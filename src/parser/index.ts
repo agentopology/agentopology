@@ -199,6 +199,9 @@ export function parseAgent(
   if (fields.invocation) node.invocation = fields.invocation;
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
   if (fields.isolation) node.isolation = fields.isolation;
+  if (fields.background) node.background = fields.background === "true";
+  const mcpServers = parseMultilineList(body, "mcp-servers");
+  if (mcpServers.length) node.mcpServers = mcpServers;
   if (outputs) node.outputs = outputs;
 
   // Parse scale sub-block

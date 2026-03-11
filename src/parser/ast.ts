@@ -187,6 +187,10 @@ export interface AgentNode extends BaseNode {
   retry?: number;
   /** Isolation mode (e.g. "worktree"). */
   isolation?: string;
+  /** Whether this agent runs in the background. */
+  background?: boolean;
+  /** MCP server names this agent uses. */
+  mcpServers?: string[];
   /** Output enum definitions. */
   outputs?: OutputsMap;
   /** Scale / parallelism configuration. */

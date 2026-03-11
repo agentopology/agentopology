@@ -22,12 +22,27 @@ function toTitle(id: string): string {
     .join(" ");
 }
 
-/** Wrap content in a YAML frontmatter block. */
-function frontmatter(fields: Record<string, string | string[]>): string {
+/**
+ * Wrap content in a YAML frontmatter block.
+ *
+ * Supports scalar values, booleans, and arrays.
+ * Arrays are rendered as multi-line YAML lists:
+ *   key:
+ *     - item1
+ *     - item2
+ */
+function frontmatter(fields: Record<string, string | boolean | string[]>): string {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue;
     if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.join(", ")}]`);
+      if (value.length === 0) continue;
+      lines.push(`${key}:`);
+      for (const item of value) {
+        lines.push(`  - ${item}`);
+      }
+    } else if (typeof value === "boolean") {
+      lines.push(`${key}: ${value}`);
     } else {
       lines.push(`${key}: ${value}`);
     }
@@ -54,6 +69,34 @@ function gitkeep(dirPath: string): GeneratedFile {
   return { path: `${dirPath}/.gitkeep`, content: "" };
 }
 
+/**
+ * Map topology permission strings to Claude Code permissionMode values.
+ * Returns undefined when the permission mode should be omitted (default/autonomous).
+ */
+function mapPermissionMode(perm: string): string | undefined {
+  // Claude Code native values — pass through
+  const nativeValues = ["plan", "auto", "confirm", "bypassPermissions"];
+  if (nativeValues.includes(perm)) {
+    // "auto" is the default, omit it
+    if (perm === "auto") return undefined;
+    return perm;
+  }
+
+  // Topology-level semantic values
+  switch (perm) {
+    case "supervised":
+      return "plan";
+    case "autonomous":
+      return undefined; // default, omit
+    case "interactive":
+      return "askUser";
+    case "unrestricted":
+      return "bypassPermissions";
+    default:
+      return perm; // unknown — pass through as-is
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Section generators
 // ---------------------------------------------------------------------------
@@ -66,18 +109,38 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "agent") continue;
     const agent = node as AgentNode;
 
-    const fm: Record<string, string | string[]> = {};
+    // Build frontmatter fields
+    const fm: Record<string, string | boolean | string[]> = {};
+    fm.name = agent.id;
+
+    // Description: prefer role description from roles block, then agent.role
+    const roleDesc = ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    if (roleDesc) {
+      fm.description = `"${roleDesc}"`;
+    }
+
     if (agent.model) fm.model = agent.model;
     if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools;
-    if (agent.permissions) fm.permissions = agent.permissions;
+    if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
+    if (agent.background === true) fm.background = true;
+
+    if (agent.permissions) {
+      const mapped = mapPermissionMode(agent.permissions);
+      if (mapped) fm.permissionMode = mapped;
+    }
+
     if (agent.isolation) fm.isolation = agent.isolation;
 
+    // Build body
     const sections: string[] = [frontmatter(fm), ""];
     sections.push(`You are the ${toTitle(agent.id)} agent.`);
     sections.push("");
 
-    if (agent.role) {
-      sections.push(`Role: ${agent.role}`);
+    // Role section
+    const roleText = ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    if (roleText) {
+      sections.push("## Role");
+      sections.push(roleText);
       sections.push("");
     }
 
@@ -86,12 +149,33 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    // Reads section
     if (agent.reads && agent.reads.length > 0) {
-      sections.push(`Reads: ${agent.reads.join(", ")}`);
+      sections.push("## Reads");
+      for (const r of agent.reads) {
+        sections.push(`- ${r}`);
+      }
+      sections.push("");
     }
+
+    // Writes section
     if (agent.writes && agent.writes.length > 0) {
-      sections.push(`Writes: ${agent.writes.join(", ")}`);
+      sections.push("## Writes");
+      for (const w of agent.writes) {
+        sections.push(`- ${w}`);
+      }
+      sections.push("");
     }
+
+    // Outputs section
+    if (agent.outputs) {
+      sections.push("## Outputs");
+      for (const [field, values] of Object.entries(agent.outputs)) {
+        sections.push(`- ${field}: ${values.join(" | ")}`);
+      }
+      sections.push("");
+    }
+
     if (agent.skills && agent.skills.length > 0) {
       sections.push(`Skills: ${agent.skills.join(", ")}`);
     }
@@ -116,7 +200,25 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
   const name = ast.topology.name;
 
+  // Build frontmatter
+  const fm: Record<string, string | boolean | string[]> = {};
+  fm.name = name;
+  if (ast.topology.description) {
+    fm.description = `"${ast.topology.description}"`;
+  }
+  fm.version = `"${ast.topology.version}"`;
+  fm.topology = name;
+  if (ast.topology.patterns.length > 0) {
+    fm.patterns = ast.topology.patterns;
+  }
+  // Entry: first trigger's command file
+  if (ast.triggers.length > 0) {
+    fm.entry = `commands/${ast.triggers[0].name}.md`;
+  }
+
   const sections: string[] = [];
+  sections.push(frontmatter(fm));
+  sections.push("");
   sections.push(`# ${toTitle(name)} Topology Skill`);
   sections.push("");
   if (ast.topology.description) {
@@ -280,28 +382,73 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
-/** Generate hook configuration in .claude/settings.json. */
+/** Generate hook script stubs for every hook's `run` field. */
+function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const name = ast.topology.name;
+
+  for (const hook of ast.hooks) {
+    if (!hook.run) continue;
+    // Extract script filename from the run command
+    const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    files.push({
+      path: `.claude/skills/${name}/scripts/${scriptName}`,
+      content: [
+        "#!/usr/bin/env bash",
+        `# Hook: ${hook.name} — fires on ${hook.on}`,
+        "# Auto-generated by agentopology scaffold — edit as needed.",
+        'set -euo pipefail',
+        "",
+        `echo "TODO: implement ${hook.name} hook"`,
+        "",
+      ].join("\n"),
+    });
+  }
+
+  return files;
+}
+
+/**
+ * Generate hook configuration in .claude/settings.json.
+ *
+ * Hooks are grouped by event name as an object:
+ *   { "hooks": { "PostToolUse": [ { hooks: [...], matcher? } ], ... } }
+ */
 function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const settings: Record<string, unknown> = {};
+  const topologyName = ast.topology.name;
 
-  // Hooks section
+  // Hooks section — grouped by event name
   if (ast.hooks.length > 0) {
-    const hooks: Record<string, unknown>[] = [];
+    const hooksByEvent: Record<string, unknown[]> = {};
     for (const hook of ast.hooks) {
-      const entry: Record<string, unknown> = {
-        matcher: hook.matcher,
+      const eventName = hook.on;
+      if (!hooksByEvent[eventName]) {
+        hooksByEvent[eventName] = [];
+      }
+
+      // Build the script command with proper path prefix
+      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+      const command = `bash .claude/skills/${topologyName}/scripts/${scriptName}`;
+
+      const hookEntry: Record<string, unknown> = {
         hooks: [
           {
             type: hook.type ?? "command",
-            command: hook.run,
+            command,
             ...(hook.timeout ? { timeout: hook.timeout } : {}),
           },
         ],
       };
-      if (hook.on) entry.event = hook.on;
-      hooks.push(entry);
+
+      // Only add matcher when it has a value
+      if (hook.matcher) {
+        hookEntry.matcher = hook.matcher;
+      }
+
+      hooksByEvent[eventName].push(hookEntry);
     }
-    settings.hooks = hooks;
+    settings.hooks = hooksByEvent;
   }
 
   // Permissions section from settings block
@@ -324,7 +471,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
-/** Generate .mcp.json from mcp-servers block. */
+/** Generate .mcp.json from mcp-servers block. Always includes env field. */
 function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   if (Object.keys(ast.mcpServers).length === 0) return null;
 
@@ -333,12 +480,18 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
 
   for (const [name, config] of Object.entries(ast.mcpServers)) {
     const entry: Record<string, unknown> = {};
+    let hasEnv = false;
     for (const [key, value] of Object.entries(config)) {
       if (key === "args" && Array.isArray(value)) {
         entry.args = value;
       } else {
         entry[key] = value;
       }
+      if (key === "env") hasEnv = true;
+    }
+    // Always include env field
+    if (!hasEnv) {
+      entry.env = {};
     }
     servers[name] = entry;
   }
@@ -418,6 +571,116 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
+/** Generate .claude/commands/X.md for each trigger. */
+function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const trigger of ast.triggers) {
+    const sections: string[] = [];
+
+    // Frontmatter
+    const fm: Record<string, string | boolean | string[]> = {};
+    if (ast.topology.description) {
+      fm.description = `"${ast.topology.description}"`;
+    }
+    sections.push(frontmatter(fm));
+    sections.push("");
+
+    // Header
+    sections.push(`# /${trigger.name}`);
+    sections.push("");
+    sections.push(trigger.pattern);
+    sections.push("");
+
+    // Arguments
+    if (trigger.argument) {
+      sections.push("## Arguments");
+      sections.push(`- ${trigger.argument}: extracted from the command pattern`);
+      sections.push("");
+    }
+
+    // Pipeline (from edges)
+    if (ast.edges.length > 0) {
+      sections.push("## Pipeline");
+      for (const edge of ast.edges) {
+        let line = `${edge.from} -> ${edge.to}`;
+        if (edge.condition) line += ` [when ${edge.condition}]`;
+        sections.push(`- ${line}`);
+      }
+      sections.push("");
+    }
+
+    // Agents table
+    const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+    if (agents.length > 0) {
+      sections.push("## Agents");
+      sections.push("| Agent | Phase | Model | Role |");
+      sections.push("|-------|-------|-------|------|");
+      for (const agent of agents) {
+        const phase = agent.phase != null ? String(agent.phase) : "-";
+        const model = agent.model ?? "-";
+        const role = agent.role ?? "-";
+        sections.push(`| ${agent.id} | ${phase} | ${model} | ${role} |`);
+      }
+      sections.push("");
+    }
+
+    files.push({
+      path: `.claude/commands/${trigger.name}.md`,
+      content: sections.join("\n") + "\n",
+    });
+  }
+
+  return files;
+}
+
+/** Generate workspace-protocol.md if workspace memory has a protocol field. */
+function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
+  const name = ast.topology.name;
+  const workspace = ast.memory.workspace as Record<string, unknown> | undefined;
+  if (!workspace || !workspace.protocol) return null;
+
+  const protocol = workspace.protocol as string;
+  const sections: string[] = [];
+  sections.push("# Workspace Protocol");
+  sections.push("");
+
+  // Directory structure from workspace.structure
+  const structure = workspace.structure;
+  if (structure && Array.isArray(structure)) {
+    sections.push("## Directory Structure");
+    for (const item of structure) {
+      sections.push(`- ${item}`);
+    }
+    sections.push("");
+  }
+
+  // Read/Write rules from agent nodes
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+  if (agents.length > 0) {
+    sections.push("## Read/Write Rules");
+    for (const agent of agents) {
+      const reads = agent.reads ?? [];
+      const writes = agent.writes ?? [];
+      if (reads.length > 0 || writes.length > 0) {
+        sections.push(`### ${toTitle(agent.id)}`);
+        if (reads.length > 0) {
+          sections.push(`- Reads: ${reads.join(", ")}`);
+        }
+        if (writes.length > 0) {
+          sections.push(`- Writes: ${writes.join(", ")}`);
+        }
+        sections.push("");
+      }
+    }
+  }
+
+  return {
+    path: `.claude/skills/${name}/${protocol}`,
+    content: sections.join("\n") + "\n",
+  };
+}
+
 /** Generate trigger documentation in the skill. */
 function generateTriggers(ast: TopologyAST): string {
   if (ast.triggers.length === 0) return "";
@@ -448,7 +711,7 @@ export const claudeCodeBinding: BindingTarget = {
     // Agent files
     files.push(...generateAgents(ast));
 
-    // Main topology skill
+    // Main topology skill (with frontmatter)
     const skillFiles = generateTopologySkill(ast);
     // Append trigger info to the main skill
     if (ast.triggers.length > 0 && skillFiles.length > 0) {
@@ -465,14 +728,24 @@ export const claudeCodeBinding: BindingTarget = {
     // Gate scripts
     files.push(...generateGateScripts(ast));
 
+    // Hook scripts (NEW)
+    files.push(...generateHookScripts(ast));
+
     // Tool scripts
     files.push(...generateToolScripts(ast));
+
+    // Command files (NEW)
+    files.push(...generateCommandFiles(ast));
+
+    // Workspace protocol (NEW)
+    const wsProtocol = generateWorkspaceProtocol(ast);
+    if (wsProtocol) files.push(wsProtocol);
 
     // Settings (hooks + permissions)
     const settingsFile = generateSettings(ast);
     if (settingsFile) files.push(settingsFile);
 
-    // MCP servers
+    // MCP servers (with env field)
     const mcpFile = generateMcpJson(ast);
     if (mcpFile) files.push(mcpFile);
 
