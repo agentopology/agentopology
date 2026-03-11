@@ -113,13 +113,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     const fm: Record<string, string | boolean | string[]> = {};
     fm.name = agent.id;
 
-    // Description: prefer role description from roles block, then agent.role
-    const roleDesc = ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
-    if (roleDesc) {
-      fm.description = `"${roleDesc}"`;
+    // Description: prefer agent.description, then role description from roles block
+    const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    if (desc) {
+      fm.description = `"${desc}"`;
     }
 
     if (agent.model) fm.model = agent.model;
+    if (agent.maxTurns != null) fm.maxTurns = String(agent.maxTurns);
     if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools;
     if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
     if (agent.background === true) fm.background = true;
@@ -130,6 +131,15 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     if (agent.isolation) fm.isolation = agent.isolation;
+
+    // Merge claude-code extension fields into frontmatter
+    if (agent.extensions?.["claude-code"]) {
+      for (const [k, v] of Object.entries(agent.extensions["claude-code"])) {
+        if (typeof v === "string") fm[k] = v;
+        else if (typeof v === "boolean") fm[k] = v;
+        else if (Array.isArray(v)) fm[k] = v as string[];
+      }
+    }
 
     // Build body
     const sections: string[] = [frontmatter(fm), ""];
@@ -216,6 +226,23 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     fm.entry = `commands/${ast.triggers[0].name}.md`;
   }
 
+  // Add skill-level fields from the first matching skill (if skills exist)
+  // For the main topology skill, look for a skill with the same name as the topology
+  const mainSkill = ast.skills.find((s) => s.id === name);
+  if (mainSkill) {
+    if (mainSkill.disableModelInvocation != null) {
+      fm["disable-model-invocation"] = mainSkill.disableModelInvocation;
+    }
+    if (mainSkill.userInvocable != null) {
+      fm["user-invocable"] = mainSkill.userInvocable;
+    }
+    if (mainSkill.context) fm.context = mainSkill.context;
+    if (mainSkill.agent) fm.agent = mainSkill.agent;
+    if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
+      fm["allowed-tools"] = mainSkill.allowedTools;
+    }
+  }
+
   const sections: string[] = [];
   sections.push(frontmatter(fm));
   sections.push("");
@@ -291,6 +318,28 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
 
   for (const skill of ast.skills) {
     const sections: string[] = [];
+
+    // Build skill frontmatter
+    const sfm: Record<string, string | boolean | string[]> = {};
+    sfm.name = skill.id;
+    if (skill.description) sfm.description = `"${skill.description}"`;
+    if (skill.disableModelInvocation != null) {
+      sfm["disable-model-invocation"] = skill.disableModelInvocation;
+    }
+    if (skill.userInvocable != null) {
+      sfm["user-invocable"] = skill.userInvocable;
+    }
+    if (skill.context) sfm.context = skill.context;
+    if (skill.agent) sfm.agent = skill.agent;
+    if (skill.allowedTools && skill.allowedTools.length > 0) {
+      sfm["allowed-tools"] = skill.allowedTools;
+    }
+    // Only emit frontmatter if there are fields beyond just the name
+    if (Object.keys(sfm).length > 1) {
+      sections.push(frontmatter(sfm));
+      sections.push("");
+    }
+
     sections.push(`# ${toTitle(skill.id)} Skill`);
     sections.push("");
     if (skill.description) {
@@ -449,6 +498,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       hooksByEvent[eventName].push(hookEntry);
     }
     settings.hooks = hooksByEvent;
+  }
+
+  // Environment variables
+  const envSettings = generateEnvToSettings(ast);
+  if (envSettings) {
+    settings.env = envSettings;
   }
 
   // Permissions section from settings block
@@ -681,6 +736,54 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
+/**
+ * Generate context/instructions file (e.g. CLAUDE.md).
+ *
+ * If `ast.context.file` is set, generates that file. Otherwise generates
+ * a default `CLAUDE.md` with basic topology info.
+ */
+function generateContextFile(ast: TopologyAST): GeneratedFile {
+  const fileName = ast.context.file ?? "CLAUDE.md";
+  const sections: string[] = [];
+
+  sections.push(`# ${toTitle(ast.topology.name)}`);
+  sections.push("");
+  if (ast.topology.description) {
+    sections.push(ast.topology.description);
+    sections.push("");
+  }
+  sections.push(`Version: ${ast.topology.version}`);
+  if (ast.topology.patterns.length > 0) {
+    sections.push(`Patterns: ${ast.topology.patterns.join(", ")}`);
+  }
+  sections.push("");
+
+  // Include references
+  if (ast.context.includes && ast.context.includes.length > 0) {
+    sections.push("## Includes");
+    sections.push("");
+    for (const inc of ast.context.includes) {
+      sections.push(`- ${inc}`);
+    }
+    sections.push("");
+  }
+
+  return {
+    path: fileName,
+    content: sections.join("\n") + "\n",
+  };
+}
+
+/**
+ * Merge `ast.env` into the settings.json output under an `env` key.
+ *
+ * Returns the env record if non-empty, otherwise null.
+ */
+function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null {
+  if (Object.keys(ast.env).length === 0) return null;
+  return { ...ast.env };
+}
+
 /** Generate trigger documentation in the skill. */
 function generateTriggers(ast: TopologyAST): string {
   if (ast.triggers.length === 0) return "";
@@ -752,6 +855,9 @@ export const claudeCodeBinding: BindingTarget = {
     // Metering
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
+
+    // Context file (CLAUDE.md or custom)
+    files.push(generateContextFile(ast));
 
     return files;
   },

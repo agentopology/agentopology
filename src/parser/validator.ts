@@ -83,6 +83,10 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "true", "false", "pipeline", "supervisor", "blackboard",
   "orchestrator-worker", "debate", "market-routing", "consensus",
   "fan-out", "event-driven", "human-gate",
+  // Extension system keywords
+  "context", "extensions", "max-turns",
+  "disable-model-invocation", "user-invocable", "allowed-tools",
+  "domain", "fork",
 ]);
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,8 @@ export interface HookDef {
   type?: string;
   /** Timeout in milliseconds. */
   timeout?: number;
+  /** Platform-specific extension fields, keyed by binding name. */
+  extensions?: Record<string, Record<string, unknown>>;
 }
 
 /** A skill declaration within a topology. */
@@ -88,6 +90,18 @@ export interface SkillDef {
   references?: string[];
   /** Prompt file path. */
   prompt?: string;
+  /** Whether to disable automatic model invocation. */
+  disableModelInvocation?: boolean;
+  /** Whether this skill is user-invocable (shows in menu). */
+  userInvocable?: boolean;
+  /** Context mode (e.g. "fork" for subagent isolation). */
+  context?: string;
+  /** Agent type to use when context is "fork". */
+  agent?: string;
+  /** Tools allowed without permission prompt. */
+  allowedTools?: string[];
+  /** Platform-specific extension fields. */
+  extensions?: Record<string, Record<string, unknown>>;
 }
 
 /** A tool declaration within a topology-level `tools` block. */
@@ -199,6 +213,12 @@ export interface AgentNode extends BaseNode {
   hooks?: HookDef[];
   /** Role description (resolved from the roles block). */
   role?: string;
+  /** Human-readable description for delegation/discovery. */
+  description?: string;
+  /** Maximum number of agentic turns before stopping. */
+  maxTurns?: number;
+  /** Platform-specific extension fields, keyed by binding name. */
+  extensions?: Record<string, Record<string, unknown>>;
 }
 
 /** A gate node (quality / security checkpoint). */
@@ -218,6 +238,8 @@ export interface GateNode extends BaseNode {
   onFail?: string;
   /** Behavior mode. */
   behavior?: string;
+  /** Platform-specific extension fields, keyed by binding name. */
+  extensions?: Record<string, Record<string, unknown>>;
 }
 
 /** Union of all node types. */
@@ -257,6 +279,8 @@ export interface TopologyMeta {
   foundations?: string[];
   /** Advanced patterns (from meta block). */
   advanced?: string[];
+  /** Domain identifier (e.g. "legal", "marketing"). */
+  domain?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,4 +319,13 @@ export interface TopologyAST {
   toolDefs: ToolBlockDef[];
   /** Role descriptions keyed by role name. */
   roles: Record<string, string>;
+  /** Context/instructions file configuration. */
+  context: {
+    /** Filename for the context file (e.g. "CONTEXT.md"). */
+    file?: string;
+    /** Additional files to include in context. */
+    includes?: string[];
+  };
+  /** Environment variables for the topology. */
+  env: Record<string, string>;
 }

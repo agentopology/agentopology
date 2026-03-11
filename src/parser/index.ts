@@ -59,6 +59,49 @@ function toLabel(id: string): string {
     .join(" ");
 }
 
+/**
+ * Parse an `extensions { binding-name { key: value } }` sub-block.
+ *
+ * Each named sub-block inside `extensions` becomes a key in the returned
+ * record, with its key-value pairs parsed via {@link parseFields}.
+ */
+function parseExtensionsBlock(block: string): Record<string, Record<string, unknown>> | undefined {
+  const extBlock = extractBlock(block, "extensions");
+  if (!extBlock) return undefined;
+
+  const result: Record<string, Record<string, unknown>> = {};
+
+  // Extract each named sub-block inside extensions
+  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(extBlock.body)) !== null) {
+    const name = m[1];
+    const startIdx = m.index! + m[0].length;
+    let depth = 1;
+    let i = startIdx;
+    while (i < extBlock.body.length && depth > 0) {
+      if (extBlock.body[i] === "{") depth++;
+      else if (extBlock.body[i] === "}") depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const innerBody = extBlock.body.slice(startIdx, i - 1);
+      const fields = parseFields(innerBody);
+      const entry: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        // Try to parse booleans and numbers
+        if (v === "true") entry[k] = true;
+        else if (v === "false") entry[k] = false;
+        else if (/^\d+$/.test(v)) entry[k] = parseInt(v, 10);
+        else entry[k] = unquote(v);
+      }
+      result[name] = entry;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Section parsers
 // ---------------------------------------------------------------------------
@@ -97,6 +140,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   const result: Partial<TopologyMeta> = {};
   if (fields.version) result.version = unquote(fields.version);
   if (fields.description) result.description = unquote(fields.description);
+  if (fields.domain) result.domain = fields.domain;
 
   const foundations = parseMultilineList(body, "foundations");
   if (foundations.length) result.foundations = foundations;
@@ -242,6 +286,12 @@ export function parseAgent(
     if (agentHooks.length > 0) node.hooks = agentHooks;
   }
 
+  // New fields: description, max-turns, extensions
+  if (fields.description) node.description = unquote(fields.description);
+  if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
+  const extensions = parseExtensionsBlock(body);
+  if (extensions) node.extensions = extensions;
+
   // Attach role description if available.
   // Prefer exact match, then longest prefix match.
   const exactRole = roles[id];
@@ -277,6 +327,9 @@ export function parseGate(id: string, body: string): GateNode {
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
   if (fields["on-fail"]) node.onFail = fields["on-fail"];
   if (fields.behavior) node.behavior = fields.behavior;
+
+  const extensions = parseExtensionsBlock(body);
+  if (extensions) node.extensions = extensions;
 
   return node;
 }
@@ -602,9 +655,54 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
     if (domains.length) sd.domains = domains;
     if (references.length) sd.references = references;
     if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
+
+    // New skill fields
+    if (sFields["disable-model-invocation"]) {
+      sd.disableModelInvocation = sFields["disable-model-invocation"] === "true";
+    }
+    if (sFields["user-invocable"]) {
+      sd.userInvocable = sFields["user-invocable"] === "true";
+    }
+    if (sFields.context) sd.context = sFields.context;
+    if (sFields.agent) sd.agent = sFields.agent;
+    const allowedTools = parseMultilineList(block.body, "allowed-tools");
+    if (allowedTools.length) sd.allowedTools = allowedTools;
+    const skillExtensions = parseExtensionsBlock(block.body);
+    if (skillExtensions) sd.extensions = skillExtensions;
+
     skillDefs.push(sd);
   }
   return skillDefs;
+}
+
+/**
+ * Parse the `context { ... }` block.
+ *
+ * Returns context file configuration with optional file path and includes list.
+ */
+export function parseContext(body: string): { file?: string; includes?: string[] } {
+  const fields = parseFields(body);
+  const result: { file?: string; includes?: string[] } = {};
+  if (fields.file) result.file = unquote(fields.file);
+  const includes = parseMultilineList(body, "includes");
+  if (includes.length) result.includes = includes;
+  return result;
+}
+
+/**
+ * Parse the `env { ... }` block.
+ *
+ * Returns a record of environment variable key-value pairs.
+ */
+export function parseEnv(body: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of body.split("\n")) {
+    const kv = parseKV(line);
+    if (kv) {
+      result[kv[0]] = unquote(kv[1]);
+    }
+  }
+  return result;
 }
 
 /**
@@ -668,6 +766,7 @@ export function parse(source: string): TopologyAST {
     patterns: header.patterns,
     ...(metaFields.foundations ? { foundations: metaFields.foundations } : {}),
     ...(metaFields.advanced ? { advanced: metaFields.advanced } : {}),
+    ...(metaFields.domain ? { domain: metaFields.domain } : {}),
   };
 
   // --- Roles ---
@@ -787,6 +886,14 @@ export function parse(source: string): TopologyAST {
     ? parseMetering(meteringBlock.body)
     : null;
 
+  // --- Context ---
+  const contextBlock = extractBlock(topBody, "context");
+  const context = contextBlock ? parseContext(contextBlock.body) : {};
+
+  // --- Env ---
+  const envBlock = extractBlock(topBody, "env");
+  const env = envBlock ? parseEnv(envBlock.body) : {};
+
   // --- Assemble AST ---
   return {
     topology,
@@ -804,5 +911,7 @@ export function parse(source: string): TopologyAST {
     skills: skillDefs,
     toolDefs,
     roles,
+    context,
+    env,
   };
 }
