@@ -1,0 +1,288 @@
+# data-processing.at — Batch data processing pipeline
+#
+# Demonstrates: scale blocks, custom tools, batch processing, metering,
+#               parallel extractors, MCP servers, environments
+
+topology data-processing : [pipeline, fan-out] {
+
+  meta {
+    version: "1.0.0"
+    description: "Batch data processing — ingest, extract, classify, and generate reports"
+  }
+
+  orchestrator {
+    model: opus
+    generates: "commands/process.md"
+    handles: [ingest, validate-batch, deliver]
+    outputs: {
+      batch-mode: streaming | bulk
+    }
+  }
+
+  roles {
+    extractor: "Multi-format text extraction from raw documents"
+    classifier: "Score and categorize extracted documents"
+    synthesizer: "Merge classified results into structured output"
+    reporter: "Generate human-readable reports from synthesis"
+  }
+
+  # --- Custom Tools ---
+
+  tools {
+    tool extract-pdf {
+      script: "scripts/extract-pdf.py"
+      args: [input-path, output-path]
+      lang: python
+      description: "Extract text from PDF documents"
+    }
+
+    tool extract-doc {
+      script: "scripts/extract-doc.py"
+      args: [input-path, output-path]
+      lang: python
+      description: "Extract text from DOC/DOCX files"
+    }
+
+    tool merge-results {
+      script: "scripts/merge-results.sh"
+      args: [input-dir, output-file]
+      lang: bash
+      description: "Merge classified results into a single output"
+    }
+
+    tool validate-output {
+      script: "scripts/validate-output.py"
+      args: [output-file, schema-path]
+      lang: python
+      description: "Validate output against expected schema"
+    }
+  }
+
+  # --- Skills ---
+
+  skill extraction {
+    description: "Document extraction -- PDF, DOC, images"
+    scripts: [extract-pdf, extract-doc]
+  }
+
+  skill classification {
+    description: "Document scoring and categorization"
+    scripts: [validate-output]
+    domains: ["domains/scoring-rubric.md"]
+  }
+
+  # --- Actions ---
+
+  action ingest {
+    kind: external
+    source: "s3-bucket"
+    description: "Pull raw documents from the input bucket"
+  }
+
+  action validate-batch {
+    kind: inline
+    description: "Validate batch completeness before synthesis"
+  }
+
+  action deliver {
+    kind: report
+    description: "Deliver final reports to output bucket"
+  }
+
+  # --- Agents ---
+
+  agent extractor {
+    role: extractor
+    model: sonnet
+    permissions: autonomous
+    prompt: "prompts/extractor.md"
+    phase: 1
+    tools: [Read, Write, extract-pdf, extract-doc]
+    skills: [extraction]
+    reads: ["workspace/raw/"]
+    writes: ["workspace/extracted/"]
+    background: true
+    scale {
+      mode: auto
+      by: doc-count
+      min: 2
+      max: 8
+      batch-size: 50
+    }
+  }
+
+  agent classifier {
+    role: classifier
+    model: gemini-2.0-flash
+    permissions: autonomous
+    prompt: "prompts/classifier.md"
+    phase: 2
+    tools: [Read, Write, validate-output]
+    skills: [classification]
+    reads: ["workspace/extracted/"]
+    writes: ["workspace/classified/"]
+    background: true
+    scale {
+      mode: auto
+      by: batch-count
+      min: 2
+      max: 12
+      batch-size: 25
+    }
+  }
+
+  agent synthesizer {
+    role: synthesizer
+    model: opus
+    permissions: autonomous
+    prompt: "prompts/synthesizer.md"
+    phase: 3
+    tools: [Read, Write, merge-results]
+    reads: ["workspace/classified/"]
+    writes: ["workspace/synthesis.json"]
+  }
+
+  agent reporter {
+    role: reporter
+    model: sonnet
+    permissions: autonomous
+    prompt: "prompts/reporter.md"
+    phase: 4
+    tools: [Read, Write]
+    reads: ["workspace/synthesis.json"]
+    writes: ["workspace/report.md", "workspace/report.pdf"]
+    outputs: {
+      quality: complete | partial | failed
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    ingest -> extractor
+    extractor -> classifier
+    classifier -> validate-batch
+    validate-batch -> synthesizer
+    synthesizer -> reporter
+    reporter -> deliver           [when reporter.quality == complete]
+    reporter -> deliver           [when reporter.quality == partial]
+    reporter -> synthesizer       [when reporter.quality == failed, max 2]
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate schema-validation {
+      after: synthesizer
+      before: reporter
+      run: "scripts/validate-schema.sh"
+      checks: [schema, completeness, consistency]
+      retry: 2
+      on-fail: bounce-back
+    }
+  }
+
+  # --- Batch ---
+
+  batch {
+    parallel: true
+    per: ticket
+    conflicts: {
+      detect: ["workspace/synthesis.json"]
+      resolve: sequential-rebase
+    }
+    workspace: "runs/_batch/{BATCH_ID}/"
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      protocol: "workspace-protocol.md"
+      structure: [raw, extracted, classified, synthesis, reports]
+    }
+
+    metrics {
+      path: "metrics/processing.jsonl"
+      mode: append-only
+    }
+  }
+
+  # --- Metering ---
+
+  metering {
+    track: [tokens-in, tokens-out, cost, wall-time, agent-count]
+    per: [phase, agent, run]
+    output: "metrics/"
+    format: jsonl
+    pricing: none
+  }
+
+  # --- Environments ---
+
+  environments {
+    development {
+      bucket: "dev-input-bucket"
+      output-bucket: "dev-output-bucket"
+    }
+
+    production {
+      bucket: "prod-input-bucket"
+      output-bucket: "prod-output-bucket"
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command process {
+      pattern: "/process <BATCH_ID>"
+      argument: BATCH_ID
+    }
+
+    command status {
+      pattern: "/status"
+    }
+  }
+
+  # --- Hooks ---
+
+  hooks {
+    hook track-progress {
+      on: AgentStop
+      run: "scripts/track-progress.sh"
+      type: command
+    }
+
+    hook security-check {
+      on: ToolUse
+      matcher: "Bash"
+      run: "scripts/security-check.sh"
+      type: command
+    }
+  }
+
+  # --- MCP Servers ---
+
+  mcp-servers {
+    storage {
+      type: stdio
+      command: "npx"
+      args: ["-y", "storage-mcp-server"]
+    }
+
+    monitoring {
+      type: http
+      url: "https://mcp.monitoring.example.com"
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: ["Read", "Write", "Glob", "Grep"]
+    deny: ["Bash(rm -rf *)"]
+    ask: ["Bash(aws s3 *)"]
+  }
+}

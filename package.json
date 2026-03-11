@@ -1,0 +1,52 @@
+{
+  "name": "agentopology",
+  "version": "0.1.0",
+  "description": "The declarative language for multi-agent systems. Write once, scaffold for any platform.",
+  "author": "Nadav Naveh",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agentopology": "dist/cli/index.js"
+  },
+  "files": ["dist", "spec", "README.md", "LICENSE"],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./parser": {
+      "import": "./dist/parser/index.js",
+      "types": "./dist/parser/index.d.ts"
+    },
+    "./bindings": {
+      "import": "./dist/bindings/index.js",
+      "types": "./dist/bindings/index.d.ts"
+    },
+    "./visualizer": {
+      "import": "./dist/visualizer/index.js",
+      "types": "./dist/visualizer/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx src/cli/index.ts validate examples/simple-pipeline.at",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agents", "multi-agent", "topology", "orchestration", "ai",
+    "llm", "claude", "codex", "gemini", "declarative", "scaffold"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nadavnaveh/agentopology.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.0.0"
+  }
+}

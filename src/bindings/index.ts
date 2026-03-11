@@ -1,0 +1,27 @@
+/**
+ * Binding registry.
+ *
+ * Exports all available bindings and a lookup map keyed by target name.
+ *
+ * @module
+ */
+
+import type { BindingTarget } from "./types.js";
+import { claudeCodeBinding } from "./claude-code.js";
+import { codexBinding } from "./codex.js";
+import { geminiCliBinding } from "./gemini-cli.js";
+import { copilotCliBinding } from "./copilot-cli.js";
+
+export type { GeneratedFile, BindingTarget } from "./types.js";
+export { claudeCodeBinding } from "./claude-code.js";
+export { codexBinding } from "./codex.js";
+export { geminiCliBinding } from "./gemini-cli.js";
+export { copilotCliBinding } from "./copilot-cli.js";
+
+/** All available binding targets, keyed by name. */
+export const bindings: Record<string, BindingTarget> = {
+  "claude-code": claudeCodeBinding,
+  "codex": codexBinding,
+  "gemini-cli": geminiCliBinding,
+  "copilot-cli": copilotCliBinding,
+};

@@ -1,0 +1,159 @@
+# code-review.at — Automated code review with fan-out
+#
+# Demonstrates: fan-out pattern, advisory agents, skip conditions,
+#               multiple output enums, parallel execution
+
+topology code-review : [pipeline, fan-out, human-gate] {
+
+  meta {
+    version: "1.0.0"
+    description: "Automated code review — analyze, scan, review, and approve"
+  }
+
+  orchestrator {
+    model: opus
+    generates: "commands/review.md"
+    handles: [intake, create-report]
+  }
+
+  roles {
+    analyzer: "Static analysis — complexity, dependencies, blast radius"
+    security: "Security vulnerability scanning and OWASP checks"
+    reviewer: "Holistic code review — logic, style, test coverage"
+    reporter: "Compile findings into a structured review report"
+  }
+
+  # --- Actions ---
+
+  action intake {
+    kind: external
+    source: "github-pr"
+    description: "Fetch PR diff and metadata from GitHub"
+  }
+
+  action create-report {
+    kind: report
+    description: "Compile all findings into final review report"
+  }
+
+  # --- Agents ---
+
+  agent analyzer {
+    role: analyzer
+    model: gemini-2.0-flash
+    permissions: supervised
+    prompt: "prompts/analyzer.md"
+    phase: 1
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/pr-diff.md"]
+    writes: ["workspace/analysis.md"]
+    outputs: {
+      risk-level: low | medium | high | critical
+    }
+  }
+
+  agent security-scanner {
+    role: security
+    model: sonnet
+    permissions: supervised
+    prompt: "prompts/security-scanner.md"
+    phase: 1
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/pr-diff.md"]
+    writes: ["workspace/security.md"]
+    behavior: advisory
+    outputs: {
+      has-vulnerabilities: yes | no
+    }
+  }
+
+  agent reviewer {
+    role: reviewer
+    model: opus
+    permissions: supervised
+    prompt: "prompts/reviewer.md"
+    phase: 2
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/pr-diff.md", "workspace/analysis.md", "workspace/security.md"]
+    writes: ["workspace/review.md"]
+    outputs: {
+      verdict: approve | request-changes | reject
+    }
+  }
+
+  agent reporter {
+    role: reporter
+    model: haiku
+    permissions: autonomous
+    prompt: "prompts/reporter.md"
+    phase: 3
+    tools: [Read, Write, Glob]
+    reads: ["workspace/analysis.md", "workspace/security.md", "workspace/review.md"]
+    writes: ["workspace/final-report.md"]
+  }
+
+  # --- Flow ---
+  #
+  # Fan-out: analyzer and security-scanner run in parallel after intake.
+  # Both feed into reviewer. Reporter compiles the final output.
+
+  flow {
+    intake -> [analyzer, security-scanner]
+    analyzer -> reviewer
+    security-scanner -> reviewer
+    reviewer -> reporter           [when reviewer.verdict == approve]
+    reviewer -> reporter           [when reviewer.verdict == request-changes]
+    reviewer -> create-report      [when reviewer.verdict == reject]
+    reporter -> create-report
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate human-approval {
+      after: reviewer
+      before: reporter
+      run: "scripts/human-approve.sh"
+      on-fail: halt
+    }
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [pr-diff, analysis, security, review, reports]
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command review {
+      pattern: "/review <PR_URL>"
+      argument: PR_URL
+    }
+
+    command audit {
+      pattern: "/audit"
+    }
+  }
+
+  # --- Hooks ---
+
+  hooks {
+    hook log-findings {
+      on: AgentStop
+      run: "scripts/log-findings.sh"
+      type: command
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: ["Read", "Grep", "Glob"]
+    deny: ["Write", "Edit", "Bash"]
+  }
+}

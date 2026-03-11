@@ -1,0 +1,128 @@
+# simple-pipeline.at — A basic 3-agent content pipeline
+#
+# Demonstrates: pipeline pattern, basic flow, gate, roles, triggers
+
+topology simple-pipeline : [pipeline, human-gate] {
+
+  meta {
+    version: "1.0.0"
+    description: "Research, write, and review — a minimal content pipeline"
+  }
+
+  orchestrator {
+    model: sonnet
+    generates: "commands/create.md"
+    handles: [intake, done]
+    outputs: {
+      topic-type: technical | creative
+    }
+  }
+
+  roles {
+    researcher: "Gather information, find sources, and compile research notes"
+    writer: "Draft content based on research, following style guidelines"
+    reviewer: "Review drafts for accuracy, clarity, and completeness"
+  }
+
+  # --- Actions ---
+
+  action intake {
+    kind: inline
+    description: "Parse user request — extract topic and requirements"
+  }
+
+  # --- Agents ---
+
+  agent researcher {
+    role: researcher
+    model: gpt-4o
+    permissions: supervised
+    prompt: "prompts/researcher.md"
+    phase: 1
+    tools: [Read, Grep, Glob, WebSearch]
+    writes: ["workspace/research.md"]
+  }
+
+  agent writer {
+    role: writer
+    model: sonnet
+    permissions: autonomous
+    prompt: "prompts/writer.md"
+    phase: 2
+    tools: [Read, Write, Glob]
+    reads: ["workspace/research.md"]
+    writes: ["workspace/draft.md"]
+    outputs: {
+      confidence: high | medium | low
+    }
+  }
+
+  agent reviewer {
+    role: reviewer
+    model: opus
+    permissions: supervised
+    prompt: "prompts/reviewer.md"
+    phase: 3
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/draft.md", "workspace/research.md"]
+    writes: ["workspace/review.md"]
+    outputs: {
+      verdict: approve | revise | reject
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    intake -> researcher
+    researcher -> writer
+    writer -> reviewer
+    reviewer -> writer     [when reviewer.verdict == revise, max 2]
+    reviewer -> researcher [when reviewer.verdict == reject, max 1]
+    reviewer -> done       [when reviewer.verdict == approve]
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate quality-check {
+      after: writer
+      before: reviewer
+      run: "scripts/check-quality.sh"
+      checks: [grammar, formatting]
+      on-fail: bounce-back
+    }
+  }
+
+  # --- Action to finish ---
+
+  action done {
+    kind: report
+    description: "Deliver final content to the user"
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [research, drafts, reviews]
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command create {
+      pattern: "/create <TOPIC>"
+      argument: TOPIC
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: ["Read", "Grep", "Glob", "WebSearch"]
+    deny: ["Bash(rm -rf *)"]
+  }
+}

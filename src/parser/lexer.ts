@@ -1,0 +1,218 @@
+/**
+ * Lexical utilities for the AgentTopology parser.
+ *
+ * These low-level functions handle comment stripping, block extraction,
+ * key-value parsing, and list parsing. They operate on raw source strings
+ * and know nothing about the AgentTopology grammar beyond brace-matched
+ * blocks and `key: value` lines.
+ *
+ * @module
+ */
+
+// ---------------------------------------------------------------------------
+// Comment handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip single-line comments from source text.
+ *
+ * Lines whose first non-whitespace character is `#` are replaced with
+ * empty lines (preserving line count for error reporting).
+ */
+export function stripComments(src: string): string {
+  return src
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("#")) return "";
+      return line;
+    })
+    .join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Regex helpers
+// ---------------------------------------------------------------------------
+
+/** Escape special regex characters in a string so it can be used as a literal pattern. */
+export function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ---------------------------------------------------------------------------
+// Block extraction
+// ---------------------------------------------------------------------------
+
+/** Result of extracting a brace-delimited block. */
+export interface BlockResult {
+  /** The identifier token after the keyword, or null if none was present. */
+  id: string | null;
+  /** The content between the outermost `{` and `}`, exclusive. */
+  body: string;
+}
+
+/**
+ * Extract the first top-level block matching `keyword identifier? { ... }`.
+ *
+ * Uses brace counting to handle arbitrarily nested blocks.
+ * Returns the inner content (between the outermost braces) and the
+ * identifier if one was present after the keyword.
+ *
+ * @param src    - The source string to search.
+ * @param keyword - The keyword that introduces the block.
+ * @returns The extracted block, or `null` if no match was found.
+ */
+export function extractBlock(
+  src: string,
+  keyword: string
+): BlockResult | null {
+  const re = new RegExp(
+    `(?:^|\\n)\\s*${escapeRegex(keyword)}(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
+    "m"
+  );
+  const m = re.exec(src);
+  if (!m) return null;
+
+  const id = m[1] ?? null;
+  const startIdx = m.index! + m[0].length;
+  let depth = 1;
+  let i = startIdx;
+  while (i < src.length && depth > 0) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  return { id, body: src.slice(startIdx, i - 1) };
+}
+
+/**
+ * Extract ALL blocks matching `keyword identifier? { ... }` within a source string.
+ *
+ * Similar to {@link extractBlock} but returns every match instead of just the first.
+ *
+ * @param src     - The source string to search.
+ * @param keyword - The keyword (or regex fragment) that introduces each block.
+ * @returns Array of extracted blocks.
+ */
+export function extractAllBlocks(
+  src: string,
+  keyword: string
+): BlockResult[] {
+  const results: BlockResult[] = [];
+  const re = new RegExp(
+    `(?:^|\\n)\\s*${escapeRegex(keyword)}(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
+    "gm"
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const id = m[1] ?? null;
+    const startIdx = m.index! + m[0].length;
+    let depth = 1;
+    let i = startIdx;
+    while (i < src.length && depth > 0) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") depth--;
+      i++;
+    }
+    if (depth === 0) {
+      results.push({ id, body: src.slice(startIdx, i - 1) });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Key-value & list parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a single `key: value` line.
+ *
+ * @returns A `[key, rawValue]` tuple, or `null` if the line is not a valid KV pair.
+ */
+export function parseKV(line: string): [string, string] | null {
+  const m = line.match(/^\s*([a-zA-Z_-]+)\s*:\s*(.+?)\s*$/);
+  if (!m) return null;
+  return [m[1], m[2]];
+}
+
+/**
+ * Parse a bracketed list `[a, b, c]` into a string array.
+ *
+ * If the input is not a bracketed list, returns an array containing the
+ * trimmed input as a single element.
+ */
+export function parseList(raw: string): string[] {
+  const m = raw.match(/^\[([^\]]*)\]$/);
+  if (!m) return [raw.trim()];
+  return m[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+}
+
+/**
+ * Parse a multiline bracketed list that may span multiple lines.
+ *
+ * Searches for `key: [ ... ]` in the body (potentially spanning newlines)
+ * and returns the items as a string array. Uses a word boundary before the
+ * key to avoid partial matches (e.g. searching for "tools" will not match
+ * "disallowed-tools").
+ */
+export function parseMultilineList(body: string, key: string): string[] {
+  const re = new RegExp(
+    `(?:^|(?<=\\s))${escapeRegex(key)}\\s*:\\s*\\[([^\\]]*(?:\\n[^\\]]*)*?)\\]`,
+    "m"
+  );
+  const m = re.exec(body);
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+}
+
+/**
+ * Remove surrounding double quotes from a string value.
+ *
+ * If the string is not quoted, returns it unchanged.
+ */
+export function unquote(s: string): string {
+  return s.replace(/^"(.*)"$/, "$1");
+}
+
+/**
+ * Parse all simple `key: value` lines from a block body into a record.
+ *
+ * Skips lines that are not valid KV pairs (blank lines, nested blocks, etc.).
+ */
+export function parseFields(body: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const line of body.split("\n")) {
+    const kv = parseKV(line);
+    if (kv) {
+      fields[kv[0]] = kv[1];
+    }
+  }
+  return fields;
+}
+
+/**
+ * Parse an `outputs: { key: val | val | val }` sub-block.
+ *
+ * @returns A map of output names to their possible enum values, or `null`
+ *          if no `outputs` block is found.
+ */
+export function parseOutputsBlock(body: string): Record<string, string[]> | null {
+  const block = extractBlock(body, "outputs");
+  if (!block) return null;
+  const result: Record<string, string[]> = {};
+  for (const line of block.body.split("\n")) {
+    const kv = parseKV(line);
+    if (kv) {
+      result[kv[0]] = kv[1].split("|").map((s) => s.trim());
+    }
+  }
+  return result;
+}
