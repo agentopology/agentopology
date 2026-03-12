@@ -15,7 +15,7 @@ topology, library, import, from, use,
 agent, action, orchestrator, meta, roles, memory, flow, gates, gate,
 depth, batch, environments, triggers, command, event, level,
 hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
-context, env, extensions
+context, env, extensions, providers
 ```
 
 ---
@@ -51,7 +51,7 @@ domains, references, external-docs, metrics, workspace, conflicts,
 detect, resolve, sequential-rebase, source, commands,
 external, git, decision, inline, report, not, ticket, true, false,
 max-turns, description, disable-model-invocation, user-invocable, allowed-tools,
-domain, fork,
+domain, fork, api-key, base-url, default,
 pipeline, supervisor, blackboard, orchestrator-worker, debate,
 market-routing, consensus, fan-out, event-driven, human-gate
 ```

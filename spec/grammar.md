@@ -130,7 +130,7 @@ All string paths in `.at` files are **relative to the output directory** scaffol
 | `tools.tool.script` | `"scripts/ocr-pipeline.sh"` | `<output-dir>/scripts/ocr-pipeline.sh` |
 | `gates.gate.run` | `"scripts/validate.sh"` | `<output-dir>/scripts/validate.sh` |
 | `hooks.hook.run` | `"scripts/emit-event.sh"` | `<output-dir>/scripts/emit-event.sh` |
-| `agent.prompt` | `"prompts/classifier.md"` | `<output-dir>/prompts/classifier.md` |
+| `agent.prompt` | `prompt { ... }` | Inline content (not a file path) |
 | `agent.reads/writes` | `"workspace/raw/"` | Runtime workspace path (not output-relative) |
 | `memory.domains.path` | `"domains/"` | `<output-dir>/domains/` |
 
@@ -295,7 +295,7 @@ agent-fields    = agent-field*
 agent-field     = 'role' ':' identifier
                 | 'model' ':' model-id
                 | 'permissions' ':' perm-enum
-                | 'prompt' ':' string
+                | 'prompt' '{' raw-text '}'
                 | 'phase' ':' number
                 | 'tools' ':' tool-list
                 | 'disallowed-tools' ':' tool-list
@@ -333,7 +333,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
-| `prompt` | string | no | -- | Path to the agent's instruction file |
+| `prompt` | block | no | -- | Inline agent instructions (multi-line text block) |
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |
@@ -1134,9 +1134,55 @@ agent explorer {
 
 ---
 
+### 4.25 `providers`
+
+Declares API provider credentials, base URLs, and model routing. The `providers` block is **optional** — omitting it means the topology uses subscription-based authentication (the default for CLI tools like Claude Code and Gemini CLI).
+
+```ebnf
+providers-block = 'providers' '{' { provider-def } '}' ;
+provider-def    = IDENT '{' { provider-field } '}' ;
+provider-field  = 'api-key' ':' string-value
+                | 'base-url' ':' string-value
+                | 'models' ':' '[' model-id { ',' model-id } ']'
+                | 'default' ':' boolean
+                | IDENT ':' value ;
+```
+
+```agenttopology
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus, sonnet, haiku]
+    default: true
+  }
+  openai {
+    api-key: "${OPENAI_API_KEY}"
+    base-url: "https://api.openai.com/v1"
+    models: [gpt-4o, o4-mini]
+  }
+  ollama {
+    base-url: "http://localhost:11434/v1"
+    models: [llama-3.1-70b, mistral-7b]
+  }
+}
+```
+
+**Security:** `api-key` values MUST be `${ENV_VAR}` references. Literal API keys are a validation error (V16).
+
+**Semantics:**
+- `api-key` — environment variable reference for the provider's API key. Must use `${VAR_NAME}` syntax.
+- `base-url` — custom endpoint URL. Optional; providers like Anthropic and OpenAI have well-known defaults.
+- `models` — model identifiers this provider can serve. Used for routing and validation.
+- `default` — at most one provider may be marked as default. When a model is available from multiple providers, the default provider is preferred.
+- Extra fields are stored in `ProviderDef.extra` for forward compatibility.
+
+**LL(2) note:** `providers` is a top-level block keyword. The parser sees `providers` `{` and enters the providers production. Inside, each `<identifier>` `{` starts a named provider sub-block. No ambiguity.
+
+---
+
 ## 5. Validation Rules
 
-See `validation.md` for the complete list of 15 validation rules with examples.
+See `validation.md` for the complete list of 19 validation rules with examples.
 
 ---
 

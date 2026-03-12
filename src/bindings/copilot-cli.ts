@@ -216,6 +216,17 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // Provider credentials
+  if (ast.providers && ast.providers.length > 0) {
+    const githubProvider = ast.providers.find((p) => p.name === "github");
+    if (githubProvider?.apiKey) {
+      sections.push("## Authentication");
+      sections.push("");
+      sections.push(`Set the environment variable referenced by the provider: \`${githubProvider.apiKey}\``);
+      sections.push("");
+    }
+  }
+
   // Context includes
   if (ast.context.includes && ast.context.includes.length > 0) {
     sections.push("## Includes");
@@ -301,7 +312,9 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     if (agent.prompt) {
-      sections.push(`Prompt: ${agent.prompt}`);
+      sections.push("## Instructions");
+      sections.push("");
+      sections.push(agent.prompt);
       sections.push("");
     }
 

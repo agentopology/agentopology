@@ -5,6 +5,7 @@
  *   agentopology validate <file.at>                        — parse and validate
  *   agentopology scaffold <file.at> --target <binding>     — generate files
  *   agentopology scaffold <file.at> --target <binding> --dry-run — preview only
+ *   agentopology sync <file.at> --target <binding> --dir <path> — sync prompts back
  *   agentopology targets                                   — list bindings
  *
  * @module
@@ -15,6 +16,8 @@ import * as path from "node:path";
 import { parse } from "../parser/index.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
+import { syncFromPlatform } from "../sync/index.js";
+import type { PlatformFile } from "../sync/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -43,15 +46,18 @@ ${c.bold("agentopology")} — AgentTopology CLI
 ${c.bold("Usage:")}
   agentopology validate <file.at>
   agentopology scaffold <file.at> --target <binding> [--dry-run]
+  agentopology sync <file.at> --target <binding> --dir <path>
   agentopology targets
 
 ${c.bold("Commands:")}
-  validate   Parse an .at file and run all 15 validation rules.
+  validate   Parse an .at file and run all 19 validation rules.
   scaffold   Generate project files for a target platform.
+  sync       Sync prompt content from platform files back into .at source.
   targets    List available binding targets.
 
 ${c.bold("Options:")}
   --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli)
+  --dir <path>      Directory to read platform files from (used with sync).
   --dry-run         Preview generated files without writing to disk.
   --help, -h        Show this help message.
 `);
@@ -82,6 +88,7 @@ interface ParsedArgs {
   command: string | undefined;
   file: string | undefined;
   target: string | undefined;
+  dir: string | undefined;
   dryRun: boolean;
   help: boolean;
 }
@@ -92,6 +99,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     command: undefined,
     file: undefined,
     target: undefined,
+    dir: undefined,
     dryRun: false,
     help: false,
   };
@@ -112,6 +120,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--target" && i + 1 < args.length) {
       result.target = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--dir" && i + 1 < args.length) {
+      result.dir = args[i + 1];
       i += 2;
       continue;
     }
@@ -151,7 +164,7 @@ function cmdValidate(filePath: string): void {
   const results = validate(ast);
 
   if (results.length === 0) {
-    console.log(c.green("  All 15 validation rules passed."));
+    console.log(c.green("  All 19 validation rules passed."));
     console.log("");
     return;
   }
@@ -231,6 +244,44 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean): voi
   console.log("");
 }
 
+function readDirRecursive(dirPath: string): PlatformFile[] {
+  const resolved = path.resolve(dirPath);
+  if (!fs.existsSync(resolved)) {
+    console.error(c.red(`Error: directory not found: ${resolved}`));
+    process.exit(1);
+  }
+
+  const files: PlatformFile[] = [];
+  function walk(dir: string, prefix: string): void {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = path.join(prefix, entry.name);
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, rel);
+      } else {
+        files.push({ path: rel, content: fs.readFileSync(full, "utf-8") });
+      }
+    }
+  }
+  walk(resolved, "");
+  return files;
+}
+
+function cmdSync(filePath: string, targetName: string, dirPath: string): void {
+  const atSource = readFile(filePath);
+  const files = readDirRecursive(dirPath);
+
+  const updated = syncFromPlatform(atSource, files, targetName);
+
+  const resolved = path.resolve(filePath);
+  fs.writeFileSync(resolved, updated, "utf-8");
+  console.log(
+    c.green(
+      `  Updated ${path.basename(filePath)} with prompt blocks from ${targetName} files.`,
+    ),
+  );
+}
+
 function cmdTargets(): void {
   console.log(c.bold("Available binding targets:"));
   console.log("");
@@ -274,6 +325,25 @@ function main(): void {
         process.exit(1);
       }
       cmdScaffold(args.file, args.target, args.dryRun);
+      break;
+
+    case "sync":
+      if (!args.file) {
+        console.error(c.red("Error: sync requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      if (!args.target) {
+        console.error(c.red("Error: sync requires --target <binding>."));
+        usage();
+        process.exit(1);
+      }
+      if (!args.dir) {
+        console.error(c.red("Error: sync requires --dir <path>."));
+        usage();
+        process.exit(1);
+      }
+      cmdSync(args.file, args.target, args.dir);
       break;
 
     case "targets":

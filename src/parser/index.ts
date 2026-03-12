@@ -30,6 +30,7 @@ import type {
   ToolBlockDef,
   MeteringDef,
   ScaleDef,
+  ProviderDef,
 } from "./ast.js";
 
 import {
@@ -42,6 +43,7 @@ import {
   unquote,
   parseFields,
   parseOutputsBlock,
+  dedentBlock,
 } from "./lexer.js";
 
 // Re-export AST types for convenience
@@ -232,7 +234,13 @@ export function parseAgent(
   if (fields.phase) node.phase = parseFloat(fields.phase);
   if (fields.model) node.model = fields.model;
   if (fields.permissions) node.permissions = fields.permissions;
-  if (fields.prompt) node.prompt = unquote(fields.prompt);
+
+  // Extract prompt from prompt {} block (not KV pair)
+  const promptBlock = extractBlock(body, "prompt");
+  if (promptBlock) {
+    node.prompt = dedentBlock(promptBlock.body);
+  }
+
   if (tools.length) node.tools = tools;
   if (skills.length) node.skills = skills;
   if (reads.length) node.reads = reads;
@@ -706,6 +714,64 @@ export function parseEnv(body: string): Record<string, string> {
 }
 
 /**
+ * Parse the `providers { ... }` block.
+ *
+ * Each named sub-block declares a provider with api-key, base-url, models,
+ * default, and any extra fields.
+ */
+export function parseProviders(body: string): ProviderDef[] {
+  const providers: ProviderDef[] = [];
+
+  // Extract each named sub-block inside providers
+  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const name = m[1];
+    const startIdx = m.index! + m[0].length;
+    let depth = 1;
+    let i = startIdx;
+    while (i < body.length && depth > 0) {
+      if (body[i] === "{") depth++;
+      else if (body[i] === "}") depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const innerBody = body.slice(startIdx, i - 1);
+      const fields = parseFields(innerBody);
+
+      // Parse models list
+      const models = parseMultilineList(innerBody, "models");
+
+      // Collect known fields
+      const knownKeys = new Set(["api-key", "base-url", "models", "default"]);
+      const extra: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (!knownKeys.has(k)) {
+          if (v === "true") extra[k] = true;
+          else if (v === "false") extra[k] = false;
+          else if (/^\d+$/.test(v)) extra[k] = parseInt(v, 10);
+          else extra[k] = unquote(v);
+        }
+      }
+
+      const provider: ProviderDef = {
+        name,
+        models,
+        extra,
+      };
+
+      if (fields["api-key"]) provider.apiKey = unquote(fields["api-key"]);
+      if (fields["base-url"]) provider.baseUrl = unquote(fields["base-url"]);
+      if (fields["default"]) provider.default = fields["default"] === "true";
+
+      providers.push(provider);
+    }
+  }
+
+  return providers;
+}
+
+/**
  * Parse the top-level `tools { ... }` block containing `tool <id> { ... }` sub-blocks.
  */
 export function parseToolsBlock(topBody: string): ToolBlockDef[] {
@@ -894,6 +960,10 @@ export function parse(source: string): TopologyAST {
   const envBlock = extractBlock(topBody, "env");
   const env = envBlock ? parseEnv(envBlock.body) : {};
 
+  // --- Providers ---
+  const providersBlock = extractBlock(topBody, "providers");
+  const providers = providersBlock ? parseProviders(providersBlock.body) : [];
+
   // --- Assemble AST ---
   return {
     topology,
@@ -913,5 +983,6 @@ export function parse(source: string): TopologyAST {
     roles,
     context,
     env,
+    providers,
   };
 }

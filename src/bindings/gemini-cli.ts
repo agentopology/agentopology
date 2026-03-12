@@ -138,6 +138,11 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
         sections.push("");
       }
 
+      if (agent.prompt) {
+        sections.push(agent.prompt);
+        sections.push("");
+      }
+
       if (agent.model) sections.push(`- Model: ${agent.model}`);
       if (agent.phase != null) sections.push(`- Phase: ${agent.phase}`);
       if (agent.tools && agent.tools.length > 0) {
@@ -268,8 +273,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
   }
 
   // Environment variables
-  if (Object.keys(ast.env).length > 0) {
-    settings.env = { ...ast.env };
+  const envVars: Record<string, string> = { ...ast.env };
+
+  // If a google provider exists, scaffold the GEMINI_API_KEY env var
+  if (ast.providers && ast.providers.length > 0) {
+    const googleProvider = ast.providers.find((p) => p.name === "google");
+    if (googleProvider?.apiKey) {
+      const envVarMatch = googleProvider.apiKey.match(/^\$\{(.+)\}$/);
+      if (envVarMatch) {
+        envVars[envVarMatch[1]] = googleProvider.apiKey;
+      }
+    }
+  }
+
+  if (Object.keys(envVars).length > 0) {
+    settings.env = envVars;
   }
 
   // Merge gemini-cli extension fields from topology-level settings

@@ -37,17 +37,25 @@ topology simple-pipeline : [pipeline, human-gate] {
     role: researcher
     model: gpt-4o
     permissions: supervised
-    prompt: "prompts/researcher.md"
     phase: 1
     tools: [Read, Grep, Glob, WebSearch]
     writes: ["workspace/research.md"]
+
+    prompt {
+        You are a research specialist focused on gathering comprehensive information.
+
+        ## Guidelines
+        - Search broadly for relevant sources
+        - Compile findings into structured research notes
+        - Include citations and source URLs
+        - Prioritize recent and authoritative sources
+    }
   }
 
   agent writer {
     role: writer
     model: sonnet
     permissions: autonomous
-    prompt: "prompts/writer.md"
     phase: 2
     tools: [Read, Write, Glob]
     reads: ["workspace/research.md"]
@@ -55,19 +63,38 @@ topology simple-pipeline : [pipeline, human-gate] {
     outputs: {
       confidence: high | medium | low
     }
+
+    prompt {
+        You are a content writer who transforms research into polished drafts.
+
+        ## Guidelines
+        - Follow the style guide and tone requirements
+        - Structure content with clear headings and sections
+        - Incorporate all key findings from the research
+        - Write for the target audience specified in the brief
+    }
   }
 
   agent reviewer {
     role: reviewer
     model: opus
     permissions: supervised
-    prompt: "prompts/reviewer.md"
     phase: 3
     tools: [Read, Grep, Glob]
     reads: ["workspace/draft.md", "workspace/research.md"]
     writes: ["workspace/review.md"]
     outputs: {
       verdict: approve | revise | reject
+    }
+
+    prompt {
+        You are a content reviewer ensuring quality and accuracy.
+
+        ## Guidelines
+        - Verify all claims against the research sources
+        - Check for clarity, grammar, and logical flow
+        - Assess completeness against the original requirements
+        - Provide actionable feedback for revisions if needed
     }
   }
 

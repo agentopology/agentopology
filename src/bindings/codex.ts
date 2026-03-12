@@ -166,18 +166,32 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
     lines.push("");
   }
 
-  // Providers from extensions or MCP servers
-  const providers = codexTopologyExt?.providers as
+  // Providers from extensions or ast.providers
+  const extProviders = codexTopologyExt?.providers as
     | Array<Record<string, unknown>>
     | undefined;
-  if (providers && providers.length > 0) {
-    for (const provider of providers) {
+  if (extProviders && extProviders.length > 0) {
+    // Extensions path takes priority
+    for (const provider of extProviders) {
       lines.push("[[providers]]");
       if (provider.name) lines.push(`name = ${tomlString(String(provider.name))}`);
       if (provider.base_url)
         lines.push(`base_url = ${tomlString(String(provider.base_url))}`);
       if (provider.env_key)
         lines.push(`env_key = ${tomlString(String(provider.env_key))}`);
+      lines.push("");
+    }
+  } else if (ast.providers && ast.providers.length > 0) {
+    // Fallback: map ast.providers to Codex [[providers]] format
+    for (const p of ast.providers) {
+      lines.push("[[providers]]");
+      lines.push(`name = ${tomlString(p.name)}`);
+      if (p.baseUrl) lines.push(`base_url = ${tomlString(p.baseUrl)}`);
+      if (p.apiKey) {
+        // Convert ${ENV_VAR} to just ENV_VAR for Codex env_key format
+        const envKey = p.apiKey.replace(/^\$\{(.+)\}$/, "$1");
+        lines.push(`env_key = ${tomlString(envKey)}`);
+      }
       lines.push("");
     }
   }
@@ -334,7 +348,11 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
 
       // Prompt
       if (agent.prompt) {
-        sections.push(`- **Prompt:** ${agent.prompt}`);
+        sections.push("");
+        sections.push("#### Instructions");
+        sections.push("");
+        sections.push(agent.prompt);
+        sections.push("");
       }
 
       // Tools

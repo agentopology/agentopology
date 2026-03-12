@@ -155,7 +155,9 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     if (agent.prompt) {
-      sections.push(`Prompt: ${agent.prompt}`);
+      sections.push("## Instructions");
+      sections.push("");
+      sections.push(agent.prompt);
       sections.push("");
     }
 
@@ -777,11 +779,29 @@ function generateContextFile(ast: TopologyAST): GeneratedFile {
 /**
  * Merge `ast.env` into the settings.json output under an `env` key.
  *
+ * When `ast.providers` includes an "anthropic" provider with an api-key,
+ * that env var is included automatically (enabling API-key mode instead
+ * of subscription mode).
+ *
  * Returns the env record if non-empty, otherwise null.
  */
 function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null {
-  if (Object.keys(ast.env).length === 0) return null;
-  return { ...ast.env };
+  const env: Record<string, string> = { ...ast.env };
+
+  // If an anthropic provider exists, scaffold the API key env var
+  if (ast.providers && ast.providers.length > 0) {
+    const anthropicProvider = ast.providers.find((p) => p.name === "anthropic");
+    if (anthropicProvider?.apiKey) {
+      // Extract env var name from ${ENV_VAR} format
+      const envVarMatch = anthropicProvider.apiKey.match(/^\$\{(.+)\}$/);
+      if (envVarMatch) {
+        env[envVarMatch[1]] = anthropicProvider.apiKey;
+      }
+    }
+  }
+
+  if (Object.keys(env).length === 0) return null;
+  return env;
 }
 
 /** Generate trigger documentation in the skill. */

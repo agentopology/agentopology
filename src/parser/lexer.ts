@@ -18,16 +18,86 @@
  *
  * Lines whose first non-whitespace character is `#` are replaced with
  * empty lines (preserving line count for error reporting).
+ * Lines inside `prompt { }` blocks are preserved as-is, so that
+ * `# markdown headings` survive comment stripping.
  */
 export function stripComments(src: string): string {
-  return src
-    .split("\n")
-    .map((line) => {
+  const lines = src.split("\n");
+
+  // Pre-scan: find line ranges that fall inside prompt { } blocks.
+  // We use simple brace-counting starting from each `prompt {` occurrence.
+  const insidePrompt = new Set<number>();
+  for (let li = 0; li < lines.length; li++) {
+    const trimmed = lines[li].trimStart();
+    // Detect `prompt {` (optionally preceded by whitespace)
+    if (/^prompt\s*\{/.test(trimmed)) {
+      // Count braces starting from the opening `{`
+      let depth = 0;
+      const lineText = lines[li];
+      // Find the first `{` on this line
+      const braceIdx = lineText.indexOf("{");
+      // Count braces from that point forward on this line
+      for (let ci = braceIdx; ci < lineText.length; ci++) {
+        if (lineText[ci] === "{") depth++;
+        else if (lineText[ci] === "}") depth--;
+      }
+      // Mark subsequent lines as inside the prompt block
+      let j = li + 1;
+      while (j < lines.length && depth > 0) {
+        insidePrompt.add(j);
+        for (const ch of lines[j]) {
+          if (ch === "{") depth++;
+          else if (ch === "}") depth--;
+        }
+        j++;
+      }
+    }
+  }
+
+  return lines
+    .map((line, idx) => {
+      if (insidePrompt.has(idx)) return line; // preserve prompt block content
       const trimmed = line.trimStart();
       if (trimmed.startsWith("#")) return "";
       return line;
     })
     .join("\n");
+}
+
+/**
+ * Dedent a block of text by removing the common leading whitespace.
+ *
+ * - Finds the minimum indentation (spaces/tabs) among non-empty lines
+ * - Strips that common prefix from all lines
+ * - Trims leading and trailing blank lines
+ */
+export function dedentBlock(text: string): string {
+  const lines = text.split("\n");
+
+  // Find minimum indentation among non-empty lines
+  let minIndent = Infinity;
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    const match = line.match(/^(\s*)/);
+    if (match && match[1].length < minIndent) {
+      minIndent = match[1].length;
+    }
+  }
+
+  if (minIndent === Infinity) minIndent = 0;
+
+  // Strip the common prefix from all lines
+  const dedented = lines.map((line) => {
+    if (line.trim().length === 0) return "";
+    return line.slice(minIndent);
+  });
+
+  // Trim leading and trailing blank lines
+  while (dedented.length > 0 && dedented[0].trim() === "") dedented.shift();
+  while (dedented.length > 0 && dedented[dedented.length - 1].trim() === "")
+    dedented.pop();
+
+  return dedented.join("\n");
 }
 
 // ---------------------------------------------------------------------------

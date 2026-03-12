@@ -179,7 +179,7 @@ export interface AgentNode extends BaseNode {
   model?: string;
   /** Permission mode (any string, e.g. "plan", "auto", "confirm"). */
   permissions?: string;
-  /** Path to the agent's prompt file. */
+  /** Inline prompt content (multi-line text from prompt {} block). */
   prompt?: string;
   /** Allowed tool names. */
   tools?: string[];
@@ -283,6 +283,22 @@ export interface TopologyMeta {
   domain?: string;
 }
 
+/** A provider configuration for API credentials and model routing. */
+export interface ProviderDef {
+  /** Provider name (e.g. "anthropic", "openai", "ollama"). */
+  name: string;
+  /** Environment variable reference for API key (must be "${ENV_VAR}" format). */
+  apiKey?: string;
+  /** Custom base URL for the provider's API endpoint. */
+  baseUrl?: string;
+  /** Model identifiers this provider serves. */
+  models: string[];
+  /** Whether this is the default provider (at most one can be true). */
+  default?: boolean;
+  /** Future-proof extensibility fields. */
+  extra: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Complete AST
 // ---------------------------------------------------------------------------
@@ -328,4 +344,6 @@ export interface TopologyAST {
   };
   /** Environment variables for the topology. */
   env: Record<string, string>;
+  /** Provider configurations for API credentials and model routing. */
+  providers: ProviderDef[];
 }

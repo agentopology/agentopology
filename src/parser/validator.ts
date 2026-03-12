@@ -1,7 +1,7 @@
 /**
  * AgentTopology AST validator.
  *
- * Implements the 15 validation rules from the AgentTopology specification
+ * Implements the 19 validation rules from the AgentTopology specification
  * (section 6). Takes a parsed {@link TopologyAST} and returns an array of
  * {@link ValidationResult} entries describing errors and warnings.
  *
@@ -26,6 +26,7 @@ import type {
   GateNode,
   OrchestratorNode,
   EdgeDef,
+  ProviderDef,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,8 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "context", "extensions", "max-turns",
   "disable-model-invocation", "user-invocable", "allowed-tools",
   "domain", "fork",
+  // Provider keywords
+  "providers", "api-key", "base-url", "default",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -386,15 +389,15 @@ function v9ActionsHandled(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V10: Prompt paths should resolve (warning only -- cannot check filesystem). */
+/** V10: Prompt content should not be empty if a prompt block is declared. */
 function v10PromptsExist(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const node of ast.nodes) {
-    if (isAgent(node) && node.prompt) {
+    if (isAgent(node) && node.prompt !== undefined && node.prompt.trim() === "") {
       results.push({
         rule: "V10",
         level: "warning",
-        message: `Agent "${node.id}" references prompt "${node.prompt}" — cannot verify file exists`,
+        message: `Agent "${node.id}" has an empty prompt block`,
         node: node.id,
       });
     }
@@ -583,12 +586,102 @@ function v15ExhaustiveConditions(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V16: `api-key` must be a `${...}` env-var reference (no literal secrets). */
+function v16ApiKeyEnvVar(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const envVarPattern = /^\$\{[A-Z][A-Z0-9_]*\}$/;
+  for (const provider of ast.providers) {
+    if (provider.apiKey && !envVarPattern.test(provider.apiKey)) {
+      results.push({
+        rule: "V16",
+        level: "error",
+        message: `Provider "${provider.name}" has a literal api-key value — must be a \${ENV_VAR} reference`,
+        node: provider.name,
+      });
+    }
+  }
+  return results;
+}
+
+/** V17: At most one provider may have `default: true`. */
+function v17SingleDefault(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const defaults = ast.providers.filter((p) => p.default === true);
+  if (defaults.length > 1) {
+    results.push({
+      rule: "V17",
+      level: "error",
+      message: `Multiple providers marked as default: ${defaults.map((p) => p.name).join(", ")} — at most one allowed`,
+    });
+  }
+  return results;
+}
+
+/** V18: Every model referenced by an agent should exist in at least one provider's models list. */
+function v18ModelInProvider(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.providers.length === 0) return results;
+
+  const providerModels = new Set<string>();
+  for (const provider of ast.providers) {
+    for (const model of provider.models) {
+      providerModels.add(model);
+    }
+  }
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.model && !providerModels.has(node.model)) {
+      results.push({
+        rule: "V18",
+        level: "warning",
+        message: `Agent "${node.id}" uses model "${node.model}" which is not listed in any provider's models`,
+        node: node.id,
+      });
+    }
+  }
+
+  // Also check orchestrator
+  for (const node of ast.nodes) {
+    if (!isOrchestrator(node)) continue;
+    if (node.model && !providerModels.has(node.model)) {
+      results.push({
+        rule: "V18",
+        level: "warning",
+        message: `Orchestrator uses model "${node.model}" which is not listed in any provider's models`,
+        node: "orchestrator",
+      });
+    }
+  }
+
+  return results;
+}
+
+/** V19: Provider names must be unique. */
+function v19UniqueProviders(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const provider of ast.providers) {
+    if (seen.has(provider.name)) {
+      results.push({
+        rule: "V19",
+        level: "error",
+        message: `Duplicate provider name "${provider.name}"`,
+        node: provider.name,
+      });
+    } else {
+      seen.add(provider.name);
+    }
+  }
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 15 specification rules.
+ * Validate a parsed AgentTopology AST against all 19 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -610,5 +703,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v13GatePlacement(ast),
     ...v14ToolExclusivity(ast),
     ...v15ExhaustiveConditions(ast),
+    ...v16ApiKeyEnvVar(ast),
+    ...v17SingleDefault(ast),
+    ...v18ModelInProvider(ast),
+    ...v19UniqueProviders(ast),
   ];
 }

@@ -11,12 +11,14 @@ import { claudeCodeBinding } from "./claude-code.js";
 import { codexBinding } from "./codex.js";
 import { geminiCliBinding } from "./gemini-cli.js";
 import { copilotCliBinding } from "./copilot-cli.js";
+import { openClawBinding } from "./openclaw.js";
 
 export type { GeneratedFile, BindingTarget } from "./types.js";
 export { claudeCodeBinding } from "./claude-code.js";
 export { codexBinding } from "./codex.js";
 export { geminiCliBinding } from "./gemini-cli.js";
 export { copilotCliBinding } from "./copilot-cli.js";
+export { openClawBinding } from "./openclaw.js";
 
 /** All available binding targets, keyed by name. */
 export const bindings: Record<string, BindingTarget> = {
@@ -24,4 +26,5 @@ export const bindings: Record<string, BindingTarget> = {
   "codex": codexBinding,
   "gemini-cli": geminiCliBinding,
   "copilot-cli": copilotCliBinding,
+  "openclaw": openClawBinding,
 };

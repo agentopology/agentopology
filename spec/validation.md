@@ -2,7 +2,7 @@
 
 Created by Nadav Naveh
 
-These 15 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
+These 19 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
 
 ---
 
@@ -229,5 +229,92 @@ flow {
   reviewer -> publisher  [when reviewer.verdict == approve]
   reviewer -> writer     [when reviewer.verdict == revise, max 2]
   reviewer -> researcher [when reviewer.verdict == reject, max 1]
+}
+```
+
+---
+
+## Rule 16: API Key Environment Variables
+
+Provider `api-key` values must be environment variable references using `${ENV_VAR}` syntax. Literal API keys in `.at` files are a security risk and always a validation error.
+
+```agenttopology
+# INVALID -- literal API key
+providers {
+  anthropic {
+    api-key: "sk-ant-api03-..."
+    models: [opus, sonnet]
+  }
+}
+
+# VALID -- environment variable reference
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus, sonnet]
+  }
+}
+```
+
+---
+
+## Rule 17: Single Default Provider
+
+At most one provider may have `default: true`. When multiple providers serve the same model, the default provider is preferred for routing.
+
+```agenttopology
+# INVALID -- two defaults
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus, sonnet]
+    default: true
+  }
+  openrouter {
+    api-key: "${OPENROUTER_API_KEY}"
+    models: [opus, sonnet]
+    default: true
+  }
+}
+```
+
+---
+
+## Rule 18: Model in Provider (Warning)
+
+When a `providers` block is present, every model referenced by an agent or orchestrator should exist in at least one provider's `models` list. This is a **warning**, not an error — the topology is still valid but may indicate a misconfiguration.
+
+```agenttopology
+# WARNING -- agent uses "gpt-4o" but no provider lists it
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus, sonnet]
+  }
+}
+
+agent writer {
+  model: gpt-4o  # warning: not in any provider's models
+  tools: [Read, Write]
+}
+```
+
+---
+
+## Rule 19: Unique Provider Names
+
+Provider names must be unique within the `providers` block. Duplicate names are an error.
+
+```agenttopology
+# INVALID -- duplicate "anthropic"
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus]
+  }
+  anthropic {
+    api-key: "${ANTHROPIC_BACKUP_KEY}"
+    models: [sonnet]
+  }
 }
 ```
