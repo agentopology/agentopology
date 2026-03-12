@@ -10,7 +10,7 @@
   "bin": {
     "agentopology": "dist/cli/index.js"
   },
-  "files": ["dist", "spec", "README.md", "LICENSE"],
+  "files": ["dist", "spec", ".claude", "README.md", "LICENSE"],
   "exports": {
     ".": {
       "import": "./dist/index.js",

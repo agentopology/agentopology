@@ -63,7 +63,7 @@ An `.at` file declares the full topology: agents, their models and tools, how da
 - **Declarative** -- describe *what* you want, not *how* to build it
 - **Platform-agnostic** -- scaffold for Claude Code, Codex, Gemini CLI, or any platform
 - **Human-readable** -- architects and operators can reason about topology without code
-- **Validated** -- 15 built-in rules catch errors before you scaffold
+- **Validated** -- 19 built-in rules catch errors before you scaffold
 - **Composable** -- import and reuse agent definitions across topologies
 
 ## Quick Start
@@ -88,8 +88,9 @@ agentopology targets
 |--------|--------|-------------|
 | `claude-code` | Stable | Anthropic Claude Code CLI |
 | `codex` | Beta | OpenAI Codex CLI |
-| `gemini-cli` | Planned | Google Gemini CLI |
-| `copilot-cli` | Planned | GitHub Copilot CLI |
+| `gemini-cli` | Beta | Google Gemini CLI |
+| `copilot-cli` | Beta | GitHub Copilot CLI |
+| `openclaw` | Beta | OpenClaw platform |
 
 ## Language Features
 
@@ -130,12 +131,27 @@ const html = generateVisualization(ast);
 // Write html to a file and open in a browser
 ```
 
+## Interactive Skill
+
+Agentopology ships with an interactive skill that guides you through topology design via conversation. It works in Claude Code and other compatible CLIs.
+
+```bash
+# Symlink into your project
+ln -s $(npm root -g)/agentopology/.claude/skills/agentopology .claude/skills/agentopology
+
+# Then in your CLI:
+/agentopology --chat "I want a code review pipeline"
+```
+
+The skill has 5 modes: interactive menu, conversational builder, validate, scaffold, and visualize. See the [Skill Guide](docs/skill-guide.md) for details.
+
 ## Documentation
 
 - [Getting Started](docs/getting-started.md)
 - [Language Guide](docs/language-guide.md)
 - [Language Specification](spec/grammar.md)
 - [Creating Bindings](docs/bindings.md)
+- [Skill Guide](docs/skill-guide.md)
 - [Examples](examples/)
 
 ## Creating a Binding

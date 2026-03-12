@@ -94,7 +94,7 @@ Check your topology for errors:
 agentopology validate my-pipeline.at
 ```
 
-The validator checks all 15 rules: unique names, flow resolution, exhaustive conditions, bounded loops, and more. If something is wrong, you get a clear error message pointing to the issue.
+The validator checks all 19 rules: unique names, flow resolution, exhaustive conditions, bounded loops, provider security, and more. If something is wrong, you get a clear error message pointing to the issue.
 
 ## Scaffold
 
@@ -108,7 +108,10 @@ This produces agent configuration files, permission settings, MCP configs, and o
 
 Available targets:
 - `claude-code` -- Claude Code agent files, settings, and MCP config
-- More bindings coming soon (Agent SDK, E2B, OpenAI Swarm)
+- `codex` -- OpenAI Codex CLI configuration
+- `gemini-cli` -- Google Gemini CLI settings
+- `copilot-cli` -- GitHub Copilot CLI instructions
+- `openclaw` -- OpenClaw platform JSON
 
 ## Visualize
 
@@ -126,3 +129,4 @@ This produces an interactive HTML file showing all agents, actions, gates, and f
 - **Spec** -- `spec/grammar.md` is the formal language specification with EBNF grammar.
 - **Examples** -- The `examples/` directory has complete topologies demonstrating different patterns.
 - **Bindings** -- `docs/bindings.md` explains how to create bindings for new platforms.
+- **Interactive Skill** -- `docs/skill-guide.md` covers the conversational topology builder.

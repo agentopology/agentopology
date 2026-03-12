@@ -1,0 +1,142 @@
+# OpenClaw showcase — personal assistant with multi-channel support
+
+topology personal-assistant : [supervisor, fan-out] {
+
+  meta {
+    version: "1.0.0"
+    description: "Multi-channel personal assistant with research, writing, and scheduling capabilities"
+    domain: "productivity"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake, route]
+    outputs: {
+      task-type: research | write | schedule | general
+    }
+  }
+
+  roles {
+    researcher: "Deep research using web search and document analysis"
+    writer: "Draft emails, messages, and documents in user's voice"
+    scheduler: "Manage calendar and schedule meetings"
+    responder: "Handle general questions and conversation"
+  }
+
+  action intake {
+    kind: inline
+    description: "Parse user request — extract task type"
+  }
+
+  action route {
+    kind: inline
+    description: "Route to appropriate specialist agent based on task-type"
+  }
+
+  agent researcher {
+    role: researcher
+    model: sonnet
+    phase: 1
+    tools: [Read, Write, Bash, Glob, Grep, WebSearch, WebFetch]
+    reads: ["workspace/queries/"]
+    writes: ["workspace/research/"]
+    max-turns: 15
+    description: "Research agent — searches web, reads docs, produces summaries"
+  }
+
+  agent writer {
+    role: writer
+    model: sonnet
+    phase: 1
+    tools: [Read, Write, Edit]
+    writes: ["workspace/drafts/"]
+    description: "Writing agent — drafts in user's voice using research output"
+  }
+
+  agent scheduler {
+    role: scheduler
+    model: haiku
+    phase: 1
+    tools: [Read, Write]
+    skills: [google-calendar]
+    reads: ["workspace/requests/"]
+    writes: ["workspace/scheduled/"]
+    description: "Calendar agent — checks availability, proposes meeting times"
+    extensions {
+      openclaw {
+        calendar-integration: true
+      }
+    }
+  }
+
+  agent responder {
+    role: responder
+    model: sonnet
+    phase: 1
+    tools: [Read, Write]
+    reads: ["domains/"]
+    writes: ["workspace/responses/"]
+    description: "General responder for conversation and simple questions"
+  }
+
+  flow {
+    intake -> route
+    route -> researcher   [when orchestrator.task-type == research]
+    route -> writer       [when orchestrator.task-type == write]
+    route -> scheduler    [when orchestrator.task-type == schedule]
+    route -> responder    [when orchestrator.task-type == general]
+  }
+
+  memory {
+    domains {
+      path: "domains/"
+      routing: "FILE_MAP.md"
+    }
+    workspace {
+      path: "workspace/"
+      structure: [queries, research, drafts, requests, scheduled, responses]
+    }
+    metrics {
+      path: "metrics.jsonl"
+      mode: append-only
+    }
+  }
+
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
+  settings {
+    allow: [Read, Write, Edit, Glob, Grep]
+    deny: []
+  }
+
+  metering {
+    track: [tokens-in, tokens-out, cost, wall-time]
+    per: [agent, run]
+    output: "metrics/"
+    format: jsonl
+    pricing: anthropic-current
+  }
+
+  extensions {
+    openclaw {
+      gateway-port: 18789
+      auth-tokens: ["${OPENCLAW_AUTH_TOKEN}"]
+      channels: [telegram, slack]
+      telegram: {
+        bot-token: "${TELEGRAM_BOT_TOKEN}"
+        dm-policy: "pairing"
+      }
+      slack: {
+        app-token: "${SLACK_APP_TOKEN}"
+        bot-token: "${SLACK_BOT_TOKEN}"
+      }
+      model-fallback-chain: ["opus", "sonnet", "haiku"]
+    }
+  }
+}
