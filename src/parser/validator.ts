@@ -1666,6 +1666,105 @@ function v52SecretUriScheme(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V53 – Param type validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V53: Param type must be one of: `string`, `number`, `boolean`.
+ */
+function v53ParamType(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_PARAM_TYPES: ReadonlySet<string> = new Set(["string", "number", "boolean"]);
+  for (const param of ast.params) {
+    if (!VALID_PARAM_TYPES.has(param.type)) {
+      results.push({
+        rule: "V53",
+        level: "error",
+        message: `param "${param.name}": type "${param.type}" is invalid — must be one of: string, number, boolean`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V54 – Interface entry/exit must reference declared nodes
+// ---------------------------------------------------------------------------
+
+/**
+ * V54: Interface entry and exit must reference declared node ids.
+ */
+function v54InterfaceEndpoints(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.interfaceEndpoints) return results;
+
+  const nodeIds = new Set(ast.nodes.map((n) => n.id));
+  if (!nodeIds.has(ast.interfaceEndpoints.entry)) {
+    results.push({
+      rule: "V54",
+      level: "error",
+      message: `interface entry "${ast.interfaceEndpoints.entry}" does not reference a declared node`,
+    });
+  }
+  if (!nodeIds.has(ast.interfaceEndpoints.exit)) {
+    results.push({
+      rule: "V54",
+      level: "error",
+      message: `interface exit "${ast.interfaceEndpoints.exit}" does not reference a declared node`,
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V55 – Import alias must be unique
+// ---------------------------------------------------------------------------
+
+/**
+ * V55: No two imports may share the same alias.
+ */
+function v55UniqueImportAlias(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const imp of ast.imports) {
+    if (seen.has(imp.alias)) {
+      results.push({
+        rule: "V55",
+        level: "error",
+        message: `import alias "${imp.alias}" is used more than once — each import must have a unique alias`,
+      });
+    }
+    seen.add(imp.alias);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V56 – Import source path validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V56: Import source must be a syntactically valid path (starts with `./`,
+ * `../`, or is a registry address containing `/`).
+ */
+function v56ImportSourcePath(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const imp of ast.imports) {
+    const src = imp.source;
+    const isRelative = src.startsWith("./") || src.startsWith("../");
+    const isRegistry = src.includes("/") && !src.startsWith("/");
+    if (!isRelative && !isRegistry) {
+      results.push({
+        rule: "V56",
+        level: "error",
+        message: `import source "${src}" is not a valid path — must start with "./" or "../" or be a registry address`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1729,5 +1828,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v50ObservabilitySampleRate(ast),
     ...v51SensitiveLiteral(ast),
     ...v52SecretUriScheme(ast),
+    ...v53ParamType(ast),
+    ...v54InterfaceEndpoints(ast),
+    ...v55UniqueImportAlias(ast),
+    ...v56ImportSourcePath(ast),
   ];
 }

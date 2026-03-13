@@ -481,6 +481,48 @@ export interface ProviderDef {
 }
 
 // ---------------------------------------------------------------------------
+// Composition system
+// ---------------------------------------------------------------------------
+
+/** A typed parameter declaration for a topology's `params` block. */
+export interface ParamDef {
+  /** Parameter name. */
+  name: string;
+  /** Parameter type. */
+  type: "string" | "number" | "boolean";
+  /** Default value (if provided, the parameter is optional). */
+  default?: string | number | boolean;
+  /** Whether this parameter is required (no default value). */
+  required: boolean;
+}
+
+/** Entry and exit points for a composable topology. */
+export interface InterfaceEndpoints {
+  /** Node id that serves as the topology's entry point. */
+  entry: string;
+  /** Node id that serves as the topology's exit point. */
+  exit: string;
+}
+
+/** An import declaration bringing another topology into the current one. */
+export interface ImportDef {
+  /** File path or registry address of the imported topology. */
+  source: string;
+  /** Alias identifier (from the `as` clause). */
+  alias: string;
+  /** Parameter overrides from the `with { ... }` clause. */
+  params: Record<string, string | number | boolean>;
+  /** Optional SHA-256 integrity hash. */
+  sha256?: string;
+}
+
+/** An include directive for merging a fragment file. */
+export interface IncludeDef {
+  /** Path to the fragment file. */
+  source: string;
+}
+
+// ---------------------------------------------------------------------------
 // Complete AST
 // ---------------------------------------------------------------------------
 
@@ -539,6 +581,16 @@ export interface TopologyAST {
   extensions?: Record<string, Record<string, unknown>>;
   /** Observability / tracing configuration (null if not configured). */
   observability: ObservabilityDef | null;
+  /** Typed parameter declarations for composition. */
+  params: ParamDef[];
+  /** Interface entry/exit endpoints for composition (null if not declared). */
+  interfaceEndpoints: InterfaceEndpoints | null;
+  /** Import declarations for sub-topologies. */
+  imports: ImportDef[];
+  /** Include directives for fragment files. */
+  includes: IncludeDef[];
+  /** Whether this file was parsed as a `fragment` rather than a `topology`. */
+  isFragment?: boolean;
 }
 
 // ---------------------------------------------------------------------------

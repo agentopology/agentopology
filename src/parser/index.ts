@@ -43,6 +43,10 @@ import type {
   ObservabilityDef,
   ObservabilityCaptureConfig,
   ObservabilitySpanConfig,
+  ParamDef,
+  InterfaceEndpoints,
+  ImportDef,
+  IncludeDef,
 } from "./ast.js";
 
 import {
@@ -1395,20 +1399,184 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   return sourceMap;
 }
 
+// ---------------------------------------------------------------------------
+// Composition parsing: params, interface, import, include, fragment
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a `params { ... }` block into typed parameter definitions.
+ *
+ * Each line has the form `name: type` or `name: type = default`.
+ * If a default is provided, the parameter is optional; otherwise required.
+ */
+export function parseParams(body: string): ParamDef[] {
+  const params: ParamDef[] = [];
+  const VALID_TYPES = new Set(["string", "number", "boolean"]);
+
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Match: name: type = default  OR  name: type
+    const m = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(string|number|boolean)(?:\s*=\s*(.+))?$/);
+    if (!m) continue;
+
+    const [, name, type, rawDefault] = m;
+    const paramType = type as "string" | "number" | "boolean";
+    let defaultValue: string | number | boolean | undefined;
+    let required = true;
+
+    if (rawDefault !== undefined) {
+      required = false;
+      const dv = rawDefault.trim();
+      if (paramType === "number") {
+        defaultValue = parseFloat(dv);
+      } else if (paramType === "boolean") {
+        defaultValue = dv === "true";
+      } else {
+        // string — strip quotes if present
+        defaultValue = unquote(dv);
+      }
+    }
+
+    params.push({ name, type: paramType, required, ...(defaultValue !== undefined ? { default: defaultValue } : {}) });
+  }
+
+  return params;
+}
+
+/**
+ * Parse an `interface { entry: <id>  exit: <id> }` block body.
+ */
+export function parseInterfaceEndpoints(body: string): InterfaceEndpoints | null {
+  const fields = parseFields(body);
+  const entry = fields["entry"];
+  const exit = fields["exit"];
+  if (!entry || !exit) return null;
+  return { entry: unquote(entry), exit: unquote(exit) };
+}
+
+/**
+ * Extract and parse the `interface { ... }` block from a topology body,
+ * carefully avoiding collision with `interfaces { ... }`.
+ */
+function parseInterfaceBlock(topBody: string): InterfaceEndpoints | null {
+  // Match "interface" followed by whitespace+"{" but NOT "interfaces"
+  const re = /(?:^|\n)\s*interface\s*\{/m;
+  const m = re.exec(topBody);
+  if (!m) return null;
+
+  // Make sure we did not match "interfaces" — check what precedes the `{`
+  const matchText = m[0];
+  if (/interfaces/.test(matchText)) return null;
+
+  // Find the opening brace and count braces to extract the body
+  const braceIdx = m.index! + m[0].length;
+  let depth = 1;
+  let i = braceIdx;
+  while (i < topBody.length && depth > 0) {
+    if (topBody[i] === "{") depth++;
+    else if (topBody[i] === "}") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+
+  const body = topBody.slice(braceIdx, i - 1);
+  return parseInterfaceEndpoints(body);
+}
+
+/**
+ * Parse import statements from a topology body.
+ *
+ * Syntax:
+ *   import "./path.at" as alias
+ *   import "./path.at" as alias with { key: value ... }
+ *
+ * Import statements are parsed from the raw body text since they are
+ * not brace-delimited blocks in the usual sense.
+ */
+export function parseImports(body: string): ImportDef[] {
+  const imports: ImportDef[] = [];
+
+  // Regex: import "source" as alias (captures everything after for optional with block)
+  const importRe = /(?:^|\n)\s*import\s+"([^"]+)"\s+as\s+([a-zA-Z][a-zA-Z0-9_-]*)/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = importRe.exec(body)) !== null) {
+    const source = m[1];
+    const alias = m[2];
+    const params: Record<string, string | number | boolean> = {};
+
+    // Check for `with { ... }` block following the import
+    const afterImport = body.slice(m.index! + m[0].length);
+    const withMatch = afterImport.match(/^\s*with\s*\{([^}]*)\}/);
+
+    if (withMatch) {
+      const withBody = withMatch[1];
+      for (const line of withBody.split("\n")) {
+        const kv = parseKV(line);
+        if (!kv) continue;
+        const [key, rawVal] = kv;
+        const val = unquote(rawVal);
+        // Try number
+        if (/^-?\d+(\.\d+)?$/.test(val)) {
+          params[key] = parseFloat(val);
+        } else if (val === "true" || val === "false") {
+          params[key] = val === "true";
+        } else {
+          params[key] = val;
+        }
+      }
+    }
+
+    imports.push({ source, alias, params });
+  }
+
+  return imports;
+}
+
+/**
+ * Parse include statements from a topology body.
+ *
+ * Syntax: include "./path.at"
+ */
+export function parseIncludes(body: string): IncludeDef[] {
+  const includes: IncludeDef[] = [];
+  const re = /(?:^|\n)\s*include\s+"([^"]+)"/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(body)) !== null) {
+    includes.push({ source: m[1] });
+  }
+
+  return includes;
+}
+
 export function parse(source: string): TopologyAST {
   const src = stripComments(source);
 
   // --- Source map (line numbers for nodes) ---
   const sourceMap = buildSourceMap(source);
 
-  // --- Topology header ---
-  // Use raw source to preserve the topology line (comments already on other lines)
-  const header = parseTopologyHeader(source);
+  // --- Detect fragment vs topology root ---
+  const isFragment = /(?:^|\n)\s*fragment\s+\S+\s*\{/.test(source);
 
-  // --- Extract the full topology body ---
-  const topoBlock = extractBlock(source, "topology");
+  // --- Topology header ---
+  let header: { name: string; patterns: string[] };
+  if (isFragment) {
+    // Fragment header: fragment <name> { ... }
+    const fm = source.match(/fragment\s+(\S+)\s*\{/);
+    if (!fm) throw new Error("Could not find fragment header");
+    header = { name: fm[1], patterns: [] };
+  } else {
+    // Use raw source to preserve the topology line (comments already on other lines)
+    header = parseTopologyHeader(source);
+  }
+
+  // --- Extract the full topology/fragment body ---
+  const topoBlock = extractBlock(source, isFragment ? "fragment" : "topology");
   if (!topoBlock) {
-    throw new Error("Could not extract topology body");
+    throw new Error(isFragment ? "Could not extract fragment body" : "Could not extract topology body");
   }
   const topBody = stripComments(topoBlock.body);
 
@@ -1581,12 +1749,27 @@ export function parse(source: string): TopologyAST {
   // --- Top-level Extensions ---
   const topLevelExtensions = parseExtensionsBlock(topBody);
 
+  // --- Params ---
+  const paramsBlock = extractBlock(topBody, "params");
+  const params = paramsBlock ? parseParams(paramsBlock.body) : [];
+
+  // --- Interface (entry/exit endpoints) ---
+  // Note: "interface" block is distinct from "interfaces" (external interface definitions).
+  // We use a targeted regex to avoid matching "interfaces" when looking for "interface".
+  const interfaceEndpoints = parseInterfaceBlock(topBody);
+
+  // --- Imports ---
+  const imports = parseImports(topBody);
+
+  // --- Includes ---
+  const includes = parseIncludes(topBody);
+
   // --- Duplicate section detection ---
   const singletonKeywords = [
     "meta", "orchestrator", "flow", "memory", "batch", "environments",
     "triggers", "settings", "mcp-servers", "metering", "context", "env",
     "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
-    "defaults", "schemas", "observability",
+    "defaults", "schemas", "observability", "params", "interface",
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
@@ -1631,6 +1814,11 @@ export function parse(source: string): TopologyAST {
     schemas,
     ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
     observability,
+    params,
+    interfaceEndpoints,
+    imports,
+    includes,
+    ...(isFragment ? { isFragment: true } : {}),
   };
 
   // Attach V12 parse-time errors for the validator to consume.

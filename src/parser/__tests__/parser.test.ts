@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parse, parseSchemaType, parseSchemaFields } from "../index.js";
+import { parse, parseSchemaType, parseSchemaFields, parseParams, parseInterfaceEndpoints, parseImports, parseIncludes } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig, SchemaFieldDef, SchemaDef, SensitiveValue } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -840,6 +840,10 @@ describe("Validator", () => {
       providers: [],
       schedules: [],
       interfaces: [],
+      params: [],
+      interfaceEndpoints: null,
+      imports: [],
+      includes: [],
       ...overrides,
     };
   }
@@ -2604,6 +2608,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         providers: [],
         schedules: [],
         interfaces: [],
+        params: [],
+        interfaceEndpoints: null,
+        imports: [],
+        includes: [],
         ...overrides,
       };
     }
@@ -3419,6 +3427,10 @@ describe("Wave 2: Validator rules V39-V45", () => {
       providers: [],
       schedules: [],
       interfaces: [],
+      params: [],
+      interfaceEndpoints: null,
+      imports: [],
+      includes: [],
       ...overrides,
     };
   }
@@ -3971,6 +3983,10 @@ topology test : [pipeline] {
         providers: [],
         schedules: [],
         interfaces: [],
+        params: [],
+        interfaceEndpoints: null,
+        imports: [],
+        includes: [],
         ...overrides,
       };
     }
@@ -4044,6 +4060,10 @@ topology test : [pipeline] {
         providers: [],
         schedules: [],
         interfaces: [],
+        params: [],
+        interfaceEndpoints: null,
+        imports: [],
+        includes: [],
         ...overrides,
       };
     }
@@ -4489,6 +4509,10 @@ describe("Wave 3: Validator rules V48-V50 (observability)", () => {
       providers: [],
       schedules: [],
       interfaces: [],
+      params: [],
+      interfaceEndpoints: null,
+      imports: [],
+      includes: [],
       ...overrides,
     };
   }
@@ -4620,5 +4644,522 @@ describe("Wave 3: Validator rules V48-V50 (observability)", () => {
     const results = validate(ast);
     const obsRules = results.filter((r) => ["V48", "V49", "V50"].includes(r.rule));
     expect(obsRules).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// Wave 4: Composition — params, interface, imports, includes, fragment
+// =========================================================================
+
+describe("Wave 4 — Composition", () => {
+  // ── Params block ────────────────────────────────────────────────────────
+
+  describe("params block parsing", () => {
+    it("parses typed params with defaults (string, number, boolean)", () => {
+      const body = `
+        output-path: string = "workspace/research/"
+        model-name: string = "gpt-4o"
+        max-depth: number = 3
+        strict-mode: boolean = false
+      `;
+      const params = parseParams(body);
+      expect(params).toHaveLength(4);
+      expect(params[0]).toEqual({ name: "output-path", type: "string", required: false, default: "workspace/research/" });
+      expect(params[1]).toEqual({ name: "model-name", type: "string", required: false, default: "gpt-4o" });
+      expect(params[2]).toEqual({ name: "max-depth", type: "number", required: false, default: 3 });
+      expect(params[3]).toEqual({ name: "strict-mode", type: "boolean", required: false, default: false });
+    });
+
+    it("parses required params (no default)", () => {
+      const body = `
+        api-key: string
+        count: number
+        verbose: boolean
+      `;
+      const params = parseParams(body);
+      expect(params).toHaveLength(3);
+      expect(params[0]).toEqual({ name: "api-key", type: "string", required: true });
+      expect(params[1]).toEqual({ name: "count", type: "number", required: true });
+      expect(params[2]).toEqual({ name: "verbose", type: "boolean", required: true });
+    });
+
+    it("parses mixed required and optional params", () => {
+      const body = `
+        api-key: string
+        model: string = "sonnet"
+      `;
+      const params = parseParams(body);
+      expect(params).toHaveLength(2);
+      expect(params[0].required).toBe(true);
+      expect(params[1].required).toBe(false);
+      expect(params[1].default).toBe("sonnet");
+    });
+
+    it("parses params block from full topology", () => {
+      const src = `
+topology test : [pipeline] {
+  params {
+    output-path: string = "workspace/"
+    max-depth: number = 5
+  }
+  agent worker {
+    model: sonnet
+  }
+  flow {
+    intake -> worker -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.params).toHaveLength(2);
+      expect(ast.params[0].name).toBe("output-path");
+      expect(ast.params[0].type).toBe("string");
+      expect(ast.params[0].default).toBe("workspace/");
+      expect(ast.params[1].name).toBe("max-depth");
+      expect(ast.params[1].type).toBe("number");
+      expect(ast.params[1].default).toBe(5);
+    });
+
+    it("empty params block returns empty array", () => {
+      const params = parseParams("");
+      expect(params).toEqual([]);
+    });
+  });
+
+  // ── Interface block ────────────────────────────────────────────────────
+
+  describe("interface block parsing", () => {
+    it("parses entry and exit endpoints", () => {
+      const body = `
+        entry: intake
+        exit: report
+      `;
+      const endpoints = parseInterfaceEndpoints(body);
+      expect(endpoints).not.toBeNull();
+      expect(endpoints!.entry).toBe("intake");
+      expect(endpoints!.exit).toBe("report");
+    });
+
+    it("returns null if entry or exit is missing", () => {
+      expect(parseInterfaceEndpoints("entry: intake")).toBeNull();
+      expect(parseInterfaceEndpoints("exit: report")).toBeNull();
+      expect(parseInterfaceEndpoints("")).toBeNull();
+    });
+
+    it("parses interface block from full topology", () => {
+      const src = `
+topology scanner : [pipeline] {
+  interface {
+    entry: intake
+    exit: report
+  }
+  agent intake {
+    model: sonnet
+  }
+  agent report {
+    model: sonnet
+  }
+  flow {
+    intake -> report -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.interfaceEndpoints).not.toBeNull();
+      expect(ast.interfaceEndpoints!.entry).toBe("intake");
+      expect(ast.interfaceEndpoints!.exit).toBe("report");
+    });
+
+    it("does not confuse interface block with interfaces block", () => {
+      const src = `
+topology test : [pipeline] {
+  interfaces {
+    slack {
+      type: webhook
+      channel: general
+    }
+  }
+  agent worker {
+    model: sonnet
+  }
+  flow {
+    intake -> worker -> done
+  }
+}`;
+      const ast = parse(src);
+      // Should NOT produce interface endpoints from the "interfaces" block
+      expect(ast.interfaceEndpoints).toBeNull();
+      // Should correctly parse interfaces
+      expect(ast.interfaces).toHaveLength(1);
+    });
+  });
+
+  // ── Import statements ──────────────────────────────────────────────────
+
+  describe("import parsing", () => {
+    it("parses import with alias", () => {
+      const body = `
+        import "./topologies/research.at" as research
+      `;
+      const imports = parseImports(body);
+      expect(imports).toHaveLength(1);
+      expect(imports[0].source).toBe("./topologies/research.at");
+      expect(imports[0].alias).toBe("research");
+      expect(imports[0].params).toEqual({});
+    });
+
+    it("parses import with 'with' clause", () => {
+      const body = `
+        import "./topologies/research.at" as research
+          with {
+            model: "sonnet"
+            output-path: "workspace/"
+          }
+      `;
+      const imports = parseImports(body);
+      expect(imports).toHaveLength(1);
+      expect(imports[0].source).toBe("./topologies/research.at");
+      expect(imports[0].alias).toBe("research");
+      expect(imports[0].params).toEqual({
+        model: "sonnet",
+        "output-path": "workspace/",
+      });
+    });
+
+    it("parses import with numeric and boolean params in with clause", () => {
+      const body = `
+        import "./sub.at" as sub
+          with {
+            depth: 3
+            verbose: true
+          }
+      `;
+      const imports = parseImports(body);
+      expect(imports).toHaveLength(1);
+      expect(imports[0].params.depth).toBe(3);
+      expect(imports[0].params.verbose).toBe(true);
+    });
+
+    it("parses multiple imports", () => {
+      const body = `
+        import "./a.at" as alpha
+        import "./b.at" as beta
+      `;
+      const imports = parseImports(body);
+      expect(imports).toHaveLength(2);
+      expect(imports[0].alias).toBe("alpha");
+      expect(imports[1].alias).toBe("beta");
+    });
+
+    it("parses imports from full topology", () => {
+      const src = `
+topology factory : [pipeline] {
+  import "./topologies/research.at" as research
+    with {
+      model: "sonnet"
+    }
+  agent editor {
+    model: opus
+  }
+  flow {
+    intake -> research -> editor -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.imports).toHaveLength(1);
+      expect(ast.imports[0].source).toBe("./topologies/research.at");
+      expect(ast.imports[0].alias).toBe("research");
+      expect(ast.imports[0].params.model).toBe("sonnet");
+    });
+  });
+
+  // ── Include statements ────────────────────────────────────────────────
+
+  describe("include parsing", () => {
+    it("parses include statement", () => {
+      const body = `
+        include "./fragments/observability.at"
+      `;
+      const includes = parseIncludes(body);
+      expect(includes).toHaveLength(1);
+      expect(includes[0].source).toBe("./fragments/observability.at");
+    });
+
+    it("parses multiple includes", () => {
+      const body = `
+        include "./fragments/observability.at"
+        include "./fragments/security.at"
+      `;
+      const includes = parseIncludes(body);
+      expect(includes).toHaveLength(2);
+    });
+
+    it("parses includes from full topology", () => {
+      const src = `
+topology test : [pipeline] {
+  include "./fragments/observability.at"
+  agent worker {
+    model: sonnet
+  }
+  flow {
+    intake -> worker -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.includes).toHaveLength(1);
+      expect(ast.includes[0].source).toBe("./fragments/observability.at");
+    });
+  });
+
+  // ── Fragment root type ─────────────────────────────────────────────────
+
+  describe("fragment parsing", () => {
+    it("parses a fragment file", () => {
+      const src = `
+fragment observability {
+  metering {
+    track: [tokens-in, tokens-out, cost]
+    per: [agent, run]
+    output: "metrics/"
+    format: jsonl
+    pricing: anthropic-current
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.isFragment).toBe(true);
+      expect(ast.topology.name).toBe("observability");
+      expect(ast.topology.patterns).toEqual([]);
+      expect(ast.metering).not.toBeNull();
+      expect(ast.metering!.format).toBe("jsonl");
+    });
+
+    it("fragment with hooks", () => {
+      const src = `
+fragment security-hooks {
+  hooks {
+    hook audit-log {
+      on: AgentStop
+      matcher: "*"
+      run: "scripts/audit.sh"
+      type: command
+    }
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.isFragment).toBe(true);
+      expect(ast.topology.name).toBe("security-hooks");
+      expect(ast.hooks).toHaveLength(1);
+      expect(ast.hooks[0].name).toBe("audit-log");
+    });
+  });
+
+  // ── Backward compatibility ──────────────────────────────────────────────
+
+  describe("backward compatibility", () => {
+    it("topology without params/interface/imports/includes has empty defaults", () => {
+      const src = `
+topology simple : [pipeline] {
+  agent worker {
+    model: sonnet
+  }
+  flow {
+    intake -> worker -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.params).toEqual([]);
+      expect(ast.interfaceEndpoints).toBeNull();
+      expect(ast.imports).toEqual([]);
+      expect(ast.includes).toEqual([]);
+      expect(ast.isFragment).toBeUndefined();
+    });
+  });
+
+  // ── Validator rules V53-V56 ──────────────────────────────────────────
+
+  describe("V53-V56 composition validation", () => {
+    function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+      return {
+        topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+        ],
+        edges: [
+          { from: "intake", to: "worker", condition: null, maxIterations: null },
+        ],
+        depth: { factors: [], levels: [] },
+        memory: {},
+        batch: {},
+        environments: {},
+        triggers: [],
+        hooks: [],
+        settings: {},
+        mcpServers: {},
+        metering: null,
+        defaults: null,
+        schemas: [],
+        observability: null,
+        skills: [],
+        toolDefs: [],
+        roles: {},
+        context: {},
+        env: {},
+        providers: [],
+        schedules: [],
+        interfaces: [],
+        params: [],
+        interfaceEndpoints: null,
+        imports: [],
+        includes: [],
+        ...overrides,
+      };
+    }
+
+    // V53: param types
+    it("V53: valid param types -> no error", () => {
+      const ast = minimalAST({
+        params: [
+          { name: "key", type: "string", required: true },
+          { name: "count", type: "number", required: false, default: 3 },
+          { name: "flag", type: "boolean", required: false, default: true },
+        ],
+      });
+      const results = validate(ast);
+      const v53 = results.filter((r) => r.rule === "V53");
+      expect(v53).toHaveLength(0);
+    });
+
+    it("V53: empty params -> no error", () => {
+      const ast = minimalAST({ params: [] });
+      const results = validate(ast);
+      const v53 = results.filter((r) => r.rule === "V53");
+      expect(v53).toHaveLength(0);
+    });
+
+    // V54: interface entry/exit must reference declared nodes
+    it("V54: valid interface endpoints -> no error", () => {
+      const ast = minimalAST({
+        interfaceEndpoints: { entry: "intake", exit: "worker" },
+      });
+      const results = validate(ast);
+      const v54 = results.filter((r) => r.rule === "V54");
+      expect(v54).toHaveLength(0);
+    });
+
+    it("V54: invalid entry -> error", () => {
+      const ast = minimalAST({
+        interfaceEndpoints: { entry: "nonexistent", exit: "worker" },
+      });
+      const results = validate(ast);
+      const v54 = results.filter((r) => r.rule === "V54");
+      expect(v54).toHaveLength(1);
+      expect(v54[0].message).toContain("nonexistent");
+    });
+
+    it("V54: invalid exit -> error", () => {
+      const ast = minimalAST({
+        interfaceEndpoints: { entry: "intake", exit: "nonexistent" },
+      });
+      const results = validate(ast);
+      const v54 = results.filter((r) => r.rule === "V54");
+      expect(v54).toHaveLength(1);
+      expect(v54[0].message).toContain("nonexistent");
+    });
+
+    it("V54: both invalid -> two errors", () => {
+      const ast = minimalAST({
+        interfaceEndpoints: { entry: "foo", exit: "bar" },
+      });
+      const results = validate(ast);
+      const v54 = results.filter((r) => r.rule === "V54");
+      expect(v54).toHaveLength(2);
+    });
+
+    it("V54: no interface block -> no error", () => {
+      const ast = minimalAST({ interfaceEndpoints: null });
+      const results = validate(ast);
+      const v54 = results.filter((r) => r.rule === "V54");
+      expect(v54).toHaveLength(0);
+    });
+
+    // V55: unique import aliases
+    it("V55: unique import aliases -> no error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "./a.at", alias: "alpha", params: {} },
+          { source: "./b.at", alias: "beta", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v55 = results.filter((r) => r.rule === "V55");
+      expect(v55).toHaveLength(0);
+    });
+
+    it("V55: duplicate import alias -> error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "./a.at", alias: "research", params: {} },
+          { source: "./b.at", alias: "research", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v55 = results.filter((r) => r.rule === "V55");
+      expect(v55).toHaveLength(1);
+      expect(v55[0].message).toContain("research");
+    });
+
+    it("V55: no imports -> no error", () => {
+      const ast = minimalAST({ imports: [] });
+      const results = validate(ast);
+      const v55 = results.filter((r) => r.rule === "V55");
+      expect(v55).toHaveLength(0);
+    });
+
+    // V56: import source path validation
+    it("V56: valid relative paths -> no error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "./topologies/research.at", alias: "a", params: {} },
+          { source: "../shared/utils.at", alias: "b", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v56 = results.filter((r) => r.rule === "V56");
+      expect(v56).toHaveLength(0);
+    });
+
+    it("V56: registry address -> no error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "registry/my-topology@1.0.0", alias: "reg", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v56 = results.filter((r) => r.rule === "V56");
+      expect(v56).toHaveLength(0);
+    });
+
+    it("V56: invalid source path (bare name) -> error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "research.at", alias: "r", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v56 = results.filter((r) => r.rule === "V56");
+      expect(v56).toHaveLength(1);
+      expect(v56[0].message).toContain("research.at");
+    });
+
+    it("V56: absolute path -> error", () => {
+      const ast = minimalAST({
+        imports: [
+          { source: "/absolute/path.at", alias: "abs", params: {} },
+        ],
+      });
+      const results = validate(ast);
+      const v56 = results.filter((r) => r.rule === "V56");
+      expect(v56).toHaveLength(1);
+    });
   });
 });
