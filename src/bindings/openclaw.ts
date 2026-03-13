@@ -163,6 +163,16 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
       entry.tools = { allow, deny };
     }
 
+    // First-class sandbox support (per-agent)
+    if (agent.sandbox != null) {
+      entry.sandbox = agent.sandbox;
+    }
+
+    // First-class fallback chain (per-agent)
+    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
+      entry.modelFallbackChain = agent.fallbackChain.map(mapModel);
+    }
+
     // Merge agent-level openclaw extensions
     if (agent.extensions?.openclaw) {
       for (const [k, v] of Object.entries(agent.extensions.openclaw)) {
@@ -187,12 +197,23 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     },
   };
 
-  // Channels from extensions
-  if (ext?.channels) {
+  // First-class interfaces support
+  if (ast.interfaces.length > 0) {
+    const channelConfig: Record<string, unknown> = {
+      enabled: ast.interfaces.map(i => i.id),
+    };
+    for (const iface of ast.interfaces) {
+      channelConfig[iface.id] = {
+        type: iface.type,
+        ...iface.config,
+      };
+    }
+    config.channels = channelConfig;
+  } else if (ext?.channels) {
+    // Legacy extension fallback
     const channelConfig: Record<string, unknown> = {
       enabled: ext.channels,
     };
-    // Include per-channel config
     const channelNames = ext.channels as string[];
     if (Array.isArray(channelNames)) {
       for (const ch of channelNames) {
@@ -204,14 +225,27 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     config.channels = channelConfig;
   }
 
-  // Model fallback chain
-  if (ext?.["model-fallback-chain"]) {
+  // First-class fallback-chain support
+  const settingsFallback = ast.settings?.fallbackChain as string[] | undefined;
+  if (settingsFallback && settingsFallback.length > 0) {
+    config.modelFallbackChain = settingsFallback.map(mapModel);
+  } else if (ext?.["model-fallback-chain"]) {
+    // Legacy extension fallback
     const chain = ext["model-fallback-chain"] as string[];
     config.modelFallbackChain = chain.map(mapModel);
   }
 
-  // Cron jobs
-  if (ext?.["cron-jobs"]) {
+  // First-class schedule support
+  if (ast.schedules.length > 0) {
+    config.cronJobs = ast.schedules.map(job => ({
+      name: job.id,
+      schedule: job.cron ?? job.every,
+      agent: job.agent,
+      action: job.action,
+      enabled: job.enabled,
+    }));
+  } else if (ext?.["cron-jobs"]) {
+    // Legacy extension fallback
     config.cronJobs = ext["cron-jobs"];
   }
 
@@ -220,8 +254,14 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     config.plugins = ext.plugins;
   }
 
-  // Sandbox defaults
-  if (ext?.["sandbox-defaults"]) {
+  // First-class sandbox support
+  const topologySandbox = ast.settings?.sandbox;
+  if (topologySandbox != null) {
+    config.sandboxDefaults = typeof topologySandbox === 'boolean'
+      ? { enabled: topologySandbox }
+      : { enabled: true, type: topologySandbox };
+  } else if (ext?.["sandbox-defaults"]) {
+    // Legacy extension fallback
     config.sandboxDefaults = ext["sandbox-defaults"];
   }
 

@@ -118,6 +118,32 @@ export interface ToolBlockDef {
   description: string;
 }
 
+/** A scheduled job definition. */
+export interface ScheduleJobDef {
+  /** Job identifier. */
+  id: string;
+  /** Cron expression (mutually exclusive with `every`). */
+  cron?: string;
+  /** Human-readable recurrence (mutually exclusive with `cron`). */
+  every?: string;
+  /** Agent id to invoke. */
+  agent?: string;
+  /** Action id to invoke. */
+  action?: string;
+  /** Whether this job is enabled. Defaults to true. */
+  enabled: boolean;
+}
+
+/** An external interface definition (webhook, HTTP, etc.). */
+export interface InterfaceDef {
+  /** Interface identifier. */
+  id: string;
+  /** Interface type (e.g. "webhook", "http"). */
+  type?: string;
+  /** All non-type configuration fields. */
+  config: Record<string, unknown>;
+}
+
 /** Metering / cost tracking configuration. */
 export interface MeteringDef {
   /** Metrics to track (e.g. ["tokens-in", "tokens-out", "cost"]). */
@@ -217,6 +243,10 @@ export interface AgentNode extends BaseNode {
   description?: string;
   /** Maximum number of agentic turns before stopping. */
   maxTurns?: number;
+  /** Sandbox mode override (e.g. "docker", "none", "network-only", true, false). */
+  sandbox?: string | boolean;
+  /** Model fallback chain (ordered list of model ids to try). */
+  fallbackChain?: string[];
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -346,4 +376,8 @@ export interface TopologyAST {
   env: Record<string, string>;
   /** Provider configurations for API credentials and model routing. */
   providers: ProviderDef[];
+  /** Scheduled job definitions. */
+  schedules: ScheduleJobDef[];
+  /** External interface definitions. */
+  interfaces: InterfaceDef[];
 }

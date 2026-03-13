@@ -10,7 +10,13 @@
   "bin": {
     "agentopology": "dist/cli/index.js"
   },
-  "files": ["dist", "spec", ".claude", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "spec",
+    ".claude",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -31,12 +37,21 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx src/cli/index.ts validate examples/simple-pipeline.at",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "agents", "multi-agent", "topology", "orchestration", "ai",
-    "llm", "claude", "codex", "gemini", "declarative", "scaffold"
+    "agents",
+    "multi-agent",
+    "topology",
+    "orchestration",
+    "ai",
+    "llm",
+    "claude",
+    "codex",
+    "gemini",
+    "declarative",
+    "scaffold"
   ],
   "repository": {
     "type": "git",
@@ -46,7 +61,8 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "tsx": "^4.0.0",
     "typescript": "^5.9.3",
-    "tsx": "^4.0.0"
+    "vitest": "^3.2.4"
   }
 }

@@ -2,7 +2,7 @@
 
 Created by Nadav Naveh
 
-These 19 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
+These 22 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
 
 ---
 
@@ -316,5 +316,73 @@ providers {
     api-key: "${ANTHROPIC_BACKUP_KEY}"
     models: [sonnet]
   }
+}
+```
+
+---
+
+## Rule 20: Schedule Job References
+
+Every schedule job must reference a declared agent or action. The `cron` and `every` fields are mutually exclusive -- a job cannot have both.
+
+```agenttopology
+# INVALID -- "ghost-agent" is not declared
+schedule {
+  job nightly-run {
+    cron: "0 2 * * *"
+    agent: ghost-agent
+  }
+}
+
+# INVALID -- both cron and every specified
+schedule {
+  job conflicting {
+    cron: "0 9 * * *"
+    every: "daily"
+    agent: summarizer
+  }
+}
+```
+
+---
+
+## Rule 21: Interface Secret Detection
+
+Interface fields named `webhook`, `auth`, `token`, or `secret` must use `${ENV_VAR}` syntax. Literal values are a validation error, preventing accidental secret exposure in `.at` files.
+
+```agenttopology
+# INVALID -- literal webhook URL
+interfaces {
+  slack {
+    type: webhook
+    webhook: "https://hooks.slack.com/services/T00/B00/xxxx"
+  }
+}
+
+# VALID
+interfaces {
+  slack {
+    type: webhook
+    webhook: "${SLACK_WEBHOOK_URL}"
+  }
+}
+```
+
+---
+
+## Rule 22: Fallback Chain Model Validation
+
+When providers are declared, every model in a `fallback-chain` should exist in at least one provider's `models` list. This is a **warning** (not error) since model availability may vary at runtime.
+
+```agenttopology
+providers {
+  anthropic {
+    api-key: "${ANTHROPIC_API_KEY}"
+    models: [opus, sonnet]
+  }
+}
+
+settings {
+  fallback-chain: [opus, sonnet, haiku]  # warning: haiku not in any provider
 }
 ```

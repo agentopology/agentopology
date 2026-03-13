@@ -27,6 +27,8 @@ import type {
   OrchestratorNode,
   EdgeDef,
   ProviderDef,
+  ScheduleJobDef,
+  InterfaceDef,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,14 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "domain", "fork",
   // Provider keywords
   "providers", "api-key", "base-url", "default",
+  // Schedule keywords
+  "schedule", "job", "cron", "every", "enabled",
+  // Interface keywords
+  "interfaces", "webhook", "channel", "auth", "port",
+  // Sandbox keywords
+  "sandbox", "docker", "network-only",
+  // Fallback chain keyword
+  "fallback-chain",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -676,12 +686,116 @@ function v19UniqueProviders(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V20: Every schedule job must reference a declared agent or action; cron and every are mutually exclusive. */
+function v20ScheduleJobs(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const ids = allNodeIds(ast);
+
+  for (const job of ast.schedules) {
+    // cron and every are mutually exclusive
+    if (job.cron && job.every) {
+      results.push({
+        rule: "V20",
+        level: "error",
+        message: `Schedule job "${job.id}" has both "cron" and "every" — they are mutually exclusive`,
+        node: job.id,
+      });
+    }
+
+    // Must reference a declared agent or action
+    if (job.agent && !ids.has(job.agent)) {
+      results.push({
+        rule: "V20",
+        level: "error",
+        message: `Schedule job "${job.id}" references undeclared agent "${job.agent}"`,
+        node: job.id,
+      });
+    }
+    if (job.action && !ids.has(job.action)) {
+      results.push({
+        rule: "V20",
+        level: "error",
+        message: `Schedule job "${job.id}" references undeclared action "${job.action}"`,
+        node: job.id,
+      });
+    }
+  }
+  return results;
+}
+
+/** V21: Interface webhook/auth values containing literal secrets (not `${ENV_VAR}`) should error. */
+function v21InterfaceSecrets(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const envVarPattern = /^\$\{[A-Z][A-Z0-9_]*\}$/;
+  const sensitiveKeys = new Set(["webhook", "auth"]);
+
+  for (const iface of ast.interfaces) {
+    for (const [key, value] of Object.entries(iface.config)) {
+      if (!sensitiveKeys.has(key)) continue;
+      if (typeof value === "string" && !envVarPattern.test(value)) {
+        results.push({
+          rule: "V21",
+          level: "error",
+          message: `Interface "${iface.id}" has a literal "${key}" value — must be a \${ENV_VAR} reference`,
+          node: iface.id,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V22: Every model in a fallback-chain should exist in at least one provider's models list. */
+function v22FallbackChainModels(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.providers.length === 0) return results;
+
+  const providerModels = new Set<string>();
+  for (const provider of ast.providers) {
+    for (const model of provider.models) {
+      providerModels.add(model);
+    }
+  }
+
+  // Check per-agent fallback chains
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (!node.fallbackChain) continue;
+    for (const model of node.fallbackChain) {
+      if (!providerModels.has(model)) {
+        results.push({
+          rule: "V22",
+          level: "warning",
+          message: `Agent "${node.id}" fallback-chain references model "${model}" which is not listed in any provider's models`,
+          node: node.id,
+        });
+      }
+    }
+  }
+
+  // Check settings-level fallback chain
+  const settingsFallback = ast.settings.fallbackChain;
+  if (Array.isArray(settingsFallback)) {
+    for (const model of settingsFallback) {
+      if (typeof model === "string" && !providerModels.has(model)) {
+        results.push({
+          rule: "V22",
+          level: "warning",
+          message: `Settings fallback-chain references model "${model}" which is not listed in any provider's models`,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 19 specification rules.
+ * Validate a parsed AgentTopology AST against all 22 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -707,5 +821,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v17SingleDefault(ast),
     ...v18ModelInProvider(ast),
     ...v19UniqueProviders(ast),
+    ...v20ScheduleJobs(ast),
+    ...v21InterfaceSecrets(ast),
+    ...v22FallbackChainModels(ast),
   ];
 }

@@ -258,6 +258,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
     if (mapped.sandbox !== undefined) settings.sandbox = mapped.sandbox;
   }
 
+  // First-class sandbox field from settings takes precedence
+  const settingsSandbox = ast.settings?.sandbox;
+  if (settingsSandbox !== undefined && settingsSandbox !== null) {
+    if (typeof settingsSandbox === "boolean") {
+      settings.sandbox = settingsSandbox;
+    } else if (settingsSandbox === "true" || settingsSandbox === "false") {
+      settings.sandbox = settingsSandbox === "true";
+    } else {
+      // String values like "docker", "none", "network-only" — pass through
+      settings.sandbox = settingsSandbox;
+    }
+  }
+
   // Tool allow/deny lists from settings block
   const perms = ast.settings;
   if (perms) {
@@ -424,6 +437,44 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
       }
       sections.push("");
     }
+  }
+
+  // Schedules section
+  if (ast.schedules.length > 0) {
+    sections.push("## Schedules");
+    sections.push("");
+    for (const job of ast.schedules) {
+      const expr = job.cron ? `cron: ${job.cron}` : job.every ? `every: ${job.every}` : "";
+      const target = job.agent ? `agent: ${job.agent}` : job.action ? `action: ${job.action}` : "";
+      sections.push(`- **${job.id}**: ${expr}${target ? ` -> ${target}` : ""}${job.enabled === false ? " (disabled)" : ""}`);
+    }
+    sections.push("");
+  }
+
+  // Interfaces section
+  if (ast.interfaces.length > 0) {
+    sections.push("## Interfaces");
+    sections.push("");
+    for (const iface of ast.interfaces) {
+      const typePart = iface.type ? ` (${iface.type})` : "";
+      const configKeys = Object.keys(iface.config);
+      const configPart = configKeys.length > 0 ? ` — ${configKeys.map((k) => `${k}: ${iface.config[k]}`).join(", ")}` : "";
+      sections.push(`- **${iface.id}**${typePart}${configPart}`);
+    }
+    sections.push("");
+  }
+
+  // Fallback chain from settings
+  const fallbackChain = ast.settings?.["fallback-chain"];
+  if (fallbackChain) {
+    sections.push("## Fallback Chain");
+    sections.push("");
+    if (Array.isArray(fallbackChain)) {
+      sections.push(`Models: ${(fallbackChain as string[]).join(" -> ")}`);
+    } else {
+      sections.push(`Fallback chain: ${fallbackChain}`);
+    }
+    sections.push("");
   }
 
   // Metering

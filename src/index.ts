@@ -34,6 +34,8 @@ export type {
   MeteringDef,
   ScaleDef,
   OutputsMap,
+  ScheduleJobDef,
+  InterfaceDef,
 } from "./parser/ast.js";
 
 export type { BindingTarget, GeneratedFile } from "./bindings/types.js";

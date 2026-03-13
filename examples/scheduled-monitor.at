@@ -1,0 +1,193 @@
+# Scheduled Monitor — demonstrates schedule, interfaces, sandbox, and fallback-chain
+# A monitoring topology that runs on cron, reports to Slack, and uses sandboxed agents.
+
+topology scheduled-monitor : [pipeline, fan-out] {
+
+  meta {
+    version: "1.0"
+    description: "Automated monitoring pipeline with scheduled jobs, external interfaces, sandboxing, and model fallback"
+    domain: devops
+  }
+
+  orchestrator {
+    model: opus
+    handles: [monitor, gen-report, alert]
+    outputs {
+      severity: critical | warning | info
+    }
+  }
+
+  roles {
+    collector: "Gather metrics and health data from monitored systems"
+    analyzer: "Analyze collected data for anomalies and trends"
+    reporter: "Generate human-readable reports and summaries"
+    alerter: "Send alerts to external channels when thresholds are breached"
+  }
+
+  action monitor {
+    kind: inline
+    description: "Collect and analyze system health"
+  }
+
+  action gen-report {
+    kind: report
+    description: "Generate monitoring report"
+  }
+
+  action alert {
+    kind: external
+    source: "scripts/send-alert.sh"
+    description: "Dispatch alert to configured channels"
+  }
+
+  agent collector {
+    model: sonnet
+    phase: 1
+    role: collector
+    tools: [Read, Bash, WebFetch]
+    writes: ["workspace/metrics/"]
+    sandbox: docker
+    outputs {
+      status: healthy | degraded | critical
+    }
+    description: "Collects metrics from configured endpoints"
+  }
+
+  agent analyzer {
+    model: opus
+    phase: 2
+    role: analyzer
+    tools: [Read, Grep]
+    reads: ["workspace/metrics/"]
+    writes: ["workspace/analysis/"]
+    sandbox: network-only
+    fallback-chain: [sonnet, haiku]
+    outputs {
+      severity: critical | warning | info
+    }
+    description: "Analyzes collected metrics for anomalies"
+  }
+
+  agent reporter {
+    model: sonnet
+    phase: 3
+    role: reporter
+    tools: [Read, Write]
+    reads: ["workspace/analysis/"]
+    writes: ["workspace/reports/"]
+    sandbox: true
+    description: "Generates summary reports from analysis"
+  }
+
+  agent alerter {
+    model: haiku
+    phase: 3
+    role: alerter
+    tools: [Read, WebFetch]
+    reads: ["workspace/analysis/"]
+    writes: ["workspace/alerts/"]
+    description: "Sends alerts to configured interfaces"
+  }
+
+  flow {
+    collector -> [analyzer]
+    analyzer -> reporter     [when analyzer.severity == info]
+    analyzer -> reporter     [when analyzer.severity == warning]
+    analyzer -> [reporter, alerter] [when analyzer.severity == critical]
+  }
+
+  gates {
+    gate metric-validation {
+      after: collector
+      before: analyzer
+      run: "scripts/validate-metrics.sh"
+      checks: [format, completeness]
+      on-fail: bounce-back
+    }
+  }
+
+  memory {
+    workspace {
+      path: ".monitor/workspace/"
+      structure: [metrics, analysis, reports, alerts]
+    }
+  }
+
+  triggers {
+    command monitor {
+      pattern: "/monitor"
+    }
+    command report {
+      pattern: "/report <TICKET>"
+      argument: TICKET
+    }
+  }
+
+  # First-class schedule — replaces extensions.openclaw.cron-jobs
+  schedule {
+    job health-check {
+      cron: "*/15 * * * *"
+      agent: collector
+    }
+    job daily-report {
+      cron: "0 9 * * *"
+      agent: reporter
+    }
+    job weekly-deep-scan {
+      every: "monday 3:00"
+      agent: analyzer
+      enabled: true
+    }
+  }
+
+  # First-class interfaces — replaces extensions.openclaw.channels
+  interfaces {
+    slack {
+      type: webhook
+      webhook: "${SLACK_MONITORING_WEBHOOK}"
+      channel: "ops-alerts"
+    }
+    pagerduty {
+      type: http
+      webhook: "${PAGERDUTY_WEBHOOK_URL}"
+      auth: "${PAGERDUTY_API_KEY}"
+    }
+    dashboard {
+      type: http
+      port: 3000
+    }
+  }
+
+  settings {
+    allow: [Read, Write, Bash, WebFetch, Grep]
+    deny: [Edit]
+    # First-class sandbox — topology-wide default
+    sandbox: docker
+    # First-class fallback chain — topology-wide default
+    fallback-chain: [opus, sonnet, haiku]
+  }
+
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
+  hooks {
+    hook alert-on-error {
+      on: Error
+      run: "scripts/alert-on-error.sh"
+      type: command
+    }
+  }
+
+  metering {
+    track: [tokens-in, tokens-out, cost, wall-time]
+    per: [agent, topology]
+    output: "metrics.jsonl"
+    format: jsonl
+    pricing: anthropic-current
+  }
+}

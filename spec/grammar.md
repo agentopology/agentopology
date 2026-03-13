@@ -152,9 +152,10 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
+                 | schedule | interfaces
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, and `tools` may appear **at most once** (parser error on duplicates). `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, `tools`, `schedule`, and `interfaces` may appear **at most once** (parser error on duplicates). `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -313,6 +314,8 @@ agent-field     = 'role' ':' identifier
                 | 'background' ':' boolean
                 | 'description' ':' string
                 | 'max-turns' ':' number
+                | 'sandbox' ':' (boolean | identifier)
+                | 'fallback-chain' ':' name-list
                 | agent-extensions
                 | agent-hooks
                 | agent-scale
@@ -353,6 +356,8 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime) |
+| `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
+| `fallback-chain` | name-list | no | `[]` | Ordered model fallback list |
 | `extensions` | agent-extensions | no | -- | Platform-specific extension fields (see below) |
 
 **Per-agent `hooks`:** Hooks defined inside an agent block are scoped to that agent's lifetime. They only fire while the agent is active. The hook sub-block syntax is identical to the global `hooks` section -- same fields (`on`, `matcher`, `run`, `type`, `timeout`), same hook events.
@@ -1180,9 +1185,141 @@ providers {
 
 ---
 
+### 4.26 `schedule`
+
+Declares scheduled jobs -- recurring tasks that trigger agents or actions on a cron schedule. This is a **first-class capability section**: bindings that support scheduling (e.g., OpenClaw, GitHub Actions) generate native cron configuration. Bindings that don't support scheduling emit documentation or skip the section with a warning.
+
+```ebnf
+schedule        = 'schedule' '{' schedule-entry* '}'
+schedule-entry  = 'job' identifier '{' schedule-fields '}'
+schedule-fields = ('cron' ':' string)
+                | ('every' ':' string)
+                | ('agent' ':' identifier)
+                | ('action' ':' identifier)
+                | ('enabled' ':' boolean)
+```
+
+```agenttopology
+schedule {
+  job daily-digest {
+    cron: "0 9 * * *"
+    agent: summarizer
+  }
+  job weekly-report {
+    every: "monday 9:00"
+    agent: reporter
+    enabled: true
+  }
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `cron` | string | one of cron/every | -- | Standard cron expression (5-field) |
+| `every` | string | one of cron/every | -- | Human-readable schedule ("daily", "monday 9:00") |
+| `agent` | identifier | one of agent/action | -- | Agent to trigger |
+| `action` | identifier | one of agent/action | -- | Action to trigger |
+| `enabled` | boolean | no | `true` | Whether the job is active |
+
+**Mutual exclusivity:** A job must have exactly one of `cron` or `every` -- not both (V20). A job must reference exactly one of `agent` or `action`.
+
+**Validation:** Every `agent` or `action` referenced must be declared in the topology (V20).
+
+**Binding behavior:** OpenClaw maps jobs to `cronJobs` in `openclaw.json`. GitHub Copilot maps `cron` expressions to `schedule:` triggers in GitHub Actions workflows. Other bindings document the schedules in their instructions files.
+
+---
+
+### 4.27 `interfaces`
+
+Declares external interfaces -- how the agent topology connects to the outside world. Interfaces define input/output surfaces such as webhooks, HTTP APIs, messaging channels, and email endpoints.
+
+```ebnf
+interfaces      = 'interfaces' '{' interface-entry* '}'
+interface-entry = identifier '{' interface-fields '}'
+interface-fields = ('type' ':' identifier)?
+                 | (identifier ':' value)*
+```
+
+```agenttopology
+interfaces {
+  slack {
+    type: webhook
+    webhook: "${SLACK_WEBHOOK_URL}"
+  }
+  api {
+    type: http
+    port: 8080
+    auth: "${API_TOKEN}"
+  }
+  discord {
+    type: webhook
+    webhook: "${DISCORD_WEBHOOK_URL}"
+    channel: "agent-updates"
+  }
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | identifier | no | -- | Interface type (webhook, http, sse, email) |
+| `*` | value | no | -- | Additional config fields (opaque, passed to binding) |
+
+**Security:** Fields named `webhook`, `auth`, `token`, or `secret` that contain literal values (not `${ENV_VAR}` references) are a validation error (V21). This reuses the same secret detection pattern as provider `api-key` fields (V16).
+
+**Binding behavior:** OpenClaw maps interfaces to `channels` in `openclaw.json`. Other bindings document interfaces in their instructions files. The interface block is intentionally open-ended -- bindings may interpret or ignore any field.
+
+---
+
+### 4.28 `sandbox` (settings and agent field)
+
+The `sandbox` field specifies execution sandboxing for the topology or individual agents. It appears as a field inside `settings {}` (topology-wide default) or directly on an `agent {}` block (per-agent override).
+
+```agenttopology
+settings {
+  sandbox: docker
+  allow: [Read, Write, Bash]
+}
+
+agent analyzer {
+  model: sonnet
+  sandbox: network-only
+}
+```
+
+**Valid values:** `true`, `false`, `docker`, `none`, `network-only`
+
+**Binding behavior:** Codex maps to `[sandbox] type` in `codex.toml`. OpenClaw maps to `sandboxDefaults` in `openclaw.json`. Gemini CLI maps to the `sandbox` field in `.gemini/settings.json`. Other bindings include it in agent frontmatter or documentation.
+
+**Agent override:** When `sandbox` appears on an agent, it overrides the topology-level default for that agent only.
+
+---
+
+### 4.29 `fallback-chain` (settings and agent field)
+
+The `fallback-chain` field specifies an ordered list of model identifiers to try when the primary model is unavailable. It appears as a field inside `settings {}` (topology-wide default) or directly on an `agent {}` block (per-agent override).
+
+```agenttopology
+settings {
+  fallback-chain: [opus, sonnet, haiku]
+}
+
+agent expensive-thinker {
+  model: opus
+  fallback-chain: [sonnet, haiku]
+}
+```
+
+**Semantics:** When the primary model (from the `model` field) fails or is unavailable, the binding should attempt models in the fallback chain in order. This is distinct from `providers` -- providers define WHERE to route, fallback-chain defines WHAT to try.
+
+**Validation:** When providers are declared, every model in a fallback chain should exist in at least one provider's `models` list (V22, warning level).
+
+**Binding behavior:** OpenClaw maps to `modelFallbackChain` in `openclaw.json`. Other bindings document the chain in their instructions or agent files.
+
+---
+
 ## 5. Validation Rules
 
-See `validation.md` for the complete list of 19 validation rules with examples.
+See `validation.md` for the complete list of 22 validation rules with examples.
 
 ---
 
@@ -1219,6 +1356,8 @@ All optional fields and their defaults when omitted:
 | `agent` | `background` | `false` |
 | `agent` | `hooks` | -- (none) |
 | `agent` | `max-turns` | -- (none) |
+| `agent` | `sandbox` | -- (none) |
+| `agent` | `fallback-chain` | `[]` |
 | `agent` | `extensions` | -- (none) |
 | `action` | `source` | -- (none) |
 | `action` | `description` | -- (none) |
@@ -1240,6 +1379,9 @@ All optional fields and their defaults when omitted:
 | `settings` | `allow` | `[]` |
 | `settings` | `deny` | `[]` |
 | `settings` | `ask` | `[]` |
+| `settings` | `sandbox` | -- (none) |
+| `settings` | `fallback-chain` | `[]` |
+| `schedule.job` | `enabled` | `true` |
 | `mcp-server` | `url` | -- (none) |
 | `mcp-server` | `command` | -- (none) |
 | `mcp-server` | `args` | `[]` |

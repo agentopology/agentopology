@@ -132,6 +132,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     if (agent.isolation) fm.isolation = agent.isolation;
 
+    if (agent.sandbox != null) {
+      fm.sandbox = typeof agent.sandbox === "boolean" ? agent.sandbox : agent.sandbox;
+    }
+
+    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
+      fm["fallback-chain"] = agent.fallbackChain.join(", ");
+    }
+
     // Merge claude-code extension fields into frontmatter
     if (agent.extensions?.["claude-code"]) {
       for (const [k, v] of Object.entries(agent.extensions["claude-code"])) {
@@ -304,6 +312,44 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       sections.push("");
     }
+  }
+
+  // Schedules section
+  if (ast.schedules.length > 0) {
+    sections.push("## Schedules");
+    sections.push("");
+    for (const job of ast.schedules) {
+      const expr = job.cron ? `cron: ${job.cron}` : job.every ? `every: ${job.every}` : "";
+      const target = job.agent ? `agent: ${job.agent}` : job.action ? `action: ${job.action}` : "";
+      sections.push(`- **${job.id}**: ${expr}${target ? ` -> ${target}` : ""}${job.enabled === false ? " (disabled)" : ""}`);
+    }
+    sections.push("");
+  }
+
+  // Interfaces section
+  if (ast.interfaces.length > 0) {
+    sections.push("## Interfaces");
+    sections.push("");
+    for (const iface of ast.interfaces) {
+      const typePart = iface.type ? ` (${iface.type})` : "";
+      const configKeys = Object.keys(iface.config);
+      const configPart = configKeys.length > 0 ? ` — ${configKeys.map((k) => `${k}: ${iface.config[k]}`).join(", ")}` : "";
+      sections.push(`- **${iface.id}**${typePart}${configPart}`);
+    }
+    sections.push("");
+  }
+
+  // Fallback chain from settings
+  const fallbackChain = ast.settings?.["fallback-chain"];
+  if (fallbackChain) {
+    sections.push("## Fallback Chain");
+    sections.push("");
+    if (Array.isArray(fallbackChain)) {
+      sections.push(`Models: ${(fallbackChain as string[]).join(" -> ")}`);
+    } else {
+      sections.push(`Fallback chain: ${fallbackChain}`);
+    }
+    sections.push("");
   }
 
   files.push({

@@ -17,6 +17,8 @@ import type {
   AgentNode,
   GateNode,
   HookDef,
+  InterfaceDef,
+  ScheduleJobDef,
   SkillDef,
   ToolBlockDef,
 } from "../parser/ast.js";
@@ -158,8 +160,11 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
     lines.push("");
   }
 
-  // Sandbox settings — derive from topology permissions
-  const sandboxType = codexTopologyExt?.sandbox_type ?? deriveSandboxType(ast);
+  // Sandbox settings — first-class AST field, then extension, then derived
+  const topSandbox = ast.settings?.sandbox;
+  const sandboxType = topSandbox != null
+    ? (typeof topSandbox === 'boolean' ? (topSandbox ? 'docker' : 'none') : String(topSandbox))
+    : codexTopologyExt?.sandbox_type ?? deriveSandboxType(ast);
   if (sandboxType) {
     lines.push("[sandbox]");
     lines.push(`type = ${tomlString(String(sandboxType))}`);
@@ -194,6 +199,13 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
       }
       lines.push("");
     }
+  }
+
+  // Fallback chain — document if present (Codex doesn't natively support it)
+  const fallbackChain = ast.settings?.["fallback-chain"] as string[] | undefined;
+  if (fallbackChain && fallbackChain.length > 0) {
+    lines.push(`# Model fallback chain: ${fallbackChain.join(" -> ")}`);
+    lines.push("");
   }
 
   // Merge any remaining extension fields as top-level TOML keys
@@ -307,6 +319,40 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
       sections.push(`- ${line}`);
+    }
+    sections.push("");
+  }
+
+  // Schedules section (Codex doesn't natively support cron; document for reference)
+  if (ast.schedules && ast.schedules.length > 0) {
+    sections.push("## Schedules");
+    sections.push("");
+    for (const job of ast.schedules) {
+      const timing = job.cron ? `runs at \`${job.cron}\`` : `runs ${job.every}`;
+      const target = job.agent
+        ? `triggers agent \`${job.agent}\``
+        : job.action
+          ? `triggers action \`${job.action}\``
+          : "";
+      const suffix = target ? `, ${target}` : "";
+      const enabled = job.enabled === false ? " (disabled)" : "";
+      sections.push(`- **${job.id}**: ${timing}${suffix}${enabled}`);
+    }
+    sections.push("");
+  }
+
+  // Interfaces section (document external interfaces for reference)
+  if (ast.interfaces && ast.interfaces.length > 0) {
+    sections.push("## Interfaces");
+    sections.push("");
+    for (const iface of ast.interfaces) {
+      const details: string[] = [];
+      if (iface.type) details.push(iface.type);
+      for (const [k, v] of Object.entries(iface.config)) {
+        details.push(`${k} ${v}`);
+      }
+      const desc = details.length > 0 ? details.join(", ") : "configured";
+      sections.push(`- **${iface.id}**: ${desc}`);
     }
     sections.push("");
   }

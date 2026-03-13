@@ -204,6 +204,19 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Interfaces section
+  if (ast.interfaces.length > 0) {
+    sections.push("## Interfaces");
+    sections.push("");
+    for (const iface of ast.interfaces) {
+      const typePart = iface.type ? ` (${iface.type})` : "";
+      const configKeys = Object.keys(iface.config);
+      const configPart = configKeys.length > 0 ? ` — ${configKeys.map((k) => `${k}: ${iface.config[k]}`).join(", ")}` : "";
+      sections.push(`- **${iface.id}**${typePart}${configPart}`);
+    }
+    sections.push("");
+  }
+
   // Memory section
   if (Object.keys(ast.memory).length > 0) {
     sections.push("## Memory");
@@ -281,6 +294,11 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     // Model override
     if (agent.model) fm.model = agent.model;
+
+    // Sandbox mode
+    if (agent.sandbox != null) {
+      fm.sandbox = typeof agent.sandbox === "boolean" ? agent.sandbox : agent.sandbox;
+    }
 
     // Merge copilot-cli extension fields into frontmatter
     if (agent.extensions?.["copilot-cli"]) {
@@ -375,6 +393,13 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    // Fallback chain
+    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
+      sections.push("## Fallback Chain");
+      sections.push(`Models: ${agent.fallbackChain.join(" -> ")}`);
+      sections.push("");
+    }
+
     files.push({
       path: `.github/agents/${agent.id}.agent.md`,
       content: sections.join("\n") + "\n",
@@ -413,6 +438,15 @@ function generateWorkflow(ast: TopologyAST): GeneratedFile | null {
   if (ast.triggers.length > 0) {
     lines.push("  issue_comment:");
     lines.push("    types: [created]");
+  }
+
+  // Add schedule triggers from topology schedules
+  const cronJobs = ast.schedules.filter((s) => s.cron && s.enabled !== false);
+  if (cronJobs.length > 0) {
+    lines.push("  schedule:");
+    for (const job of cronJobs) {
+      lines.push(`    - cron: '${job.cron}'  # ${job.id}`);
+    }
   }
 
   lines.push("");

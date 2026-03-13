@@ -31,6 +31,8 @@ import type {
   MeteringDef,
   ScaleDef,
   ProviderDef,
+  ScheduleJobDef,
+  InterfaceDef,
 } from "./ast.js";
 
 import {
@@ -293,6 +295,18 @@ export function parseAgent(
     }
     if (agentHooks.length > 0) node.hooks = agentHooks;
   }
+
+  // Sandbox override
+  if (fields.sandbox) {
+    const sv = fields.sandbox;
+    if (sv === "true") node.sandbox = true;
+    else if (sv === "false") node.sandbox = false;
+    else node.sandbox = sv;
+  }
+
+  // Fallback chain
+  const fallbackChain = parseMultilineList(body, "fallback-chain");
+  if (fallbackChain.length) node.fallbackChain = fallbackChain;
 
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
@@ -585,6 +599,20 @@ export function parseSettings(body: string): Record<string, unknown> {
     const list = parseMultilineList(body, key);
     result[key] = list;
   }
+
+  // Sandbox setting
+  const fields = parseFields(body);
+  if (fields.sandbox) {
+    const sv = fields.sandbox;
+    if (sv === "true") result.sandbox = true;
+    else if (sv === "false") result.sandbox = false;
+    else result.sandbox = sv;
+  }
+
+  // Fallback chain
+  const fallbackChain = parseMultilineList(body, "fallback-chain");
+  if (fallbackChain.length) result.fallbackChain = fallbackChain;
+
   return result;
 }
 
@@ -769,6 +797,75 @@ export function parseProviders(body: string): ProviderDef[] {
   }
 
   return providers;
+}
+
+/**
+ * Parse the `schedule { ... }` block.
+ *
+ * Extracts `job <id> { ... }` sub-blocks within the schedule section.
+ */
+export function parseSchedule(body: string): ScheduleJobDef[] {
+  const jobs: ScheduleJobDef[] = [];
+  const jobBlocks = extractAllBlocks(body, "job");
+  for (const block of jobBlocks) {
+    if (!block.id) continue;
+    const fields = parseFields(block.body);
+    const job: ScheduleJobDef = {
+      id: block.id,
+      enabled: true,
+    };
+    if (fields.cron) job.cron = unquote(fields.cron);
+    if (fields.every) job.every = unquote(fields.every);
+    if (fields.agent) job.agent = fields.agent;
+    if (fields.action) job.action = fields.action;
+    if (fields.enabled) job.enabled = fields.enabled !== "false";
+    jobs.push(job);
+  }
+  return jobs;
+}
+
+/**
+ * Parse the `interfaces { ... }` block.
+ *
+ * Each named sub-block declares an interface with a `type` field and arbitrary
+ * configuration. Follows the same named-sub-block pattern as {@link parseMcpServers}.
+ */
+export function parseInterfaces(body: string): InterfaceDef[] {
+  const interfaces: InterfaceDef[] = [];
+
+  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const name = m[1];
+    const startIdx = m.index! + m[0].length;
+    let depth = 1;
+    let i = startIdx;
+    while (i < body.length && depth > 0) {
+      if (body[i] === "{") depth++;
+      else if (body[i] === "}") depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const innerBody = body.slice(startIdx, i - 1);
+      const fields = parseFields(innerBody);
+      const config: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (k === "type") continue;
+        if (v === "true") config[k] = true;
+        else if (v === "false") config[k] = false;
+        else if (/^\d+$/.test(v)) config[k] = parseInt(v, 10);
+        else config[k] = unquote(v);
+      }
+      const iface: InterfaceDef = {
+        id: name,
+        config,
+      };
+      if (fields.type) iface.type = fields.type;
+      interfaces.push(iface);
+    }
+  }
+
+  return interfaces;
 }
 
 /**
@@ -964,6 +1061,14 @@ export function parse(source: string): TopologyAST {
   const providersBlock = extractBlock(topBody, "providers");
   const providers = providersBlock ? parseProviders(providersBlock.body) : [];
 
+  // --- Schedule ---
+  const scheduleBlock = extractBlock(topBody, "schedule");
+  const schedules = scheduleBlock ? parseSchedule(scheduleBlock.body) : [];
+
+  // --- Interfaces ---
+  const interfacesBlock = extractBlock(topBody, "interfaces");
+  const interfaces = interfacesBlock ? parseInterfaces(interfacesBlock.body) : [];
+
   // --- Assemble AST ---
   return {
     topology,
@@ -984,5 +1089,7 @@ export function parse(source: string): TopologyAST {
     context,
     env,
     providers,
+    schedules,
+    interfaces,
   };
 }
