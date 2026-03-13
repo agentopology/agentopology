@@ -6,6 +6,7 @@
  *   agentopology scaffold <file.at> --target <binding>     — generate files
  *   agentopology scaffold <file.at> --target <binding> --dry-run — preview only
  *   agentopology sync <file.at> --target <binding> --dir <path> — sync prompts back
+ *   agentopology visualize <file.at>                          — generate HTML visualization
  *   agentopology targets                                   — list bindings
  *
  * @module
@@ -13,11 +14,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
+import { generateVisualization } from "../visualizer/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -45,19 +48,22 @@ ${c.bold("agentopology")} — AgentTopology CLI
 
 ${c.bold("Usage:")}
   agentopology validate <file.at>
-  agentopology scaffold <file.at> --target <binding> [--dry-run]
+  agentopology scaffold <file.at> --target <binding> [--dry-run] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
+  agentopology visualize <file.at> [--output <dir>]
   agentopology targets
 
 ${c.bold("Commands:")}
-  validate   Parse an .at file and run all 19 validation rules.
+  validate   Parse an .at file and run all 22 validation rules.
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
+  visualize  Generate an interactive HTML visualization of the topology.
   targets    List available binding targets.
 
 ${c.bold("Options:")}
-  --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli)
+  --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli, kiro)
   --dir <path>      Directory to read platform files from (used with sync).
+  --output, -o <dir> Output directory for generated files (scaffold, visualize).
   --dry-run         Preview generated files without writing to disk.
   --help, -h        Show this help message.
 `);
@@ -89,6 +95,7 @@ interface ParsedArgs {
   file: string | undefined;
   target: string | undefined;
   dir: string | undefined;
+  output: string | undefined;
   dryRun: boolean;
   help: boolean;
 }
@@ -100,6 +107,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     file: undefined,
     target: undefined,
     dir: undefined,
+    output: undefined,
     dryRun: false,
     help: false,
   };
@@ -125,6 +133,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--dir" && i + 1 < args.length) {
       result.dir = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if ((arg === "--output" || arg === "-o") && i + 1 < args.length) {
+      result.output = args[i + 1];
       i += 2;
       continue;
     }
@@ -164,7 +177,7 @@ function cmdValidate(filePath: string): void {
   const results = validate(ast);
 
   if (results.length === 0) {
-    console.log(c.green("  All 19 validation rules passed."));
+    console.log(c.green("  All 22 validation rules passed."));
     console.log("");
     return;
   }
@@ -177,8 +190,9 @@ function cmdValidate(filePath: string): void {
       result.level === "error"
         ? c.red(`  ERROR [${result.rule}]`)
         : c.yellow(`  WARN  [${result.rule}]`);
+    const linePart = result.line ? ` line ${result.line}:` : "";
     const nodePart = result.node ? c.dim(` (${result.node})`) : "";
-    console.log(`${prefix} ${result.message}${nodePart}`);
+    console.log(`${prefix}${linePart} ${result.message}${nodePart}`);
   }
 
   console.log("");
@@ -192,7 +206,7 @@ function cmdValidate(filePath: string): void {
   }
 }
 
-function cmdScaffold(filePath: string, targetName: string, dryRun: boolean): void {
+function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string): void {
   const source = readFile(filePath);
 
   let ast;
@@ -233,13 +247,13 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean): voi
     console.log("");
     console.log(`  ${c.bold(`${files.length}`)} file(s) would be generated.`);
   } else {
-    const basePath = process.cwd();
+    const basePath = outputDir ? path.resolve(outputDir) : process.cwd();
     for (const file of files) {
       writeFile(basePath, file.path, file.content);
       console.log(`  ${c.green("+")} ${file.path}`);
     }
     console.log("");
-    console.log(`  ${c.bold(`${files.length}`)} file(s) written.`);
+    console.log(`  ${c.bold(`${files.length}`)} file(s) written to ${basePath}`);
   }
   console.log("");
 }
@@ -280,6 +294,44 @@ function cmdSync(filePath: string, targetName: string, dirPath: string): void {
       `  Updated ${path.basename(filePath)} with prompt blocks from ${targetName} files.`,
     ),
   );
+}
+
+function cmdVisualize(filePath: string, outputDir?: string): void {
+  const source = readFile(filePath);
+
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (err) {
+    console.error(c.red(`Parse error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  const html = generateVisualization(ast);
+
+  const resolved = path.resolve(filePath);
+  const stem = path.basename(resolved, ".at");
+  const outDir = outputDir ? path.resolve(outputDir) : path.dirname(resolved);
+  const outFile = path.join(outDir, `${stem}-topology.html`);
+
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(outFile, html, "utf-8");
+  } catch (err) {
+    console.error(c.red(`Error: Cannot write "${outFile}"`));
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  console.log(c.green(`  Visualization written to ${outFile}`));
+
+  // Try to open in the default browser (non-fatal if it fails).
+  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+  } catch {
+    // Non-fatal — the file was written successfully regardless.
+  }
 }
 
 function cmdTargets(): void {
@@ -324,7 +376,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdScaffold(args.file, args.target, args.dryRun);
+      cmdScaffold(args.file, args.target, args.dryRun, args.output);
       break;
 
     case "sync":
@@ -344,6 +396,15 @@ function main(): void {
         process.exit(1);
       }
       cmdSync(args.file, args.target, args.dir);
+      break;
+
+    case "visualize":
+      if (!args.file) {
+        console.error(c.red("Error: visualize requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      cmdVisualize(args.file, args.output);
       break;
 
     case "targets":

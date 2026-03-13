@@ -57,6 +57,30 @@ describe("Lexer", () => {
       const src = `key: value\nanother: thing`;
       expect(stripComments(src)).toBe(src);
     });
+
+    it("strips inline comments after values", () => {
+      const src = `model: opus  # main model\ntools: Read, Write  # core tools`;
+      const result = stripComments(src);
+      expect(result).toBe(`model: opus\ntools: Read, Write`);
+    });
+
+    it("does not strip # inside quoted strings", () => {
+      const src = `description: "use # wisely"`;
+      const result = stripComments(src);
+      expect(result).toBe(`description: "use # wisely"`);
+    });
+
+    it("preserves # in prompt blocks even as inline comments", () => {
+      const src = [
+        "agent test {",
+        "  prompt {",
+        "    Use color #ff0000 for errors",
+        "  }",
+        "}",
+      ].join("\n");
+      const result = stripComments(src);
+      expect(result).toContain("Use color #ff0000 for errors");
+    });
   });
 
   describe("extractBlock", () => {
@@ -437,8 +461,8 @@ describe("Parser sections", () => {
       const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a, c] }\n  action a { kind: inline }\n  agent b { model: opus }\n  action c { kind: report }\n  flow {\n    a -> b -> c\n  }\n}`;
       const ast = parse(src);
       expect(ast.edges).toHaveLength(2);
-      expect(ast.edges[0]).toEqual({ from: "a", to: "b", condition: null, maxIterations: null });
-      expect(ast.edges[1]).toEqual({ from: "b", to: "c", condition: null, maxIterations: null });
+      expect(ast.edges[0]).toEqual({ from: "a", to: "b", condition: null, maxIterations: null, per: null });
+      expect(ast.edges[1]).toEqual({ from: "b", to: "c", condition: null, maxIterations: null, per: null });
     });
 
     it("parses fan-out [a, b]", () => {
@@ -959,6 +983,38 @@ describe("Validator", () => {
     expect(v11.length).toBeGreaterThan(0);
   });
 
+  it("V12: edge annotation with max before when -> error", () => {
+    const src = `
+topology test-v12 : [pipeline] {
+  meta {
+    version: "1.0.0"
+  }
+  orchestrator {
+    model: sonnet
+    handles {
+      intake
+    }
+    outputs {
+      decision { pass, fail }
+    }
+  }
+  action intake {}
+  agent worker {
+    model: sonnet
+  }
+  flow {
+    intake -> worker [max 3, when orchestrator.decision == pass]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v12 = results.filter((r) => r.rule === "V12");
+    expect(v12.length).toBeGreaterThan(0);
+    expect(v12[0].level).toBe("error");
+    expect(v12[0].message).toContain("max");
+    expect(v12[0].message).toContain("when");
+  });
+
   it("V13: gate references undeclared node -> error", () => {
     const ast = minimalAST({
       nodes: [
@@ -1102,6 +1158,30 @@ describe("Validator", () => {
     const ast = minimalAST({
       interfaces: [
         { id: "slack", type: "webhook", config: { webhook: "${SLACK_WEBHOOK}" } },
+      ],
+    });
+    const results = validate(ast);
+    const v21 = results.filter((r) => r.rule === "V21");
+    expect(v21).toHaveLength(0);
+  });
+
+  it("V21: interface with literal token -> error", () => {
+    const ast = minimalAST({
+      interfaces: [
+        { id: "api-gateway", type: "http", config: { token: "sk-abc123" } },
+      ],
+    });
+    const results = validate(ast);
+    const v21 = results.filter((r) => r.rule === "V21");
+    expect(v21.length).toBeGreaterThan(0);
+    expect(v21[0].message).toContain("literal");
+    expect(v21[0].message).toContain("token");
+  });
+
+  it("V21: interface with ${ENV_VAR} token -> pass", () => {
+    const ast = minimalAST({
+      interfaces: [
+        { id: "api-gateway", type: "http", config: { token: "${API_TOKEN}" } },
       ],
     });
     const results = validate(ast);
@@ -1343,6 +1423,14 @@ describe("Integration: example files", () => {
 // =========================================================================
 
 describe("Edge cases", () => {
+  it("inline comments are stripped from agent model", () => {
+    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker {\n    model: opus  # main model\n    tools: [Read, Write]  # core tools\n  }\n  flow { a -> worker }\n}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "worker") as AgentNode;
+    expect(agent.model).toBe("opus");
+    expect(agent.tools).toEqual(["Read", "Write"]);
+  });
+
   it("prompt blocks with # characters inside are preserved", () => {
     const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n    prompt {\n      # Step 1: Research\n      Do research.\n      # Step 2: Write\n      Write content.\n    }\n  }\n  flow { a -> writer }\n}`;
     const ast = parse(src);
@@ -1416,5 +1504,567 @@ describe("Edge cases", () => {
     expect(edge).toBeDefined();
     expect(edge!.condition).toBe("b.status == fail");
     expect(edge!.maxIterations).toBe(3);
+  });
+});
+
+// =========================================================================
+// F. Negative / error path tests
+// =========================================================================
+
+describe("Parse errors (should throw)", () => {
+  it("throws on unclosed brace", () => {
+    expect(() =>
+      parse("topology foo : [pipeline] { agent bar { model: opus ")
+    ).toThrow();
+  });
+
+  it("throws on missing topology keyword", () => {
+    expect(() => parse("agent bar { model: opus }")).toThrow();
+  });
+
+  it("throws on empty file", () => {
+    expect(() => parse("")).toThrow();
+  });
+
+  it("throws on only comments", () => {
+    expect(() => parse("# just a comment")).toThrow();
+  });
+
+  it("throws on malformed topology header (missing name)", () => {
+    expect(() => parse("topology : [pipeline] {")).toThrow();
+  });
+});
+
+// =========================================================================
+// G. Validation errors (parse succeeds, validate returns errors)
+// =========================================================================
+
+describe("Validation errors", () => {
+  it("V1 UniqueNames: two agents with the same id", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent dup { model: opus }
+  agent dup { model: sonnet }
+  flow { a -> dup }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v1 = results.filter((r) => r.rule === "V1" && r.level === "error");
+    expect(v1.length).toBeGreaterThanOrEqual(1);
+    expect(v1[0].message).toContain("dup");
+  });
+
+  it("V3 FlowReferences: flow edge referencing a non-existent node", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent real { model: opus }
+  flow { a -> ghost }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v3 = results.filter((r) => r.rule === "V3" && r.level === "error");
+    expect(v3.length).toBeGreaterThanOrEqual(1);
+    expect(v3[0].message).toContain("ghost");
+  });
+
+  it("V14 ToolExclusivity: agent with both tools and disallowed-tools", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent confused {
+    model: opus
+    tools: [Read, Write]
+    disallowed-tools: [Bash]
+  }
+  flow { a -> confused }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v14 = results.filter((r) => r.rule === "V14" && r.level === "error");
+    expect(v14.length).toBeGreaterThanOrEqual(1);
+    expect(v14[0].message).toContain("confused");
+  });
+
+  it("V6 LoopBound: back-edge without max N annotation", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent step1 { model: opus }
+  agent step2 { model: opus }
+  flow {
+    a -> step1
+    step1 -> step2
+    step2 -> step1
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v6 = results.filter((r) => r.rule === "V6" && r.level === "error");
+    expect(v6.length).toBeGreaterThanOrEqual(1);
+    expect(v6[0].message).toContain("max");
+  });
+
+  it("V6 NoSelfEdges: self-referencing edge without max bound", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent analyzer { model: opus }
+  flow {
+    a -> analyzer
+    analyzer -> analyzer
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v6 = results.filter((r) => r.rule === "V6" && r.level === "error");
+    expect(v6.length).toBeGreaterThanOrEqual(1);
+    expect(v6[0].message).toContain("analyzer");
+  });
+
+  it("V13 GateAnchors: gate with after referencing non-existent node", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent worker { model: opus }
+  gates {
+    gate check {
+      after: nonexistent
+      run: "lint.sh"
+    }
+  }
+  flow { a -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v13 = results.filter((r) => r.rule === "V13" && r.level === "error");
+    expect(v13.length).toBeGreaterThanOrEqual(1);
+    expect(v13[0].message).toContain("nonexistent");
+  });
+});
+
+// =========================================================================
+// H. Validation warnings
+// =========================================================================
+
+describe("Validation warnings", () => {
+  it("V18 ModelNotInProvider: agent uses model not listed in any provider", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent worker {
+    model: mystery-model
+  }
+  providers {
+    anthropic {
+      api-key: \${ANTHROPIC_API_KEY}
+      models: [opus, sonnet, haiku]
+    }
+  }
+  flow { a -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v18 = results.filter((r) => r.rule === "V18" && r.level === "warning");
+    expect(v18.length).toBeGreaterThanOrEqual(1);
+    expect(v18[0].message).toContain("mystery-model");
+  });
+
+  it("V22 FallbackNotInProvider: fallback chain model not in provider", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent worker {
+    model: opus
+    fallback-chain: [sonnet, unknown-model]
+  }
+  providers {
+    anthropic {
+      api-key: \${ANTHROPIC_API_KEY}
+      models: [opus, sonnet]
+    }
+  }
+  flow { a -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v22 = results.filter((r) => r.rule === "V22" && r.level === "warning");
+    expect(v22.length).toBeGreaterThanOrEqual(1);
+    expect(v22[0].message).toContain("unknown-model");
+  });
+});
+
+// =========================================================================
+// I. Edge cases that should NOT throw
+// =========================================================================
+
+describe("Edge cases that should NOT throw", () => {
+  it("agent with no tools parses fine", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent bare { model: opus }
+  flow { a -> bare }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "bare") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.tools).toBeUndefined();
+  });
+
+  it("agent with empty prompt block", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent empty-prompt {
+    model: opus
+    prompt {}
+  }
+  flow { a -> empty-prompt }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "empty-prompt") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.prompt).toBeDefined();
+  });
+
+  it("flow with no conditions (all unconditional edges)", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent s1 { model: opus }
+  agent s2 { model: opus }
+  agent s3 { model: opus }
+  flow {
+    a -> s1
+    s1 -> s2
+    s2 -> s3
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges.length).toBe(3);
+    for (const edge of ast.edges) {
+      expect(edge.condition).toBeNull();
+    }
+  });
+
+  it("topology with no agents (just an orchestrator)", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+}`;
+    const ast = parse(src);
+    const agents = ast.nodes.filter((n) => n.type === "agent");
+    expect(agents).toHaveLength(0);
+    expect(ast.topology.name).toBe("t");
+  });
+});
+
+// =========================================================================
+// J. Phase 2 edge cases
+// =========================================================================
+
+describe("Lexer", () => {
+  describe("stripComments — Phase 2 edge cases", () => {
+    it("# at end of line with no space before it is NOT a comment (e.g. color:#ff0000)", () => {
+      const src = `color:#ff0000`;
+      const result = stripComments(src);
+      expect(result).toBe(`color:#ff0000`);
+    });
+
+    it("multiple # on one line: only the first outside-quote one is the comment start", () => {
+      const src = `value: something  # comment with # inside`;
+      const result = stripComments(src);
+      expect(result).toBe(`value: something`);
+    });
+
+    it("empty line with only # should be stripped", () => {
+      const src = `foo\n#\nbar`;
+      const result = stripComments(src);
+      expect(result).toBe(`foo\n\nbar`);
+    });
+
+    it("inline comment after a bracket list: tools: [Read, Write]  # core", () => {
+      const src = `tools: [Read, Write]  # core`;
+      const result = stripComments(src);
+      expect(result).toBe(`tools: [Read, Write]`);
+    });
+  });
+});
+
+describe("Validator — V12 edge attribute order (Phase 2)", () => {
+  it("valid order [when x.y == pass, max 3] should produce no V12 error", () => {
+    const src = `
+topology test-v12-valid : [pipeline] {
+  orchestrator {
+    model: sonnet
+    handles { intake }
+    outputs { decision { pass, fail } }
+  }
+  action intake {}
+  agent worker { model: sonnet }
+  flow {
+    intake -> worker [when orchestrator.decision == pass, max 3]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v12 = results.filter((r) => r.rule === "V12");
+    expect(v12).toHaveLength(0);
+  });
+
+  it("invalid order [max 3, when x.y == pass] should produce V12 error", () => {
+    const src = `
+topology test-v12-invalid : [pipeline] {
+  orchestrator {
+    model: sonnet
+    handles { intake }
+    outputs { decision { pass, fail } }
+  }
+  action intake {}
+  agent worker { model: sonnet }
+  flow {
+    intake -> worker [max 3, when orchestrator.decision == pass]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v12 = results.filter((r) => r.rule === "V12");
+    expect(v12.length).toBeGreaterThan(0);
+    expect(v12[0].level).toBe("error");
+  });
+
+  it("[max 3] alone (no when) should produce no V12 error", () => {
+    const src = `
+topology test-v12-maxonly : [pipeline] {
+  orchestrator { model: sonnet handles: [intake] }
+  action intake {}
+  agent worker { model: sonnet }
+  flow {
+    intake -> worker [max 3]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v12 = results.filter((r) => r.rule === "V12");
+    expect(v12).toHaveLength(0);
+  });
+
+  it("[when x.y == pass] alone (no max) should produce no V12 error", () => {
+    const src = `
+topology test-v12-whenonly : [pipeline] {
+  orchestrator {
+    model: sonnet
+    handles { intake }
+    outputs { decision { pass, fail } }
+  }
+  action intake {}
+  agent worker { model: sonnet }
+  flow {
+    intake -> worker [when orchestrator.decision == pass]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v12 = results.filter((r) => r.rule === "V12");
+    expect(v12).toHaveLength(0);
+  });
+});
+
+describe("Flow parsing edge cases (Phase 2)", () => {
+  it("chain with 3+ nodes: a -> b -> c -> d produces 3 edges", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  agent c { model: opus }
+  agent d { model: opus }
+  flow {
+    a -> b -> c -> d
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges).toHaveLength(3);
+    expect(ast.edges[0]).toEqual({ from: "a", to: "b", condition: null, maxIterations: null, per: null });
+    expect(ast.edges[1]).toEqual({ from: "b", to: "c", condition: null, maxIterations: null, per: null });
+    expect(ast.edges[2]).toEqual({ from: "c", to: "d", condition: null, maxIterations: null, per: null });
+  });
+
+  it("fan-out combined with condition: a -> [b, c] [when x.y == pass]", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator {
+    model: opus
+    handles: [a]
+    outputs { verdict: pass | fail }
+  }
+  action a { kind: inline }
+  agent b { model: opus }
+  agent c { model: opus }
+  flow {
+    a -> [b, c] [when orchestrator.verdict == pass]
+  }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges.filter((e) => e.from === "a");
+    expect(edges).toHaveLength(2);
+    expect(edges[0].to).toBe("b");
+    expect(edges[0].condition).toBe("orchestrator.verdict == pass");
+    expect(edges[1].to).toBe("c");
+    expect(edges[1].condition).toBe("orchestrator.verdict == pass");
+  });
+
+  it("empty flow block produces empty edges array", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow {
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges).toHaveLength(0);
+  });
+
+  it("single node (no arrow) produces no edges", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent lonely { model: opus invocation: manual }
+  flow {
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges).toHaveLength(0);
+  });
+});
+
+describe("Role prefix matching (Phase 2)", () => {
+  it("agent review-security should get role from review prefix in roles block", () => {
+    const src = `topology t : [pipeline] {
+  roles {
+    review: "Performs reviews"
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent review-security {
+    model: opus
+  }
+  flow { a -> review-security }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "review-security") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.role).toBe("Performs reviews");
+  });
+
+  it("exact match should take priority over prefix match", () => {
+    const src = `topology t : [pipeline] {
+  roles {
+    review: "Generic reviewer"
+    review-security: "Security reviewer"
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent review-security {
+    model: opus
+  }
+  flow { a -> review-security }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "review-security") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.role).toBe("Security reviewer");
+  });
+
+  it("agent with no matching role should have no role field", () => {
+    const src = `topology t : [pipeline] {
+  roles {
+    writer: "Writes content"
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent analyzer {
+    model: opus
+  }
+  flow { a -> analyzer }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "analyzer") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.role).toBeUndefined();
+  });
+});
+
+// =========================================================================
+// Line number tracking
+// =========================================================================
+
+describe("Line number tracking", () => {
+  it("_sourceMap records line numbers for agents, actions, gates, and orchestrator", () => {
+    const src = [
+      "topology t : [pipeline] {",       // line 1
+      "  orchestrator {",                 // line 2
+      "    model: opus",                  // line 3
+      "    handles: [a]",                 // line 4
+      "  }",                              // line 5
+      "  action a {",                     // line 6
+      "    kind: inline",                 // line 7
+      "  }",                              // line 8
+      "  agent worker {",                 // line 9
+      "    model: opus",                  // line 10
+      "  }",                              // line 11
+      "  flow { a -> worker }",           // line 12
+      "}",                                // line 13
+    ].join("\n");
+    const ast = parse(src) as any;
+    expect(ast._sourceMap).toBeDefined();
+    expect(ast._sourceMap["orchestrator"]).toBe(2);
+    expect(ast._sourceMap["a"]).toBe(6);
+    expect(ast._sourceMap["worker"]).toBe(9);
+  });
+
+  it("V1 duplicate name error includes line number", () => {
+    const src = [
+      "topology t : [pipeline] {",       // line 1
+      "  orchestrator {",                 // line 2
+      "    model: opus",                  // line 3
+      "    handles: [a]",                 // line 4
+      "  }",                              // line 5
+      "  action a { kind: inline }",      // line 6
+      "  agent dup { model: opus }",      // line 7
+      "  agent dup { model: sonnet }",    // line 8
+      "  flow { a -> dup }",              // line 9
+      "}",                                // line 10
+    ].join("\n");
+    const ast = parse(src);
+    const results = validate(ast);
+    const v1 = results.filter((r) => r.rule === "V1" && r.level === "error");
+    expect(v1.length).toBeGreaterThanOrEqual(1);
+    expect(v1[0].line).toBeDefined();
+    // The duplicate "dup" is the second occurrence at line 8
+    expect(v1[0].line).toBe(8);
+  });
+
+  it("V7 missing model error includes line number", () => {
+    const src = [
+      "topology t : [pipeline] {",       // line 1
+      "  orchestrator {",                 // line 2
+      "    model: opus",                  // line 3
+      "    handles: [a]",                 // line 4
+      "  }",                              // line 5
+      "  action a { kind: inline }",      // line 6
+      "  agent no-model {",               // line 7
+      "    permissions: plan",             // line 8
+      "  }",                              // line 9
+      "  flow { a -> no-model }",         // line 10
+      "}",                                // line 11
+    ].join("\n");
+    const ast = parse(src);
+    const results = validate(ast);
+    const v7 = results.filter((r) => r.rule === "V7" && r.level === "error");
+    expect(v7.length).toBeGreaterThanOrEqual(1);
+    expect(v7[0].line).toBe(7);
+    expect(v7[0].node).toBe("no-model");
   });
 });

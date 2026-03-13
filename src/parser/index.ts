@@ -362,7 +362,7 @@ export function parseGate(id: string, body: string): GateNode {
  * Supports chain syntax (`a -> b -> c`), fan-out (`a -> [b, c]`), and
  * edge annotations (`[when condition, max N]`).
  */
-export function parseFlow(body: string): EdgeDef[] {
+export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>): EdgeDef[] {
   const edges: EdgeDef[] = [];
 
   for (const line of body.split("\n")) {
@@ -371,22 +371,37 @@ export function parseFlow(body: string): EdgeDef[] {
 
     let condition: string | null = null;
     let maxIterations: number | null = null;
+    let per: string | null = null;
     let flowPart = trimmed;
 
-    // Match annotation at end of line: [when ..., max N]
-    // Must start with "when" or "max" to avoid matching fan-out lists.
+    // Match annotation at end of line: [when ..., max N, per agent-id]
+    // Must start with "when", "max", or "per" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?)\]\s*$/
     );
     if (bracketMatch) {
       flowPart = trimmed.slice(0, bracketMatch.index!).trim();
       const annotation = bracketMatch[1];
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*max|$)/);
+      // V12: Detect wrong attribute order — "max" before "when"
+      const maxIdx = annotation.search(/\bmax\s+\d+/);
+      const whenIdx = annotation.search(/\bwhen\s+/);
+      if (maxIdx !== -1 && whenIdx !== -1 && maxIdx < whenIdx && _edgeAttributeErrors) {
+        _edgeAttributeErrors.push({
+          rule: "V12",
+          level: "error",
+          message: `Edge annotation has wrong attribute order: "max" before "when" — expected [when ..., max N] (line: ${trimmed})`,
+        });
+      }
+
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
       if (maxMatch) maxIterations = parseInt(maxMatch[1], 10);
+
+      const perMatch = annotation.match(/per\s+(\S+)/);
+      if (perMatch) per = perMatch[1].replace(/,\s*$/, "");
     }
 
     // Split on ->
@@ -410,6 +425,7 @@ export function parseFlow(body: string): EdgeDef[] {
             to: target,
             condition: isLastSegment ? condition : null,
             maxIterations: isLastSegment ? maxIterations : null,
+            per: isLastSegment ? per : null,
           });
         }
       } else {
@@ -418,6 +434,7 @@ export function parseFlow(body: string): EdgeDef[] {
           to,
           condition: isLastSegment ? condition : null,
           maxIterations: isLastSegment ? maxIterations : null,
+          per: isLastSegment ? per : null,
         });
       }
     }
@@ -453,7 +470,7 @@ export function parseDepth(body: string): DepthDef {
  * Extracts known sub-blocks (domains, references, external-docs, metrics,
  * workspace) and returns them as a nested record.
  */
-export function parseMemory(body: string): Record<string, unknown> {
+export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>): Record<string, unknown> {
   const memory: Record<string, unknown> = {};
 
   const knownSubs = [
@@ -463,6 +480,8 @@ export function parseMemory(body: string): Record<string, unknown> {
     "metrics",
     "workspace",
   ];
+  const knownSubsSet = new Set(knownSubs);
+
   for (const name of knownSubs) {
     const block = extractBlock(body, name);
     if (!block) continue;
@@ -480,6 +499,22 @@ export function parseMemory(body: string): Record<string, unknown> {
     }
 
     memory[name] = entry;
+  }
+
+  // Detect unknown sub-blocks
+  if (_unknownSubBlockWarnings) {
+    const subBlockRe = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+    let m: RegExpExecArray | null;
+    while ((m = subBlockRe.exec(body)) !== null) {
+      const name = m[1];
+      if (!knownSubsSet.has(name)) {
+        _unknownSubBlockWarnings.push({
+          rule: "V24",
+          level: "warning",
+          message: `Unknown sub-block "${name}" in memory block — known sub-blocks are: ${knownSubs.join(", ")}`,
+        });
+      }
+    }
   }
 
   return memory;
@@ -904,8 +939,36 @@ export function parseToolsBlock(topBody: string): ToolBlockDef[] {
  * @returns The fully-parsed AST.
  * @throws If the topology header or body cannot be extracted.
  */
+/**
+ * Build a source map that records the line number (1-based) where each named
+ * block starts in the raw source. Scans for `agent <id> {`, `gate <id> {`,
+ * `action <id> {`, and `orchestrator {` patterns.
+ */
+function buildSourceMap(rawSource: string): Record<string, number> {
+  const sourceMap: Record<string, number> = {};
+  const lines = rawSource.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Match: agent <id> {, action <id> {, gate <id> {
+    const namedMatch = line.match(/^\s*(?:agent|action|gate)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    if (namedMatch) {
+      sourceMap[namedMatch[1]] = i + 1; // 1-based line number
+      continue;
+    }
+    // Match: orchestrator {
+    const orchMatch = line.match(/^\s*orchestrator\s*(?:\{|[^{]*\{)/);
+    if (orchMatch) {
+      sourceMap["orchestrator"] = i + 1;
+    }
+  }
+  return sourceMap;
+}
+
 export function parse(source: string): TopologyAST {
   const src = stripComments(source);
+
+  // --- Source map (line numbers for nodes) ---
+  const sourceMap = buildSourceMap(source);
 
   // --- Topology header ---
   // Use raw source to preserve the topology line (comments already on other lines)
@@ -980,7 +1043,8 @@ export function parse(source: string): TopologyAST {
 
   // --- Edges (flow) ---
   const flowBlock = extractBlock(topBody, "flow");
-  const edges = flowBlock ? parseFlow(flowBlock.body) : [];
+  const edgeAttributeErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  const edges = flowBlock ? parseFlow(flowBlock.body, edgeAttributeErrors) : [];
 
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
@@ -990,7 +1054,8 @@ export function parse(source: string): TopologyAST {
 
   // --- Memory ---
   const memoryBlock = extractBlock(topBody, "memory");
-  const memory = memoryBlock ? parseMemory(memoryBlock.body) : {};
+  const unknownMemorySubBlockWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  const memory = memoryBlock ? parseMemory(memoryBlock.body, unknownMemorySubBlockWarnings) : {};
 
   // --- Batch ---
   const batchBlock = extractBlock(topBody, "batch");
@@ -1069,8 +1134,31 @@ export function parse(source: string): TopologyAST {
   const interfacesBlock = extractBlock(topBody, "interfaces");
   const interfaces = interfacesBlock ? parseInterfaces(interfacesBlock.body) : [];
 
+  // --- Duplicate section detection ---
+  const singletonKeywords = [
+    "meta", "orchestrator", "flow", "memory", "batch", "environments",
+    "triggers", "settings", "mcp-servers", "metering", "context", "env",
+    "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
+  ];
+  const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  for (const keyword of singletonKeywords) {
+    const allBlocks = extractAllBlocks(topBody, keyword);
+    if (allBlocks.length > 1) {
+      duplicateSectionWarnings.push({
+        rule: "V23",
+        level: "warning",
+        message: `Duplicate "${keyword}" block detected (found ${allBlocks.length}) — only the first occurrence is used`,
+      });
+    }
+  }
+
   // --- Assemble AST ---
-  return {
+  const ast: TopologyAST & {
+    _edgeAttributeErrors?: typeof edgeAttributeErrors;
+    _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
+    _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
+    _sourceMap?: Record<string, number>;
+  } = {
     topology,
     nodes,
     edges,
@@ -1092,4 +1180,26 @@ export function parse(source: string): TopologyAST {
     schedules,
     interfaces,
   };
+
+  // Attach V12 parse-time errors for the validator to consume.
+  if (edgeAttributeErrors.length > 0) {
+    ast._edgeAttributeErrors = edgeAttributeErrors;
+  }
+
+  // Attach V23 duplicate section warnings for the validator to consume.
+  if (duplicateSectionWarnings.length > 0) {
+    ast._duplicateSectionWarnings = duplicateSectionWarnings;
+  }
+
+  // Attach V24 unknown memory sub-block warnings for the validator to consume.
+  if (unknownMemorySubBlockWarnings.length > 0) {
+    ast._unknownMemorySubBlockWarnings = unknownMemorySubBlockWarnings;
+  }
+
+  // Attach source map for line number tracking in validation results.
+  if (Object.keys(sourceMap).length > 0) {
+    ast._sourceMap = sourceMap;
+  }
+
+  return ast;
 }

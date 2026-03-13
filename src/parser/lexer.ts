@@ -14,6 +14,33 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * Strip an inline `#` comment from a single line.
+ *
+ * Scans left-to-right, tracking whether we are inside a quoted string.
+ * The first `#` preceded by whitespace (or at position 0) that is
+ * outside quotes is treated as the start of a comment; everything from
+ * that `#` to end-of-line is removed and trailing whitespace is trimmed.
+ */
+function stripInlineComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+    } else if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === "#" && !inSingle && !inDouble) {
+      // Only treat as comment if preceded by whitespace (or at start of line)
+      if (i === 0 || /\s/.test(line[i - 1])) {
+        return line.slice(0, i).trimEnd();
+      }
+    }
+  }
+  return line;
+}
+
+/**
  * Strip single-line comments from source text.
  *
  * Lines whose first non-whitespace character is `#` are replaced with
@@ -59,7 +86,7 @@ export function stripComments(src: string): string {
       if (insidePrompt.has(idx)) return line; // preserve prompt block content
       const trimmed = line.trimStart();
       if (trimmed.startsWith("#")) return "";
-      return line;
+      return stripInlineComment(line);
     })
     .join("\n");
 }

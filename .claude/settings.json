@@ -1,0 +1,14 @@
+{
+  "allow": [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "Agent"
+  ],
+  "deny": [
+    "WebFetch"
+  ]
+}

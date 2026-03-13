@@ -1,7 +1,7 @@
 /**
  * AgentTopology AST validator.
  *
- * Implements the 19 validation rules from the AgentTopology specification
+ * Implements the 22 validation rules from the AgentTopology specification
  * (section 6). Takes a parsed {@link TopologyAST} and returns an array of
  * {@link ValidationResult} entries describing errors and warnings.
  *
@@ -45,6 +45,8 @@ export interface ValidationResult {
   message: string;
   /** The node, gate, or action name related to the issue (if applicable). */
   node?: string;
+  /** Source line number where the issue was found (1-based), if available. */
+  line?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +123,11 @@ function isOrchestrator(n: NodeDef): n is OrchestratorNode {
 /** Build a set of all declared node ids. */
 function allNodeIds(ast: TopologyAST): Set<string> {
   return new Set(ast.nodes.map((n) => n.id));
+}
+
+/** Look up the source line number for a node ID from the AST's _sourceMap. */
+function lookupLine(ast: TopologyAST, nodeId: string): number | undefined {
+  return (ast as TopologyASTWithParseErrors)._sourceMap?.[nodeId];
 }
 
 /**
@@ -228,6 +235,7 @@ function v1UniqueNames(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Duplicate name "${node.id}" — already declared as ${prev}`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     } else {
       seen.set(node.id, node.type);
@@ -247,6 +255,7 @@ function v2NoKeywordNames(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Name "${node.id}" is a reserved keyword`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -292,6 +301,7 @@ function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Agent "${node.id}" is not in flow and does not have invocation: manual`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -355,16 +365,22 @@ function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Agent "${node.id}" has no model specified`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
   return results;
 }
 
-/** V8: Import references should resolve (warning only -- we cannot check the filesystem). */
+/**
+ * V8: Import references should resolve (warning only -- we cannot check the filesystem).
+ *
+ * NOTE: This is a placeholder. The import system is not yet implemented in the
+ * parser, so this rule always returns [] and is effectively skipped. It is
+ * retained for completeness so the rule numbering stays consistent with the
+ * spec. A future CLI extension can provide actual filesystem resolution.
+ */
 function v8ImportsResolve(_ast: TopologyAST): ValidationResult[] {
-  // Without filesystem access, we emit a warning-level placeholder.
-  // A CLI tool can extend this check with actual file resolution.
   return [];
 }
 
@@ -393,6 +409,7 @@ function v9ActionsHandled(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Action "${node.id}" is used in flow but not in orchestrator.handles`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -409,6 +426,7 @@ function v10PromptsExist(ast: TopologyAST): ValidationResult[] {
         level: "warning",
         message: `Agent "${node.id}" has an empty prompt block`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -472,6 +490,7 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
           level: "error",
           message: `Agent "${node.id}" reads "${key}" but no writing agent has a flow path to it`,
           node: node.id,
+          line: lookupLine(ast, node.id),
         });
       }
     }
@@ -479,13 +498,33 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V12: Edge attribute order must be [when, max, per]. */
+/**
+ * V12: Edge attribute order must be [when, max, per].
+ *
+ * This rule is syntactic — at the AST level the attributes are already
+ * separated into distinct fields, so ordering violations cannot be detected
+ * post-parse. The parser's {@link parseFlow} function enforces this: its
+ * regex requires annotations to begin with `when` or `max` (not both in
+ * reversed order). If `[max N, when ...]` is written, `parseFlow` will
+ * still extract both values but the condition is silently mis-parsed.
+ *
+ * To catch mis-ordered annotations reliably, the parser emits a
+ * V12 error via `edgeAttributeErrors` when `max` appears before `when`
+ * in the same bracket annotation. Those errors are forwarded here.
+ */
 function v12EdgeAttributeOrder(ast: TopologyAST): ValidationResult[] {
-  // This rule is syntactic and would ideally be checked during parsing.
-  // At the AST level, the attributes are already separated into distinct fields,
-  // so we cannot detect ordering violations. This rule is enforced during parsing.
-  // We include it here as a no-op for completeness.
-  return [];
+  // Errors are collected during parsing and attached to the AST.
+  // See parseFlow() in src/parser/index.ts.
+  return (ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? [];
+}
+
+/** Extended AST type that may carry parse-time errors/warnings. */
+interface TopologyASTWithParseErrors extends TopologyAST {
+  _edgeAttributeErrors?: ValidationResult[];
+  _duplicateSectionWarnings?: ValidationResult[];
+  _unknownMemorySubBlockWarnings?: ValidationResult[];
+  /** Maps node/block IDs to their source line numbers (1-based). */
+  _sourceMap?: Record<string, number>;
 }
 
 /** V13: Gate `after` and `before` must reference declared nodes. */
@@ -501,6 +540,7 @@ function v13GatePlacement(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Gate "${node.id}" references undeclared node "${node.after}" in "after"`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
     if (node.before && !ids.has(node.before)) {
@@ -509,6 +549,7 @@ function v13GatePlacement(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Gate "${node.id}" references undeclared node "${node.before}" in "before"`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -531,6 +572,7 @@ function v14ToolExclusivity(ast: TopologyAST): ValidationResult[] {
         level: "error",
         message: `Agent "${node.id}" has both "tools" and "disallowed-tools" — they are mutually exclusive`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -647,6 +689,7 @@ function v18ModelInProvider(ast: TopologyAST): ValidationResult[] {
         level: "warning",
         message: `Agent "${node.id}" uses model "${node.model}" which is not listed in any provider's models`,
         node: node.id,
+        line: lookupLine(ast, node.id),
       });
     }
   }
@@ -660,6 +703,7 @@ function v18ModelInProvider(ast: TopologyAST): ValidationResult[] {
         level: "warning",
         message: `Orchestrator uses model "${node.model}" which is not listed in any provider's models`,
         node: "orchestrator",
+        line: lookupLine(ast, "orchestrator"),
       });
     }
   }
@@ -727,7 +771,7 @@ function v20ScheduleJobs(ast: TopologyAST): ValidationResult[] {
 function v21InterfaceSecrets(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const envVarPattern = /^\$\{[A-Z][A-Z0-9_]*\}$/;
-  const sensitiveKeys = new Set(["webhook", "auth"]);
+  const sensitiveKeys = new Set(["webhook", "auth", "token", "secret"]);
 
   for (const iface of ast.interfaces) {
     for (const [key, value] of Object.entries(iface.config)) {
@@ -768,6 +812,7 @@ function v22FallbackChainModels(ast: TopologyAST): ValidationResult[] {
           level: "warning",
           message: `Agent "${node.id}" fallback-chain references model "${model}" which is not listed in any provider's models`,
           node: node.id,
+          line: lookupLine(ast, node.id),
         });
       }
     }
@@ -790,12 +835,33 @@ function v22FallbackChainModels(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/**
+ * V23: Duplicate top-level singleton sections.
+ *
+ * Sections like `meta`, `flow`, `memory`, etc. should appear at most once.
+ * When duplicates are found, only the first occurrence is used by the parser.
+ * This rule surfaces warnings collected during parsing.
+ */
+function v23DuplicateSections(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._duplicateSectionWarnings ?? [];
+}
+
+/**
+ * V24: Unknown sub-blocks in the `memory` section.
+ *
+ * Only known sub-blocks (domains, references, external-docs, metrics,
+ * workspace) are parsed. Any other named sub-block is flagged as a warning.
+ */
+function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._unknownMemorySubBlockWarnings ?? [];
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 22 specification rules.
+ * Validate a parsed AgentTopology AST against all 24 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -824,5 +890,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v20ScheduleJobs(ast),
     ...v21InterfaceSecrets(ast),
     ...v22FallbackChainModels(ast),
+    ...v23DuplicateSections(ast),
+    ...v24UnknownMemorySubBlocks(ast),
   ];
 }

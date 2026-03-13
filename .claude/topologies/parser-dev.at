@@ -1,0 +1,292 @@
+# parser-dev.at — Inner topology for developing the agentopology parser
+#
+# Demonstrates: pipeline + fan-out, specialist agents, type-check gates,
+#               phased execution, inline prompts
+
+topology parser-dev : [pipeline, fan-out] {
+
+  meta {
+    version: "1.0.0"
+    description: "Parser development — grammar, bindings, tests, CLI, and docs"
+  }
+
+  orchestrator {
+    model: opus
+    generates: "commands/parser-dev.md"
+    handles: [develop-grammar, develop-binding, develop-tests, develop-cli, develop-docs, validate-all]
+    outputs: {
+      route: grammar | binding | tests | cli | docs | validate
+    }
+  }
+
+  roles {
+    grammar-engineer: "Language engineer — evolves the .at grammar, AST types, parser, validator, and reserved keywords as a cohesive unit"
+    binding-engineer: "Binding specialist — maintains all 5 platform bindings (Claude Code, Codex, Gemini CLI, Copilot CLI, OpenClaw) and ensures backward compatibility"
+    test-engineer: "Test specialist — writes comprehensive parser tests, runs vitest, validates all example .at files"
+    cli-engineer: "CLI and tooling specialist — develops the agentopology CLI commands and the interactive HTML visualizer"
+    doc-writer: "Documentation specialist — maintains examples, README, and docs for the open-source package"
+  }
+
+  # --- Actions ---
+
+  action develop-grammar {
+    kind: inline
+    description: "Route to grammar-engineer for language feature development"
+  }
+
+  action develop-binding {
+    kind: inline
+    description: "Route to binding-engineer for binding updates"
+  }
+
+  action develop-tests {
+    kind: inline
+    description: "Route to test-engineer for test development"
+  }
+
+  action develop-cli {
+    kind: inline
+    description: "Route to cli-engineer for CLI and visualizer development"
+  }
+
+  action develop-docs {
+    kind: inline
+    description: "Route to doc-writer for documentation updates"
+  }
+
+  action validate-all {
+    kind: inline
+    description: "Run full validation — type-check, tests, example validation"
+  }
+
+  # --- Agents ---
+
+  agent grammar-engineer {
+    role: grammar-engineer
+    model: opus
+    permissions: autonomous
+    phase: 1
+    tools: [Read, Write, Edit, Grep, Glob, Bash]
+    writes: ["src/parser/", "spec/"]
+    outputs: {
+      status: done | needs-tests
+    }
+
+    prompt {
+      You are a language engineer for the AgentTopology .at parser.
+
+      ## Your Files
+      - spec/grammar.md — Language specification
+      - spec/reserved-keywords.md — Reserved keyword list
+      - spec/validation.md — Validation rules
+      - src/parser/ast.ts — AST type definitions
+      - src/parser/index.ts — Parser implementation
+      - src/parser/validator.ts — Validation logic
+      - src/parser/lexer.ts — Lexer/tokenizer
+
+      ## Rules
+      - Every new feature needs ALL of: AST type, parser function, dispatch call, validator rule, reserved keyword entry, spec update
+      - Change these files as a cohesive unit — never update one without the others
+      - Keep the grammar LL(2) — no ambiguity, no backtracking
+      - Never include sophisticated wiring patterns in examples
+      - Run `npx tsc --noEmit` after changes to verify types
+    }
+  }
+
+  agent binding-engineer {
+    role: binding-engineer
+    model: opus
+    permissions: autonomous
+    phase: 1
+    tools: [Read, Write, Edit, Grep, Glob, Bash]
+    reads: ["src/parser/ast.ts"]
+    writes: ["src/bindings/"]
+    outputs: {
+      status: done | needs-tests
+    }
+
+    prompt {
+      You are a binding specialist for the AgentTopology parser.
+
+      ## Your Files
+      - src/bindings/claude-code.ts — Claude Code binding
+      - src/bindings/codex.ts — OpenAI Codex binding
+      - src/bindings/gemini-cli.ts — Google Gemini CLI binding
+      - src/bindings/copilot-cli.ts — GitHub Copilot CLI binding
+      - src/bindings/openclaw.ts — OpenClaw binding
+
+      ## Rules
+      - When a new AST field is added, update ALL 5 bindings to consume it
+      - Maintain extension fallbacks for backward compatibility
+      - Each binding transforms the shared AST into platform-specific config
+      - Run `npx tsc --noEmit` after changes to verify types
+    }
+  }
+
+  agent test-engineer {
+    role: test-engineer
+    model: sonnet
+    permissions: autonomous
+    phase: 2
+    tools: [Read, Write, Edit, Bash, Grep, Glob]
+    reads: ["src/parser/", "src/bindings/"]
+    writes: ["src/parser/__tests__/"]
+    outputs: {
+      status: pass | fail
+    }
+
+    prompt {
+      You are a test specialist for the AgentTopology parser.
+
+      ## Your Files
+      - src/parser/__tests__/parser.test.ts — Main parser test suite
+
+      ## How to Run
+      - Tests: `npx vitest run`
+      - Validate a single .at file: `node --import tsx src/cli/index.ts validate <file>`
+      - Validate all examples: run validate on each file in examples/
+
+      ## Rules
+      - Write tests that cover edge cases and error conditions
+      - Every new grammar feature needs parser tests and validator tests
+      - Test both valid and invalid .at syntax
+      - Validate all example .at files after changes
+    }
+  }
+
+  agent cli-engineer {
+    role: cli-engineer
+    model: sonnet
+    permissions: autonomous
+    phase: 1
+    tools: [Read, Write, Edit, Bash, Grep, Glob]
+    writes: ["src/cli/", "src/visualizer/"]
+    outputs: {
+      status: done | needs-tests
+    }
+
+    prompt {
+      You are a CLI and tooling specialist for the AgentTopology parser.
+
+      ## Your Files
+      - src/cli/index.ts — CLI entry point and commands
+      - src/visualizer/index.ts — Interactive HTML topology viewer
+
+      ## Rules
+      - CLI commands: validate, visualize, scaffold, parse
+      - The visualizer generates standalone HTML with embedded CSS and JS
+      - Keep the CLI interface simple and consistent
+      - Run `npx tsc --noEmit` after changes to verify types
+    }
+  }
+
+  agent doc-writer {
+    role: doc-writer
+    model: sonnet
+    permissions: autonomous
+    phase: 3
+    tools: [Read, Write, Edit, Grep, Glob]
+    writes: ["examples/", "docs/"]
+    outputs: {
+      status: done | needs-tests
+    }
+
+    prompt {
+      You are a documentation specialist for the AgentTopology parser.
+
+      ## Your Files
+      - examples/*.at — Example topology files
+      - docs/ — Documentation directory
+      - README.md — Package README
+
+      ## Rules
+      - Examples must be MINIMAL — show the feature, nothing more
+      - Never include sophisticated wiring patterns in examples
+      - Keep documentation accurate with the current grammar spec
+      - Update examples when grammar changes
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    develop-grammar -> grammar-engineer
+    grammar-engineer -> test-engineer  [when grammar-engineer.status == needs-tests]
+    grammar-engineer -> doc-writer     [when grammar-engineer.status == done]
+
+    develop-binding -> binding-engineer
+    binding-engineer -> test-engineer  [when binding-engineer.status == needs-tests]
+    binding-engineer -> doc-writer     [when binding-engineer.status == done]
+
+    develop-tests -> test-engineer
+
+    develop-cli -> cli-engineer
+    cli-engineer -> test-engineer      [when cli-engineer.status == needs-tests]
+    cli-engineer -> doc-writer         [when cli-engineer.status == done]
+
+    develop-docs -> doc-writer
+
+    validate-all -> test-engineer
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate type-check {
+      after: grammar-engineer
+      before: test-engineer
+      run: "npx tsc --noEmit"
+      on-fail: bounce-back
+    }
+
+    gate example-validation {
+      after: test-engineer
+      run: "scripts/validate-examples.sh"
+      on-fail: halt
+    }
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: ".claude/workspace/parser-dev/"
+      structure: [grammar-changes, binding-changes, test-results, cli-changes, docs]
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command grammar {
+      pattern: "/parser grammar"
+    }
+
+    command binding {
+      pattern: "/parser binding"
+    }
+
+    command test {
+      pattern: "/parser test"
+    }
+
+    command cli {
+      pattern: "/parser cli"
+    }
+
+    command docs {
+      pattern: "/parser docs"
+    }
+
+    command validate {
+      pattern: "/parser validate"
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Agent"]
+    deny: ["WebFetch"]
+  }
+}

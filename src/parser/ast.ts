@@ -289,6 +289,8 @@ export interface EdgeDef {
   condition: string | null;
   /** Optional max iteration count (from `[max N]`). */
   maxIterations: number | null;
+  /** Optional per-agent scoping identifier (from `[per <id>]`). */
+  per?: string | null;
 }
 
 // ---------------------------------------------------------------------------
