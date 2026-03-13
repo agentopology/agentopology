@@ -856,12 +856,30 @@ function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._unknownMemorySubBlockWarnings ?? [];
 }
 
+/** V25: `on-fail: bounce-back` is advisory on all CLI bindings. */
+function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.onFail === "bounce-back") {
+      results.push({
+        rule: "V25",
+        level: "warning",
+        message: `Gate "${gate.id}" uses on-fail: bounce-back which is advisory on all CLI bindings — requires orchestrator cooperation or a framework binding for enforcement`,
+        node: gate.id,
+      });
+    }
+  }
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 24 specification rules.
+ * Validate a parsed AgentTopology AST against all 25 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -892,5 +910,6 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v22FallbackChainModels(ast),
     ...v23DuplicateSections(ast),
     ...v24UnknownMemorySubBlocks(ast),
+    ...v25BounceBackAdvisory(ast),
   ];
 }

@@ -148,6 +148,9 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
       if (agent.tools && agent.tools.length > 0) {
         sections.push(`- Tools: ${agent.tools.join(", ")}`);
       }
+      if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+        sections.push(`- Disallowed tools: ${agent.disallowedTools.join(", ")}`);
+      }
       if (agent.skills && agent.skills.length > 0) {
         sections.push(`- Skills: ${agent.skills.join(", ")}`);
       }
@@ -199,6 +202,7 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- Checks: ${gate.checks.join(", ")}`);
       }
       if (gate.onFail) sections.push(`- On fail: ${gate.onFail}`);
+      sections.push(`- Enforcement: script-level — run gate script manually between agents`);
       sections.push("");
     }
   }

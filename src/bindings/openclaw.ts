@@ -545,6 +545,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`- **Checks:** ${gate.checks.join(", ")}`);
       }
+      sections.push(`- **Enforcement:** tools.deny is enforced in openclaw.json; gate scripts are advisory — run manually between agents`);
       sections.push("");
     }
   }
@@ -710,6 +711,11 @@ function generateBootstrapMd(ast: TopologyAST): GeneratedFile {
   );
   if (preFlightGates.length > 0) {
     sections.push("## Pre-Flight Gates");
+    sections.push("");
+    sections.push("> **Enforcement note:** Gate scripts are advisory — they must be run manually");
+    sections.push("> between agents. Tool deny lists (`tools.deny` in openclaw.json) ARE enforced");
+    sections.push("> by the runtime. Gate scripts provide quality checks but not hard enforcement.");
+    sections.push("");
     let idx = 1;
     for (const gate of preFlightGates) {
       sections.push(`${idx}. Gate: ${gate.id} -- ${gate.run ?? "manual check"}`);

@@ -2067,4 +2067,27 @@ describe("Line number tracking", () => {
     expect(v7[0].line).toBe(7);
     expect(v7[0].node).toBe("no-model");
   });
+
+  it("V25: on-fail bounce-back produces warning", () => {
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator { model: opus handles: [a] }
+    action a { kind: inline }
+    agent b { model: opus }
+    agent c { model: opus }
+    gates {
+      gate bb {
+        after: b
+        before: c
+        run: "check.sh"
+        on-fail: bounce-back
+      }
+    }
+    flow { a -> b -> c }
+  }`);
+    const issues = validate(ast);
+    const v25 = issues.filter(i => i.rule === "V25");
+    expect(v25).toHaveLength(1);
+    expect(v25[0].level).toBe("warning");
+    expect(v25[0].message).toContain("bounce-back");
+  });
 });

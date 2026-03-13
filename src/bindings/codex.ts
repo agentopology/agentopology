@@ -487,6 +487,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       }
       if (gate.onFail) sections.push(`- **On fail:** ${gate.onFail}`);
       if (gate.retry != null) sections.push(`- **Retry:** ${gate.retry}`);
+      sections.push(`- **Enforcement:** script-level — run gate script manually between agents`);
       sections.push("");
     }
   }

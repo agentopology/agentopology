@@ -61,6 +61,7 @@ topology test-scaffold : [pipeline, fan-out] {
     reads: ["workspace/plan.md"]
     writes: ["workspace/output.md"]
     permissions: autonomous
+    disallowed-tools: [Edit]
   }
 
   flow {
@@ -74,6 +75,11 @@ topology test-scaffold : [pipeline, fan-out] {
       run: "scripts/lint.sh"
       checks: [lint, types]
       on-fail: halt
+    }
+    gate soft-review {
+      after: planner
+      run: "scripts/review.sh"
+      behavior: advisory
     }
   }
 
@@ -237,6 +243,43 @@ describe("claude-code binding", () => {
     const contextFile = files.find((f) => f.path === "CLAUDE.md");
     expect(contextFile).toBeDefined();
   });
+
+  it("emits disallowed-tools in agent frontmatter", () => {
+    const builderFile = files.find((f) => f.path === ".claude/agents/builder/AGENT.md");
+    expect(builderFile).toBeDefined();
+    expect(builderFile!.content).toContain("disallowed-tools:");
+    expect(builderFile!.content).toContain("Edit");
+  });
+
+  it("compiles enforced gate to settings.json PreToolUse hook", () => {
+    const settingsFile = files.find((f) => f.path === ".claude/settings.json");
+    expect(settingsFile).toBeDefined();
+    const settings = JSON.parse(settingsFile!.content);
+    expect(settings.hooks.PreToolUse).toBeDefined();
+    const gateHook = settings.hooks.PreToolUse.find(
+      (h: Record<string, unknown>) => h.matcher === "Task" && JSON.stringify(h).includes("gate-quality-check")
+    );
+    expect(gateHook).toBeDefined();
+  });
+
+  it("does NOT compile advisory gate to settings.json hook", () => {
+    const settingsFile = files.find((f) => f.path === ".claude/settings.json");
+    const settings = JSON.parse(settingsFile!.content);
+    const allHookJson = JSON.stringify(settings.hooks);
+    expect(allHookJson).not.toContain("gate-soft-review");
+  });
+
+  it("generates gate wrapper script for enforced gate", () => {
+    const wrapperScript = files.find((f) => f.path.includes("gate-quality-check.sh"));
+    expect(wrapperScript).toBeDefined();
+    expect(wrapperScript!.content).toContain("lint.sh");
+    expect(wrapperScript!.content).toContain("exit 1");
+  });
+
+  it("does NOT generate gate wrapper script for advisory gate", () => {
+    const advisoryWrapper = files.find((f) => f.path.includes("gate-soft-review.sh"));
+    expect(advisoryWrapper).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -269,6 +312,11 @@ describe("codex binding", () => {
   it("produces gate scripts under .codex/scripts/", () => {
     const gateScript = files.find((f) => f.path.startsWith(".codex/scripts/") && f.content.includes("Gate"));
     expect(gateScript).toBeDefined();
+  });
+
+  it("marks gate enforcement level in AGENTS.md", () => {
+    const agentsMd = files.find((f) => f.path === "AGENTS.md");
+    expect(agentsMd!.content).toContain("Enforcement:");
   });
 });
 
@@ -331,6 +379,17 @@ describe("copilot-cli binding", () => {
     const paths = agentFiles.map((f) => f.path);
     expect(paths).toContain(".github/agents/planner.agent.md");
     expect(paths).toContain(".github/agents/builder.agent.md");
+  });
+
+  it("generates gate script for enforced gate", () => {
+    const gateScript = files.find((f) => f.path === "scripts/gate-quality-check.sh");
+    expect(gateScript).toBeDefined();
+    expect(gateScript!.content).toContain("lint.sh");
+  });
+
+  it("does NOT generate gate script for advisory gate", () => {
+    const advisoryScript = files.find((f) => f.path === "scripts/gate-soft-review.sh");
+    expect(advisoryScript).toBeUndefined();
   });
 });
 
@@ -873,5 +932,17 @@ describe("kiro binding", () => {
   it("produces memory directories", () => {
     const runsKeep = files.find((f) => f.path === ".kiro/runs/.gitkeep");
     expect(runsKeep).toBeDefined();
+  });
+
+  it("generates .kiro/hooks/ file for enforced gate", () => {
+    const hookFile = files.find((f) => f.path === ".kiro/hooks/gate-quality-check.md");
+    expect(hookFile).toBeDefined();
+    expect(hookFile!.content).toContain("postToolUse");
+    expect(hookFile!.content).toContain("lint.sh");
+  });
+
+  it("does NOT generate hook file for advisory gate", () => {
+    const advisoryHook = files.find((f) => f.path === ".kiro/hooks/gate-soft-review.md");
+    expect(advisoryHook).toBeUndefined();
   });
 });

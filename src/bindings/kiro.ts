@@ -846,6 +846,66 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
 }
 
 // ---------------------------------------------------------------------------
+// Gate hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.kiro/hooks/gate-{id}.md` files for each enforced gate.
+ *
+ * Kiro hooks are individual files in `.kiro/hooks/` with trigger metadata.
+ * Each gate with `run:` and non-advisory behavior gets a hook file that
+ * fires after the gate's `after` agent completes.
+ */
+function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.run) continue;
+    if (gate.behavior === "advisory") continue;
+
+    const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const onFail = gate.onFail || "halt";
+
+    const content = [
+      `# Gate: ${gate.id}`,
+      "",
+      "## Trigger",
+      "",
+      "```json",
+      JSON.stringify({
+        type: "postToolUse",
+        matcher: gate.after || "*",
+      }, null, 2),
+      "```",
+      "",
+      "## Description",
+      "",
+      `Quality gate that runs after **${gate.after || "any agent"}**${gate.before ? ` and before **${gate.before}**` : ""}.`,
+      "",
+      "## Action",
+      "",
+      `Run: \`bash .kiro/scripts/${scriptName}\``,
+      "",
+      `On failure: **${onFail}**`,
+      "",
+      gate.checks && gate.checks.length > 0
+        ? `Checks: ${gate.checks.join(", ")}`
+        : "",
+      "",
+    ].filter(Boolean).join("\n") + "\n";
+
+    files.push({
+      path: `.kiro/hooks/gate-${gate.id}.md`,
+      content,
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
 // Binding export
 // ---------------------------------------------------------------------------
 
@@ -882,13 +942,16 @@ export const kiroBinding: BindingTarget = {
     // 7. Gate scripts
     files.push(...generateGateScripts(ast));
 
-    // 8. Tool scripts
+    // 8. Gate hook files
+    files.push(...generateGateHooks(ast));
+
+    // 9. Tool scripts
     files.push(...generateToolScripts(ast));
 
-    // 9. Memory directories
+    // 10. Memory directories
     files.push(...generateMemory(ast));
 
-    // 10. Metering
+    // 11. Metering
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
 
