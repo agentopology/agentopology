@@ -376,7 +376,8 @@ function generateTechSteering(ast: TopologyAST): GeneratedFile {
   if (Object.keys(ast.env).length > 0) {
     sections.push("## Environment");
     sections.push("");
-    for (const [key, value] of Object.entries(ast.env)) {
+    for (const [key, val] of Object.entries(ast.env)) {
+      const value = typeof val === "string" ? val : val.value;
       sections.push(`- \`${key}\`: ${value}`);
     }
     sections.push("");

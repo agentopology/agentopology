@@ -906,7 +906,10 @@ function generateContextFile(ast: TopologyAST): GeneratedFile {
  * Returns the env record if non-empty, otherwise null.
  */
 function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null {
-  const env: Record<string, string> = { ...ast.env };
+  const env: Record<string, string> = {};
+  for (const [key, val] of Object.entries(ast.env)) {
+    env[key] = typeof val === "string" ? val : val.value;
+  }
 
   // If an anthropic provider exists, scaffold the API key env var
   if (ast.providers && ast.providers.length > 0) {

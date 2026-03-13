@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parse } from "../index.js";
+import { parse, parseSchemaType, parseSchemaFields } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig, SchemaFieldDef, SchemaDef, SensitiveValue } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -830,6 +830,8 @@ describe("Validator", () => {
       mcpServers: {},
       metering: null,
       defaults: null,
+      schemas: [],
+      observability: null,
       skills: [],
       toolDefs: [],
       roles: {},
@@ -2592,6 +2594,8 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         mcpServers: {},
         metering: null,
         defaults: null,
+        schemas: [],
+        observability: null,
         skills: [],
         toolDefs: [],
         roles: {},
@@ -3405,6 +3409,8 @@ describe("Wave 2: Validator rules V39-V45", () => {
       mcpServers: {},
       metering: null,
       defaults: null,
+      schemas: [],
+      observability: null,
       skills: [],
       toolDefs: [],
       roles: {},
@@ -3706,5 +3712,913 @@ describe("Wave 2: Backward compatibility", () => {
     expect(edge).toBeDefined();
     expect(edge!.condition).toBe("b.status == fail");
     expect(edge!.maxIterations).toBe(3);
+  });
+});
+
+// =========================================================================
+// Wave 3: Schema system tests
+// =========================================================================
+
+describe("Wave 3: Schema system", () => {
+  describe("parseSchemaType", () => {
+    it("parses string as primitive", () => {
+      expect(parseSchemaType("string")).toEqual({ kind: "primitive", value: "string" });
+    });
+
+    it("parses number as primitive", () => {
+      expect(parseSchemaType("number")).toEqual({ kind: "primitive", value: "number" });
+    });
+
+    it("parses integer as primitive", () => {
+      expect(parseSchemaType("integer")).toEqual({ kind: "primitive", value: "integer" });
+    });
+
+    it("parses boolean as primitive", () => {
+      expect(parseSchemaType("boolean")).toEqual({ kind: "primitive", value: "boolean" });
+    });
+
+    it("parses object as primitive", () => {
+      expect(parseSchemaType("object")).toEqual({ kind: "primitive", value: "object" });
+    });
+
+    it("parses array of string", () => {
+      expect(parseSchemaType("array of string")).toEqual({
+        kind: "array",
+        itemType: { kind: "primitive", value: "string" },
+      });
+    });
+
+    it("parses array of ref", () => {
+      expect(parseSchemaType("array of finding")).toEqual({
+        kind: "array",
+        itemType: { kind: "ref", name: "finding" },
+      });
+    });
+
+    it("parses enum values", () => {
+      expect(parseSchemaType("low | medium | high")).toEqual({
+        kind: "enum",
+        values: ["low", "medium", "high"],
+      });
+    });
+
+    it("parses non-primitive as ref", () => {
+      expect(parseSchemaType("finding")).toEqual({ kind: "ref", name: "finding" });
+    });
+  });
+
+  describe("parseSchemaFields", () => {
+    it("parses basic fields", () => {
+      const body = `    severity: low | medium | high
+    rule: string
+    line: integer`;
+      const fields = parseSchemaFields(body);
+      expect(fields).toHaveLength(3);
+      expect(fields[0]).toEqual({
+        name: "severity",
+        type: { kind: "enum", values: ["low", "medium", "high"] },
+        optional: false,
+      });
+      expect(fields[1]).toEqual({
+        name: "rule",
+        type: { kind: "primitive", value: "string" },
+        optional: false,
+      });
+      expect(fields[2]).toEqual({
+        name: "line",
+        type: { kind: "primitive", value: "integer" },
+        optional: false,
+      });
+    });
+
+    it("parses optional fields with ? prefix", () => {
+      const body = `    line: ?integer
+    message: ?string`;
+      const fields = parseSchemaFields(body);
+      expect(fields).toHaveLength(2);
+      expect(fields[0].optional).toBe(true);
+      expect(fields[0].type).toEqual({ kind: "primitive", value: "integer" });
+      expect(fields[1].optional).toBe(true);
+    });
+
+    it("parses array fields", () => {
+      const body = `    findings: array of finding`;
+      const fields = parseSchemaFields(body);
+      expect(fields).toHaveLength(1);
+      expect(fields[0].type).toEqual({
+        kind: "array",
+        itemType: { kind: "ref", name: "finding" },
+      });
+    });
+  });
+
+  describe("Agent with input-schema", () => {
+    it("parses input-schema block on agent", () => {
+      const src = `
+topology test : [pipeline] {
+  agent analyzer {
+    model: sonnet
+    input-schema {
+      pr-url: string
+      base-branch: string
+    }
+  }
+  flow {
+    analyzer -> done
+  }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "analyzer") as AgentNode;
+      expect(agent.inputSchema).toBeDefined();
+      expect(agent.inputSchema).toHaveLength(2);
+      expect(agent.inputSchema![0]).toEqual({
+        name: "pr-url",
+        type: { kind: "primitive", value: "string" },
+        optional: false,
+      });
+    });
+  });
+
+  describe("Agent with output-schema", () => {
+    it("parses output-schema block on agent", () => {
+      const src = `
+topology test : [pipeline] {
+  agent analyzer {
+    model: sonnet
+    output-schema {
+      risk-level: low | medium | high | critical
+      confidence: number
+      findings: array of finding
+    }
+  }
+  flow {
+    analyzer -> done
+  }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "analyzer") as AgentNode;
+      expect(agent.outputSchema).toBeDefined();
+      expect(agent.outputSchema).toHaveLength(3);
+      expect(agent.outputSchema![0]).toEqual({
+        name: "risk-level",
+        type: { kind: "enum", values: ["low", "medium", "high", "critical"] },
+        optional: false,
+      });
+      expect(agent.outputSchema![1]).toEqual({
+        name: "confidence",
+        type: { kind: "primitive", value: "number" },
+        optional: false,
+      });
+      expect(agent.outputSchema![2]).toEqual({
+        name: "findings",
+        type: { kind: "array", itemType: { kind: "ref", name: "finding" } },
+        optional: false,
+      });
+    });
+  });
+
+  describe("Top-level schemas block", () => {
+    it("parses named schemas from top-level schemas block", () => {
+      const src = `
+topology test : [pipeline] {
+  schemas {
+    schema finding {
+      severity: low | medium | high | critical
+      rule: string
+      file: string
+      line: integer
+      message: string
+    }
+
+    schema review-result {
+      verdict: approve | request-changes | reject
+      confidence: number
+      findings: array of finding
+    }
+  }
+
+  agent reviewer {
+    model: sonnet
+  }
+
+  flow {
+    reviewer -> done
+  }
+}`;
+      const ast = parse(src);
+      expect(ast.schemas).toHaveLength(2);
+      expect(ast.schemas[0].id).toBe("finding");
+      expect(ast.schemas[0].fields).toHaveLength(5);
+      expect(ast.schemas[1].id).toBe("review-result");
+      expect(ast.schemas[1].fields).toHaveLength(3);
+      expect(ast.schemas[1].fields[2]).toEqual({
+        name: "findings",
+        type: { kind: "array", itemType: { kind: "ref", name: "finding" } },
+        optional: false,
+      });
+    });
+  });
+
+  describe("Backward compatibility", () => {
+    it("agents without schemas still work", () => {
+      const src = `
+topology test : [pipeline] {
+  agent worker {
+    model: sonnet
+    tools: [Read, Write]
+  }
+  flow {
+    worker -> done
+  }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "worker") as AgentNode;
+      expect(agent.inputSchema).toBeUndefined();
+      expect(agent.outputSchema).toBeUndefined();
+      expect(ast.schemas).toEqual([]);
+    });
+  });
+
+  describe("Validator V46: schema type names valid", () => {
+    function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+      return {
+        topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+        ],
+        edges: [
+          { from: "intake", to: "worker", condition: null, maxIterations: null },
+        ],
+        depth: { factors: [], levels: [] },
+        memory: {},
+        batch: {},
+        environments: {},
+        triggers: [],
+        hooks: [],
+        settings: {},
+        mcpServers: {},
+        metering: null,
+        defaults: null,
+        schemas: [],
+        observability: null,
+        skills: [],
+        toolDefs: [],
+        roles: {},
+        context: {},
+        env: {},
+        providers: [],
+        schedules: [],
+        interfaces: [],
+        ...overrides,
+      };
+    }
+
+    it("valid schema types produce no V46 errors", () => {
+      const ast = minimalAST({
+        schemas: [
+          {
+            id: "finding",
+            fields: [
+              { name: "severity", type: { kind: "enum", values: ["low", "high"] }, optional: false },
+              { name: "line", type: { kind: "primitive", value: "integer" }, optional: false },
+              { name: "tags", type: { kind: "array", itemType: { kind: "primitive", value: "string" } }, optional: false },
+            ],
+          },
+        ],
+      });
+      const issues = validate(ast);
+      const v46 = issues.filter((i) => i.rule === "V46");
+      expect(v46).toHaveLength(0);
+    });
+
+    it("passes for agent input-schema with valid types", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          {
+            id: "worker", type: "agent", label: "Worker", model: "sonnet",
+            inputSchema: [
+              { name: "url", type: { kind: "primitive", value: "string" }, optional: false },
+            ],
+          } as AgentNode,
+        ],
+      });
+      const issues = validate(ast);
+      const v46 = issues.filter((i) => i.rule === "V46");
+      expect(v46).toHaveLength(0);
+    });
+  });
+
+  describe("Validator V47: schema ref resolves", () => {
+    function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+      return {
+        topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+        ],
+        edges: [
+          { from: "intake", to: "worker", condition: null, maxIterations: null },
+        ],
+        depth: { factors: [], levels: [] },
+        memory: {},
+        batch: {},
+        environments: {},
+        triggers: [],
+        hooks: [],
+        settings: {},
+        mcpServers: {},
+        metering: null,
+        defaults: null,
+        schemas: [],
+        observability: null,
+        skills: [],
+        toolDefs: [],
+        roles: {},
+        context: {},
+        env: {},
+        providers: [],
+        schedules: [],
+        interfaces: [],
+        ...overrides,
+      };
+    }
+
+    it("resolved ref produces no V47 error", () => {
+      const ast = minimalAST({
+        schemas: [
+          {
+            id: "finding",
+            fields: [
+              { name: "message", type: { kind: "primitive", value: "string" }, optional: false },
+            ],
+          },
+          {
+            id: "report",
+            fields: [
+              { name: "findings", type: { kind: "array", itemType: { kind: "ref", name: "finding" } }, optional: false },
+            ],
+          },
+        ],
+      });
+      const issues = validate(ast);
+      const v47 = issues.filter((i) => i.rule === "V47");
+      expect(v47).toHaveLength(0);
+    });
+
+    it("unresolved ref produces V47 error", () => {
+      const ast = minimalAST({
+        schemas: [
+          {
+            id: "report",
+            fields: [
+              { name: "findings", type: { kind: "array", itemType: { kind: "ref", name: "nonexistent" } }, optional: false },
+            ],
+          },
+        ],
+      });
+      const issues = validate(ast);
+      const v47 = issues.filter((i) => i.rule === "V47");
+      expect(v47).toHaveLength(1);
+      expect(v47[0].message).toContain("nonexistent");
+    });
+
+    it("unresolved ref in agent output-schema produces V47 error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          {
+            id: "worker", type: "agent", label: "Worker", model: "sonnet",
+            outputSchema: [
+              { name: "results", type: { kind: "ref", name: "missing-schema" }, optional: false },
+            ],
+          } as AgentNode,
+        ],
+      });
+      const issues = validate(ast);
+      const v47 = issues.filter((i) => i.rule === "V47");
+      expect(v47).toHaveLength(1);
+      expect(v47[0].message).toContain("missing-schema");
+    });
+  });
+});
+
+// =========================================================================
+// Wave 3C: Secret URI References + Sensitive Modifier (F11, F22)
+// =========================================================================
+
+describe("Sensitive and Secret env values", () => {
+  const minimalPrefix = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }`;
+
+  it("parses sensitive env var reference as SensitiveValue", () => {
+    const src = `${minimalPrefix}
+  env {
+    API_KEY: sensitive "\${API_KEY}"
+  }
+}`;
+    const ast = parse(src);
+    const val = ast.env["API_KEY"] as SensitiveValue;
+    expect(val).toBeDefined();
+    expect(typeof val).toBe("object");
+    expect(val.value).toBe("${API_KEY}");
+    expect(val.sensitive).toBe(true);
+    expect(val.secretRef).toBeUndefined();
+  });
+
+  it("parses secret URI as SensitiveValue with SecretRef", () => {
+    const src = `${minimalPrefix}
+  env {
+    api-key: secret "vault://secret/data/prod#key"
+  }
+}`;
+    const ast = parse(src);
+    const val = ast.env["api-key"] as SensitiveValue;
+    expect(val).toBeDefined();
+    expect(typeof val).toBe("object");
+    expect(val.value).toBe("vault://secret/data/prod#key");
+    expect(val.sensitive).toBe(true);
+    expect(val.secretRef).toBeDefined();
+    expect(val.secretRef!.scheme).toBe("vault");
+    expect(val.secretRef!.uri).toBe("vault://secret/data/prod#key");
+  });
+
+  it("plain string env values still work (backward compat)", () => {
+    const src = `${minimalPrefix}
+  env {
+    NODE_ENV: "production"
+    REGION: "us-east-1"
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.env["NODE_ENV"]).toBe("production");
+    expect(ast.env["REGION"]).toBe("us-east-1");
+  });
+
+  it("handles mixed plain, sensitive, and secret values in same env block", () => {
+    const src = `${minimalPrefix}
+  env {
+    NODE_ENV: "production"
+    API_KEY: sensitive "\${API_KEY}"
+    DB_PASS: secret "op://prod/db/password"
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.env["NODE_ENV"]).toBe("production");
+    const apiKey = ast.env["API_KEY"] as SensitiveValue;
+    expect(apiKey.sensitive).toBe(true);
+    expect(apiKey.value).toBe("${API_KEY}");
+    const dbPass = ast.env["DB_PASS"] as SensitiveValue;
+    expect(dbPass.sensitive).toBe(true);
+    expect(dbPass.secretRef!.scheme).toBe("op");
+  });
+
+  it("parses all supported secret URI schemes", () => {
+    const schemes = ["vault", "op", "awssm", "ssm", "gcpsm", "azurekv"];
+    for (const scheme of schemes) {
+      const src = `${minimalPrefix}
+  env {
+    KEY: secret "${scheme}://path/to/secret"
+  }
+}`;
+      const ast = parse(src);
+      const val = ast.env["KEY"] as SensitiveValue;
+      expect(val.secretRef!.scheme).toBe(scheme);
+    }
+  });
+});
+
+describe("V51 - Sensitive literal warning", () => {
+  const minimalPrefix = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }`;
+
+  it("warns when sensitive is used with a literal string", () => {
+    const src = `${minimalPrefix}
+  env {
+    API_KEY: sensitive "my-literal-secret"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v51 = issues.filter((i) => i.rule === "V51");
+    expect(v51).toHaveLength(1);
+    expect(v51[0].level).toBe("warning");
+    expect(v51[0].message).toContain("sensitive value should reference an environment variable");
+  });
+
+  it("does not warn when sensitive references an env var", () => {
+    const src = `${minimalPrefix}
+  env {
+    API_KEY: sensitive "\${API_KEY}"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v51 = issues.filter((i) => i.rule === "V51");
+    expect(v51).toHaveLength(0);
+  });
+
+  it("does not warn for plain string values", () => {
+    const src = `${minimalPrefix}
+  env {
+    NODE_ENV: "production"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v51 = issues.filter((i) => i.rule === "V51");
+    expect(v51).toHaveLength(0);
+  });
+
+  it("does not warn for secret URIs (those have secretRef)", () => {
+    const src = `${minimalPrefix}
+  env {
+    KEY: secret "vault://secret/data/prod#key"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v51 = issues.filter((i) => i.rule === "V51");
+    expect(v51).toHaveLength(0);
+  });
+});
+
+describe("V52 - Secret URI scheme validation", () => {
+  const minimalPrefix = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }`;
+
+  it("errors on unknown secret URI scheme", () => {
+    const src = `${minimalPrefix}
+  env {
+    KEY: secret "unknown://path/to/secret"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v52 = issues.filter((i) => i.rule === "V52");
+    expect(v52).toHaveLength(1);
+    expect(v52[0].level).toBe("error");
+    expect(v52[0].message).toContain('unknown secret URI scheme "unknown"');
+  });
+
+  it("valid schemes all pass", () => {
+    const schemes = ["vault", "op", "awssm", "ssm", "gcpsm", "azurekv"];
+    for (const scheme of schemes) {
+      const src = `${minimalPrefix}
+  env {
+    KEY: secret "${scheme}://path/to/secret"
+  }
+}`;
+      const ast = parse(src);
+      const issues = validate(ast);
+      const v52 = issues.filter((i) => i.rule === "V52");
+      expect(v52).toHaveLength(0);
+    }
+  });
+
+  it("does not apply to sensitive values (no secretRef)", () => {
+    const src = `${minimalPrefix}
+  env {
+    KEY: sensitive "\${MY_KEY}"
+  }
+}`;
+    const ast = parse(src);
+    const issues = validate(ast);
+    const v52 = issues.filter((i) => i.rule === "V52");
+    expect(v52).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// Wave 3: Observability block (F12)
+// =========================================================================
+
+describe("Wave 3: Observability block parsing", () => {
+  it("full observability block parses correctly", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+  observability {
+    enabled: true
+    level: debug
+    exporter: otlp
+    endpoint: "\${OTEL_ENDPOINT}"
+    service: "my-service"
+    sample-rate: 0.5
+    capture {
+      prompts: true
+      completions: true
+      tool-args: false
+      tool-results: false
+    }
+    spans {
+      agents: true
+      tools: true
+      gates: false
+      memory: true
+    }
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).not.toBeNull();
+    expect(ast.observability!.enabled).toBe(true);
+    expect(ast.observability!.level).toBe("debug");
+    expect(ast.observability!.exporter).toBe("otlp");
+    expect(ast.observability!.endpoint).toBe("${OTEL_ENDPOINT}");
+    expect(ast.observability!.service).toBe("my-service");
+    expect(ast.observability!.sampleRate).toBe(0.5);
+    expect(ast.observability!.capture.prompts).toBe(true);
+    expect(ast.observability!.capture.completions).toBe(true);
+    expect(ast.observability!.capture.toolArgs).toBe(false);
+    expect(ast.observability!.capture.toolResults).toBe(false);
+    expect(ast.observability!.spans.agents).toBe(true);
+    expect(ast.observability!.spans.tools).toBe(true);
+    expect(ast.observability!.spans.gates).toBe(false);
+    expect(ast.observability!.spans.memory).toBe(true);
+  });
+
+  it("observability with only capture sub-block", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+  observability {
+    level: info
+    exporter: langsmith
+    capture {
+      prompts: true
+      completions: false
+    }
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).not.toBeNull();
+    expect(ast.observability!.level).toBe("info");
+    expect(ast.observability!.exporter).toBe("langsmith");
+    expect(ast.observability!.capture.prompts).toBe(true);
+    expect(ast.observability!.capture.completions).toBe(false);
+    expect(ast.observability!.capture.toolArgs).toBe(false);
+    expect(ast.observability!.capture.toolResults).toBe(false);
+    // spans should get defaults
+    expect(ast.observability!.spans.agents).toBe(true);
+    expect(ast.observability!.spans.tools).toBe(true);
+    expect(ast.observability!.spans.gates).toBe(true);
+    expect(ast.observability!.spans.memory).toBe(false);
+  });
+
+  it("observability with only spans sub-block", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+  observability {
+    exporter: datadog
+    spans {
+      agents: false
+      memory: true
+    }
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).not.toBeNull();
+    expect(ast.observability!.exporter).toBe("datadog");
+    expect(ast.observability!.capture.prompts).toBe(false);
+    expect(ast.observability!.capture.completions).toBe(false);
+    expect(ast.observability!.capture.toolArgs).toBe(false);
+    expect(ast.observability!.capture.toolResults).toBe(false);
+    expect(ast.observability!.spans.agents).toBe(false);
+    expect(ast.observability!.spans.tools).toBe(true);
+    expect(ast.observability!.spans.gates).toBe(true);
+    expect(ast.observability!.spans.memory).toBe(true);
+  });
+
+  it("defaults are applied when fields omitted", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+  observability {
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).not.toBeNull();
+    expect(ast.observability!.enabled).toBe(true);
+    expect(ast.observability!.level).toBe("info");
+    expect(ast.observability!.exporter).toBe("otlp");
+    expect(ast.observability!.sampleRate).toBe(1.0);
+    expect(ast.observability!.endpoint).toBeUndefined();
+    expect(ast.observability!.service).toBeUndefined();
+    expect(ast.observability!.capture.prompts).toBe(false);
+    expect(ast.observability!.capture.completions).toBe(false);
+    expect(ast.observability!.capture.toolArgs).toBe(false);
+    expect(ast.observability!.capture.toolResults).toBe(false);
+    expect(ast.observability!.spans.agents).toBe(true);
+    expect(ast.observability!.spans.tools).toBe(true);
+    expect(ast.observability!.spans.gates).toBe(true);
+    expect(ast.observability!.spans.memory).toBe(false);
+  });
+
+  it("backward compat: topology without observability -> null", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).toBeNull();
+  });
+
+  it("observability with enabled: false", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+  observability {
+    enabled: false
+    exporter: none
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.observability).not.toBeNull();
+    expect(ast.observability!.enabled).toBe(false);
+    expect(ast.observability!.exporter).toBe("none");
+  });
+});
+
+describe("Wave 3: Validator rules V48-V50 (observability)", () => {
+  function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+    return {
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "Intake" },
+        { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null },
+      ],
+      depth: { factors: [], levels: [] },
+      memory: {},
+      batch: {},
+      environments: {},
+      triggers: [],
+      hooks: [],
+      settings: {},
+      mcpServers: {},
+      metering: null,
+      defaults: null,
+      schemas: [],
+      observability: null,
+      skills: [],
+      toolDefs: [],
+      roles: {},
+      context: {},
+      env: {},
+      providers: [],
+      schedules: [],
+      interfaces: [],
+      ...overrides,
+    };
+  }
+
+  it("V48: invalid observability level -> error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "verbose", exporter: "otlp", sampleRate: 1.0,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v48 = results.filter((r) => r.rule === "V48");
+    expect(v48.length).toBeGreaterThan(0);
+    expect(v48[0].level).toBe("error");
+    expect(v48[0].message).toContain("verbose");
+  });
+
+  it("V48: valid observability level -> no error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "warn", exporter: "otlp", sampleRate: 1.0,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v48 = results.filter((r) => r.rule === "V48");
+    expect(v48).toHaveLength(0);
+  });
+
+  it("V49: invalid observability exporter -> error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "prometheus", sampleRate: 1.0,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v49 = results.filter((r) => r.rule === "V49");
+    expect(v49.length).toBeGreaterThan(0);
+    expect(v49[0].level).toBe("error");
+    expect(v49[0].message).toContain("prometheus");
+  });
+
+  it("V49: valid observability exporter -> no error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "datadog", sampleRate: 1.0,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v49 = results.filter((r) => r.rule === "V49");
+    expect(v49).toHaveLength(0);
+  });
+
+  it("V50: sample-rate > 1 -> error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "otlp", sampleRate: 1.5,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v50 = results.filter((r) => r.rule === "V50");
+    expect(v50.length).toBeGreaterThan(0);
+    expect(v50[0].level).toBe("error");
+  });
+
+  it("V50: sample-rate < 0 -> error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "otlp", sampleRate: -0.1,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v50 = results.filter((r) => r.rule === "V50");
+    expect(v50.length).toBeGreaterThan(0);
+  });
+
+  it("V50: valid sample-rate (0.5) -> no error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "otlp", sampleRate: 0.5,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v50 = results.filter((r) => r.rule === "V50");
+    expect(v50).toHaveLength(0);
+  });
+
+  it("V50: sample-rate 0 (boundary) -> no error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "otlp", sampleRate: 0,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v50 = results.filter((r) => r.rule === "V50");
+    expect(v50).toHaveLength(0);
+  });
+
+  it("V50: sample-rate 1 (boundary) -> no error", () => {
+    const ast = minimalAST({
+      observability: {
+        enabled: true, level: "info", exporter: "otlp", sampleRate: 1,
+        capture: { prompts: false, completions: false, toolArgs: false, toolResults: false },
+        spans: { agents: true, tools: true, gates: true, memory: false },
+      },
+    });
+    const results = validate(ast);
+    const v50 = results.filter((r) => r.rule === "V50");
+    expect(v50).toHaveLength(0);
+  });
+
+  it("no observability block -> no V48/V49/V50 errors", () => {
+    const ast = minimalAST({ observability: null });
+    const results = validate(ast);
+    const obsRules = results.filter((r) => ["V48", "V49", "V50"].includes(r.rule));
+    expect(obsRules).toHaveLength(0);
   });
 });

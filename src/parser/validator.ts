@@ -31,6 +31,9 @@ import type {
   InterfaceDef,
   RetryConfig,
   ActionNode,
+  SchemaType,
+  SchemaFieldDef,
+  SensitiveValue,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -1443,6 +1446,225 @@ function v45TopologyTimeout(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V46: Schema type names must be valid (primitive, array of X, enum, or ref). */
+function v46SchemaTypeValid(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_PRIMITIVES = new Set(["string", "number", "integer", "boolean", "object"]);
+
+  function validateSchemaType(t: SchemaType, context: string): void {
+    switch (t.kind) {
+      case "primitive":
+        if (!VALID_PRIMITIVES.has(t.value)) {
+          results.push({
+            rule: "V46",
+            level: "error",
+            message: `Invalid schema type "${t.value}" in ${context} — must be string, number, integer, boolean, or object`,
+          });
+        }
+        break;
+      case "array":
+        validateSchemaType(t.itemType, context);
+        break;
+      case "enum":
+        // Enum values are always valid strings
+        break;
+      case "ref":
+        // Ref validity is checked by V47
+        break;
+    }
+  }
+
+  function validateFields(fields: SchemaFieldDef[], context: string): void {
+    for (const field of fields) {
+      validateSchemaType(field.type, `${context} field "${field.name}"`);
+    }
+  }
+
+  // Check top-level schemas
+  for (const schema of ast.schemas) {
+    validateFields(schema.fields, `schema "${schema.id}"`);
+  }
+
+  // Check agent input/output schemas
+  for (const node of ast.nodes) {
+    if (node.type === "agent") {
+      if (node.inputSchema) {
+        validateFields(node.inputSchema, `agent "${node.id}" input-schema`);
+      }
+      if (node.outputSchema) {
+        validateFields(node.outputSchema, `agent "${node.id}" output-schema`);
+      }
+    }
+  }
+
+  return results;
+}
+
+/** V47: Schema `ref` names must resolve to a declared schema in the top-level `schemas` block. */
+function v47SchemaRefResolves(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const declaredSchemas = new Set(ast.schemas.map((s) => s.id));
+
+  function checkRefs(t: SchemaType, context: string): void {
+    switch (t.kind) {
+      case "ref":
+        if (!declaredSchemas.has(t.name)) {
+          results.push({
+            rule: "V47",
+            level: "error",
+            message: `Schema reference "${t.name}" in ${context} does not resolve to any declared schema`,
+          });
+        }
+        break;
+      case "array":
+        checkRefs(t.itemType, context);
+        break;
+      // primitive and enum have no refs
+    }
+  }
+
+  function checkFields(fields: SchemaFieldDef[], context: string): void {
+    for (const field of fields) {
+      checkRefs(field.type, `${context} field "${field.name}"`);
+    }
+  }
+
+  // Check top-level schemas (can reference each other)
+  for (const schema of ast.schemas) {
+    checkFields(schema.fields, `schema "${schema.id}"`);
+  }
+
+  // Check agent input/output schemas
+  for (const node of ast.nodes) {
+    if (node.type === "agent") {
+      if (node.inputSchema) {
+        checkFields(node.inputSchema, `agent "${node.id}" input-schema`);
+      }
+      if (node.outputSchema) {
+        checkFields(node.outputSchema, `agent "${node.id}" output-schema`);
+      }
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V48 – Observability level enum
+// ---------------------------------------------------------------------------
+
+const VALID_OBSERVABILITY_LEVELS: ReadonlySet<string> = new Set([
+  "debug", "info", "warn", "error",
+]);
+
+/** V48: Validate `observability.level` is one of: debug, info, warn, error. */
+function v48ObservabilityLevel(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.observability && !VALID_OBSERVABILITY_LEVELS.has(ast.observability.level)) {
+    results.push({
+      rule: "V48",
+      level: "error",
+      message: `Observability level "${ast.observability.level}" is invalid — must be one of: ${[...VALID_OBSERVABILITY_LEVELS].join(", ")}`,
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V49 – Observability exporter enum
+// ---------------------------------------------------------------------------
+
+const VALID_OBSERVABILITY_EXPORTERS: ReadonlySet<string> = new Set([
+  "otlp", "langsmith", "datadog", "stdout", "none",
+]);
+
+/** V49: Validate `observability.exporter` is one of: otlp, langsmith, datadog, stdout, none. */
+function v49ObservabilityExporter(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.observability && !VALID_OBSERVABILITY_EXPORTERS.has(ast.observability.exporter)) {
+    results.push({
+      rule: "V49",
+      level: "error",
+      message: `Observability exporter "${ast.observability.exporter}" is invalid — must be one of: ${[...VALID_OBSERVABILITY_EXPORTERS].join(", ")}`,
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V50 – Observability sample-rate range
+// ---------------------------------------------------------------------------
+
+/** V50: Validate `observability.sample-rate` is between 0 and 1 (inclusive). */
+function v50ObservabilitySampleRate(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.observability) {
+    const rate = ast.observability.sampleRate;
+    if (isNaN(rate) || rate < 0 || rate > 1) {
+      results.push({
+        rule: "V50",
+        level: "error",
+        message: `Observability sample-rate ${rate} is invalid — must be between 0 and 1`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V51 – Sensitive literal warning
+// ---------------------------------------------------------------------------
+
+const SENSITIVE_ENV_VAR_RE = /\$\{[^}]+\}/;
+
+/**
+ * V51: When `sensitive` is used with a literal string (not a `${...}` env var
+ * reference), emit a warning. Literal secrets should never appear in source.
+ */
+function v51SensitiveLiteral(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const [key, val] of Object.entries(ast.env)) {
+    if (typeof val === "object" && val !== null && val.sensitive && !val.secretRef) {
+      // It's a sensitive value without a secret ref — check if it's a literal
+      if (!SENSITIVE_ENV_VAR_RE.test(val.value)) {
+        results.push({
+          rule: "V51",
+          level: "warning",
+          message: `env "${key}": sensitive value should reference an environment variable, not a literal string`,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V52 – Secret URI scheme validation
+// ---------------------------------------------------------------------------
+
+const VALID_SECRET_SCHEMES: ReadonlySet<string> = new Set([
+  "vault", "op", "awssm", "ssm", "gcpsm", "azurekv",
+]);
+
+/**
+ * V52: Validate that secret URI schemes are one of the supported providers.
+ */
+function v52SecretUriScheme(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const [key, val] of Object.entries(ast.env)) {
+    if (typeof val === "object" && val !== null && val.secretRef) {
+      if (!VALID_SECRET_SCHEMES.has(val.secretRef.scheme)) {
+        results.push({
+          rule: "V52",
+          level: "error",
+          message: `env "${key}": unknown secret URI scheme "${val.secretRef.scheme}" — must be one of: ${[...VALID_SECRET_SCHEMES].join(", ")}`,
+        });
+      }
+    }
+  }
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -1500,5 +1722,12 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v43WaitFormat(ast),
     ...v44ErrorHandlerExists(ast),
     ...v45TopologyTimeout(ast),
+    ...v46SchemaTypeValid(ast),
+    ...v47SchemaRefResolves(ast),
+    ...v48ObservabilityLevel(ast),
+    ...v49ObservabilityExporter(ast),
+    ...v50ObservabilitySampleRate(ast),
+    ...v51SensitiveLiteral(ast),
+    ...v52SecretUriScheme(ast),
   ];
 }

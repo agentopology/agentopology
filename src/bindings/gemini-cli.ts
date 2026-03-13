@@ -290,7 +290,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
   }
 
   // Environment variables
-  const envVars: Record<string, string> = { ...ast.env };
+  const envVars: Record<string, string> = {};
+  for (const [key, val] of Object.entries(ast.env)) {
+    envVars[key] = typeof val === "string" ? val : val.value;
+  }
 
   // If a google provider exists, scaffold the GEMINI_API_KEY env var
   if (ast.providers && ast.providers.length > 0) {

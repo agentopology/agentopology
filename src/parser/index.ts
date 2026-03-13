@@ -35,6 +35,14 @@ import type {
   InterfaceDef,
   RetryConfig,
   DefaultsDef,
+  SchemaType,
+  SchemaFieldDef,
+  SchemaDef,
+  SensitiveValue,
+  SecretRef,
+  ObservabilityDef,
+  ObservabilityCaptureConfig,
+  ObservabilitySpanConfig,
 } from "./ast.js";
 
 import {
@@ -106,6 +114,101 @@ function parseExtensionsBlock(block: string): Record<string, Record<string, unkn
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Schema parsing
+// ---------------------------------------------------------------------------
+
+/** Known primitive type names for the schema type system. */
+const SCHEMA_PRIMITIVES = new Set(["string", "number", "integer", "boolean", "object"]);
+
+/**
+ * Parse a type expression string into a {@link SchemaType}.
+ *
+ * Supports:
+ * - Primitives: `"string"`, `"number"`, `"integer"`, `"boolean"`, `"object"`
+ * - Arrays: `"array of string"`, `"array of finding"`
+ * - Enums: `"low | medium | high"`
+ * - References: any non-primitive identifier like `"finding"`
+ */
+export function parseSchemaType(typeStr: string): SchemaType {
+  const trimmed = typeStr.trim();
+
+  // Enum: contains ` | ` separator
+  if (trimmed.includes("|")) {
+    const values = trimmed.split("|").map((v) => v.trim()).filter(Boolean);
+    return { kind: "enum", values };
+  }
+
+  // Array: "array of <type>"
+  const arrayMatch = trimmed.match(/^array\s+of\s+(.+)$/i);
+  if (arrayMatch) {
+    return { kind: "array", itemType: parseSchemaType(arrayMatch[1]) };
+  }
+
+  // Primitive
+  if (SCHEMA_PRIMITIVES.has(trimmed)) {
+    return { kind: "primitive", value: trimmed as SchemaType & { kind: "primitive" } extends { value: infer V } ? V : never };
+  }
+
+  // Reference to a named schema
+  return { kind: "ref", name: trimmed };
+}
+
+/**
+ * Parse a block body of `name: type-expression` lines into schema field definitions.
+ *
+ * Each line is parsed as a KV pair. A leading `?` on the type expression marks
+ * the field as optional.
+ */
+export function parseSchemaFields(body: string): SchemaFieldDef[] {
+  const fields: SchemaFieldDef[] = [];
+
+  for (const line of body.split("\n")) {
+    const kv = parseKV(line);
+    if (!kv) continue;
+
+    const [name, rawType] = kv;
+    let typeStr = rawType.trim();
+    let optional = false;
+
+    if (typeStr.startsWith("?")) {
+      optional = true;
+      typeStr = typeStr.slice(1).trim();
+    }
+
+    fields.push({
+      name,
+      type: parseSchemaType(typeStr),
+      optional,
+    });
+  }
+
+  return fields;
+}
+
+/**
+ * Parse the top-level `schemas { schema <id> { ... } ... }` block.
+ *
+ * Returns an array of named schema definitions.
+ */
+export function parseSchemas(topBody: string): SchemaDef[] {
+  const schemasBlock = extractBlock(topBody, "schemas");
+  if (!schemasBlock) return [];
+
+  const schemaBlocks = extractAllBlocks(schemasBlock.body, "schema");
+  const schemas: SchemaDef[] = [];
+
+  for (const block of schemaBlocks) {
+    if (!block.id) continue;
+    schemas.push({
+      id: block.id,
+      fields: parseSchemaFields(block.body),
+    });
+  }
+
+  return schemas;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +470,16 @@ export function parseAgent(
   // Fallback chain
   const fallbackChain = parseMultilineList(body, "fallback-chain");
   if (fallbackChain.length) node.fallbackChain = fallbackChain;
+
+  // Input/output schema blocks
+  const inputSchemaBlock = extractBlock(body, "input-schema");
+  if (inputSchemaBlock) {
+    node.inputSchema = parseSchemaFields(inputSchemaBlock.body);
+  }
+  const outputSchemaBlock = extractBlock(body, "output-schema");
+  if (outputSchemaBlock) {
+    node.outputSchema = parseSchemaFields(outputSchemaBlock.body);
+  }
 
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
@@ -938,14 +1051,42 @@ export function parseContext(body: string): { file?: string; includes?: string[]
 /**
  * Parse the `env { ... }` block.
  *
- * Returns a record of environment variable key-value pairs.
+ * Returns a record of environment variable key-value pairs. Values may be
+ * plain strings (backward compatible) or {@link SensitiveValue} objects when
+ * the `sensitive` or `secret` modifier is used.
  */
-export function parseEnv(body: string): Record<string, string> {
-  const result: Record<string, string> = {};
+export function parseEnv(body: string): Record<string, string | SensitiveValue> {
+  const result: Record<string, string | SensitiveValue> = {};
   for (const line of body.split("\n")) {
     const kv = parseKV(line);
     if (kv) {
-      result[kv[0]] = unquote(kv[1]);
+      const rawValue = kv[1].trim();
+
+      // Check for `secret "uri"` modifier
+      if (rawValue.startsWith("secret ")) {
+        const uriPart = rawValue.slice("secret ".length).trim();
+        const uri = unquote(uriPart);
+        const schemeMatch = uri.match(/^([a-zA-Z][a-zA-Z0-9]*):\/\//);
+        const scheme = schemeMatch ? schemeMatch[1] : "";
+        const secretRef: SecretRef = { scheme, uri };
+        result[kv[0]] = {
+          value: uri,
+          sensitive: true,
+          secretRef,
+        } satisfies SensitiveValue;
+      }
+      // Check for `sensitive` modifier
+      else if (rawValue.startsWith("sensitive ")) {
+        const innerValue = rawValue.slice("sensitive ".length).trim();
+        result[kv[0]] = {
+          value: unquote(innerValue),
+          sensitive: true,
+        } satisfies SensitiveValue;
+      }
+      // Plain string (backward compatible)
+      else {
+        result[kv[0]] = unquote(rawValue);
+      }
     }
   }
   return result;
@@ -1163,6 +1304,61 @@ export function parseDefaults(body: string): DefaultsDef | null {
   return hasFields ? defaults : null;
 }
 
+/**
+ * Parse the `observability { ... }` block.
+ *
+ * Extracts simple KV fields plus `capture { ... }` and `spans { ... }`
+ * sub-blocks. Returns an {@link ObservabilityDef} with defaults applied
+ * for any omitted fields.
+ */
+export function parseObservability(body: string): ObservabilityDef {
+  const fields = parseFields(body);
+
+  // Parse simple KV fields with defaults
+  const enabled = fields.enabled !== undefined ? fields.enabled === "true" : true;
+  const level = fields.level ?? "info";
+  const exporter = fields.exporter ?? "otlp";
+  const endpoint = fields.endpoint ? unquote(fields.endpoint) : undefined;
+  const service = fields.service ? unquote(fields.service) : undefined;
+  const sampleRate = fields["sample-rate"] !== undefined
+    ? parseFloat(fields["sample-rate"])
+    : 1.0;
+
+  // Parse capture sub-block with defaults (all false)
+  const captureBlock = extractBlock(body, "capture");
+  const captureFields = captureBlock ? parseFields(captureBlock.body) : {};
+  const capture: ObservabilityCaptureConfig = {
+    prompts: captureFields.prompts === "true",
+    completions: captureFields.completions === "true",
+    toolArgs: (captureFields["tool-args"] ?? captureFields.toolArgs) === "true",
+    toolResults: (captureFields["tool-results"] ?? captureFields.toolResults) === "true",
+  };
+
+  // Parse spans sub-block with defaults (agents/tools/gates: true, memory: false)
+  const spansBlock = extractBlock(body, "spans");
+  const spansFields = spansBlock ? parseFields(spansBlock.body) : {};
+  const spans: ObservabilitySpanConfig = {
+    agents: spansFields.agents !== undefined ? spansFields.agents === "true" : true,
+    tools: spansFields.tools !== undefined ? spansFields.tools === "true" : true,
+    gates: spansFields.gates !== undefined ? spansFields.gates === "true" : true,
+    memory: spansFields.memory !== undefined ? spansFields.memory === "true" : false,
+  };
+
+  const def: ObservabilityDef = {
+    enabled,
+    level,
+    exporter,
+    sampleRate,
+    capture,
+    spans,
+  };
+
+  if (endpoint !== undefined) def.endpoint = endpoint;
+  if (service !== undefined) def.service = service;
+
+  return def;
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -1375,6 +1571,13 @@ export function parse(source: string): TopologyAST {
   const defaultsBlock = extractBlock(topBody, "defaults");
   const defaults = defaultsBlock ? parseDefaults(defaultsBlock.body) : null;
 
+  // --- Schemas ---
+  const schemas = parseSchemas(topBody);
+
+  // --- Observability ---
+  const observabilityBlock = extractBlock(topBody, "observability");
+  const observability = observabilityBlock ? parseObservability(observabilityBlock.body) : null;
+
   // --- Top-level Extensions ---
   const topLevelExtensions = parseExtensionsBlock(topBody);
 
@@ -1383,7 +1586,7 @@ export function parse(source: string): TopologyAST {
     "meta", "orchestrator", "flow", "memory", "batch", "environments",
     "triggers", "settings", "mcp-servers", "metering", "context", "env",
     "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
-    "defaults",
+    "defaults", "schemas", "observability",
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
@@ -1425,7 +1628,9 @@ export function parse(source: string): TopologyAST {
     schedules,
     interfaces,
     defaults,
+    schemas,
     ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
+    observability,
   };
 
   // Attach V12 parse-time errors for the validator to consume.

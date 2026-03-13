@@ -159,6 +159,35 @@ export interface MeteringDef {
 }
 
 // ---------------------------------------------------------------------------
+// Schema system
+// ---------------------------------------------------------------------------
+
+/** A schema type expression (primitive, array, enum, or reference). */
+export type SchemaType =
+  | { kind: "primitive"; value: "string" | "number" | "integer" | "boolean" | "object" }
+  | { kind: "array"; itemType: SchemaType }
+  | { kind: "enum"; values: string[] }
+  | { kind: "ref"; name: string };
+
+/** A single field definition within a schema block. */
+export interface SchemaFieldDef {
+  /** Field name. */
+  name: string;
+  /** Field type expression. */
+  type: SchemaType;
+  /** Whether this field is optional (prefixed with `?`). */
+  optional: boolean;
+}
+
+/** A named schema definition from the top-level `schemas` block. */
+export interface SchemaDef {
+  /** Schema identifier. */
+  id: string;
+  /** Field definitions. */
+  fields: SchemaFieldDef[];
+}
+
+// ---------------------------------------------------------------------------
 // Retry configuration
 // ---------------------------------------------------------------------------
 
@@ -299,6 +328,10 @@ export interface AgentNode extends BaseNode {
   logLevel?: string;
   /** Join semantics for fan-in: "all" | "any" | "all-done" | "none-failed". */
   join?: string;
+  /** Typed input schema fields for structured input. */
+  inputSchema?: SchemaFieldDef[];
+  /** Typed output schema fields for structured output. */
+  outputSchema?: SchemaFieldDef[];
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -350,6 +383,28 @@ export interface DefaultsDef {
   timeout?: string;
   /** Log level: "debug" | "info" | "warn" | "error". */
   logLevel?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Secrets & sensitive values
+// ---------------------------------------------------------------------------
+
+/** A reference to a secret stored in an external secret manager. */
+export interface SecretRef {
+  /** Secret manager scheme (e.g. "vault", "op", "awssm"). */
+  scheme: string;
+  /** Full URI string (e.g. "vault://secret/data/prod#key"). */
+  uri: string;
+}
+
+/** A string value marked as sensitive or referencing a secret. */
+export interface SensitiveValue {
+  /** The raw string value. */
+  value: string;
+  /** Whether this value is sensitive and should not be echoed. */
+  sensitive: boolean;
+  /** Optional secret reference parsed from a `secret "uri"` form. */
+  secretRef?: SecretRef;
 }
 
 /** Union of all node types. */
@@ -468,8 +523,8 @@ export interface TopologyAST {
     /** Additional files to include in context. */
     includes?: string[];
   };
-  /** Environment variables for the topology. */
-  env: Record<string, string>;
+  /** Environment variables for the topology (plain strings or sensitive values). */
+  env: Record<string, string | SensitiveValue>;
   /** Provider configurations for API credentials and model routing. */
   providers: ProviderDef[];
   /** Scheduled job definitions. */
@@ -478,6 +533,58 @@ export interface TopologyAST {
   interfaces: InterfaceDef[];
   /** Topology-level defaults for sampling params and shared agent config. */
   defaults: DefaultsDef | null;
+  /** Named schema definitions from the top-level `schemas` block. */
+  schemas: SchemaDef[];
   /** Top-level platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+  /** Observability / tracing configuration (null if not configured). */
+  observability: ObservabilityDef | null;
+}
+
+// ---------------------------------------------------------------------------
+// Observability
+// ---------------------------------------------------------------------------
+
+/** Capture settings for observability — what data to record. */
+export interface ObservabilityCaptureConfig {
+  /** Whether to capture prompt text sent to models. */
+  prompts: boolean;
+  /** Whether to capture completion text returned from models. */
+  completions: boolean;
+  /** Whether to capture tool invocation arguments. */
+  toolArgs: boolean;
+  /** Whether to capture tool invocation results. */
+  toolResults: boolean;
+}
+
+/** Span settings for observability — which spans to emit. */
+export interface ObservabilitySpanConfig {
+  /** Emit spans for agent execution. */
+  agents: boolean;
+  /** Emit spans for tool invocations. */
+  tools: boolean;
+  /** Emit spans for gate checks. */
+  gates: boolean;
+  /** Emit spans for memory reads/writes. */
+  memory: boolean;
+}
+
+/** Observability / tracing configuration block. */
+export interface ObservabilityDef {
+  /** Whether observability is enabled. */
+  enabled: boolean;
+  /** Log level for observability output. */
+  level: string;
+  /** Exporter backend (e.g. "otlp", "langsmith", "datadog", "stdout", "none"). */
+  exporter: string;
+  /** Exporter endpoint URL. */
+  endpoint?: string;
+  /** Service name for trace attribution. */
+  service?: string;
+  /** Sampling rate between 0 and 1. */
+  sampleRate: number;
+  /** Data capture configuration. */
+  capture: ObservabilityCaptureConfig;
+  /** Span emission configuration. */
+  spans: ObservabilitySpanConfig;
 }
