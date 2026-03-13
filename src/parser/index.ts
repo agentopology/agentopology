@@ -20,6 +20,7 @@ import type {
   ActionNode,
   AgentNode,
   GateNode,
+  HumanNode,
   NodeDef,
   EdgeDef,
   DepthDef,
@@ -34,6 +35,7 @@ import type {
   ScheduleJobDef,
   InterfaceDef,
   RetryConfig,
+  CircuitBreakerConfig,
   DefaultsDef,
   SchemaType,
   SchemaFieldDef,
@@ -413,6 +415,21 @@ export function parseAgent(
   // Join semantics
   if (fields.join) node.join = fields.join;
 
+  // Circuit breaker
+  const cbBlock = extractBlock(body, "circuit-breaker");
+  if (cbBlock) {
+    const cbFields = parseFields(cbBlock.body);
+    const cb: CircuitBreakerConfig = {
+      threshold: cbFields.threshold ? parseInt(cbFields.threshold, 10) : 1,
+      window: cbFields.window ?? "1m",
+      cooldown: cbFields.cooldown ?? "30s",
+    };
+    node.circuitBreaker = cb;
+  }
+
+  // Compensation / saga
+  if (fields.compensates) node.compensates = fields.compensates;
+
   if (fields.isolation) node.isolation = fields.isolation;
   if (fields.background) node.background = fields.background === "true";
   const mcpServers = parseMultilineList(body, "mcp-servers");
@@ -530,6 +547,25 @@ export function parseGate(id: string, body: string): GateNode {
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
+
+  return node;
+}
+
+/**
+ * Parse a `human <id> { ... }` block into a {@link HumanNode}.
+ */
+export function parseHuman(id: string, body: string): HumanNode {
+  const fields = parseFields(body);
+
+  const node: HumanNode = {
+    id,
+    type: "human",
+    label: toLabel(id),
+  };
+
+  if (fields.description) node.description = unquote(fields.description);
+  if (fields.timeout) node.timeout = fields.timeout;
+  if (fields["on-timeout"]) node.onTimeout = fields["on-timeout"];
 
   return node;
 }
@@ -1384,8 +1420,8 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   const lines = rawSource.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Match: agent <id> {, action <id> {, gate <id> {
-    const namedMatch = line.match(/^\s*(?:agent|action|gate)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    // Match: agent <id> {, action <id> {, gate <id> {, human <id> {
+    const namedMatch = line.match(/^\s*(?:agent|action|gate|human)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
     if (namedMatch) {
       sourceMap[namedMatch[1]] = i + 1; // 1-based line number
       continue;
@@ -1633,6 +1669,14 @@ export function parse(source: string): TopologyAST {
       if (block.id) {
         nodes.push(parseGate(block.id, block.body));
       }
+    }
+  }
+
+  // Human nodes
+  const humanBlocks = extractAllBlocks(topBody, "human");
+  for (const block of humanBlocks) {
+    if (block.id) {
+      nodes.push(parseHuman(block.id, block.body));
     }
   }
 

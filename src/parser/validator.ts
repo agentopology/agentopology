@@ -31,9 +31,11 @@ import type {
   InterfaceDef,
   RetryConfig,
   ActionNode,
+  HumanNode,
   SchemaType,
   SchemaFieldDef,
   SensitiveValue,
+  CircuitBreakerConfig,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +166,10 @@ function isGate(n: NodeDef): n is GateNode {
 
 function isOrchestrator(n: NodeDef): n is OrchestratorNode {
   return n.type === "orchestrator";
+}
+
+function isHuman(n: NodeDef): n is HumanNode {
+  return n.type === "human";
 }
 
 /** Build a set of all declared node ids. */
@@ -1041,6 +1047,38 @@ function v30TimeoutFormat(ast: TopologyAST): ValidationResult[] {
         });
       }
     }
+    if (isHuman(node) && node.timeout) {
+      if (!durationRe.test(node.timeout)) {
+        results.push({
+          rule: "V30",
+          level: "error",
+          message: `Human node "${node.id}" has invalid timeout "${node.timeout}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V59: Human node `on-timeout` must be one of: halt, skip, or start with "fallback ". */
+function v59HumanOnTimeout(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_ON_TIMEOUT = new Set(["halt", "skip"]);
+
+  for (const node of ast.nodes) {
+    if (isHuman(node) && node.onTimeout) {
+      if (!VALID_ON_TIMEOUT.has(node.onTimeout) && !node.onTimeout.startsWith("fallback ")) {
+        results.push({
+          rule: "V59",
+          level: "error",
+          message: `Human node "${node.id}" has invalid on-timeout "${node.onTimeout}" — must be "halt", "skip", or "fallback <id>"`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
   }
   return results;
 }
@@ -1765,6 +1803,81 @@ function v56ImportSourcePath(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V57 – Circuit breaker fields validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V57: Validate circuit-breaker fields — threshold must be a positive integer,
+ * window and cooldown must be valid duration strings matching /^\d+[smhd]$/.
+ */
+function v57CircuitBreakerFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const durationRe = /^\d+[smhd]$/;
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node) || !node.circuitBreaker) continue;
+    const cb = node.circuitBreaker;
+
+    if (!Number.isInteger(cb.threshold) || cb.threshold < 1) {
+      results.push({
+        rule: "V57",
+        level: "error",
+        message: `Agent "${node.id}" circuit-breaker has invalid threshold "${cb.threshold}" — must be a positive integer`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+
+    if (!durationRe.test(cb.window)) {
+      results.push({
+        rule: "V57",
+        level: "error",
+        message: `Agent "${node.id}" circuit-breaker has invalid window "${cb.window}" — must match format like "30s", "5m", "2h", "1d"`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+
+    if (!durationRe.test(cb.cooldown)) {
+      results.push({
+        rule: "V57",
+        level: "error",
+        message: `Agent "${node.id}" circuit-breaker has invalid cooldown "${cb.cooldown}" — must match format like "30s", "5m", "2h", "1d"`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V58 – compensates must reference a declared agent
+// ---------------------------------------------------------------------------
+
+/**
+ * V58: `compensates` must reference a declared agent node.
+ */
+function v58CompensatesTarget(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const nodeIds = allNodeIds(ast);
+
+  for (const node of ast.nodes) {
+    if (node.type === "agent" && node.compensates) {
+      if (!nodeIds.has(node.compensates)) {
+        results.push({
+          rule: "V58",
+          level: "error",
+          message: `agent "${node.id}": compensates target "${node.compensates}" is not a declared node`,
+          node: node.id,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1832,5 +1945,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v54InterfaceEndpoints(ast),
     ...v55UniqueImportAlias(ast),
     ...v56ImportSourcePath(ast),
+    ...v57CircuitBreakerFields(ast),
+    ...v58CompensatesTarget(ast),
+    ...v59HumanOnTimeout(ast),
   ];
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse, parseSchemaType, parseSchemaFields, parseParams, parseInterfaceEndpoints, parseImports, parseIncludes } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, HumanNode, RetryConfig, CircuitBreakerConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -5161,5 +5161,377 @@ topology simple : [pipeline] {
       const v56 = results.filter((r) => r.rule === "V56");
       expect(v56).toHaveLength(1);
     });
+  });
+});
+
+// =========================================================================
+// Wave 5: Compensation / Saga Pattern (F27)
+// =========================================================================
+
+describe("Wave 5 — Compensation / Saga (F27)", () => {
+  it("parses agent with compensates field", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent deployer {
+    model: sonnet
+  }
+  agent rollback-deployer {
+    model: sonnet
+    compensates: deployer
+  }
+  flow { a -> deployer -> rollback-deployer }
+}`;
+    const ast = parse(src);
+    const rollback = ast.nodes.find((n) => n.id === "rollback-deployer") as AgentNode;
+    expect(rollback).toBeDefined();
+    expect(rollback.compensates).toBe("deployer");
+  });
+
+  it("agent without compensates has no compensates field", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent worker {
+    model: sonnet
+  }
+  flow { a -> worker }
+}`;
+    const ast = parse(src);
+    const worker = ast.nodes.find((n) => n.id === "worker") as AgentNode;
+    expect(worker).toBeDefined();
+    expect(worker.compensates).toBeUndefined();
+  });
+
+  it("V58: compensates referencing non-existent agent -> error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent rollback {
+    model: sonnet
+    compensates: ghost-agent
+  }
+  flow { a -> rollback }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v58 = results.filter((r) => r.rule === "V58");
+    expect(v58).toHaveLength(1);
+    expect(v58[0].level).toBe("error");
+    expect(v58[0].message).toContain("ghost-agent");
+    expect(v58[0].node).toBe("rollback");
+  });
+
+  it("V58: compensates referencing existing agent -> no error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent deployer {
+    model: sonnet
+  }
+  agent rollback-deployer {
+    model: sonnet
+    compensates: deployer
+  }
+  flow { a -> deployer -> rollback-deployer }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v58 = results.filter((r) => r.rule === "V58");
+    expect(v58).toHaveLength(0);
+  });
+
+  it("backward compat: existing topologies without compensates still work", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w1 { model: sonnet }
+  agent w2 { model: opus }
+  flow { a -> w1 -> w2 }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v58 = results.filter((r) => r.rule === "V58");
+    expect(v58).toHaveLength(0);
+    // No compensates fields on any agents
+    for (const node of ast.nodes) {
+      if (node.type === "agent") {
+        expect(node.compensates).toBeUndefined();
+      }
+    }
+  });
+});
+
+// =========================================================================
+// Wave 5: Circuit Breaker on Agents (F26)
+// =========================================================================
+
+describe("Circuit Breaker (F26)", () => {
+
+  describe("Parsing", () => {
+    it("agent with circuit-breaker block parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    circuit-breaker {
+      threshold: 5
+      window: 5m
+      cooldown: 30s
+    }
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.circuitBreaker).toBeDefined();
+      expect(agent.circuitBreaker!.threshold).toBe(5);
+      expect(agent.circuitBreaker!.window).toBe("5m");
+      expect(agent.circuitBreaker!.cooldown).toBe("30s");
+    });
+
+    it("agent without circuit-breaker has no circuitBreaker field", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: sonnet }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.circuitBreaker).toBeUndefined();
+    });
+  });
+
+  describe("V57: circuit-breaker field validation", () => {
+
+    function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+      return {
+        topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+        ],
+        edges: [
+          { from: "intake", to: "worker", condition: null, maxIterations: null },
+        ],
+        depth: { factors: [], levels: [] },
+        memory: {},
+        batch: {},
+        environments: {},
+        triggers: [],
+        hooks: [],
+        settings: {},
+        mcpServers: {},
+        metering: null,
+        defaults: null,
+        schemas: [],
+        observability: null,
+        skills: [],
+        toolDefs: [],
+        roles: {},
+        context: {},
+        env: {},
+        providers: [],
+        schedules: [],
+        interfaces: [],
+        params: [],
+        interfaceEndpoints: null,
+        imports: [],
+        includes: [],
+        ...overrides,
+      };
+    }
+
+    it("valid circuit-breaker -> no V57 errors", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 5, window: "5m", cooldown: "30s" } },
+        ],
+      });
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(0);
+    });
+
+    it("invalid threshold (0) -> V57 error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 0, window: "5m", cooldown: "30s" } },
+        ],
+      });
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(1);
+      expect(v57[0].message).toContain("threshold");
+    });
+
+    it("invalid window format -> V57 error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 3, window: "five-min", cooldown: "30s" } },
+        ],
+      });
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(1);
+      expect(v57[0].message).toContain("window");
+    });
+
+    it("invalid cooldown format -> V57 error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 3, window: "5m", cooldown: "invalid" } },
+        ],
+      });
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(1);
+      expect(v57[0].message).toContain("cooldown");
+    });
+
+    it("multiple invalid fields -> multiple V57 errors", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: -1, window: "bad", cooldown: "worse" } },
+        ],
+      });
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(3);
+    });
+
+    it("agent without circuit-breaker -> no V57 errors", () => {
+      const ast = minimalAST();
+      const results = validate(ast);
+      const v57 = results.filter((r) => r.rule === "V57");
+      expect(v57).toHaveLength(0);
+    });
+  });
+});
+
+// =========================================================================
+// Wave 5: Human Node Type (F32)
+// =========================================================================
+
+describe("Human node type (F32)", () => {
+  it("parses human node with all fields", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  human approval {
+    description: "Human reviews and approves the deployment plan"
+    timeout: 1h
+    on-timeout: skip
+  }
+  flow { intake -> approval }
+}`;
+    const ast = parse(src);
+    const human = ast.nodes.find((n) => n.id === "approval") as HumanNode;
+    expect(human).toBeDefined();
+    expect(human.type).toBe("human");
+    expect(human.label).toBe("Approval");
+    expect(human.description).toBe("Human reviews and approves the deployment plan");
+    expect(human.timeout).toBe("1h");
+    expect(human.onTimeout).toBe("skip");
+  });
+
+  it("human node appears in flow edges", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  human review {
+    description: "Review step"
+  }
+  agent worker { model: sonnet }
+  flow { intake -> review -> worker }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges;
+    expect(edges.some((e) => e.from === "intake" && e.to === "review")).toBe(true);
+    expect(edges.some((e) => e.from === "review" && e.to === "worker")).toBe(true);
+  });
+
+  it("V59: invalid on-timeout -> error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  human approval {
+    timeout: 1h
+    on-timeout: retry
+  }
+  flow { intake -> approval }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v59 = results.filter((r) => r.rule === "V59");
+    expect(v59).toHaveLength(1);
+    expect(v59[0].level).toBe("error");
+    expect(v59[0].message).toContain("approval");
+    expect(v59[0].message).toContain("retry");
+  });
+
+  it("V59: valid on-timeout values pass", () => {
+    for (const value of ["halt", "skip", "fallback backup-agent"]) {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  human approval {
+    timeout: 1h
+    on-timeout: ${value}
+  }
+  flow { intake -> approval }
+}`;
+      const ast = parse(src);
+      const results = validate(ast);
+      const v59 = results.filter((r) => r.rule === "V59");
+      expect(v59).toHaveLength(0);
+    }
+  });
+
+  it("V30: invalid timeout on human node -> error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  human approval {
+    timeout: forever
+    on-timeout: halt
+  }
+  flow { intake -> approval }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v30 = results.filter((r) => r.rule === "V30");
+    expect(v30).toHaveLength(1);
+    expect(v30[0].message).toContain("approval");
+  });
+
+  it("backward compat: existing topologies without human nodes still work", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w1 { model: sonnet }
+  agent w2 { model: opus }
+  flow { a -> w1 -> w2 }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    // No human nodes parsed
+    expect(ast.nodes.filter((n) => n.type === "human")).toHaveLength(0);
+    // No V59 errors
+    const v59 = results.filter((r) => r.rule === "V59");
+    expect(v59).toHaveLength(0);
   });
 });

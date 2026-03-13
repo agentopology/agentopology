@@ -188,6 +188,20 @@ export interface SchemaDef {
 }
 
 // ---------------------------------------------------------------------------
+// Circuit breaker configuration
+// ---------------------------------------------------------------------------
+
+/** Circuit breaker configuration for agents. */
+export interface CircuitBreakerConfig {
+  /** Number of failures before the circuit opens. */
+  threshold: number;
+  /** Time window for counting failures (duration string, e.g. "5m"). */
+  window: string;
+  /** Cooldown before transitioning to half-open (duration string, e.g. "30s"). */
+  cooldown: string;
+}
+
+// ---------------------------------------------------------------------------
 // Retry configuration
 // ---------------------------------------------------------------------------
 
@@ -328,6 +342,10 @@ export interface AgentNode extends BaseNode {
   logLevel?: string;
   /** Join semantics for fan-in: "all" | "any" | "all-done" | "none-failed". */
   join?: string;
+  /** Circuit breaker configuration for failure isolation. */
+  circuitBreaker?: CircuitBreakerConfig;
+  /** ID of the agent whose side effects this agent can undo (compensation/saga). */
+  compensates?: string;
   /** Typed input schema fields for structured input. */
   inputSchema?: SchemaFieldDef[];
   /** Typed output schema fields for structured output. */
@@ -357,6 +375,17 @@ export interface GateNode extends BaseNode {
   timeout?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/** A human-in-the-loop node requiring manual input or approval. */
+export interface HumanNode extends BaseNode {
+  type: "human";
+  /** Human-readable description of what the human should do. */
+  description?: string;
+  /** How long to wait for human input (duration string, e.g. "1h", "30m"). */
+  timeout?: string;
+  /** What to do if human doesn't respond: "halt" | "skip" | "fallback <id>". */
+  onTimeout?: string;
 }
 
 /** Topology-level defaults for sampling params and shared agent config. */
@@ -408,7 +437,7 @@ export interface SensitiveValue {
 }
 
 /** Union of all node types. */
-export type NodeDef = OrchestratorNode | ActionNode | AgentNode | GateNode;
+export type NodeDef = OrchestratorNode | ActionNode | AgentNode | GateNode | HumanNode;
 
 // ---------------------------------------------------------------------------
 // Edges

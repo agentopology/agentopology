@@ -17,6 +17,7 @@ import type {
   AgentNode,
   GateNode,
   ActionNode,
+  HumanNode,
   OrchestratorNode,
 } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
@@ -124,6 +125,13 @@ function astToViewData(ast: TopologyAST): Record<string, any> {
         if (act.description) base.description = act.description;
         if (act.source) base.source = act.source;
         if (act.commands) base.commands = act.commands;
+        break;
+      }
+      case "human": {
+        const h = n as HumanNode;
+        if (h.description) base.description = h.description;
+        if (h.timeout) base.timeout = h.timeout;
+        if (h.onTimeout) base.onTimeout = h.onTimeout;
         break;
       }
     }
@@ -983,8 +991,7 @@ function renderGraph() {
       if (!entryPos) return;
       const bx = entryPos.x - entryPos.w / 2 + 8;
       const by = entryPos.y - 2;
-      const tipLines = triggers.map(t => t.pattern).join('\\n');
-      s += '<g class="trigger-badge" style="cursor:pointer" onclick="toggleTriggerPopover(\\'' + esc(entryId) + '\\')" onmouseenter="showTooltip(event, \\'' + tipLines.replace(/'/g, "\\\\'") + '\\')" onmouseleave="hideTooltip()">';
+      s += '<g class="trigger-badge" style="cursor:pointer" onclick="toggleTriggerPopover(\\'' + esc(entryId) + '\\')">';
       s += '<circle cx="' + bx + '" cy="' + by + '" r="9" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.4)" stroke-width="0.8"/>';
       s += '<text x="' + bx + '" y="' + (by + 1) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="9" fill="#22d3ee" font-weight="700">/' + (triggers.length > 1 ? triggers.length : '') + '</text>';
       s += '</g>';
