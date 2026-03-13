@@ -1295,12 +1295,160 @@ function v38MaxTokensPositive(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V39: Validate `join` is one of: all, any, all-done, none-failed. */
+function v39JoinEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_JOIN = new Set(["all", "any", "all-done", "none-failed"]);
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.join && !VALID_JOIN.has(node.join)) {
+      results.push({
+        rule: "V39",
+        level: "error",
+        message: `Agent "${node.id}" has invalid join "${node.join}" — must be one of: all, any, all-done, none-failed`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+    if (node.type === "action") {
+      const action = node as ActionNode;
+      if (action.join && !VALID_JOIN.has(action.join)) {
+        results.push({
+          rule: "V39",
+          level: "error",
+          message: `Action "${action.id}" has invalid join "${action.join}" — must be one of: all, any, all-done, none-failed`,
+          node: action.id,
+          line: lookupLine(ast, action.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V40: Error edge target must be a declared node. */
+function v40ErrorEdgeTarget(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const ids = allNodeIds(ast);
+
+  for (const edge of ast.edges) {
+    if (edge.isError) {
+      if (!ids.has(edge.to)) {
+        results.push({
+          rule: "V40",
+          level: "error",
+          message: `Error edge target "${edge.to}" is not a declared node`,
+          node: edge.to,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V41: `[race]` is only valid on fan-out edges (node has multiple outgoing edges). */
+function v41RaceFanOut(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  // Count outgoing edges per source node
+  const outgoing = new Map<string, number>();
+  for (const edge of ast.edges) {
+    outgoing.set(edge.from, (outgoing.get(edge.from) ?? 0) + 1);
+  }
+
+  for (const edge of ast.edges) {
+    if (edge.race) {
+      const count = outgoing.get(edge.from) ?? 0;
+      if (count < 2) {
+        results.push({
+          rule: "V41",
+          level: "error",
+          message: `[race] on edge "${edge.from}" -> "${edge.to}" is only valid on fan-out edges (node must have multiple outgoing edges)`,
+          node: edge.from,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V42: `[tolerance]` format is valid (integer or percentage string matching /^\d+%?$/). */
+function v42ToleranceFormat(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const toleranceRe = /^\d+%?$/;
+
+  for (const edge of ast.edges) {
+    if (edge.tolerance !== undefined) {
+      const tolStr = String(edge.tolerance);
+      if (!toleranceRe.test(tolStr)) {
+        results.push({
+          rule: "V42",
+          level: "error",
+          message: `Edge "${edge.from}" -> "${edge.to}" has invalid tolerance "${tolStr}" — must be an integer or a percentage (e.g. "2" or "33%")`,
+          node: edge.from,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V43: `[wait]` format is a valid duration string (reuse timeout validation pattern). */
+function v43WaitFormat(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const durationRe = /^\d+[smhd]$/;
+
+  for (const edge of ast.edges) {
+    if (edge.wait) {
+      if (!durationRe.test(edge.wait)) {
+        results.push({
+          rule: "V43",
+          level: "error",
+          message: `Edge "${edge.from}" -> "${edge.to}" has invalid wait duration "${edge.wait}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: edge.from,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V44: Topology-level `error-handler` must reference a declared node. */
+function v44ErrorHandlerExists(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.topology.errorHandler) {
+    const ids = allNodeIds(ast);
+    if (!ids.has(ast.topology.errorHandler)) {
+      results.push({
+        rule: "V44",
+        level: "error",
+        message: `Topology error-handler "${ast.topology.errorHandler}" is not a declared node`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V45: Topology-level `timeout` must be a valid duration string. */
+function v45TopologyTimeout(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const durationRe = /^\d+[smhd]$/;
+  if (ast.topology.timeout && !durationRe.test(ast.topology.timeout)) {
+    results.push({
+      rule: "V45",
+      level: "error",
+      message: `Topology timeout "${ast.topology.timeout}" is invalid — must match format like "30s", "5m", "2h", "1d"`,
+    });
+  }
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 38 specification rules.
+ * Validate a parsed AgentTopology AST against all specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -1345,5 +1493,12 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v36OutputFormatEnum(ast),
     ...v37LogLevelEnum(ast),
     ...v38MaxTokensPositive(ast),
+    ...v39JoinEnum(ast),
+    ...v40ErrorEdgeTarget(ast),
+    ...v41RaceFanOut(ast),
+    ...v42ToleranceFormat(ast),
+    ...v43WaitFormat(ast),
+    ...v44ErrorHandlerExists(ast),
+    ...v45TopologyTimeout(ast),
   ];
 }

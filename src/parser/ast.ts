@@ -218,6 +218,8 @@ export interface ActionNode extends BaseNode {
   timeout?: string;
   /** Failure behavior: "halt" | "retry" | "skip" | "continue" | "fallback <agent-id>". */
   onFail?: string;
+  /** Join semantics for fan-in: "all" | "any" | "all-done" | "none-failed". */
+  join?: string;
 }
 
 /** An agent node. */
@@ -295,6 +297,8 @@ export interface AgentNode extends BaseNode {
   outputFormat?: string;
   /** Log level: "debug" | "info" | "warn" | "error". */
   logLevel?: string;
+  /** Join semantics for fan-in: "all" | "any" | "all-done" | "none-failed". */
+  join?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -367,6 +371,16 @@ export interface EdgeDef {
   maxIterations: number | null;
   /** Optional per-agent scoping identifier (from `[per <id>]`). */
   per?: string | null;
+  /** True for `-x->` error edges. */
+  isError?: boolean;
+  /** Optional error type filter from `-x[type]->`. */
+  errorType?: string;
+  /** Fan-out tolerance: integer or percentage string (e.g. "33%") from `[tolerance: N]`. */
+  tolerance?: number | string;
+  /** True for `[race]` fan-out edges. */
+  race?: boolean;
+  /** Duration string from `[wait 30s]` inline timer edge attribute. */
+  wait?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +403,10 @@ export interface TopologyMeta {
   advanced?: string[];
   /** Domain identifier (e.g. "legal", "marketing"). */
   domain?: string;
+  /** Topology-level timeout duration string (e.g. "30m", "2h"). */
+  timeout?: string;
+  /** Node id for catch-all error handler. */
+  errorHandler?: string;
 }
 
 /** A provider configuration for API credentials and model routing. */

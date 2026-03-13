@@ -3083,3 +3083,628 @@ topology code-review : [pipeline] {
     expect(agent.logLevel).toBeUndefined();
   });
 });
+
+// =========================================================================
+// Wave 2: Error Edges, Join Semantics, Edge Attributes
+// =========================================================================
+
+describe("Wave 2: Error edges (-x->)", () => {
+  it("parses -x-> as an error edge with isError: true", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent analyzer { model: opus }
+  agent error-handler { model: opus }
+  flow {
+    a -> analyzer
+    analyzer -x-> error-handler
+  }
+}`;
+    const ast = parse(src);
+    const errorEdge = ast.edges.find((e) => e.from === "analyzer" && e.to === "error-handler");
+    expect(errorEdge).toBeDefined();
+    expect(errorEdge!.isError).toBe(true);
+    expect(errorEdge!.errorType).toBeUndefined();
+  });
+
+  it("parses -x[timeout]-> as a typed error edge", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent analyzer { model: opus }
+  agent fallback { model: opus }
+  flow {
+    a -> analyzer
+    analyzer -x[timeout]-> fallback
+  }
+}`;
+    const ast = parse(src);
+    const errorEdge = ast.edges.find((e) => e.from === "analyzer" && e.to === "fallback");
+    expect(errorEdge).toBeDefined();
+    expect(errorEdge!.isError).toBe(true);
+    expect(errorEdge!.errorType).toBe("timeout");
+  });
+
+  it("parses -x[auth-error]-> with hyphenated error type", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent caller { model: opus }
+  agent auth-fallback { model: opus }
+  flow {
+    a -> caller
+    caller -x[auth-error]-> auth-fallback
+  }
+}`;
+    const ast = parse(src);
+    const errorEdge = ast.edges.find((e) => e.from === "caller" && e.to === "auth-fallback");
+    expect(errorEdge).toBeDefined();
+    expect(errorEdge!.isError).toBe(true);
+    expect(errorEdge!.errorType).toBe("auth-error");
+  });
+
+  it("normal edges do not have isError set", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  flow {
+    a -> b
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "b");
+    expect(edge).toBeDefined();
+    expect(edge!.isError).toBeUndefined();
+  });
+
+  it("mixed normal and error edges on same node", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent analyzer { model: opus }
+  agent reviewer { model: opus }
+  agent error-handler { model: opus }
+  flow {
+    a -> analyzer
+    analyzer -> reviewer
+    analyzer -x-> error-handler
+  }
+}`;
+    const ast = parse(src);
+    const normalEdge = ast.edges.find((e) => e.from === "analyzer" && e.to === "reviewer");
+    expect(normalEdge).toBeDefined();
+    expect(normalEdge!.isError).toBeUndefined();
+
+    const errorEdge = ast.edges.find((e) => e.from === "analyzer" && e.to === "error-handler");
+    expect(errorEdge).toBeDefined();
+    expect(errorEdge!.isError).toBe(true);
+  });
+});
+
+describe("Wave 2: [tolerance] edge attribute", () => {
+  it("parses [tolerance: 2] as integer tolerance", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  agent c { model: opus }
+  agent d { model: opus }
+  flow {
+    a -> [b, c, d] [tolerance: 2]
+  }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges.filter((e) => e.from === "a");
+    expect(edges).toHaveLength(3);
+    for (const edge of edges) {
+      expect(edge.tolerance).toBe(2);
+    }
+  });
+
+  it("parses [tolerance: 33%] as percentage string", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  agent c { model: opus }
+  flow {
+    a -> [b, c] [tolerance: 33%]
+  }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges.filter((e) => e.from === "a");
+    expect(edges).toHaveLength(2);
+    for (const edge of edges) {
+      expect(edge.tolerance).toBe("33%");
+    }
+  });
+});
+
+describe("Wave 2: [race] edge attribute", () => {
+  it("parses [race] as boolean edge attribute", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent fast { model: opus }
+  agent slow { model: opus }
+  flow {
+    a -> [fast, slow] [race]
+  }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges.filter((e) => e.from === "a");
+    expect(edges).toHaveLength(2);
+    for (const edge of edges) {
+      expect(edge.race).toBe(true);
+    }
+  });
+});
+
+describe("Wave 2: [wait N] edge attribute", () => {
+  it("parses [wait 30s] as inline timer", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent notifier { model: opus }
+  flow {
+    a -> notifier [wait 30s]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "notifier");
+    expect(edge).toBeDefined();
+    expect(edge!.wait).toBe("30s");
+  });
+
+  it("parses [wait 5m] with minute duration", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent notifier { model: opus }
+  flow {
+    a -> notifier [wait 5m]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "notifier");
+    expect(edge).toBeDefined();
+    expect(edge!.wait).toBe("5m");
+  });
+});
+
+describe("Wave 2: join field on agent/action", () => {
+  it("parses join: all on agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent synthesizer {
+    model: opus
+    join: all
+  }
+  flow { a -> synthesizer }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "synthesizer") as AgentNode;
+    expect(agent.join).toBe("all");
+  });
+
+  it("parses join: any on agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent fast-consumer {
+    model: opus
+    join: any
+  }
+  flow { a -> fast-consumer }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "fast-consumer") as AgentNode;
+    expect(agent.join).toBe("any");
+  });
+
+  it("parses join: all-done on agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent collector {
+    model: opus
+    join: all-done
+  }
+  flow { a -> collector }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "collector") as AgentNode;
+    expect(agent.join).toBe("all-done");
+  });
+
+  it("parses join on action", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [merge-step] }
+  action merge-step {
+    kind: inline
+    join: none-failed
+  }
+  flow { merge-step -> merge-step }
+}`;
+    const ast = parse(src);
+    const action = ast.nodes.find((n) => n.id === "merge-step");
+    expect(action).toBeDefined();
+    expect((action as any).join).toBe("none-failed");
+  });
+});
+
+describe("Wave 2: Topology meta timeout and error-handler", () => {
+  it("parses timeout in meta block", () => {
+    const src = `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    timeout: 30m
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  flow { a -> a }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.timeout).toBe("30m");
+  });
+
+  it("parses error-handler in meta block", () => {
+    const src = `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    error-handler: global-error-agent
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent global-error-agent { model: opus }
+  flow { a -> global-error-agent }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.errorHandler).toBe("global-error-agent");
+  });
+
+  it("parses both timeout and error-handler in meta block", () => {
+    const src = `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    timeout: 2h
+    error-handler: catch-all
+  }
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent catch-all { model: opus }
+  flow { a -> catch-all }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.timeout).toBe("2h");
+    expect(ast.topology.errorHandler).toBe("catch-all");
+  });
+});
+
+describe("Wave 2: Validator rules V39-V45", () => {
+  function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+    return {
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "Intake" },
+        { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null },
+      ],
+      depth: { factors: [], levels: [] },
+      memory: {},
+      batch: {},
+      environments: {},
+      triggers: [],
+      hooks: [],
+      settings: {},
+      mcpServers: {},
+      metering: null,
+      defaults: null,
+      skills: [],
+      toolDefs: [],
+      roles: {},
+      context: {},
+      env: {},
+      providers: [],
+      schedules: [],
+      interfaces: [],
+      ...overrides,
+    };
+  }
+
+  it("V39: invalid join value -> error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "invalid" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v39 = results.filter((r) => r.rule === "V39");
+    expect(v39.length).toBeGreaterThan(0);
+    expect(v39[0].level).toBe("error");
+    expect(v39[0].message).toContain("invalid");
+  });
+
+  it("V39: valid join value -> no error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "all" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v39 = results.filter((r) => r.rule === "V39");
+    expect(v39).toHaveLength(0);
+  });
+
+  it("V39: invalid join on action -> error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["merge"] },
+        { id: "merge", type: "action", label: "Merge", join: "bogus" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet" },
+      ],
+      edges: [{ from: "merge", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v39 = results.filter((r) => r.rule === "V39");
+    expect(v39.length).toBeGreaterThan(0);
+  });
+
+  it("V40: error edge target must be declared", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null },
+        { from: "worker", to: "nonexistent", condition: null, maxIterations: null, isError: true },
+      ],
+    });
+    const results = validate(ast);
+    const v40 = results.filter((r) => r.rule === "V40");
+    expect(v40.length).toBeGreaterThan(0);
+    expect(v40[0].message).toContain("nonexistent");
+  });
+
+  it("V40: error edge to declared node -> no error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet" },
+        { id: "error-handler", type: "agent", label: "EH", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null },
+        { from: "worker", to: "error-handler", condition: null, maxIterations: null, isError: true },
+      ],
+    });
+    const results = validate(ast);
+    const v40 = results.filter((r) => r.rule === "V40");
+    expect(v40).toHaveLength(0);
+  });
+
+  it("V41: [race] without fan-out -> error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, race: true },
+      ],
+    });
+    const results = validate(ast);
+    const v41 = results.filter((r) => r.rule === "V41");
+    expect(v41.length).toBeGreaterThan(0);
+    expect(v41[0].level).toBe("error");
+  });
+
+  it("V41: [race] with fan-out -> no error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "fast", type: "agent", label: "F", model: "sonnet" },
+        { id: "slow", type: "agent", label: "S", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "fast", condition: null, maxIterations: null, race: true },
+        { from: "intake", to: "slow", condition: null, maxIterations: null, race: true },
+      ],
+    });
+    const results = validate(ast);
+    const v41 = results.filter((r) => r.rule === "V41");
+    expect(v41).toHaveLength(0);
+  });
+
+  it("V42: invalid tolerance format -> error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, tolerance: "abc" },
+      ],
+    });
+    const results = validate(ast);
+    const v42 = results.filter((r) => r.rule === "V42");
+    expect(v42.length).toBeGreaterThan(0);
+    expect(v42[0].level).toBe("error");
+  });
+
+  it("V42: valid tolerance integer -> no error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, tolerance: 2 },
+      ],
+    });
+    const results = validate(ast);
+    const v42 = results.filter((r) => r.rule === "V42");
+    expect(v42).toHaveLength(0);
+  });
+
+  it("V42: valid tolerance percentage -> no error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, tolerance: "33%" },
+      ],
+    });
+    const results = validate(ast);
+    const v42 = results.filter((r) => r.rule === "V42");
+    expect(v42).toHaveLength(0);
+  });
+
+  it("V43: invalid wait format -> error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, wait: "abc" },
+      ],
+    });
+    const results = validate(ast);
+    const v43 = results.filter((r) => r.rule === "V43");
+    expect(v43.length).toBeGreaterThan(0);
+    expect(v43[0].level).toBe("error");
+  });
+
+  it("V43: valid wait format -> no error", () => {
+    const ast = minimalAST({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, wait: "30s" },
+      ],
+    });
+    const results = validate(ast);
+    const v43 = results.filter((r) => r.rule === "V43");
+    expect(v43).toHaveLength(0);
+  });
+
+  it("V44: error-handler references undeclared node -> error", () => {
+    const ast = minimalAST({
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"], errorHandler: "nonexistent" },
+    });
+    const results = validate(ast);
+    const v44 = results.filter((r) => r.rule === "V44");
+    expect(v44.length).toBeGreaterThan(0);
+    expect(v44[0].message).toContain("nonexistent");
+  });
+
+  it("V44: error-handler references declared node -> no error", () => {
+    const ast = minimalAST({
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"], errorHandler: "worker" },
+    });
+    const results = validate(ast);
+    const v44 = results.filter((r) => r.rule === "V44");
+    expect(v44).toHaveLength(0);
+  });
+
+  it("V45: invalid topology timeout -> error", () => {
+    const ast = minimalAST({
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"], timeout: "abc" },
+    });
+    const results = validate(ast);
+    const v45 = results.filter((r) => r.rule === "V45");
+    expect(v45.length).toBeGreaterThan(0);
+    expect(v45[0].level).toBe("error");
+  });
+
+  it("V45: valid topology timeout -> no error", () => {
+    const ast = minimalAST({
+      topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"], timeout: "30m" },
+    });
+    const results = validate(ast);
+    const v45 = results.filter((r) => r.rule === "V45");
+    expect(v45).toHaveLength(0);
+  });
+});
+
+describe("Wave 2: Backward compatibility", () => {
+  it("existing flow syntax with [when] and [max] still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus
+    outputs { verdict: yes | no } }
+  agent c { model: opus }
+  flow {
+    b -> c [when b.verdict == yes]
+    c -> b [max 3]
+  }
+}`;
+    const ast = parse(src);
+    const condEdge = ast.edges.find((e) => e.from === "b" && e.to === "c");
+    expect(condEdge).toBeDefined();
+    expect(condEdge!.condition).toBe("b.verdict == yes");
+
+    const maxEdge = ast.edges.find((e) => e.from === "c" && e.to === "b");
+    expect(maxEdge).toBeDefined();
+    expect(maxEdge!.maxIterations).toBe(3);
+  });
+
+  it("existing fan-out syntax still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [start] }
+  action start { kind: inline }
+  agent x { model: opus }
+  agent y { model: opus }
+  flow {
+    start -> [x, y]
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges).toHaveLength(2);
+    expect(ast.edges[0].from).toBe("start");
+    expect(ast.edges[0].to).toBe("x");
+    expect(ast.edges[1].from).toBe("start");
+    expect(ast.edges[1].to).toBe("y");
+  });
+
+  it("existing chain syntax a -> b -> c still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  agent c { model: opus }
+  flow {
+    a -> b -> c
+  }
+}`;
+    const ast = parse(src);
+    expect(ast.edges).toHaveLength(2);
+    expect(ast.edges[0]).toMatchObject({ from: "a", to: "b" });
+    expect(ast.edges[1]).toMatchObject({ from: "b", to: "c" });
+  });
+
+  it("existing [per id] syntax still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  flow {
+    a -> b [per ticket]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "b");
+    expect(edge).toBeDefined();
+    expect(edge!.per).toBe("ticket");
+  });
+
+  it("existing [when ..., max N] combined syntax still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus
+    outputs { status: pass | fail } }
+  agent c { model: opus }
+  flow {
+    c -> b [when b.status == fail, max 3]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "c" && e.to === "b");
+    expect(edge).toBeDefined();
+    expect(edge!.condition).toBe("b.status == fail");
+    expect(edge!.maxIterations).toBe(3);
+  });
+});

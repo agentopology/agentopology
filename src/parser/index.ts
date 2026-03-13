@@ -154,6 +154,9 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   const advanced = parseMultilineList(body, "advanced");
   if (advanced.length) result.advanced = advanced;
 
+  if (fields.timeout) result.timeout = fields.timeout;
+  if (fields["error-handler"]) result.errorHandler = fields["error-handler"];
+
   return result;
 }
 
@@ -207,6 +210,7 @@ export function parseAction(id: string, body: string): ActionNode {
   if (commands.length) node.commands = commands;
   if (fields.timeout) node.timeout = fields.timeout;
   if (fields["on-fail"]) node.onFail = fields["on-fail"];
+  if (fields.join) node.join = fields.join;
   return node;
 }
 
@@ -298,6 +302,9 @@ export function parseAgent(
 
   // Log level
   if (fields["log-level"]) node.logLevel = fields["log-level"];
+
+  // Join semantics
+  if (fields.join) node.join = fields.join;
 
   if (fields.isolation) node.isolation = fields.isolation;
   if (fields.background) node.background = fields.background === "true";
@@ -413,8 +420,9 @@ export function parseGate(id: string, body: string): GateNode {
 /**
  * Parse the `flow { ... }` block into an array of {@link EdgeDef}.
  *
- * Supports chain syntax (`a -> b -> c`), fan-out (`a -> [b, c]`), and
- * edge annotations (`[when condition, max N]`).
+ * Supports chain syntax (`a -> b -> c`), fan-out (`a -> [b, c]`),
+ * error edges (`-x->`, `-x[type]->`), and edge annotations
+ * (`[when condition, max N, tolerance: N, race, wait 30s]`).
  */
 export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>): EdgeDef[] {
   const edges: EdgeDef[] = [];
@@ -426,12 +434,15 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let condition: string | null = null;
     let maxIterations: number | null = null;
     let per: string | null = null;
+    let tolerance: number | string | undefined;
+    let race: boolean | undefined;
+    let wait: string | undefined;
     let flowPart = trimmed;
 
-    // Match annotation at end of line: [when ..., max N, per agent-id]
-    // Must start with "when", "max", or "per" to avoid matching fan-out lists.
+    // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s]
+    // Must start with "when", "max", "per", "tolerance", "race", "wait", or "join" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?)\]\s*$/
     );
     if (bracketMatch) {
       flowPart = trimmed.slice(0, bracketMatch.index!).trim();
@@ -448,7 +459,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -456,39 +467,127 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
 
       const perMatch = annotation.match(/per\s+(\S+)/);
       if (perMatch) per = perMatch[1].replace(/,\s*$/, "");
+
+      // tolerance: N or tolerance: 33%
+      const toleranceMatch = annotation.match(/tolerance\s*:\s*(\d+%?)/);
+      if (toleranceMatch) {
+        const tolVal = toleranceMatch[1];
+        tolerance = tolVal.endsWith("%") ? tolVal : parseInt(tolVal, 10);
+      }
+
+      // race
+      if (/\brace\b/.test(annotation)) {
+        race = true;
+      }
+
+      // wait 30s
+      const waitMatch = annotation.match(/wait\s+(\d+[smhd])/);
+      if (waitMatch) {
+        wait = waitMatch[1];
+      }
     }
 
-    // Split on ->
-    const parts = flowPart
-      .split("->")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // Handle error edges: replace -x-> and -x[type]-> with a parseable form.
+    // We use a sentinel to mark error edge segments.
+    // -x[type]-> becomes __ERROR_EDGE_type__ ->
+    // -x-> becomes __ERROR_EDGE__ ->
+    interface SegmentInfo {
+      text: string;
+      isError: boolean;
+      errorType?: string;
+    }
 
-    for (let i = 0; i < parts.length - 1; i++) {
-      const from = parts[i];
-      const to = parts[i + 1];
-      const isLastSegment = i === parts.length - 2;
+    // Split the flow part into segments, handling error edge arrows.
+    // We need to split on both -> and -x-> / -x[type]->.
+    // Strategy: use regex to split on arrow patterns, tracking which type each is.
+    const segments: SegmentInfo[] = [];
+    const arrowPattern = /-x\[([^\]]+)\]->|-x->|->/g;
+    let lastIndex = 0;
+    let arrowMatch: RegExpExecArray | null;
+    const arrowTypes: Array<{ isError: boolean; errorType?: string }> = [];
+
+    // Reset lastIndex
+    arrowPattern.lastIndex = 0;
+    while ((arrowMatch = arrowPattern.exec(flowPart)) !== null) {
+      const before = flowPart.slice(lastIndex, arrowMatch.index).trim();
+      if (before) {
+        segments.push({ text: before, isError: false });
+      }
+
+      if (arrowMatch[0].startsWith("-x")) {
+        // Error edge
+        if (arrowMatch[1]) {
+          // -x[type]->
+          arrowTypes.push({ isError: true, errorType: arrowMatch[1] });
+        } else {
+          // -x->
+          arrowTypes.push({ isError: true });
+        }
+      } else {
+        // Normal ->
+        arrowTypes.push({ isError: false });
+      }
+
+      lastIndex = arrowMatch.index + arrowMatch[0].length;
+    }
+    // Remaining text after last arrow
+    const remaining = flowPart.slice(lastIndex).trim();
+    if (remaining) {
+      segments.push({ text: remaining, isError: false });
+    }
+
+    // Now segments[i] and arrowTypes[i] give us: segments[i] --arrowTypes[i]--> segments[i+1]
+    for (let i = 0; i < segments.length - 1; i++) {
+      const from = segments[i].text;
+      const to = segments[i + 1].text;
+      const arrow = arrowTypes[i];
+      const isLastSegment = i === segments.length - 2;
 
       // Check for fan-out: [a, b, c]
       const fanOutMatch = to.match(/^\[([^\]]+)\]$/);
+
+      // Build base edge properties
+      const baseEdge: Partial<EdgeDef> = {
+        condition: isLastSegment ? condition : null,
+        maxIterations: isLastSegment ? maxIterations : null,
+        per: isLastSegment ? per : null,
+      };
+      if (arrow.isError) {
+        baseEdge.isError = true;
+        if (arrow.errorType) baseEdge.errorType = arrow.errorType;
+      }
+      if (isLastSegment && tolerance !== undefined) baseEdge.tolerance = tolerance;
+      if (isLastSegment && race) baseEdge.race = true;
+      if (isLastSegment && wait) baseEdge.wait = wait;
+
       if (fanOutMatch) {
         const targets = fanOutMatch[1].split(",").map((s) => s.trim());
         for (const target of targets) {
           edges.push({
             from,
             to: target,
-            condition: isLastSegment ? condition : null,
-            maxIterations: isLastSegment ? maxIterations : null,
-            per: isLastSegment ? per : null,
+            condition: baseEdge.condition ?? null,
+            maxIterations: baseEdge.maxIterations ?? null,
+            per: baseEdge.per ?? null,
+            ...(baseEdge.isError ? { isError: true } : {}),
+            ...(baseEdge.errorType ? { errorType: baseEdge.errorType } : {}),
+            ...(baseEdge.tolerance !== undefined ? { tolerance: baseEdge.tolerance } : {}),
+            ...(baseEdge.race ? { race: true } : {}),
+            ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
           });
         }
       } else {
         edges.push({
           from,
           to,
-          condition: isLastSegment ? condition : null,
-          maxIterations: isLastSegment ? maxIterations : null,
-          per: isLastSegment ? per : null,
+          condition: baseEdge.condition ?? null,
+          maxIterations: baseEdge.maxIterations ?? null,
+          per: baseEdge.per ?? null,
+          ...(baseEdge.isError ? { isError: true } : {}),
+          ...(baseEdge.errorType ? { errorType: baseEdge.errorType } : {}),
+          ...(baseEdge.tolerance !== undefined ? { tolerance: baseEdge.tolerance } : {}),
+          ...(baseEdge.race ? { race: true } : {}),
+          ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
         });
       }
     }
@@ -1129,6 +1228,8 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.foundations ? { foundations: metaFields.foundations } : {}),
     ...(metaFields.advanced ? { advanced: metaFields.advanced } : {}),
     ...(metaFields.domain ? { domain: metaFields.domain } : {}),
+    ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
+    ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
   };
 
   // --- Roles ---
