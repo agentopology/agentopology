@@ -33,6 +33,8 @@ import type {
   ProviderDef,
   ScheduleJobDef,
   InterfaceDef,
+  RetryConfig,
+  DefaultsDef,
 } from "./ast.js";
 
 import {
@@ -203,6 +205,8 @@ export function parseAction(id: string, body: string): ActionNode {
   if (fields.source) node.source = unquote(fields.source);
   if (fields.description) node.description = unquote(fields.description);
   if (commands.length) node.commands = commands;
+  if (fields.timeout) node.timeout = fields.timeout;
+  if (fields["on-fail"]) node.onFail = fields["on-fail"];
   return node;
 }
 
@@ -251,7 +255,50 @@ export function parseAgent(
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
-  if (fields.retry) node.retry = parseInt(fields.retry, 10);
+
+  // Retry: support both simple number and structured block form
+  const retryBlock = extractBlock(body, "retry");
+  if (retryBlock) {
+    const rFields = parseFields(retryBlock.body);
+    const retryConfig: RetryConfig = {
+      max: rFields.max ? parseInt(rFields.max, 10) : 1,
+    };
+    if (rFields.backoff) retryConfig.backoff = rFields.backoff as RetryConfig["backoff"];
+    if (rFields.interval) retryConfig.interval = rFields.interval;
+    if (rFields["max-interval"]) retryConfig.maxInterval = rFields["max-interval"];
+    if (rFields.jitter) retryConfig.jitter = rFields.jitter === "true";
+    const nonRetryable = parseMultilineList(retryBlock.body, "non-retryable");
+    if (nonRetryable.length) retryConfig.nonRetryable = nonRetryable;
+    node.retry = retryConfig;
+  } else if (fields.retry) {
+    node.retry = parseInt(fields.retry, 10);
+  }
+
+  // Timeout
+  if (fields.timeout) node.timeout = fields.timeout;
+
+  // On-fail
+  if (fields["on-fail"]) node.onFail = fields["on-fail"];
+
+  // Sampling parameters
+  if (fields.temperature) node.temperature = parseFloat(fields.temperature);
+  if (fields["max-tokens"]) node.maxTokens = parseInt(fields["max-tokens"], 10);
+  if (fields["top-p"]) node.topP = parseFloat(fields["top-p"]);
+  if (fields["top-k"]) node.topK = parseInt(fields["top-k"], 10);
+  const stop = parseMultilineList(body, "stop");
+  if (stop.length) node.stop = stop;
+  if (fields.seed) node.seed = parseInt(fields.seed, 10);
+
+  // Thinking
+  if (fields.thinking) node.thinking = fields.thinking;
+  if (fields["thinking-budget"]) node.thinkingBudget = parseInt(fields["thinking-budget"], 10);
+
+  // Output format
+  if (fields["output-format"]) node.outputFormat = fields["output-format"];
+
+  // Log level
+  if (fields["log-level"]) node.logLevel = fields["log-level"];
+
   if (fields.isolation) node.isolation = fields.isolation;
   if (fields.background) node.background = fields.background === "true";
   const mcpServers = parseMultilineList(body, "mcp-servers");
@@ -355,6 +402,7 @@ export function parseGate(id: string, body: string): GateNode {
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
   if (fields["on-fail"]) node.onFail = fields["on-fail"];
   if (fields.behavior) node.behavior = fields.behavior;
+  if (fields.timeout) node.timeout = fields.timeout;
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -956,6 +1004,66 @@ export function parseToolsBlock(topBody: string): ToolBlockDef[] {
   return toolDefs;
 }
 
+/**
+ * Parse the `defaults { ... }` block.
+ *
+ * Extracts topology-level default values for sampling parameters and
+ * shared agent configuration.
+ */
+export function parseDefaults(body: string): DefaultsDef | null {
+  const fields = parseFields(body);
+  const defaults: DefaultsDef = {};
+  let hasFields = false;
+
+  if (fields.temperature) {
+    defaults.temperature = parseFloat(fields.temperature);
+    hasFields = true;
+  }
+  if (fields["max-tokens"]) {
+    defaults.maxTokens = parseInt(fields["max-tokens"], 10);
+    hasFields = true;
+  }
+  if (fields["top-p"]) {
+    defaults.topP = parseFloat(fields["top-p"]);
+    hasFields = true;
+  }
+  if (fields["top-k"]) {
+    defaults.topK = parseInt(fields["top-k"], 10);
+    hasFields = true;
+  }
+  const stop = parseMultilineList(body, "stop");
+  if (stop.length) {
+    defaults.stop = stop;
+    hasFields = true;
+  }
+  if (fields.seed) {
+    defaults.seed = parseInt(fields.seed, 10);
+    hasFields = true;
+  }
+  if (fields.thinking) {
+    defaults.thinking = fields.thinking;
+    hasFields = true;
+  }
+  if (fields["thinking-budget"]) {
+    defaults.thinkingBudget = parseInt(fields["thinking-budget"], 10);
+    hasFields = true;
+  }
+  if (fields["output-format"]) {
+    defaults.outputFormat = fields["output-format"];
+    hasFields = true;
+  }
+  if (fields.timeout) {
+    defaults.timeout = fields.timeout;
+    hasFields = true;
+  }
+  if (fields["log-level"]) {
+    defaults.logLevel = fields["log-level"];
+    hasFields = true;
+  }
+
+  return hasFields ? defaults : null;
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -1162,6 +1270,10 @@ export function parse(source: string): TopologyAST {
   const interfacesBlock = extractBlock(topBody, "interfaces");
   const interfaces = interfacesBlock ? parseInterfaces(interfacesBlock.body) : [];
 
+  // --- Defaults ---
+  const defaultsBlock = extractBlock(topBody, "defaults");
+  const defaults = defaultsBlock ? parseDefaults(defaultsBlock.body) : null;
+
   // --- Top-level Extensions ---
   const topLevelExtensions = parseExtensionsBlock(topBody);
 
@@ -1170,6 +1282,7 @@ export function parse(source: string): TopologyAST {
     "meta", "orchestrator", "flow", "memory", "batch", "environments",
     "triggers", "settings", "mcp-servers", "metering", "context", "env",
     "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
+    "defaults",
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
@@ -1210,6 +1323,7 @@ export function parse(source: string): TopologyAST {
     providers,
     schedules,
     interfaces,
+    defaults,
     ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
   };
 

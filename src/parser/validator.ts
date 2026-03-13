@@ -29,6 +29,8 @@ import type {
   ProviderDef,
   ScheduleJobDef,
   InterfaceDef,
+  RetryConfig,
+  ActionNode,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -996,12 +998,309 @@ function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V30: Validate `timeout` format is a valid duration string (matches /^\d+[smhd]$/). */
+function v30TimeoutFormat(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const durationRe = /^\d+[smhd]$/;
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.timeout) {
+      if (!durationRe.test(node.timeout)) {
+        results.push({
+          rule: "V30",
+          level: "error",
+          message: `Agent "${node.id}" has invalid timeout "${node.timeout}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+    if (node.type === "action") {
+      const action = node as ActionNode;
+      if (action.timeout && !durationRe.test(action.timeout)) {
+        results.push({
+          rule: "V30",
+          level: "error",
+          message: `Action "${action.id}" has invalid timeout "${action.timeout}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: action.id,
+          line: lookupLine(ast, action.id),
+        });
+      }
+    }
+    if (isGate(node) && node.timeout) {
+      if (!durationRe.test(node.timeout)) {
+        results.push({
+          rule: "V30",
+          level: "error",
+          message: `Gate "${node.id}" has invalid timeout "${node.timeout}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+/** V31: Validate `on-fail` is one of: halt, retry, skip, continue, or starts with "fallback ". */
+function v31OnFailValue(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_ON_FAIL = new Set(["halt", "retry", "skip", "continue"]);
+
+  function checkOnFail(nodeId: string, nodeType: string, onFail: string) {
+    if (!VALID_ON_FAIL.has(onFail) && !onFail.startsWith("fallback ")) {
+      results.push({
+        rule: "V31",
+        level: "error",
+        message: `${nodeType} "${nodeId}" has invalid on-fail "${onFail}" — must be one of: halt, retry, skip, continue, or "fallback <agent-id>"`,
+        node: nodeId,
+        line: lookupLine(ast, nodeId),
+      });
+    }
+  }
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.onFail) {
+      checkOnFail(node.id, "Agent", node.onFail);
+    }
+    if (node.type === "action") {
+      const action = node as ActionNode;
+      if (action.onFail) {
+        checkOnFail(action.id, "Action", action.onFail);
+      }
+    }
+  }
+  return results;
+}
+
+/** V32: If `on-fail: fallback <id>`, validate that the referenced agent exists. */
+function v32FallbackTargetExists(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const ids = allNodeIds(ast);
+
+  function checkFallback(nodeId: string, nodeType: string, onFail: string) {
+    if (onFail.startsWith("fallback ")) {
+      const targetId = onFail.slice("fallback ".length).trim();
+      if (!ids.has(targetId)) {
+        results.push({
+          rule: "V32",
+          level: "error",
+          message: `${nodeType} "${nodeId}" references undeclared fallback agent "${targetId}"`,
+          node: nodeId,
+          line: lookupLine(ast, nodeId),
+        });
+      }
+    }
+  }
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.onFail) {
+      checkFallback(node.id, "Agent", node.onFail);
+    }
+    if (node.type === "action") {
+      const action = node as ActionNode;
+      if (action.onFail) {
+        checkFallback(action.id, "Action", action.onFail);
+      }
+    }
+  }
+  return results;
+}
+
+/** V33: Validate retry block fields (backoff enum, interval format, non-retryable is list). */
+function v33RetryBlockFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_BACKOFF = new Set(["none", "linear", "exponential"]);
+  const durationRe = /^\d+[smhd]$/;
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (!node.retry || typeof node.retry === "number") continue;
+
+    const retryConfig = node.retry as RetryConfig;
+
+    if (retryConfig.backoff && !VALID_BACKOFF.has(retryConfig.backoff)) {
+      results.push({
+        rule: "V33",
+        level: "error",
+        message: `Agent "${node.id}" retry block has invalid backoff "${retryConfig.backoff}" — must be one of: none, linear, exponential`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+
+    if (retryConfig.interval && !durationRe.test(retryConfig.interval)) {
+      results.push({
+        rule: "V33",
+        level: "error",
+        message: `Agent "${node.id}" retry block has invalid interval "${retryConfig.interval}" — must match format like "1s", "5m"`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+
+    if (retryConfig.maxInterval && !durationRe.test(retryConfig.maxInterval)) {
+      results.push({
+        rule: "V33",
+        level: "error",
+        message: `Agent "${node.id}" retry block has invalid max-interval "${retryConfig.maxInterval}" — must match format like "60s", "5m"`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+  return results;
+}
+
+/** V34: Validate `temperature` is between 0 and 2 (on agents and defaults). */
+function v34TemperatureRange(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.temperature !== undefined && (node.temperature < 0 || node.temperature > 2)) {
+      results.push({
+        rule: "V34",
+        level: "error",
+        message: `Agent "${node.id}" has temperature ${node.temperature} — must be between 0 and 2`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+
+  if (ast.defaults?.temperature !== undefined && (ast.defaults.temperature < 0 || ast.defaults.temperature > 2)) {
+    results.push({
+      rule: "V34",
+      level: "error",
+      message: `Defaults block has temperature ${ast.defaults.temperature} — must be between 0 and 2`,
+    });
+  }
+
+  return results;
+}
+
+/** V35: Validate `thinking` is one of: off, low, medium, high, max. */
+function v35ThinkingEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_THINKING = new Set(["off", "low", "medium", "high", "max"]);
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.thinking && !VALID_THINKING.has(node.thinking)) {
+      results.push({
+        rule: "V35",
+        level: "error",
+        message: `Agent "${node.id}" has invalid thinking "${node.thinking}" — must be one of: off, low, medium, high, max`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+
+  if (ast.defaults?.thinking && !VALID_THINKING.has(ast.defaults.thinking)) {
+    results.push({
+      rule: "V35",
+      level: "error",
+      message: `Defaults block has invalid thinking "${ast.defaults.thinking}" — must be one of: off, low, medium, high, max`,
+    });
+  }
+
+  return results;
+}
+
+/** V36: Validate `output-format` is one of: text, json, json-schema. */
+function v36OutputFormatEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_FORMATS = new Set(["text", "json", "json-schema"]);
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.outputFormat && !VALID_FORMATS.has(node.outputFormat)) {
+      results.push({
+        rule: "V36",
+        level: "error",
+        message: `Agent "${node.id}" has invalid output-format "${node.outputFormat}" — must be one of: text, json, json-schema`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+
+  if (ast.defaults?.outputFormat && !VALID_FORMATS.has(ast.defaults.outputFormat)) {
+    results.push({
+      rule: "V36",
+      level: "error",
+      message: `Defaults block has invalid output-format "${ast.defaults.outputFormat}" — must be one of: text, json, json-schema`,
+    });
+  }
+
+  return results;
+}
+
+/** V37: Validate `log-level` is one of: debug, info, warn, error. */
+function v37LogLevelEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_LEVELS = new Set(["debug", "info", "warn", "error"]);
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.logLevel && !VALID_LEVELS.has(node.logLevel)) {
+      results.push({
+        rule: "V37",
+        level: "error",
+        message: `Agent "${node.id}" has invalid log-level "${node.logLevel}" — must be one of: debug, info, warn, error`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+
+  if (ast.defaults?.logLevel && !VALID_LEVELS.has(ast.defaults.logLevel)) {
+    results.push({
+      rule: "V37",
+      level: "error",
+      message: `Defaults block has invalid log-level "${ast.defaults.logLevel}" — must be one of: debug, info, warn, error`,
+    });
+  }
+
+  return results;
+}
+
+/** V38: Validate `max-tokens` is a positive integer. */
+function v38MaxTokensPositive(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.maxTokens !== undefined && (!Number.isInteger(node.maxTokens) || node.maxTokens <= 0)) {
+      results.push({
+        rule: "V38",
+        level: "error",
+        message: `Agent "${node.id}" has invalid max-tokens ${node.maxTokens} — must be a positive integer`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+
+  if (ast.defaults?.maxTokens !== undefined && (!Number.isInteger(ast.defaults.maxTokens) || ast.defaults.maxTokens <= 0)) {
+    results.push({
+      rule: "V38",
+      level: "error",
+      message: `Defaults block has invalid max-tokens ${ast.defaults.maxTokens} — must be a positive integer`,
+    });
+  }
+
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 29 specification rules.
+ * Validate a parsed AgentTopology AST against all 38 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -1037,5 +1336,14 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v27AgentPermissionsEnum(ast),
     ...v28MeteringFormatEnum(ast),
     ...v29MeteringPricingEnum(ast),
+    ...v30TimeoutFormat(ast),
+    ...v31OnFailValue(ast),
+    ...v32FallbackTargetExists(ast),
+    ...v33RetryBlockFields(ast),
+    ...v34TemperatureRange(ast),
+    ...v35ThinkingEnum(ast),
+    ...v36OutputFormatEnum(ast),
+    ...v37LogLevelEnum(ast),
+    ...v38MaxTokensPositive(ast),
   ];
 }

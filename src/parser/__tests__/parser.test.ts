@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, RetryConfig } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -829,6 +829,7 @@ describe("Validator", () => {
       settings: {},
       mcpServers: {},
       metering: null,
+      defaults: null,
       skills: [],
       toolDefs: [],
       roles: {},
@@ -2398,5 +2399,687 @@ describe("C14: top-level extensions block in topology body", () => {
 }`;
     const ast = parse(src);
     expect(ast.extensions).toBeUndefined();
+  });
+});
+
+// =========================================================================
+// Wave 1 Task A: Error Handling — timeout, on-fail, structured retry
+// =========================================================================
+
+describe("Error Handling (timeout, on-fail, retry block)", () => {
+
+  describe("Parsing", () => {
+    it("agent with timeout parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    timeout: 5m
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.timeout).toBe("5m");
+    });
+
+    it("agent with on-fail: halt parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    on-fail: halt
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.onFail).toBe("halt");
+    });
+
+    it("agent with on-fail: retry parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    on-fail: retry
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.onFail).toBe("retry");
+    });
+
+    it("agent with on-fail: skip parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    on-fail: skip
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.onFail).toBe("skip");
+    });
+
+    it("agent with on-fail: fallback parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    on-fail: fallback backup-agent
+  }
+  agent backup-agent {
+    model: haiku
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.onFail).toBe("fallback backup-agent");
+    });
+
+    it("simple retry: 3 still works (backward compat)", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    retry: 3
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(agent.retry).toBe(3);
+    });
+
+    it("retry block parses all fields", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: sonnet
+    retry {
+      max: 3
+      backoff: exponential
+      interval: 1s
+      max-interval: 60s
+      jitter: true
+      non-retryable: [auth-error, invalid-input]
+    }
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+      expect(typeof agent.retry).toBe("object");
+      const retryConfig = agent.retry as RetryConfig;
+      expect(retryConfig.max).toBe(3);
+      expect(retryConfig.backoff).toBe("exponential");
+      expect(retryConfig.interval).toBe("1s");
+      expect(retryConfig.maxInterval).toBe("60s");
+      expect(retryConfig.jitter).toBe(true);
+      expect(retryConfig.nonRetryable).toEqual(["auth-error", "invalid-input"]);
+    });
+
+    it("action with timeout and on-fail parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a {
+    kind: inline
+    timeout: 30s
+    on-fail: skip
+  }
+  agent w { model: sonnet }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const action = ast.nodes.find((n) => n.id === "a");
+      expect(action).toBeDefined();
+      expect((action as any).timeout).toBe("30s");
+      expect((action as any).onFail).toBe("skip");
+    });
+
+    it("gate with timeout parses correctly", () => {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: sonnet }
+  gates {
+    gate quality-check {
+      after: w
+      run: "check.sh"
+      timeout: 2m
+    }
+  }
+  flow { a -> w }
+}`;
+      const ast = parse(src);
+      const gate = ast.nodes.find((n) => n.id === "quality-check") as GateNode;
+      expect(gate).toBeDefined();
+      expect(gate.timeout).toBe("2m");
+    });
+  });
+
+  describe("Validation", () => {
+    function minimalAST(overrides: Partial<TopologyAST> = {}): TopologyAST {
+      return {
+        topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+        ],
+        edges: [
+          { from: "intake", to: "worker", condition: null, maxIterations: null },
+        ],
+        depth: { factors: [], levels: [] },
+        memory: {},
+        batch: {},
+        environments: {},
+        triggers: [],
+        hooks: [],
+        settings: {},
+        mcpServers: {},
+        metering: null,
+        defaults: null,
+        skills: [],
+        toolDefs: [],
+        roles: {},
+        context: {},
+        env: {},
+        providers: [],
+        schedules: [],
+        interfaces: [],
+        ...overrides,
+      };
+    }
+
+    it("V30: valid timeout format passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", timeout: "5m" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v30 = results.filter((r) => r.rule === "V30");
+      expect(v30.length).toBe(0);
+    });
+
+    it("V30: invalid timeout format produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", timeout: "five-minutes" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v30 = results.filter((r) => r.rule === "V30");
+      expect(v30.length).toBeGreaterThan(0);
+      expect(v30[0].level).toBe("error");
+    });
+
+    it("V30: invalid timeout on action produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I", timeout: "abc" } as any,
+          { id: "worker", type: "agent", label: "W", model: "sonnet" },
+        ],
+      });
+      const results = validate(ast);
+      const v30 = results.filter((r) => r.rule === "V30");
+      expect(v30.length).toBeGreaterThan(0);
+    });
+
+    it("V30: invalid timeout on gate produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet" },
+          { id: "qg", type: "gate", label: "QG", after: "worker", run: "check.sh", timeout: "forever" } as GateNode,
+        ],
+      });
+      const results = validate(ast);
+      const v30 = results.filter((r) => r.rule === "V30");
+      expect(v30.length).toBeGreaterThan(0);
+    });
+
+    it("V31: valid on-fail values pass", () => {
+      for (const value of ["halt", "retry", "skip", "continue", "fallback backup"]) {
+        const ast = minimalAST({
+          nodes: [
+            { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+            { id: "intake", type: "action", label: "I" },
+            { id: "worker", type: "agent", label: "W", model: "sonnet", onFail: value } as AgentNode,
+            { id: "backup", type: "agent", label: "B", model: "haiku", invocation: "manual" } as AgentNode,
+          ],
+        });
+        const results = validate(ast);
+        const v31 = results.filter((r) => r.rule === "V31");
+        expect(v31.length).toBe(0);
+      }
+    });
+
+    it("V31: invalid on-fail value produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", onFail: "explode" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v31 = results.filter((r) => r.rule === "V31");
+      expect(v31.length).toBeGreaterThan(0);
+      expect(v31[0].level).toBe("error");
+    });
+
+    it("V32: fallback to non-existent agent produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", onFail: "fallback ghost-agent" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v32 = results.filter((r) => r.rule === "V32");
+      expect(v32.length).toBeGreaterThan(0);
+      expect(v32[0].level).toBe("error");
+      expect(v32[0].message).toContain("ghost-agent");
+    });
+
+    it("V32: fallback to existing agent passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", onFail: "fallback backup" } as AgentNode,
+          { id: "backup", type: "agent", label: "B", model: "haiku", invocation: "manual" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v32 = results.filter((r) => r.rule === "V32");
+      expect(v32.length).toBe(0);
+    });
+
+    it("V33: invalid retry block backoff produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, backoff: "random" as any } } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v33 = results.filter((r) => r.rule === "V33");
+      expect(v33.length).toBeGreaterThan(0);
+      expect(v33[0].message).toContain("backoff");
+    });
+
+    it("V33: invalid retry block interval produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, interval: "forever" } } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v33 = results.filter((r) => r.rule === "V33");
+      expect(v33.length).toBeGreaterThan(0);
+      expect(v33[0].message).toContain("interval");
+    });
+
+    it("V33: invalid retry block max-interval produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, maxInterval: "nope" } } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v33 = results.filter((r) => r.rule === "V33");
+      expect(v33.length).toBeGreaterThan(0);
+      expect(v33[0].message).toContain("max-interval");
+    });
+
+    it("V33: valid retry block passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, backoff: "exponential", interval: "1s", maxInterval: "60s", jitter: true, nonRetryable: ["auth-error"] } } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v33 = results.filter((r) => r.rule === "V33");
+      expect(v33.length).toBe(0);
+    });
+
+    it("V33: simple retry number does not trigger V33", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: 3 } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v33 = results.filter((r) => r.rule === "V33");
+      expect(v33.length).toBe(0);
+    });
+
+    it("V34: temperature out of range produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", temperature: 3.0 } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v34 = results.filter((r) => r.rule === "V34");
+      expect(v34.length).toBeGreaterThan(0);
+      expect(v34[0].message).toContain("temperature");
+    });
+
+    it("V34: temperature in range passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", temperature: 0.7 } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v34 = results.filter((r) => r.rule === "V34");
+      expect(v34.length).toBe(0);
+    });
+
+    it("V34: temperature in defaults out of range produces error", () => {
+      const ast = minimalAST({
+        defaults: { temperature: -0.5 },
+      });
+      const results = validate(ast);
+      const v34 = results.filter((r) => r.rule === "V34");
+      expect(v34.length).toBeGreaterThan(0);
+    });
+
+    it("V35: invalid thinking produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", thinking: "turbo" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v35 = results.filter((r) => r.rule === "V35");
+      expect(v35.length).toBeGreaterThan(0);
+      expect(v35[0].message).toContain("turbo");
+    });
+
+    it("V35: valid thinking passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", thinking: "high" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v35 = results.filter((r) => r.rule === "V35");
+      expect(v35.length).toBe(0);
+    });
+
+    it("V36: invalid output-format produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", outputFormat: "xml" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v36 = results.filter((r) => r.rule === "V36");
+      expect(v36.length).toBeGreaterThan(0);
+      expect(v36[0].message).toContain("xml");
+    });
+
+    it("V36: valid output-format passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", outputFormat: "json" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v36 = results.filter((r) => r.rule === "V36");
+      expect(v36.length).toBe(0);
+    });
+
+    it("V37: invalid log-level produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", logLevel: "verbose" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v37 = results.filter((r) => r.rule === "V37");
+      expect(v37.length).toBeGreaterThan(0);
+      expect(v37[0].message).toContain("verbose");
+    });
+
+    it("V37: valid log-level passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", logLevel: "debug" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v37 = results.filter((r) => r.rule === "V37");
+      expect(v37.length).toBe(0);
+    });
+
+    it("V38: non-positive max-tokens produces error", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", maxTokens: 0 } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v38 = results.filter((r) => r.rule === "V38");
+      expect(v38.length).toBeGreaterThan(0);
+    });
+
+    it("V38: valid max-tokens passes", () => {
+      const ast = minimalAST({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+          { id: "intake", type: "action", label: "I" },
+          { id: "worker", type: "agent", label: "W", model: "sonnet", maxTokens: 4096 } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v38 = results.filter((r) => r.rule === "V38");
+      expect(v38.length).toBe(0);
+    });
+  });
+});
+
+// =========================================================================
+// F. Model config parsing tests (sampling params, defaults, thinking, output-format)
+// =========================================================================
+
+describe("Model config parsing", () => {
+  it("parses agent with sampling parameters", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  agent extractor {
+    model: gpt-4o
+    temperature: 0
+    max-tokens: 4096
+    top-p: 0.9
+    top-k: 50
+    seed: 42
+    stop: ["END", "---"]
+  }
+  flow { extractor -> extractor }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "extractor") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.temperature).toBe(0);
+    expect(agent.maxTokens).toBe(4096);
+    expect(agent.topP).toBe(0.9);
+    expect(agent.topK).toBe(50);
+    expect(agent.seed).toBe(42);
+    expect(agent.stop).toEqual(["END", "---"]);
+  });
+
+  it("parses agent with thinking: high and thinking-budget", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  agent reasoner {
+    model: opus
+    thinking: high
+    thinking-budget: 10000
+  }
+  flow { reasoner -> reasoner }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "reasoner") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.thinking).toBe("high");
+    expect(agent.thinkingBudget).toBe(10000);
+  });
+
+  it("parses agent with output-format: json", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  agent extractor {
+    model: gpt-4o
+    output-format: json
+  }
+  flow { extractor -> extractor }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "extractor") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.outputFormat).toBe("json");
+  });
+
+  it("parses agent with log-level: debug", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  agent classifier {
+    model: sonnet
+    log-level: debug
+  }
+  flow { classifier -> classifier }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "classifier") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.logLevel).toBe("debug");
+  });
+
+  it("parses defaults block", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  defaults {
+    temperature: 0.7
+    max-tokens: 8192
+    thinking: off
+    timeout: 10m
+    log-level: info
+    output-format: text
+    top-p: 0.95
+    seed: 123
+  }
+  agent writer {
+    model: sonnet
+  }
+  flow { writer -> writer }
+}`;
+    const ast = parse(src);
+    expect(ast.defaults).not.toBeNull();
+    expect(ast.defaults!.temperature).toBe(0.7);
+    expect(ast.defaults!.maxTokens).toBe(8192);
+    expect(ast.defaults!.thinking).toBe("off");
+    expect(ast.defaults!.timeout).toBe("10m");
+    expect(ast.defaults!.logLevel).toBe("info");
+    expect(ast.defaults!.outputFormat).toBe("text");
+    expect(ast.defaults!.topP).toBe(0.95);
+    expect(ast.defaults!.seed).toBe(123);
+  });
+
+  it("defaults is null when no defaults block present", () => {
+    const src = `
+topology test-pipeline : [pipeline] {
+  meta { version: "1.0.0" }
+  agent writer {
+    model: sonnet
+  }
+  flow { writer -> writer }
+}`;
+    const ast = parse(src);
+    expect(ast.defaults).toBeNull();
+  });
+
+  it("backward compat: existing topologies still parse with defaults null", () => {
+    const src = `
+topology code-review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "basic review"
+  }
+  agent reviewer {
+    model: opus
+    tools: [Read, Write]
+    retry: 2
+  }
+  flow { reviewer -> reviewer }
+}`;
+    const ast = parse(src);
+    expect(ast.defaults).toBeNull();
+    const agent = ast.nodes.find((n) => n.id === "reviewer") as AgentNode;
+    expect(agent.model).toBe("opus");
+    expect(agent.tools).toEqual(["Read", "Write"]);
+    expect(agent.retry).toBe(2);
+    // No sampling params set
+    expect(agent.temperature).toBeUndefined();
+    expect(agent.maxTokens).toBeUndefined();
+    expect(agent.thinking).toBeUndefined();
+    expect(agent.outputFormat).toBeUndefined();
+    expect(agent.logLevel).toBeUndefined();
   });
 });

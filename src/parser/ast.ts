@@ -159,6 +159,26 @@ export interface MeteringDef {
 }
 
 // ---------------------------------------------------------------------------
+// Retry configuration
+// ---------------------------------------------------------------------------
+
+/** Structured retry configuration for agents. */
+export interface RetryConfig {
+  /** Maximum number of retry attempts. */
+  max: number;
+  /** Backoff strategy between retries. */
+  backoff?: "none" | "linear" | "exponential";
+  /** Initial interval between retries (duration string, e.g. "1s", "5m"). */
+  interval?: string;
+  /** Maximum interval cap (duration string). */
+  maxInterval?: string;
+  /** Whether to add random jitter to retry intervals. */
+  jitter?: boolean;
+  /** Error types that should not trigger retries. */
+  nonRetryable?: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Nodes
 // ---------------------------------------------------------------------------
 
@@ -194,6 +214,10 @@ export interface ActionNode extends BaseNode {
   description?: string;
   /** Shell commands to execute. */
   commands?: string[];
+  /** Timeout duration string (e.g. "5m", "2h"). */
+  timeout?: string;
+  /** Failure behavior: "halt" | "retry" | "skip" | "continue" | "fallback <agent-id>". */
+  onFail?: string;
 }
 
 /** An agent node. */
@@ -223,8 +247,8 @@ export interface AgentNode extends BaseNode {
   behavior?: string;
   /** Invocation mode (e.g. "manual"). */
   invocation?: string;
-  /** Max retry count on failure. */
-  retry?: number;
+  /** Retry configuration: simple count or structured block. */
+  retry?: number | RetryConfig;
   /** Isolation mode (e.g. "worktree"). */
   isolation?: string;
   /** Whether this agent runs in the background. */
@@ -247,6 +271,30 @@ export interface AgentNode extends BaseNode {
   sandbox?: string | boolean;
   /** Model fallback chain (ordered list of model ids to try). */
   fallbackChain?: string[];
+  /** Timeout duration string (e.g. "5m", "2h"). */
+  timeout?: string;
+  /** Failure behavior: "halt" | "retry" | "skip" | "continue" | "fallback <agent-id>". */
+  onFail?: string;
+  /** Sampling temperature (0-2). */
+  temperature?: number;
+  /** Maximum tokens to generate. */
+  maxTokens?: number;
+  /** Top-p (nucleus) sampling parameter. */
+  topP?: number;
+  /** Top-k sampling parameter. */
+  topK?: number;
+  /** Stop sequences. */
+  stop?: string[];
+  /** Random seed for reproducibility. */
+  seed?: number;
+  /** Thinking/reasoning level: "off" | "low" | "medium" | "high" | "max". */
+  thinking?: string;
+  /** Token budget for thinking/reasoning. */
+  thinkingBudget?: number;
+  /** Output format: "text" | "json" | "json-schema". */
+  outputFormat?: string;
+  /** Log level: "debug" | "info" | "warn" | "error". */
+  logLevel?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -268,8 +316,36 @@ export interface GateNode extends BaseNode {
   onFail?: string;
   /** Behavior mode. */
   behavior?: string;
+  /** Timeout duration string (e.g. "5m", "2h"). */
+  timeout?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/** Topology-level defaults for sampling params and shared agent config. */
+export interface DefaultsDef {
+  /** Sampling temperature (0-2). */
+  temperature?: number;
+  /** Maximum tokens to generate. */
+  maxTokens?: number;
+  /** Top-p (nucleus) sampling parameter. */
+  topP?: number;
+  /** Top-k sampling parameter. */
+  topK?: number;
+  /** Stop sequences. */
+  stop?: string[];
+  /** Random seed for reproducibility. */
+  seed?: number;
+  /** Thinking/reasoning level: "off" | "low" | "medium" | "high" | "max". */
+  thinking?: string;
+  /** Token budget for thinking/reasoning. */
+  thinkingBudget?: number;
+  /** Output format: "text" | "json" | "json-schema". */
+  outputFormat?: string;
+  /** Timeout duration string (e.g. "5m", "2h"). */
+  timeout?: string;
+  /** Log level: "debug" | "info" | "warn" | "error". */
+  logLevel?: string;
 }
 
 /** Union of all node types. */
@@ -382,6 +458,8 @@ export interface TopologyAST {
   schedules: ScheduleJobDef[];
   /** External interface definitions. */
   interfaces: InterfaceDef[];
+  /** Topology-level defaults for sampling params and shared agent config. */
+  defaults: DefaultsDef | null;
   /** Top-level platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
