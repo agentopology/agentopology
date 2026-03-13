@@ -2,7 +2,7 @@
 
 Created by Nadav Naveh
 
-These 22 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
+These 29 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
 
 ---
 
@@ -386,3 +386,150 @@ settings {
   fallback-chain: [opus, sonnet, haiku]  # warning: haiku not in any provider
 }
 ```
+
+---
+
+## Rule 23: Duplicate Sections (Warning)
+
+Singleton top-level sections (`meta`, `flow`, `memory`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, `tools`, `schedule`, `interfaces`) may appear at most once. When duplicates are found, only the first occurrence is used by the parser and a **warning** is emitted.
+
+```agenttopology
+# WARNING -- duplicate memory block
+memory {
+  workspace { path: "workspace/" }
+}
+
+memory {
+  domains { path: "domains/" }
+}
+```
+
+---
+
+## Rule 24: Unknown Memory Sub-Blocks (Warning)
+
+Only known sub-blocks are expected inside the `memory` section: `domains`, `references`, `external-docs`, `metrics`, and `workspace`. Any other named sub-block is parsed but flagged as a **warning**.
+
+```agenttopology
+# WARNING -- "custom-store" is not a recognized memory sub-block
+memory {
+  workspace { path: "workspace/" }
+  custom-store { path: "store/" }
+}
+```
+
+---
+
+## Rule 25: Bounce-Back Advisory (Warning)
+
+The `on-fail: bounce-back` gate behavior is advisory on all CLI bindings. It requires orchestrator cooperation or a framework binding for enforcement. This is a **warning** to inform topology authors that bounce-back is not guaranteed to be enforced at runtime.
+
+```agenttopology
+# WARNING -- bounce-back is advisory
+gates {
+  gate quality-check {
+    after: writer
+    before: reviewer
+    run: "scripts/check.sh"
+    on-fail: bounce-back
+  }
+}
+```
+
+---
+
+## Rule 26: Action Kind Enum
+
+Every `action.kind` must be one of the allowed values: `external`, `git`, `decision`, `inline`, or `report`. Any other value is an error.
+
+```agenttopology
+# INVALID -- "webhook" is not a recognized action kind
+action notify {
+  kind: webhook
+  description: "Send notification"
+}
+```
+
+---
+
+## Rule 27: Agent Permissions Enum (Warning)
+
+Agent `permissions` values should be one of the known values: `autonomous`, `supervised`, `interactive`, `unrestricted`, `plan`, `auto`, `confirm`, `bypass`. Unrecognized values produce a **warning** (not error) since new permission modes may be added.
+
+```agenttopology
+# WARNING -- "restricted" is not a recognized permission mode
+agent writer {
+  model: sonnet
+  permissions: restricted
+}
+```
+
+---
+
+## Rule 28: Metering Format Enum
+
+The `metering.format` field must be one of: `json`, `jsonl`, or `csv`. Any other value is an error.
+
+```agenttopology
+# INVALID -- "xml" is not a recognized metering format
+metering {
+  track: [tokens-in, tokens-out]
+  per: [agent]
+  output: "metrics/"
+  format: xml
+  pricing: none
+}
+```
+
+---
+
+## Rule 29: Metering Pricing Enum (Warning)
+
+The `metering.pricing` field should be one of the known values: `anthropic-current`, `custom`, or `none`. Unrecognized values produce a **warning** since custom pricing integrations may exist.
+
+```agenttopology
+# WARNING -- "openai-current" is not a recognized pricing model
+metering {
+  track: [tokens-in, tokens-out]
+  per: [agent]
+  output: "metrics/"
+  format: jsonl
+  pricing: openai-current
+}
+```
+
+---
+
+## Summary Table
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| V1 | error | Unique names — all agent, action, and gate names must be globally unique |
+| V2 | error | No keyword names — names cannot match reserved keywords |
+| V3 | error | Flow resolves — every flow reference must be a declared node |
+| V4 | error | No orphans — every agent must appear in flow or have `invocation: manual` |
+| V5 | error | Outputs exist — `[when x.y]` must reference a declared output |
+| V6 | error | Bounded loops — every back-edge must have `[max N]` |
+| V7 | error | Model required — every agent and orchestrator must have a model |
+| V8 | error | Imports resolve — import paths must point to existing files |
+| V9 | error | Actions handled — flow actions must appear in `orchestrator.handles` |
+| V10 | warning | Prompts exist — prompt blocks should not be empty |
+| V11 | error | Reads/writes consistent — data dependencies must match flow order |
+| V12 | error | Edge attribute order — must be `[when, max, per]` |
+| V13 | error | Gate placement — `after` and `before` must reference declared nodes |
+| V14 | error | Tool exclusivity — cannot have both `tools` and `disallowed-tools` |
+| V15 | error | Exhaustive conditions — conditional edges must cover all output values |
+| V16 | error | API key env vars — provider `api-key` must use `${ENV_VAR}` syntax |
+| V17 | error | Single default provider — at most one provider may be default |
+| V18 | warning | Model in provider — agent models should exist in a provider's list |
+| V19 | error | Unique provider names — no duplicate provider names |
+| V20 | error | Schedule job references — jobs must reference declared nodes; cron/every exclusive |
+| V21 | error | Interface secret detection — sensitive fields must use `${ENV_VAR}` syntax |
+| V22 | warning | Fallback chain models — fallback models should exist in a provider's list |
+| V23 | warning | Duplicate sections — singleton sections should appear at most once |
+| V24 | warning | Unknown memory sub-blocks — only known sub-blocks are expected |
+| V25 | warning | Bounce-back advisory — `on-fail: bounce-back` is advisory on CLI bindings |
+| V26 | error | Action kind enum — must be external, git, decision, inline, or report |
+| V27 | warning | Agent permissions enum — should be a recognized permission mode |
+| V28 | error | Metering format enum — must be json, jsonl, or csv |
+| V29 | warning | Metering pricing enum — should be a recognized pricing model |

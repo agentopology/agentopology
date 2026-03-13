@@ -308,6 +308,10 @@ agent-field     = 'role' ':' identifier
                 | 'isolation' ':' 'worktree'
                 | 'invocation' ':' ('manual' | 'auto')
                 | 'behavior' ':' ('advisory' | 'blocking')
+                # NOTE: agent.memory is intentionally deferred. Per-agent memory scope
+                # is covered by reads/writes (data flow) and the top-level memory {}
+                # block (workspace structure). A dedicated agent.memory field would be
+                # redundant. Retained in the grammar for future consideration.
                 | 'memory' ':' ('user' | 'project' | 'local')
                 | 'skills' ':' name-list
                 | 'mcp-servers' ':' name-list
@@ -348,7 +352,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `isolation` | `worktree` | no | -- | Git worktree isolation |
 | `invocation` | `manual` / `auto` | no | `auto` | User-triggered only |
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory never blocks flow |
-| `memory` | `user` / `project` / `local` | no | -- | Persistent memory scope |
+| `memory` | `user` / `project` / `local` | no | -- | Persistent memory scope (intentionally deferred — use reads/writes and top-level memory {} instead) |
 | `skills` | name-list | no | `[]` | Skills to preload |
 | `mcp-servers` | name-list | no | `[]` | MCP servers available |
 | `background` | boolean | no | `false` | Run in background |

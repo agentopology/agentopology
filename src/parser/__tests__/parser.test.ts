@@ -1208,6 +1208,121 @@ topology test-v12 : [pipeline] {
     expect(v22[0].message).toContain("unknown-model");
   });
 
+  it("V26: action with invalid kind -> error", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["do-stuff"] },
+        { id: "do-stuff", type: "action", label: "Do Stuff", kind: "banana" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet" },
+      ],
+      edges: [{ from: "do-stuff", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v26 = results.filter((r) => r.rule === "V26");
+    expect(v26.length).toBeGreaterThan(0);
+    expect(v26[0].level).toBe("error");
+    expect(v26[0].message).toContain("banana");
+  });
+
+  it("V26: action with valid kind -> pass", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["do-stuff"] },
+        { id: "do-stuff", type: "action", label: "Do Stuff", kind: "external" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet" },
+      ],
+      edges: [{ from: "do-stuff", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v26 = results.filter((r) => r.rule === "V26");
+    expect(v26).toHaveLength(0);
+  });
+
+  it("V27: agent with unrecognized permissions -> warning", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", permissions: "yolo" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v27 = results.filter((r) => r.rule === "V27");
+    expect(v27.length).toBeGreaterThan(0);
+    expect(v27[0].level).toBe("warning");
+    expect(v27[0].message).toContain("yolo");
+  });
+
+  it("V27: agent with valid permissions -> pass", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", permissions: "plan" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v27 = results.filter((r) => r.rule === "V27");
+    expect(v27).toHaveLength(0);
+  });
+
+  it("V7: orchestrator without model -> error (C05)", () => {
+    const ast = minimalAST({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v7 = results.filter((r) => r.rule === "V7" && r.message.includes("Orchestrator"));
+    expect(v7.length).toBeGreaterThan(0);
+    expect(v7[0].level).toBe("error");
+  });
+
+  it("V28: metering with invalid format -> error", () => {
+    const ast = minimalAST({
+      metering: { track: ["tokens-in"], per: ["agent"], output: "metrics/", format: "xml", pricing: "anthropic-current" },
+    });
+    const results = validate(ast);
+    const v28 = results.filter((r) => r.rule === "V28");
+    expect(v28.length).toBeGreaterThan(0);
+    expect(v28[0].level).toBe("error");
+    expect(v28[0].message).toContain("xml");
+  });
+
+  it("V28: metering with valid format -> pass", () => {
+    const ast = minimalAST({
+      metering: { track: ["tokens-in"], per: ["agent"], output: "metrics/", format: "jsonl", pricing: "anthropic-current" },
+    });
+    const results = validate(ast);
+    const v28 = results.filter((r) => r.rule === "V28");
+    expect(v28).toHaveLength(0);
+  });
+
+  it("V29: metering with unrecognized pricing -> warning", () => {
+    const ast = minimalAST({
+      metering: { track: ["tokens-in"], per: ["agent"], output: "metrics/", format: "json", pricing: "free-tier" },
+    });
+    const results = validate(ast);
+    const v29 = results.filter((r) => r.rule === "V29");
+    expect(v29.length).toBeGreaterThan(0);
+    expect(v29[0].level).toBe("warning");
+    expect(v29[0].message).toContain("free-tier");
+  });
+
+  it("V29: metering with valid pricing -> pass", () => {
+    const ast = minimalAST({
+      metering: { track: ["tokens-in"], per: ["agent"], output: "metrics/", format: "json", pricing: "none" },
+    });
+    const results = validate(ast);
+    const v29 = results.filter((r) => r.rule === "V29");
+    expect(v29).toHaveLength(0);
+  });
+
   it("valid topology -> 0 errors", () => {
     const ast = minimalAST();
     const results = validate(ast);
@@ -2089,5 +2204,199 @@ describe("Line number tracking", () => {
     expect(v25).toHaveLength(1);
     expect(v25[0].level).toBe("warning");
     expect(v25[0].message).toContain("bounce-back");
+  });
+});
+
+// =========================================================================
+// K. Parser gap fixes (C12, C13, C14)
+// =========================================================================
+
+describe("C12: env sub-map inside mcp-servers entries", () => {
+  it("parses env block inside an mcp-server entry", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  mcp-servers {
+    filesystem {
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem"]
+      env {
+        HOME: "/tmp"
+        NODE_ENV: "production"
+      }
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.mcpServers.filesystem).toBeDefined();
+    expect(ast.mcpServers.filesystem.command).toBe("npx");
+    expect(ast.mcpServers.filesystem.args).toEqual(["-y", "@modelcontextprotocol/server-filesystem"]);
+    expect(ast.mcpServers.filesystem.env).toEqual({
+      HOME: "/tmp",
+      NODE_ENV: "production",
+    });
+  });
+
+  it("mcp-server without env block still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  mcp-servers {
+    simple {
+      command: "node"
+      args: ["server.js"]
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.mcpServers.simple).toBeDefined();
+    expect(ast.mcpServers.simple.command).toBe("node");
+    expect(ast.mcpServers.simple.env).toBeUndefined();
+  });
+
+  it("parses multiple mcp-servers with env blocks", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  mcp-servers {
+    server-a {
+      command: "npx"
+      env {
+        API_KEY: "abc123"
+      }
+    }
+    server-b {
+      url: "http://localhost:3000"
+      env {
+        TOKEN: "xyz"
+      }
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect((ast.mcpServers["server-a"].env as Record<string, string>).API_KEY).toBe("abc123");
+    expect((ast.mcpServers["server-b"].env as Record<string, string>).TOKEN).toBe("xyz");
+  });
+});
+
+describe("C13: extensions block inside hook bodies", () => {
+  it("parses extensions inside a global hook", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  hooks {
+    hook lint-check {
+      on: PreToolUse
+      matcher: "Write"
+      run: "eslint --fix"
+      type: command
+      extensions {
+        claude-code {
+          priority: 1
+        }
+      }
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.hooks).toHaveLength(1);
+    expect(ast.hooks[0].name).toBe("lint-check");
+    expect(ast.hooks[0].extensions).toBeDefined();
+    expect(ast.hooks[0].extensions!["claude-code"]).toEqual({ priority: 1 });
+  });
+
+  it("parses extensions inside a per-agent hook", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w {
+    model: opus
+    hooks {
+      hook format-check {
+        on: PostToolUse
+        matcher: "Write"
+        run: "prettier --write"
+        extensions {
+          copilot {
+            enabled: true
+          }
+        }
+      }
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "w") as AgentNode;
+    expect(agent.hooks).toHaveLength(1);
+    expect(agent.hooks![0].extensions).toBeDefined();
+    expect(agent.hooks![0].extensions!["copilot"]).toEqual({ enabled: true });
+  });
+
+  it("hook without extensions still works", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  hooks {
+    hook simple {
+      on: PreToolUse
+      matcher: "Read"
+      run: "echo ok"
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.hooks).toHaveLength(1);
+    expect(ast.hooks[0].extensions).toBeUndefined();
+  });
+});
+
+describe("C14: top-level extensions block in topology body", () => {
+  it("parses a top-level extensions block", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  extensions {
+    claude-code {
+      max-tokens: 8192
+      stream: true
+    }
+    openclaw {
+      runtime: "docker"
+    }
+  }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.extensions).toBeDefined();
+    expect(ast.extensions!["claude-code"]).toEqual({
+      "max-tokens": 8192,
+      stream: true,
+    });
+    expect(ast.extensions!["openclaw"]).toEqual({
+      runtime: "docker",
+    });
+  });
+
+  it("topology without extensions block has no extensions field", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent w { model: opus }
+  flow { a -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.extensions).toBeUndefined();
   });
 });

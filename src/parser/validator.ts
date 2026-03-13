@@ -1,7 +1,7 @@
 /**
  * AgentTopology AST validator.
  *
- * Implements the 22 validation rules from the AgentTopology specification
+ * Implements the 29 validation rules from the AgentTopology specification
  * (section 6). Takes a parsed {@link TopologyAST} and returns an array of
  * {@link ValidationResult} entries describing errors and warnings.
  *
@@ -73,11 +73,16 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "opus", "sonnet", "haiku", "inherit", "plan", "auto", "confirm",
   "bypass", "worktree", "append-only", "background", "skills",
   "user", "project", "local", "on", "matcher", "timeout",
+  // Hook event keywords
   "PreToolUse", "PostToolUse", "PostToolUseFailure",
   "SubagentStart", "SubagentStop", "Stop", "SessionStart", "SessionEnd",
   "UserPromptSubmit", "InstructionsLoaded", "PermissionRequest",
   "Notification", "TeammateIdle", "TaskCompleted", "ConfigChange",
   "PreCompact", "WorktreeCreate", "WorktreeRemove",
+  // C18: Universal hook events missing from validator
+  "AgentStart", "AgentStop", "ToolUse", "Error",
+  // C18: Permission enum values missing from validator
+  "autonomous", "supervised", "interactive", "unrestricted",
   "allow", "deny", "ask", "http", "stdio", "sse", "args", "env", "url",
   "script", "lang", "bash", "python", "node", "on-fail", "after",
   "before", "run", "checks", "load-when", "path", "mode", "files",
@@ -102,6 +107,42 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "sandbox", "docker", "network-only",
   // Fallback chain keyword
   "fallback-chain",
+  // Wave 1: Error handling and retry keywords
+  "backoff", "interval", "max-interval", "jitter",
+  "non-retryable", "exponential", "linear",
+  // Wave 1: Sampling parameter keywords
+  "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
+  // Wave 1: Defaults and thinking keywords
+  "defaults", "thinking", "thinking-budget", "off", "low", "medium", "high",
+  // Wave 1: Sensitive modifier
+  "sensitive",
+  // Wave 1: Logging keywords
+  "log-level", "debug", "info", "warn", "error",
+  // Wave 1: Output format keywords
+  "output-format", "json-schema", "text",
+  // Wave 2: Join semantics keywords
+  "join", "all", "any", "all-done", "none-failed",
+  // Wave 2: Edge attribute keywords
+  "tolerance", "race", "wait",
+  // Wave 2: Error handler keyword
+  "error-handler",
+  // Wave 3: Schema system keywords
+  "schemas", "schema", "input-schema", "output-schema",
+  "array", "of", "optional",
+  // Wave 3: Observability keywords
+  "observability", "exporter", "endpoint", "service",
+  "sample-rate", "capture", "prompts", "completions", "tool-args",
+  "tool-results", "spans", "agents",
+  // Wave 3: Observability exporter values
+  "otlp", "langsmith", "datadog", "stdout",
+  // Wave 3: Secret reference keywords
+  "secret", "vault", "op", "awssm", "ssm", "gcpsm", "azurekv",
+  // Wave 4: Composition keywords
+  "as", "with", "include", "fragment", "params", "interface",
+  "entry", "exit", "sha256",
+  // Wave 5: Advanced pattern keywords
+  "circuit-breaker", "threshold", "window", "cooldown",
+  "compensates", "human", "checkpoint", "durable",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -354,19 +395,30 @@ function v6BoundedLoops(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V7: Every agent must have a model. */
+/** V7: Every agent and orchestrator must have a model. */
 function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const node of ast.nodes) {
-    if (!isAgent(node)) continue;
-    if (!node.model) {
-      results.push({
-        rule: "V7",
-        level: "error",
-        message: `Agent "${node.id}" has no model specified`,
-        node: node.id,
-        line: lookupLine(ast, node.id),
-      });
+    if (isAgent(node)) {
+      if (!node.model) {
+        results.push({
+          rule: "V7",
+          level: "error",
+          message: `Agent "${node.id}" has no model specified`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    } else if (isOrchestrator(node)) {
+      if (!node.model) {
+        results.push({
+          rule: "V7",
+          level: "error",
+          message: `Orchestrator has no model specified`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
     }
   }
   return results;
@@ -856,6 +908,76 @@ function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._unknownMemorySubBlockWarnings ?? [];
 }
 
+/** V26: `action.kind` must be one of the allowed values. */
+function v26ActionKindEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_KINDS = new Set(["external", "git", "decision", "inline", "report"]);
+  for (const node of ast.nodes) {
+    if (node.type !== "action") continue;
+    const action = node as import("./ast.js").ActionNode;
+    if (action.kind && !VALID_KINDS.has(action.kind)) {
+      results.push({
+        rule: "V26",
+        level: "error",
+        message: `Action "${action.id}" has invalid kind "${action.kind}" — must be one of: external, git, decision, inline, report`,
+        node: action.id,
+        line: lookupLine(ast, action.id),
+      });
+    }
+  }
+  return results;
+}
+
+/** V27: `agent.permissions` should be one of the known values. */
+function v27AgentPermissionsEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_PERMISSIONS = new Set([
+    "autonomous", "supervised", "interactive", "unrestricted",
+    "plan", "auto", "confirm", "bypass",
+  ]);
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    if (node.permissions && !VALID_PERMISSIONS.has(node.permissions)) {
+      results.push({
+        rule: "V27",
+        level: "warning",
+        message: `Agent "${node.id}" has unrecognized permissions "${node.permissions}" — known values: autonomous, supervised, interactive, unrestricted, plan, auto, confirm, bypass`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+  return results;
+}
+
+/** V28: `metering.format` must be one of the allowed values. */
+function v28MeteringFormatEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_FORMATS = new Set(["json", "jsonl", "csv"]);
+  if (ast.metering && !VALID_FORMATS.has(ast.metering.format)) {
+    results.push({
+      rule: "V28",
+      level: "error",
+      message: `Metering format "${ast.metering.format}" is invalid — must be one of: json, jsonl, csv`,
+    });
+  }
+  return results;
+}
+
+/** V29: `metering.pricing` should be one of the known values. */
+function v29MeteringPricingEnum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID_PRICING = new Set(["anthropic-current", "custom", "none"]);
+  if (ast.metering && !VALID_PRICING.has(ast.metering.pricing)) {
+    results.push({
+      rule: "V29",
+      level: "warning",
+      message: `Metering pricing "${ast.metering.pricing}" is unrecognized — known values: anthropic-current, custom, none`,
+    });
+  }
+  return results;
+}
+
 /** V25: `on-fail: bounce-back` is advisory on all CLI bindings. */
 function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -879,7 +1001,7 @@ function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all 25 specification rules.
+ * Validate a parsed AgentTopology AST against all 29 specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
@@ -911,5 +1033,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v23DuplicateSections(ast),
     ...v24UnknownMemorySubBlocks(ast),
     ...v25BounceBackAdvisory(ast),
+    ...v26ActionKindEnum(ast),
+    ...v27AgentPermissionsEnum(ast),
+    ...v28MeteringFormatEnum(ast),
+    ...v29MeteringPricingEnum(ast),
   ];
 }

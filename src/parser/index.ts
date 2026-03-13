@@ -282,7 +282,7 @@ export function parseAgent(
     for (const hBlock of hookBlocks) {
       if (!hBlock.id) continue;
       const hFields = parseFields(hBlock.body);
-      agentHooks.push({
+      const agentHook: HookDef = {
         name: hBlock.id,
         on: hFields.on ?? "",
         matcher: hFields.matcher ? unquote(hFields.matcher) : "",
@@ -291,7 +291,13 @@ export function parseAgent(
         ...(hFields.timeout
           ? { timeout: parseInt(hFields.timeout, 10) }
           : {}),
-      });
+      };
+
+      // Parse extensions sub-block inside per-agent hook
+      const hookExtensions = parseExtensionsBlock(hBlock.body);
+      if (hookExtensions) agentHook.extensions = hookExtensions;
+
+      agentHooks.push(agentHook);
     }
     if (agentHooks.length > 0) node.hooks = agentHooks;
   }
@@ -611,7 +617,7 @@ export function parseHooks(body: string): HookDef[] {
   for (const block of hookBlocks) {
     if (!block.id) continue;
     const fields = parseFields(block.body);
-    hooks.push({
+    const hook: HookDef = {
       name: block.id,
       on: fields.on ?? "",
       matcher: fields.matcher ? unquote(fields.matcher) : "",
@@ -620,7 +626,13 @@ export function parseHooks(body: string): HookDef[] {
       ...(fields.timeout
         ? { timeout: parseInt(fields.timeout, 10) }
         : {}),
-    });
+    };
+
+    // Parse extensions sub-block inside hook
+    const extensions = parseExtensionsBlock(block.body);
+    if (extensions) hook.extensions = extensions;
+
+    hooks.push(hook);
   }
   return hooks;
 }
@@ -699,6 +711,22 @@ export function parseMcpServers(
       }
       const args = parseMultilineList(innerBody, "args");
       if (args.length) server.args = args;
+
+      // Parse env sub-block (key-value pairs for environment variables)
+      const envBlock = extractBlock(innerBody, "env");
+      if (envBlock) {
+        const envVars: Record<string, string> = {};
+        for (const line of envBlock.body.split("\n")) {
+          const kv = parseKV(line);
+          if (kv) {
+            envVars[kv[0]] = unquote(kv[1]);
+          }
+        }
+        if (Object.keys(envVars).length > 0) {
+          server.env = envVars;
+        }
+      }
+
       servers[name] = server;
     }
   }
@@ -1134,6 +1162,9 @@ export function parse(source: string): TopologyAST {
   const interfacesBlock = extractBlock(topBody, "interfaces");
   const interfaces = interfacesBlock ? parseInterfaces(interfacesBlock.body) : [];
 
+  // --- Top-level Extensions ---
+  const topLevelExtensions = parseExtensionsBlock(topBody);
+
   // --- Duplicate section detection ---
   const singletonKeywords = [
     "meta", "orchestrator", "flow", "memory", "batch", "environments",
@@ -1179,6 +1210,7 @@ export function parse(source: string): TopologyAST {
     providers,
     schedules,
     interfaces,
+    ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
   };
 
   // Attach V12 parse-time errors for the validator to consume.

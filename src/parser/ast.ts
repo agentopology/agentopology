@@ -382,4 +382,6 @@ export interface TopologyAST {
   schedules: ScheduleJobDef[];
   /** External interface definitions. */
   interfaces: InterfaceDef[];
+  /** Top-level platform-specific extension fields, keyed by binding name. */
+  extensions?: Record<string, Record<string, unknown>>;
 }

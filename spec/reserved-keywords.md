@@ -15,7 +15,8 @@ topology, library, import, from, use,
 agent, action, orchestrator, meta, roles, memory, flow, gates, gate,
 depth, batch, environments, triggers, command, event, level,
 hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
-context, env, extensions, providers, schedule, job, interfaces
+context, env, extensions, providers, schedule, job, interfaces,
+defaults, schemas, schema, observability, fragment, interface, params
 ```
 
 ---
@@ -56,6 +57,62 @@ cron, every, enabled, webhook, channel, auth, port,
 sandbox, docker, network-only, fallback-chain,
 pipeline, supervisor, blackboard, orchestrator-worker, debate,
 market-routing, consensus, fan-out, event-driven, human-gate
+```
+
+---
+
+## Wave 1 Keywords (Error Handling, Model Config, Secrets)
+
+```
+backoff, interval, max-interval, jitter,
+non-retryable, exponential, linear,
+temperature, max-tokens, top-p, top-k, stop, seed,
+thinking, thinking-budget, off, low, medium, high,
+sensitive,
+log-level, debug, info, warn, error,
+output-format, json-schema, text
+```
+
+---
+
+## Wave 2 Keywords (Flow Enhancements)
+
+```
+join, all, any, all-done, none-failed,
+tolerance, race, wait,
+error-handler
+```
+
+---
+
+## Wave 3 Keywords (Infrastructure)
+
+```
+input-schema, output-schema,
+array, of, optional,
+exporter, endpoint, service,
+sample-rate, capture, prompts, completions, tool-args,
+tool-results, spans, agents,
+otlp, langsmith, datadog, stdout,
+secret, vault, op, awssm, ssm, gcpsm, azurekv
+```
+
+---
+
+## Wave 4 Keywords (Composition)
+
+```
+as, with, include,
+entry, exit, sha256
+```
+
+---
+
+## Wave 5 Keywords (Advanced Patterns)
+
+```
+circuit-breaker, threshold, window, cooldown,
+compensates, human, checkpoint, durable
 ```
 
 ---
