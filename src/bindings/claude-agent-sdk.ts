@@ -168,11 +168,82 @@ function mapThinking(thinking: string | undefined, budget?: number): string | nu
 }
 
 // ---------------------------------------------------------------------------
+// Hook event mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Map topology hook event names to SDK HookEvent names.
+ *
+ * The SDK supports 22 hook events:
+ *   PreToolUse, PostToolUse, PostToolUseFailure, Notification,
+ *   UserPromptSubmit, SessionStart, SessionEnd, Stop,
+ *   SubagentStart, SubagentStop, PreCompact, PostCompact,
+ *   PermissionRequest, Setup, TeammateIdle, TaskCompleted,
+ *   Elicitation, ElicitationResult, ConfigChange,
+ *   InstructionsLoaded, WorktreeCreate, WorktreeRemove
+ */
+function mapHookEvent(event: string): string {
+  // Canonical SDK event names (pass through as-is)
+  const sdkEvents = new Set([
+    "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
+    "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop",
+    "SubagentStart", "SubagentStop", "PreCompact", "PostCompact",
+    "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted",
+    "Elicitation", "ElicitationResult", "ConfigChange",
+    "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove",
+  ]);
+
+  if (sdkEvents.has(event)) return event;
+
+  // Map common topology-level aliases to SDK events
+  const aliases: Record<string, string> = {
+    "pre-tool": "PreToolUse",
+    "pre-tool-use": "PreToolUse",
+    "post-tool": "PostToolUse",
+    "post-tool-use": "PostToolUse",
+    "tool-failure": "PostToolUseFailure",
+    "post-tool-failure": "PostToolUseFailure",
+    "notify": "Notification",
+    "notification": "Notification",
+    "prompt-submit": "UserPromptSubmit",
+    "user-prompt": "UserPromptSubmit",
+    "session-start": "SessionStart",
+    "session-end": "SessionEnd",
+    "stop": "Stop",
+    "subagent-start": "SubagentStart",
+    "subagent-stop": "SubagentStop",
+    "pre-compact": "PreCompact",
+    "post-compact": "PostCompact",
+    "permission": "PermissionRequest",
+    "permission-request": "PermissionRequest",
+    "setup": "Setup",
+    "teammate-idle": "TeammateIdle",
+    "task-completed": "TaskCompleted",
+    "elicitation": "Elicitation",
+    "elicitation-result": "ElicitationResult",
+    "config-change": "ConfigChange",
+    "instructions-loaded": "InstructionsLoaded",
+    "worktree-create": "WorktreeCreate",
+    "worktree-remove": "WorktreeRemove",
+  };
+
+  const normalized = event.toLowerCase();
+  return aliases[normalized] || event;
+}
+
+// ---------------------------------------------------------------------------
 // Code generators
 // ---------------------------------------------------------------------------
 
 function generatePackageJson(ast: TopologyAST): string {
   const name = ast.topology.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const deps: Record<string, string> = {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+  };
+  // Include zod when custom tools are defined (used by createSdkMcpServer / tool())
+  if (ast.toolDefs.length) {
+    deps["zod"] = "^3.22.0";
+  }
   return JSON.stringify(
     {
       name: `${name}-topology`,
@@ -183,9 +254,7 @@ function generatePackageJson(ast: TopologyAST): string {
         build: "tsc",
         dev: "tsx watch src/index.ts",
       },
-      dependencies: {
-        "@anthropic-ai/claude-agent-sdk": "^0.1.0",
-      },
+      dependencies: deps,
       devDependencies: {
         tsx: "^4.7.0",
         typescript: "^5.4.0",
@@ -659,6 +728,16 @@ import type {
   MemoryStore,
 } from "./types.js";
 
+// Import custom MCP tools if the topology defines a tools {} block.
+// This is a conditional import — the file may not exist if no tools are defined.
+let customToolsServer: unknown | undefined;
+try {
+  const mod = await import("./custom-tools.js");
+  customToolsServer = mod.customTools;
+} catch {
+  // No custom tools defined — this is expected.
+}
+
 /**
  * Execute an agent via the Claude Agent SDK query() call.
  *
@@ -694,9 +773,17 @@ export async function executeAgent(
   // Build query options
   const options: Record<string, unknown> = {
     model: config.model,
-    systemPrompt,
+    // Use appendSystemPrompt instead of systemPrompt to preserve the SDK's
+    // built-in system prompt (which teaches Claude how to use Read, Write,
+    // Edit, Bash, etc.). Our agent-specific prompt is appended on top.
+    appendSystemPrompt: systemPrompt,
     maxTurns: config.maxTurns,
     permissionMode: config.permissionMode,
+    // settingSources tells the SDK to auto-load project-level configuration:
+    //   - .claude/skills/   (our generated skills)
+    //   - CLAUDE.md         (our generated context)
+    //   - .claude/commands/ (our generated commands)
+    settingSources: ["project"],
   };
 
   // Allowed / disallowed tools
@@ -717,9 +804,19 @@ export async function executeAgent(
     options.thinking = config.thinking;
   }
 
-  // Output format (json-schema -> outputFormat)
+  // Output format — use the SDK's native JsonSchemaOutputFormat when available.
+  // The SDK accepts { type: "json_schema", schema: <JSON Schema object> } in
+  // the output option, which constrains the model's output to valid JSON
+  // matching the provided schema.
   if (config.outputFormat) {
-    options.outputFormat = config.outputFormat;
+    if (config.outputFormat.type === "json_schema" && config.outputFormat.schema) {
+      options.output = {
+        type: "json_schema",
+        schema: config.outputFormat.schema,
+      };
+    } else {
+      options.outputFormat = config.outputFormat;
+    }
   }
 
   // Skills
@@ -737,6 +834,13 @@ export async function executeAgent(
       if (mcp.env) mcpConfig[mcp.name].env = mcp.env;
       if (mcp.url) mcpConfig[mcp.name].url = mcp.url;
     }
+    options.mcpServers = mcpConfig;
+  }
+
+  // Custom MCP tools — add the topology-level tools server if available
+  if (customToolsServer) {
+    const mcpConfig = (options.mcpServers as Record<string, unknown>) || {};
+    mcpConfig["topology-tools"] = customToolsServer;
     options.mcpServers = mcpConfig;
   }
 
@@ -774,7 +878,11 @@ export async function executeAgent(
     options.runInBackground = true;
   }
   if (config.isolation === "worktree") {
-    options.isolation = "worktree";
+    // Use the SDK's native EnterWorktree/ExitWorktree tools for git worktree
+    // isolation. The SDK handles worktree creation and cleanup automatically —
+    // no need to generate manual git worktree commands.
+    const currentTools = (options.allowedTools as string[] | undefined) || [];
+    options.allowedTools = [...currentTools, "EnterWorktree", "ExitWorktree"];
   }
 
   try {
@@ -897,7 +1005,7 @@ async function selectSpeaker(
         options: {
           model: "haiku",
           maxTurns: 1,
-          systemPrompt: "You are a conversation moderator. Pick the next speaker. Respond with ONLY the member id, nothing else.",
+          appendSystemPrompt: "You are a conversation moderator. Pick the next speaker. Respond with ONLY the member id, nothing else.",
         },
       })) {
         if (typeof message === "string") result.push(message);
@@ -986,62 +1094,84 @@ export async function executeGroup(
 
 function generateHumanExecutor(): string {
   return `/**
- * Human-in-the-loop executor — uses the AskUserQuestion built-in tool.
+ * Human-in-the-loop executor — uses the SDK's native AskUserQuestion tool.
  * Auto-generated by agentopology scaffold — edit as needed.
  *
- * The Claude Agent SDK has a native AskUserQuestion tool, but for direct
- * human nodes in the flow graph, we use a terminal prompt as fallback.
+ * Instead of a readline-based terminal prompt, we run a lightweight query()
+ * call with AskUserQuestion enabled. The SDK handles the user interaction
+ * natively (terminal prompt, timeout, etc.).
  */
 
-import { createInterface } from "node:readline";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { HumanNodeConfig, HumanResult } from "./types.js";
 
 /**
- * Prompt the user for input with optional timeout.
+ * Prompt the user for input via the SDK's AskUserQuestion tool.
+ * Supports timeout and on-timeout behavior (halt/skip/fallback).
  */
 export async function executeHuman(
   config: HumanNodeConfig,
 ): Promise<HumanResult> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  const description = config.description || "Please provide your input";
 
-  const prompt = config.description
-    ? \`\\n[Human Input Required] \${config.description}\\n> \`
-    : "\\n[Human Input Required] Please provide your input:\\n> ";
+  // Build query options with AskUserQuestion enabled
+  const options: Record<string, unknown> = {
+    model: "haiku",
+    maxTurns: 2,
+    appendSystemPrompt: "You are a human-input collector. Use the AskUserQuestion tool to ask the user the following question, then return their exact response verbatim. Do not add commentary.",
+    allowedTools: ["AskUserQuestion"],
+    permissionMode: "bypassPermissions",
+  };
 
-  return new Promise<HumanResult>((resolve) => {
-    let resolved = false;
+  // AbortController for timeout
+  let controller: AbortController | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  if (config.timeout) {
+    controller = new AbortController();
+    timeoutId = setTimeout(() => controller!.abort(), config.timeout);
+    options.signal = controller.signal;
+  }
 
-    const handleInput = (answer: string) => {
-      if (resolved) return;
-      resolved = true;
-      rl.close();
-      resolve({ input: answer, timedOut: false });
-    };
-
-    rl.question(prompt, handleInput);
-
-    if (config.timeout) {
-      setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        rl.close();
-
-        const behavior = config.onTimeout || "halt";
-
-        if (behavior === "skip") {
-          resolve({ input: "", timedOut: true });
-        } else if (behavior.startsWith("fallback ")) {
-          const fallbackId = behavior.slice("fallback ".length);
-          resolve({ input: \`__FALLBACK__:\${fallbackId}\`, timedOut: true });
-        } else {
-          resolve({ input: "", timedOut: true });
+  try {
+    const result: string[] = [];
+    try {
+      for await (const message of query({
+        prompt: \`Ask the user: \${description}\`,
+        options,
+      })) {
+        if (typeof message === "string") {
+          result.push(message);
+        } else if (message && typeof message === "object") {
+          const msg = message as Record<string, unknown>;
+          if (msg.result && typeof msg.result === "string") result.push(msg.result);
+          else if (msg.content && typeof msg.content === "string") result.push(msg.content);
         }
-      }, config.timeout);
+      }
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
-  });
+
+    return { input: result.join("\\n").trim(), timedOut: false };
+  } catch (err) {
+    // Handle timeout (AbortError)
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    if (isTimeout) {
+      const behavior = config.onTimeout || "halt";
+
+      if (behavior === "skip") {
+        return { input: "", timedOut: true };
+      } else if (behavior.startsWith("fallback ")) {
+        const fallbackId = behavior.slice("fallback ".length);
+        return { input: \`__FALLBACK__:\${fallbackId}\`, timedOut: true };
+      } else {
+        // halt — return empty with timedOut flag
+        return { input: "", timedOut: true };
+      }
+    }
+
+    // Non-timeout error — treat as empty input
+    return { input: "", timedOut: false };
+  }
 }
 `;
 }
@@ -1621,12 +1751,20 @@ function generateOrchestrator(ast: TopologyAST): string {
       parts.push(`      mcpServers: [${mcpConfigs.join(", ")}],`);
     }
 
-    // Hooks — compile per-agent hooks to SDK format
+    // Hooks — compile per-agent hooks to SDK format.
+    // The SDK supports 22 hook events:
+    //   PreToolUse, PostToolUse, PostToolUseFailure, Notification,
+    //   UserPromptSubmit, SessionStart, SessionEnd, Stop,
+    //   SubagentStart, SubagentStop, PreCompact, PostCompact,
+    //   PermissionRequest, Setup, TeammateIdle, TaskCompleted,
+    //   Elicitation, ElicitationResult, ConfigChange,
+    //   InstructionsLoaded, WorktreeCreate, WorktreeRemove
     if (agent.hooks?.length) {
       const hookEntries: string[] = [];
       for (const hook of agent.hooks) {
+        const mappedEvent = mapHookEvent(hook.on);
         const hookParts: string[] = [
-          `event: "${hook.on}"`,
+          `event: "${mappedEvent}"`,
         ];
         if (hook.matcher) hookParts.push(`matcher: "${escapeQuotes(hook.matcher)}"`);
         hookParts.push(`run: "${escapeQuotes(hook.run)}"`);
@@ -1930,8 +2068,9 @@ ${edgeRoutes.join("\n")}
   memory,
 ${observabilityConfig}
 ${checkpointConfig}
-${ast.hooks.length > 0 ? `  globalHooks: [
-${ast.hooks.map((h) => `    { name: "${escapeQuotes(h.name)}", on: "${escapeQuotes(h.on)}", matcher: "${escapeQuotes(h.matcher)}", run: "${escapeQuotes(h.run)}", type: "${h.type || "command"}"${h.timeout ? `, timeout: ${h.timeout}` : ""} },`).join("\n")}
+${ast.hooks.length > 0 ? `  // Global hooks — event names are mapped to the SDK's 22 HookEvent names.
+  globalHooks: [
+${ast.hooks.map((h) => `    { name: "${escapeQuotes(h.name)}", on: "${escapeQuotes(mapHookEvent(h.on))}", matcher: "${escapeQuotes(h.matcher)}", run: "${escapeQuotes(h.run)}", type: "${h.type || "command"}"${h.timeout ? `, timeout: ${h.timeout}` : ""} },`).join("\n")}
   ],` : ""}
 };
 ${ast.defaults ? `
@@ -2768,6 +2907,58 @@ function generateImportsAndIncludes(ast: TopologyAST): string {
 }
 
 // ---------------------------------------------------------------------------
+// Custom MCP tools generator (from topology `tools {}` block)
+// ---------------------------------------------------------------------------
+
+function generateCustomMcpTools(ast: TopologyAST): string {
+  if (!ast.toolDefs.length) return "";
+
+  const toolEntries = ast.toolDefs.map((t) => {
+    const argNames = t.args || [];
+    const schemaFields = argNames
+      .map((arg) => `    ${arg}: z.string().describe("Argument: ${arg}"),`)
+      .join("\n");
+    const argsSpread = argNames
+      .map((arg) => `\${args.${arg}}`)
+      .join(" ");
+    const scriptCmd = t.script + (argsSpread ? ` ${argsSpread}` : "");
+
+    return `// Tool: ${t.id}
+customTools.addTool(tool(
+  "${escapeQuotes(t.id)}",
+  "${escapeQuotes(t.description)}",
+  {
+${schemaFields}
+  },
+  async (args) => {
+    const { execSync } = await import("child_process");
+    return execSync(\`${escapeString(scriptCmd)}\`).toString();
+  }
+));`;
+  });
+
+  return `/**
+ * Custom MCP tools — compiled from the topology \`tools {}\` block.
+ * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * Uses the SDK's native createSdkMcpServer() and tool() helpers to define
+ * in-process MCP tools. These are passed to query() via mcpServers, so every
+ * agent in the topology can access them.
+ */
+
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+export const customTools = createSdkMcpServer({
+  name: "topology-tools",
+  version: "1.0.0",
+});
+
+${toolEntries.join("\n\n")}
+`;
+}
+
+// ---------------------------------------------------------------------------
 // Main binding
 // ---------------------------------------------------------------------------
 
@@ -2797,6 +2988,11 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
   files.push({ path: "src/scheduler.ts", content: generateScheduler() });
   files.push({ path: "src/rate-limiter.ts", content: generateRateLimiter() });
   files.push({ path: "src/variants.ts", content: generateVariantSelector() });
+
+  // Custom MCP tools (from topology `tools {}` block)
+  if (ast.toolDefs.length) {
+    files.push({ path: "src/custom-tools.ts", content: generateCustomMcpTools(ast) });
+  }
 
   // Metering
   files.push({ path: "src/metering.ts", content: generateMetering(ast) });
