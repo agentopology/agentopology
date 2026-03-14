@@ -424,7 +424,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdScaffold(args.file, args.target, args.dryRun, args.output);
+      cmdScaffold(args.file, args.target, args.dryRun, args.output || args.dir);
       break;
 
     case "sync":
