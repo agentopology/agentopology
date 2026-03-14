@@ -287,12 +287,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    sections.push("## Instructions");
+    sections.push("");
     if (agent.prompt) {
-      sections.push("## Instructions");
-      sections.push("");
       sections.push(agent.prompt);
-      sections.push("");
+    } else {
+      sections.push(`You are ${displayName}. ${agent.description || agent.role || "Complete the assigned task."}`);
     }
+    sections.push("");
 
     // Reads section
     if (agent.reads && agent.reads.length > 0) {
