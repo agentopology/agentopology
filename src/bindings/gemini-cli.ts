@@ -17,9 +17,16 @@ import type {
   TopologyAST,
   AgentNode,
   GateNode,
+  GroupNode,
+  HumanNode,
   HookDef,
   SkillDef,
   ToolBlockDef,
+  SchemaFieldDef,
+  SchemaType,
+  RetryConfig,
+  CircuitBreakerConfig,
+  PromptVariant,
 } from "../parser/ast.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
@@ -77,6 +84,26 @@ function mapPermissions(perm: string): { sandbox?: boolean; toolApproval?: strin
     default:
       return {};
   }
+}
+
+/** Format a SchemaType to a human-readable string. */
+function formatSchemaType(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      return t.value;
+    case "array":
+      return `${formatSchemaType(t.itemType)}[]`;
+    case "enum":
+      return t.values.join(" | ");
+    case "ref":
+      return t.name;
+  }
+}
+
+/** Format a SchemaFieldDef to a readable line. */
+function formatSchemaField(f: SchemaFieldDef): string {
+  const opt = f.optional ? "?" : "";
+  return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +198,138 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
         }
       }
 
+      // Timeout
+      if (agent.timeout) {
+        sections.push(`- Maximum execution time: ${agent.timeout}`);
+      }
+
+      // On-fail
+      if (agent.onFail) {
+        sections.push(`- On failure: ${agent.onFail}`);
+      }
+
+      // Retry
+      if (agent.retry != null) {
+        if (typeof agent.retry === "number") {
+          sections.push(`- Retry: up to ${agent.retry} times on failure`);
+        } else {
+          const r = agent.retry as RetryConfig;
+          const parts = [`max ${r.max} attempts`];
+          if (r.backoff) parts.push(`${r.backoff} backoff`);
+          if (r.interval) parts.push(`interval ${r.interval}`);
+          if (r.maxInterval) parts.push(`max interval ${r.maxInterval}`);
+          if (r.jitter) parts.push(`with jitter`);
+          if (r.nonRetryable && r.nonRetryable.length > 0) {
+            parts.push(`non-retryable: ${r.nonRetryable.join(", ")}`);
+          }
+          sections.push(`- Retry strategy: ${parts.join(", ")}`);
+        }
+      }
+
+      // Output format
+      if (agent.outputFormat) {
+        sections.push(`- Output format: ${agent.outputFormat}`);
+      }
+
+      // Log level
+      if (agent.logLevel) {
+        sections.push(`- Log verbosity: ${agent.logLevel}`);
+      }
+
+      // Join semantics
+      if (agent.join) {
+        sections.push(`- Wait for: ${agent.join} (upstream join strategy)`);
+      }
+
+      // Circuit breaker
+      if (agent.circuitBreaker) {
+        const cb = agent.circuitBreaker;
+        sections.push(`- Circuit breaker: threshold=${cb.threshold}, window=${cb.window}, cooldown=${cb.cooldown}`);
+      }
+
+      // Compensates
+      if (agent.compensates) {
+        sections.push(`- Compensates: ${agent.compensates} (can undo its side effects)`);
+      }
+
+      // Input/Output schemas
+      if (agent.inputSchema && agent.inputSchema.length > 0) {
+        sections.push("- Input schema:");
+        for (const field of agent.inputSchema) {
+          sections.push(`  ${formatSchemaField(field)}`);
+        }
+      }
+      if (agent.outputSchema && agent.outputSchema.length > 0) {
+        sections.push("- Output schema:");
+        for (const field of agent.outputSchema) {
+          sections.push(`  ${formatSchemaField(field)}`);
+        }
+      }
+
+      // Rate limit
+      if (agent.rateLimit) {
+        sections.push(`- Rate limit: ${agent.rateLimit}`);
+      }
+
+      // Artifacts: produces/consumes
+      if (agent.produces && agent.produces.length > 0) {
+        sections.push(`- Produces: ${agent.produces.join(", ")}`);
+      }
+      if (agent.consumes && agent.consumes.length > 0) {
+        sections.push(`- Consumes: ${agent.consumes.join(", ")}`);
+      }
+
+      // Variants
+      if (agent.variants && agent.variants.length > 0) {
+        sections.push("- Variants:");
+        for (const v of agent.variants) {
+          const parts = [`${v.id} (weight: ${v.weight})`];
+          if (v.model) parts.push(`model: ${v.model}`);
+          if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
+          sections.push(`  - ${parts.join(", ")}`);
+        }
+      }
+
+      sections.push("");
+    }
+  }
+
+  // Human nodes
+  const humans = ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+  if (humans.length > 0) {
+    sections.push("## Human Checkpoints");
+    sections.push("");
+    for (const human of humans) {
+      sections.push(`### ${toTitle(human.id)}`);
+      sections.push("");
+      if (human.description) {
+        sections.push(human.description);
+        sections.push("");
+      }
+      sections.push("**This is a human pause point.** Execution stops here until a human provides input or approval.");
+      if (human.timeout) sections.push(`- Timeout: ${human.timeout}`);
+      if (human.onTimeout) sections.push(`- On timeout: ${human.onTimeout}`);
+      sections.push("");
+    }
+  }
+
+  // Group nodes
+  const groups = ast.nodes.filter((n) => n.type === "group") as GroupNode[];
+  if (groups.length > 0) {
+    sections.push("## Group Chats");
+    sections.push("");
+    for (const group of groups) {
+      sections.push(`### ${toTitle(group.id)}`);
+      sections.push("");
+      if (group.description) {
+        sections.push(group.description);
+        sections.push("");
+      }
+      sections.push(`- Members: ${group.members.join(", ")}`);
+      if (group.speakerSelection) sections.push(`- Speaker selection: ${group.speakerSelection}`);
+      if (group.maxRounds != null) sections.push(`- Max rounds: ${group.maxRounds}`);
+      if (group.termination) sections.push(`- Termination: ${group.termination}`);
+      if (group.timeout) sections.push(`- Timeout: ${group.timeout}`);
       sections.push("");
     }
   }
@@ -180,9 +339,16 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
     sections.push("## Flow");
     sections.push("");
     for (const edge of ast.edges) {
-      let line = `${edge.from} -> ${edge.to}`;
+      const arrow = edge.isError ? `-x->` : `->`;
+      let line = `${edge.from} ${arrow} ${edge.to}`;
+      if (edge.errorType) line += ` [error: ${edge.errorType}]`;
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.weight != null) line += ` [weight ${edge.weight}]`;
+      if (edge.race) line += ` [race]`;
+      if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+      if (edge.wait) line += ` [wait ${edge.wait}]`;
+      if (edge.reflection) line += ` [reflection]`;
       sections.push(`- ${line}`);
     }
     sections.push("");
@@ -308,6 +474,33 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
 
   if (Object.keys(envVars).length > 0) {
     settings.env = envVars;
+  }
+
+  // Model configuration from defaults or first agent
+  const defaults = ast.defaults;
+  const firstAgent = agents[0];
+
+  const modelConfig: Record<string, unknown> = {};
+  const temp = defaults?.temperature ?? firstAgent?.temperature;
+  if (temp != null) modelConfig.temperature = temp;
+  const maxTok = defaults?.maxTokens ?? firstAgent?.maxTokens;
+  if (maxTok != null) modelConfig.maxOutputTokens = maxTok;
+  const tp = defaults?.topP ?? firstAgent?.topP;
+  if (tp != null) modelConfig.topP = tp;
+  const tk = defaults?.topK ?? firstAgent?.topK;
+  if (tk != null) modelConfig.topK = tk;
+
+  if (Object.keys(modelConfig).length > 0) {
+    settings.modelConfig = modelConfig;
+  }
+
+  // Thinking / reasoning config
+  const thinkingLevel = defaults?.thinking ?? firstAgent?.thinking;
+  if (thinkingLevel && thinkingLevel !== "off") {
+    const thinkingConfig: Record<string, unknown> = { thinkingMode: thinkingLevel };
+    const thinkingBudget = firstAgent?.thinkingBudget;
+    if (thinkingBudget != null) thinkingConfig.thinkingBudget = thinkingBudget;
+    settings.thinkingConfig = thinkingConfig;
   }
 
   // Merge gemini-cli extension fields from topology-level settings
@@ -494,6 +687,85 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
     sections.push(`- Output: ${m.output} (${m.format})`);
     sections.push(`- Pricing: ${m.pricing}`);
     sections.push("");
+  }
+
+  // Defaults
+  if (ast.defaults) {
+    const d = ast.defaults;
+    sections.push("## Defaults");
+    sections.push("");
+    if (d.temperature != null) sections.push(`- Temperature: ${d.temperature}`);
+    if (d.maxTokens != null) sections.push(`- Max tokens: ${d.maxTokens}`);
+    if (d.topP != null) sections.push(`- Top-p: ${d.topP}`);
+    if (d.topK != null) sections.push(`- Top-k: ${d.topK}`);
+    if (d.stop) sections.push(`- Stop sequences: ${d.stop.join(", ")}`);
+    if (d.seed != null) sections.push(`- Seed: ${d.seed}`);
+    if (d.thinking) sections.push(`- Thinking: ${d.thinking}`);
+    if (d.thinkingBudget != null) sections.push(`- Thinking budget: ${d.thinkingBudget} tokens`);
+    if (d.outputFormat) sections.push(`- Output format: ${d.outputFormat}`);
+    if (d.timeout) sections.push(`- Timeout: ${d.timeout}`);
+    if (d.logLevel) sections.push(`- Log level: ${d.logLevel}`);
+    sections.push("");
+  }
+
+  // Observability
+  if (ast.observability) {
+    const o = ast.observability;
+    sections.push("## Observability");
+    sections.push("");
+    sections.push(`- Enabled: ${o.enabled}`);
+    sections.push(`- Level: ${o.level}`);
+    sections.push(`- Exporter: ${o.exporter}`);
+    if (o.endpoint) sections.push(`- Endpoint: ${o.endpoint}`);
+    if (o.service) sections.push(`- Service: ${o.service}`);
+    sections.push(`- Sample rate: ${o.sampleRate}`);
+    sections.push(`- Capture: prompts=${o.capture.prompts}, completions=${o.capture.completions}, toolArgs=${o.capture.toolArgs}, toolResults=${o.capture.toolResults}`);
+    sections.push(`- Spans: agents=${o.spans.agents}, tools=${o.spans.tools}, gates=${o.spans.gates}, memory=${o.spans.memory}`);
+    sections.push("");
+  }
+
+  // Checkpoint
+  if (ast.checkpoint) {
+    const c = ast.checkpoint;
+    sections.push("## Checkpoint");
+    sections.push("");
+    sections.push(`- Backend: ${c.backend}`);
+    if (c.connection) sections.push(`- Connection: ${c.connection}`);
+    sections.push(`- Strategy: ${c.strategy}`);
+    if (c.ttl) sections.push(`- TTL: ${c.ttl}`);
+    if (c.replay) {
+      sections.push(`- Replay: enabled=${c.replay.enabled}`);
+      if (c.replay.maxHistory != null) sections.push(`  - Max history: ${c.replay.maxHistory}`);
+      if (c.replay.branch != null) sections.push(`  - Branch: ${c.replay.branch}`);
+    }
+    sections.push("");
+  }
+
+  // Artifacts
+  if (ast.artifacts.length > 0) {
+    sections.push("## Artifacts");
+    sections.push("");
+    for (const art of ast.artifacts) {
+      let line = `- **${art.id}** (${art.type})`;
+      if (art.path) line += ` — path: ${art.path}`;
+      if (art.retention) line += `, retention: ${art.retention}`;
+      if (art.dependsOn && art.dependsOn.length > 0) line += `, depends on: ${art.dependsOn.join(", ")}`;
+      sections.push(line);
+    }
+    sections.push("");
+  }
+
+  // Schemas
+  if (ast.schemas.length > 0) {
+    sections.push("## Schemas");
+    sections.push("");
+    for (const schema of ast.schemas) {
+      sections.push(`### ${toTitle(schema.id)}`);
+      for (const field of schema.fields) {
+        sections.push(formatSchemaField(field));
+      }
+      sections.push("");
+    }
   }
 
   return {

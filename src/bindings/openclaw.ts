@@ -17,7 +17,11 @@ import type {
   TopologyAST,
   AgentNode,
   GateNode,
+  GroupNode,
+  HumanNode,
   OrchestratorNode,
+  SchemaFieldDef,
+  RetryConfig,
 } from "../parser/ast.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
@@ -118,6 +122,51 @@ function getGates(ast: TopologyAST): GateNode[] {
   return ast.nodes.filter((n) => n.type === "gate") as GateNode[];
 }
 
+/** Get all human nodes from AST. */
+function getHumanNodes(ast: TopologyAST): HumanNode[] {
+  return ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+}
+
+/** Get all group nodes from AST. */
+function getGroupNodes(ast: TopologyAST): GroupNode[] {
+  return ast.nodes.filter((n) => n.type === "group") as GroupNode[];
+}
+
+/** Format a schema field for documentation. */
+function formatSchemaField(field: SchemaFieldDef): string {
+  const opt = field.optional ? "?" : "";
+  const typeStr = formatSchemaType(field.type);
+  return `${field.name}${opt}: ${typeStr}`;
+}
+
+/** Format a schema type expression to a string. */
+function formatSchemaType(t: SchemaFieldDef["type"]): string {
+  switch (t.kind) {
+    case "primitive":
+      return t.value;
+    case "array":
+      return `${formatSchemaType(t.itemType)}[]`;
+    case "enum":
+      return t.values.join(" | ");
+    case "ref":
+      return t.name;
+  }
+}
+
+/** Format retry config for documentation. */
+function formatRetry(retry: number | RetryConfig): string {
+  if (typeof retry === "number") return `max ${retry} attempts`;
+  const parts = [`max ${retry.max} attempts`];
+  if (retry.backoff) parts.push(`backoff: ${retry.backoff}`);
+  if (retry.interval) parts.push(`interval: ${retry.interval}`);
+  if (retry.maxInterval) parts.push(`max interval: ${retry.maxInterval}`);
+  if (retry.jitter) parts.push("jitter: on");
+  if (retry.nonRetryable && retry.nonRetryable.length > 0) {
+    parts.push(`non-retryable: ${retry.nonRetryable.join(", ")}`);
+  }
+  return parts.join(", ");
+}
+
 // ---------------------------------------------------------------------------
 // File generators
 // ---------------------------------------------------------------------------
@@ -162,6 +211,13 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     if (allow.length > 0 || deny.length > 0) {
       entry.tools = { allow, deny };
     }
+
+    // Sampling params
+    if (agent.temperature != null) entry.temperature = agent.temperature;
+    if (agent.maxTokens != null) entry.maxTokens = agent.maxTokens;
+
+    // Timeout
+    if (agent.timeout) entry.timeout = agent.timeout;
 
     // First-class sandbox support (per-agent)
     if (agent.sandbox != null) {
@@ -311,6 +367,43 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     },
   };
 
+  // Defaults — topology-level sampling/model defaults
+  if (ast.defaults) {
+    const d = ast.defaults;
+    const defaultConfig: Record<string, unknown> = {};
+    if (d.temperature != null) defaultConfig.temperature = d.temperature;
+    if (d.maxTokens != null) defaultConfig.maxTokens = d.maxTokens;
+    if (d.topP != null) defaultConfig.topP = d.topP;
+    if (d.topK != null) defaultConfig.topK = d.topK;
+    if (d.stop && d.stop.length > 0) defaultConfig.stop = d.stop;
+    if (d.seed != null) defaultConfig.seed = d.seed;
+    if (d.thinking) defaultConfig.thinking = d.thinking;
+    if (d.thinkingBudget != null) defaultConfig.thinkingBudget = d.thinkingBudget;
+    if (d.outputFormat) defaultConfig.outputFormat = d.outputFormat;
+    if (d.timeout) defaultConfig.timeout = d.timeout;
+    if (d.logLevel) defaultConfig.logLevel = d.logLevel;
+    if (Object.keys(defaultConfig).length > 0) {
+      config.defaults = defaultConfig;
+    }
+  }
+
+  // Provider auth — document auth blocks in provider config
+  if (config.providers && Array.isArray(config.providers)) {
+    for (let i = 0; i < ast.providers.length; i++) {
+      const p = ast.providers[i];
+      if (p.auth) {
+        const provEntry = (config.providers as Record<string, unknown>[])[i];
+        const authConfig: Record<string, unknown> = { type: p.auth.type };
+        if (p.auth.issuer) authConfig.issuer = p.auth.issuer;
+        if (p.auth.audience) authConfig.audience = p.auth.audience;
+        if (p.auth.tokenUrl) authConfig.tokenUrl = p.auth.tokenUrl;
+        if (p.auth.clientId) authConfig.clientId = p.auth.clientId;
+        if (p.auth.scopes && p.auth.scopes.length > 0) authConfig.scopes = p.auth.scopes;
+        provEntry.auth = authConfig;
+      }
+    }
+  }
+
   return {
     path: "openclaw.json",
     content: JSON.stringify(config, null, 2) + "\n",
@@ -366,6 +459,52 @@ function generateSoulMd(ast: TopologyAST): GeneratedFile {
   const deny = ast.settings?.deny as string[] | undefined;
   sections.push(`- Tool restrictions: ${deny && deny.length > 0 ? deny.join(", ") : "none"}`);
   sections.push("");
+
+  // Observability
+  if (ast.observability) {
+    const obs = ast.observability;
+    sections.push("## Observability");
+    sections.push(`- Enabled: ${obs.enabled}`);
+    sections.push(`- Level: ${obs.level}`);
+    sections.push(`- Exporter: ${obs.exporter}`);
+    if (obs.endpoint) sections.push(`- Endpoint: ${obs.endpoint}`);
+    if (obs.service) sections.push(`- Service: ${obs.service}`);
+    sections.push(`- Sample rate: ${obs.sampleRate}`);
+    sections.push(`- Capture: prompts=${obs.capture.prompts}, completions=${obs.capture.completions}, toolArgs=${obs.capture.toolArgs}, toolResults=${obs.capture.toolResults}`);
+    sections.push(`- Spans: agents=${obs.spans.agents}, tools=${obs.spans.tools}, gates=${obs.spans.gates}, memory=${obs.spans.memory}`);
+    sections.push("");
+  }
+
+  // Checkpoint
+  if (ast.checkpoint) {
+    const cp = ast.checkpoint;
+    sections.push("## Checkpoint / Durable Execution");
+    sections.push(`- Backend: ${cp.backend}`);
+    if (cp.connection) sections.push(`- Connection: ${cp.connection}`);
+    sections.push(`- Strategy: ${cp.strategy}`);
+    if (cp.ttl) sections.push(`- TTL: ${cp.ttl}`);
+    if (cp.replay) {
+      sections.push(`- Replay: enabled=${cp.replay.enabled}`);
+      if (cp.replay.maxHistory != null) sections.push(`  - Max history: ${cp.replay.maxHistory}`);
+      if (cp.replay.branch != null) sections.push(`  - Branch: ${cp.replay.branch}`);
+    }
+    sections.push("");
+  }
+
+  // Artifacts registry
+  if (ast.artifacts.length > 0) {
+    sections.push("## Artifacts");
+    for (const art of ast.artifacts) {
+      let line = `- **${art.id}** (${art.type})`;
+      if (art.path) line += ` — path: ${art.path}`;
+      if (art.retention) line += ` — retention: ${art.retention}`;
+      sections.push(line);
+      if (art.dependsOn && art.dependsOn.length > 0) {
+        sections.push(`  - Depends on: ${art.dependsOn.join(", ")}`);
+      }
+    }
+    sections.push("");
+  }
 
   return {
     path: "SOUL.md",
@@ -460,6 +599,90 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(agent.prompt);
       }
 
+      // Timeout
+      if (agent.timeout) {
+        sections.push(`- **Maximum execution time:** ${agent.timeout}`);
+      }
+
+      // On-fail
+      if (agent.onFail) {
+        sections.push(`- **On failure:** ${agent.onFail}`);
+      }
+
+      // Retry
+      if (agent.retry != null) {
+        sections.push(`- **Retry:** ${formatRetry(agent.retry)}`);
+      }
+
+      // Thinking
+      if (agent.thinking) {
+        sections.push(`- **Reasoning level:** ${agent.thinking}`);
+      }
+
+      // Output format
+      if (agent.outputFormat) {
+        sections.push(`- **Output format:** ${agent.outputFormat}`);
+      }
+
+      // Log level
+      if (agent.logLevel) {
+        sections.push(`- **Log verbosity:** ${agent.logLevel}`);
+      }
+
+      // Join
+      if (agent.join) {
+        sections.push(`- **Wait for:** ${agent.join}`);
+      }
+
+      // Circuit breaker
+      if (agent.circuitBreaker) {
+        const cb = agent.circuitBreaker;
+        sections.push(`- **Circuit breaker:** threshold=${cb.threshold}, window=${cb.window}, cooldown=${cb.cooldown}`);
+      }
+
+      // Compensation
+      if (agent.compensates) {
+        sections.push(`- **Compensates:** ${agent.compensates} (saga rollback)`);
+      }
+
+      // Input/Output schemas
+      if (agent.inputSchema && agent.inputSchema.length > 0) {
+        sections.push("- **Input schema:**");
+        for (const field of agent.inputSchema) {
+          sections.push(`  - ${formatSchemaField(field)}`);
+        }
+      }
+      if (agent.outputSchema && agent.outputSchema.length > 0) {
+        sections.push("- **Output schema:**");
+        for (const field of agent.outputSchema) {
+          sections.push(`  - ${formatSchemaField(field)}`);
+        }
+      }
+
+      // Rate limit
+      if (agent.rateLimit) {
+        sections.push(`- **Rate limit:** ${agent.rateLimit}`);
+      }
+
+      // Produces / Consumes artifacts
+      if (agent.produces && agent.produces.length > 0) {
+        sections.push(`- **Produces:** ${agent.produces.join(", ")}`);
+      }
+      if (agent.consumes && agent.consumes.length > 0) {
+        sections.push(`- **Consumes:** ${agent.consumes.join(", ")}`);
+      }
+
+      // Variants
+      if (agent.variants && agent.variants.length > 0) {
+        sections.push("- **Prompt variants:**");
+        for (const v of agent.variants) {
+          let vLine = `  - ${v.id} (weight: ${v.weight})`;
+          if (v.temperature != null) vLine += `, temp=${v.temperature}`;
+          if (v.model) vLine += `, model=${v.model}`;
+          sections.push(vLine);
+        }
+      }
+
       // OpenClaw-specific extensions
       if (agent.extensions?.openclaw) {
         sections.push("- **OpenClaw config:**");
@@ -468,6 +691,53 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         }
       }
 
+      sections.push("");
+    }
+  }
+
+  // Human nodes
+  const humanNodes = getHumanNodes(ast);
+  if (humanNodes.length > 0) {
+    sections.push("## Human Pause Points");
+    sections.push("");
+    for (const human of humanNodes) {
+      sections.push(`### ${toTitle(human.id)}`);
+      if (human.description) {
+        sections.push(`- **Action:** ${human.description}`);
+      }
+      if (human.timeout) {
+        sections.push(`- **Timeout:** ${human.timeout}`);
+      }
+      if (human.onTimeout) {
+        sections.push(`- **On timeout:** ${human.onTimeout}`);
+      }
+      sections.push("");
+    }
+  }
+
+  // Group nodes
+  const groupNodes = getGroupNodes(ast);
+  if (groupNodes.length > 0) {
+    sections.push("## Group Chat Coordination");
+    sections.push("");
+    for (const group of groupNodes) {
+      sections.push(`### ${toTitle(group.id)}`);
+      sections.push(`- **Members:** ${group.members.join(", ")}`);
+      if (group.speakerSelection) {
+        sections.push(`- **Speaker selection:** ${group.speakerSelection}`);
+      }
+      if (group.maxRounds != null) {
+        sections.push(`- **Max rounds:** ${group.maxRounds}`);
+      }
+      if (group.termination) {
+        sections.push(`- **Termination:** ${group.termination}`);
+      }
+      if (group.description) {
+        sections.push(`- **Description:** ${group.description}`);
+      }
+      if (group.timeout) {
+        sections.push(`- **Timeout:** ${group.timeout}`);
+      }
       sections.push("");
     }
   }
@@ -481,9 +751,16 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("### Execution Order");
     let idx = 1;
     for (const edge of ast.edges) {
-      let line = `${idx}. ${edge.from} -> ${edge.to}`;
+      const arrow = edge.isError ? "-x->" : "->";
+      let line = `${idx}. ${edge.from} ${arrow} ${edge.to}`;
       if (edge.condition) line += ` when ${edge.condition}`;
       if (edge.maxIterations) line += ` (max ${edge.maxIterations} iterations)`;
+      if (edge.errorType) line += ` [error: ${edge.errorType}]`;
+      if (edge.weight != null) line += ` [weight: ${edge.weight}]`;
+      if (edge.race) line += ` [race]`;
+      if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+      if (edge.wait) line += ` [wait: ${edge.wait}]`;
+      if (edge.reflection) line += ` [reflection]`;
       sections.push(line);
       idx++;
     }
@@ -526,6 +803,50 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(
           `- ${edge.from} <-> ${edge.to}: max ${edge.maxIterations} iterations (prevents infinite loops)`,
         );
+      }
+      sections.push("");
+    }
+
+    // Error edges
+    const errorEdges = ast.edges.filter((e) => e.isError);
+    if (errorEdges.length > 0) {
+      sections.push("### Error Handling");
+      for (const edge of errorEdges) {
+        let line = `- On error in ${edge.from}: route to ${edge.to}`;
+        if (edge.errorType) line += ` (type: ${edge.errorType})`;
+        sections.push(line);
+      }
+      sections.push("");
+    }
+
+    // Weighted routing
+    const weightedEdges = ast.edges.filter((e) => e.weight != null);
+    if (weightedEdges.length > 0) {
+      sections.push("### Weighted Routing");
+      for (const edge of weightedEdges) {
+        sections.push(`- ${edge.from} -> ${edge.to}: weight ${edge.weight}`);
+      }
+      sections.push("");
+    }
+
+    // Reflection loops
+    const reflectionEdges = ast.edges.filter((e) => e.reflection);
+    if (reflectionEdges.length > 0) {
+      sections.push("### Reflection Loops");
+      for (const edge of reflectionEdges) {
+        sections.push(`- ${edge.from} -> ${edge.to}: evaluator/reflection loop`);
+      }
+      sections.push("");
+    }
+
+    // Race conditions
+    const raceEdges = ast.edges.filter((e) => e.race);
+    if (raceEdges.length > 0) {
+      sections.push("### Race (First-Wins)");
+      for (const edge of raceEdges) {
+        let line = `- ${edge.from} -> ${edge.to}: race mode`;
+        if (edge.tolerance != null) line += `, tolerance: ${edge.tolerance}`;
+        sections.push(line);
       }
       sections.push("");
     }
@@ -768,14 +1089,24 @@ function generateTeamMd(ast: TopologyAST): GeneratedFile {
     sections.push("```mermaid");
     sections.push("graph TD");
     for (const edge of ast.edges) {
-      let label = "";
-      if (edge.condition) label += edge.condition;
-      if (edge.maxIterations) {
-        if (label) label += ", ";
-        label += `max ${edge.maxIterations}`;
-      }
+      const labelParts: string[] = [];
+      if (edge.condition) labelParts.push(edge.condition);
+      if (edge.maxIterations) labelParts.push(`max ${edge.maxIterations}`);
+      if (edge.isError) labelParts.push("error");
+      if (edge.errorType) labelParts.push(`type: ${edge.errorType}`);
+      if (edge.weight != null) labelParts.push(`weight: ${edge.weight}`);
+      if (edge.race) labelParts.push("race");
+      if (edge.tolerance != null) labelParts.push(`tolerance: ${edge.tolerance}`);
+      if (edge.wait) labelParts.push(`wait: ${edge.wait}`);
+      if (edge.reflection) labelParts.push("reflection");
+      const label = labelParts.join(", ");
+      const arrow = edge.isError ? "-.->|" : "-->|";
       if (label) {
-        sections.push(`  ${edge.from} -->|${label}| ${edge.to}`);
+        if (edge.isError) {
+          sections.push(`  ${edge.from} -.->|${label}| ${edge.to}`);
+        } else {
+          sections.push(`  ${edge.from} -->|${label}| ${edge.to}`);
+        }
       } else {
         sections.push(`  ${edge.from} --> ${edge.to}`);
       }

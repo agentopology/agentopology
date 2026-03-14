@@ -188,6 +188,52 @@ export interface SchemaDef {
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoint / durable execution
+// ---------------------------------------------------------------------------
+
+/** Replay/time-travel configuration within a checkpoint block. */
+export interface ReplayConfig {
+  /** Whether replay is enabled. */
+  enabled: boolean;
+  /** Maximum number of historical states to retain. */
+  maxHistory?: number;
+  /** Whether branching from a historical state is allowed. */
+  branch?: boolean;
+}
+
+/** Checkpoint / durable execution configuration. */
+export interface CheckpointDef {
+  /** Storage backend for checkpoints. */
+  backend: string;
+  /** Connection string or secret reference. */
+  connection?: string;
+  /** Checkpointing strategy. */
+  strategy: string;
+  /** Time-to-live for checkpoint data (duration string). */
+  ttl?: string;
+  /** Replay/time-travel configuration. */
+  replay?: ReplayConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Artifact / asset lineage
+// ---------------------------------------------------------------------------
+
+/** An artifact definition in the top-level `artifacts` block. */
+export interface ArtifactDef {
+  /** Artifact identifier. */
+  id: string;
+  /** Artifact type (e.g. "markdown", "json", "csv"). */
+  type: string;
+  /** File system path or prefix for artifact storage. */
+  path?: string;
+  /** Retention duration (duration string, e.g. "30d"). */
+  retention?: string;
+  /** IDs of other artifacts this artifact depends on. */
+  dependsOn?: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Circuit breaker configuration
 // ---------------------------------------------------------------------------
 
@@ -219,6 +265,24 @@ export interface RetryConfig {
   jitter?: boolean;
   /** Error types that should not trigger retries. */
   nonRetryable?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Prompt variants (A/B testing)
+// ---------------------------------------------------------------------------
+
+/** A prompt variant for A/B testing within an agent. */
+export interface PromptVariant {
+  /** Variant identifier. */
+  id: string;
+  /** Inline prompt content. */
+  prompt?: string;
+  /** Selection weight (0 to 1). */
+  weight: number;
+  /** Optional temperature override. */
+  temperature?: number;
+  /** Optional model override. */
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,8 +414,33 @@ export interface AgentNode extends BaseNode {
   inputSchema?: SchemaFieldDef[];
   /** Typed output schema fields for structured output. */
   outputSchema?: SchemaFieldDef[];
+  /** Artifact ids this agent produces. */
+  produces?: string[];
+  /** Artifact ids this agent consumes. */
+  consumes?: string[];
+  /** Prompt variants for A/B testing. */
+  variants?: PromptVariant[];
+  /** Rate limit expression (e.g. "60/min", "1000/hour", "5/sec"). */
+  rateLimit?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/** A group chat node for multi-agent conversation/debate. */
+export interface GroupNode extends BaseNode {
+  type: "group";
+  /** Agent IDs that participate in the group chat. */
+  members: string[];
+  /** Speaker selection strategy. */
+  speakerSelection?: string;
+  /** Maximum conversation rounds. */
+  maxRounds?: number;
+  /** Termination condition (natural language or pattern). */
+  termination?: string;
+  /** Human-readable description. */
+  description?: string;
+  /** Timeout duration string. */
+  timeout?: string;
 }
 
 /** A gate node (quality / security checkpoint). */
@@ -434,10 +523,14 @@ export interface SensitiveValue {
   sensitive: boolean;
   /** Optional secret reference parsed from a `secret "uri"` form. */
   secretRef?: SecretRef;
+  /** Whether the value is SOPS-encrypted at rest. */
+  encrypted?: boolean;
+  /** SOPS encryption method (parsed from ENC[METHOD,...] wrapper). */
+  sopsMethod?: string;
 }
 
 /** Union of all node types. */
-export type NodeDef = OrchestratorNode | ActionNode | AgentNode | GateNode | HumanNode;
+export type NodeDef = OrchestratorNode | ActionNode | AgentNode | GateNode | HumanNode | GroupNode;
 
 // ---------------------------------------------------------------------------
 // Edges
@@ -465,6 +558,10 @@ export interface EdgeDef {
   race?: boolean;
   /** Duration string from `[wait 30s]` inline timer edge attribute. */
   wait?: string;
+  /** Routing weight from `[weight 0.7]` edge attribute (0 exclusive to 1 inclusive). */
+  weight?: number;
+  /** Whether this back-edge represents an evaluator/reflection loop pattern. */
+  reflection?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +588,24 @@ export interface TopologyMeta {
   timeout?: string;
   /** Node id for catch-all error handler. */
   errorHandler?: string;
+  /** Whether durable execution is enabled. */
+  durable?: boolean;
+}
+
+/** Authentication configuration for a provider (OIDC, OAuth2, etc.). */
+export interface AuthDef {
+  /** Auth type (e.g. "oidc", "oauth2", "api-key", "aws-iam", "gcp-sa", "azure-msi"). */
+  type: string;
+  /** Token issuer URL. */
+  issuer?: string;
+  /** Expected audience claim. */
+  audience?: string;
+  /** Token endpoint URL. */
+  tokenUrl?: string;
+  /** OAuth2 client ID. */
+  clientId?: string;
+  /** OAuth2 scopes. */
+  scopes?: string[];
 }
 
 /** A provider configuration for API credentials and model routing. */
@@ -505,6 +620,8 @@ export interface ProviderDef {
   models: string[];
   /** Whether this is the default provider (at most one can be true). */
   default?: boolean;
+  /** Authentication configuration. */
+  auth?: AuthDef;
   /** Future-proof extensibility fields. */
   extra: Record<string, unknown>;
 }
@@ -543,6 +660,12 @@ export interface ImportDef {
   params: Record<string, string | number | boolean>;
   /** Optional SHA-256 integrity hash. */
   sha256?: string;
+  /** Whether this import is from a registry (vs local file). */
+  registry?: boolean;
+  /** Registry package name (parsed from source). */
+  registryPackage?: string;
+  /** Registry package version (parsed from source). */
+  registryVersion?: string;
 }
 
 /** An include directive for merging a fragment file. */
@@ -620,6 +743,10 @@ export interface TopologyAST {
   includes: IncludeDef[];
   /** Whether this file was parsed as a `fragment` rather than a `topology`. */
   isFragment?: boolean;
+  /** Checkpoint / durable execution configuration (null if not configured). */
+  checkpoint: CheckpointDef | null;
+  /** Artifact definitions from the top-level `artifacts` block. */
+  artifacts: ArtifactDef[];
 }
 
 // ---------------------------------------------------------------------------

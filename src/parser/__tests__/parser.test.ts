@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse, parseSchemaType, parseSchemaFields, parseParams, parseInterfaceEndpoints, parseImports, parseIncludes } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, HumanNode, RetryConfig, CircuitBreakerConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, HumanNode, GroupNode, RetryConfig, CircuitBreakerConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef, PromptVariant, AuthDef } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -844,6 +844,8 @@ describe("Validator", () => {
       interfaceEndpoints: null,
       imports: [],
       includes: [],
+      checkpoint: null,
+      artifacts: [],
       ...overrides,
     };
   }
@@ -2612,6 +2614,8 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         interfaceEndpoints: null,
         imports: [],
         includes: [],
+        checkpoint: null,
+        artifacts: [],
         ...overrides,
       };
     }
@@ -3431,6 +3435,8 @@ describe("Wave 2: Validator rules V39-V45", () => {
       interfaceEndpoints: null,
       imports: [],
       includes: [],
+      checkpoint: null,
+      artifacts: [],
       ...overrides,
     };
   }
@@ -3987,6 +3993,8 @@ topology test : [pipeline] {
         interfaceEndpoints: null,
         imports: [],
         includes: [],
+        checkpoint: null,
+        artifacts: [],
         ...overrides,
       };
     }
@@ -4064,6 +4072,8 @@ topology test : [pipeline] {
         interfaceEndpoints: null,
         imports: [],
         includes: [],
+        checkpoint: null,
+        artifacts: [],
         ...overrides,
       };
     }
@@ -4513,6 +4523,8 @@ describe("Wave 3: Validator rules V48-V50 (observability)", () => {
       interfaceEndpoints: null,
       imports: [],
       includes: [],
+      checkpoint: null,
+      artifacts: [],
       ...overrides,
     };
   }
@@ -5011,6 +5023,8 @@ topology simple : [pipeline] {
         interfaceEndpoints: null,
         imports: [],
         includes: [],
+        checkpoint: null,
+        artifacts: [],
         ...overrides,
       };
     }
@@ -5341,6 +5355,8 @@ describe("Circuit Breaker (F26)", () => {
         interfaceEndpoints: null,
         imports: [],
         includes: [],
+        checkpoint: null,
+        artifacts: [],
         ...overrides,
       };
     }
@@ -5533,5 +5549,1521 @@ describe("Human node type (F32)", () => {
     // No V59 errors
     const v59 = results.filter((r) => r.rule === "V59");
     expect(v59).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// Wave 6: Quorum Joins (F31) and Weighted Routing (F35)
+// =========================================================================
+
+describe("F31: Quorum join (N-of-M)", () => {
+  it("parses join: 2-of-3 on agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent synthesizer {
+    model: opus
+    join: 2-of-3
+  }
+  flow { a -> synthesizer }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "synthesizer") as AgentNode;
+    expect(agent.join).toBe("2-of-3");
+  });
+
+  it("parses join: 3-of-5 on agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent voter {
+    model: opus
+    join: 3-of-5
+  }
+  flow { a -> voter }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "voter") as AgentNode;
+    expect(agent.join).toBe("3-of-5");
+  });
+
+  it("V39: quorum join passes validation", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "2-of-3" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v39 = results.filter((r) => r.rule === "V39");
+    expect(v39).toHaveLength(0);
+  });
+
+  it("V60: join 5-of-3 (N > M) -> error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "5-of-3" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v60 = results.filter((r) => r.rule === "V60");
+    expect(v60.length).toBeGreaterThan(0);
+    expect(v60.some((r) => r.message.includes("N must be <= M"))).toBe(true);
+  });
+
+  it("V60: join 0-of-3 (N < 1) -> error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "0-of-3" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v60 = results.filter((r) => r.rule === "V60");
+    expect(v60.length).toBeGreaterThan(0);
+    expect(v60.some((r) => r.message.includes("N must be >= 1"))).toBe(true);
+  });
+
+  it("V60: join 1-of-1 (M < 2) -> error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "worker", type: "agent", label: "W", model: "sonnet", join: "1-of-1" },
+      ],
+      edges: [{ from: "intake", to: "worker", condition: null, maxIterations: null }],
+    });
+    const results = validate(ast);
+    const v60 = results.filter((r) => r.rule === "V60");
+    expect(v60.length).toBeGreaterThan(0);
+    expect(v60.some((r) => r.message.includes("M must be >= 2"))).toBe(true);
+  });
+});
+
+describe("F35: Weighted routing [weight N]", () => {
+  it("parses [weight 0.7] as edge attribute", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  flow {
+    a -> b [weight 0.7]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "b");
+    expect(edge).toBeDefined();
+    expect(edge!.weight).toBe(0.7);
+  });
+
+  it("parses [weight 1.0] as edge attribute", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [a] }
+  action a { kind: inline }
+  agent b { model: opus }
+  flow {
+    a -> b [weight 1.0]
+  }
+}`;
+    const ast = parse(src);
+    const edge = ast.edges.find((e) => e.from === "a" && e.to === "b");
+    expect(edge).toBeDefined();
+    expect(edge!.weight).toBe(1.0);
+  });
+
+  it("parses [weight N] on fan-out edges", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [router] }
+  action router { kind: inline }
+  agent a { model: opus }
+  agent b { model: opus }
+  flow {
+    router -> [a, b] [weight 0.7]
+  }
+}`;
+    const ast = parse(src);
+    const edges = ast.edges.filter((e) => e.from === "router");
+    expect(edges).toHaveLength(2);
+    for (const edge of edges) {
+      expect(edge.weight).toBe(0.7);
+    }
+  });
+
+  it("V61: weight 0 -> error (must be > 0)", () => {
+    const ast = minimalASTForWave6({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, weight: 0 },
+      ],
+    });
+    const results = validate(ast);
+    const v61 = results.filter((r) => r.rule === "V61" && r.level === "error");
+    expect(v61.length).toBeGreaterThan(0);
+    expect(v61.some((r) => r.message.includes("must be > 0"))).toBe(true);
+  });
+
+  it("V61: weight 1.5 -> error (must be <= 1)", () => {
+    const ast = minimalASTForWave6({
+      edges: [
+        { from: "intake", to: "worker", condition: null, maxIterations: null, weight: 1.5 },
+      ],
+    });
+    const results = validate(ast);
+    const v61 = results.filter((r) => r.rule === "V61" && r.level === "error");
+    expect(v61.length).toBeGreaterThan(0);
+    expect(v61.some((r) => r.message.includes("must be <= 1"))).toBe(true);
+  });
+
+  it("V61: weights summing to 1.0 -> no warning", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "a", type: "agent", label: "A", model: "sonnet" },
+        { id: "b", type: "agent", label: "B", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "a", condition: null, maxIterations: null, weight: 0.7 },
+        { from: "intake", to: "b", condition: null, maxIterations: null, weight: 0.3 },
+      ],
+    });
+    const results = validate(ast);
+    const v61warnings = results.filter((r) => r.rule === "V61" && r.level === "warning");
+    expect(v61warnings).toHaveLength(0);
+  });
+
+  it("V61: weights summing to 0.5 -> warning", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "I" },
+        { id: "a", type: "agent", label: "A", model: "sonnet" },
+        { id: "b", type: "agent", label: "B", model: "sonnet" },
+      ],
+      edges: [
+        { from: "intake", to: "a", condition: null, maxIterations: null, weight: 0.3 },
+        { from: "intake", to: "b", condition: null, maxIterations: null, weight: 0.2 },
+      ],
+    });
+    const results = validate(ast);
+    const v61warnings = results.filter((r) => r.rule === "V61" && r.level === "warning");
+    expect(v61warnings.length).toBeGreaterThan(0);
+    expect(v61warnings[0].message).toContain("expected ~1.0");
+  });
+});
+
+/** Helper to build a minimal AST for Wave 6 tests. */
+function minimalASTForWave6(overrides: Partial<TopologyAST> = {}): TopologyAST {
+  return {
+    topology: { name: "test", version: "1.0.0", description: "", patterns: ["pipeline"] },
+    nodes: [
+      { id: "orchestrator", type: "orchestrator", label: "Orchestrator", model: "opus", handles: ["intake"] },
+      { id: "intake", type: "action", label: "Intake" },
+      { id: "worker", type: "agent", label: "Worker", model: "sonnet" },
+    ],
+    edges: [
+      { from: "intake", to: "worker", condition: null, maxIterations: null },
+    ],
+    depth: { factors: [], levels: [] },
+    memory: {},
+    batch: {},
+    environments: {},
+    triggers: [],
+    hooks: [],
+    settings: {},
+    mcpServers: {},
+    metering: null,
+    skills: [],
+    toolDefs: [],
+    roles: {},
+    context: {},
+    env: {},
+    providers: [],
+    schedules: [],
+    interfaces: [],
+    defaults: null,
+    schemas: [],
+    observability: null,
+    params: [],
+    interfaceEndpoints: null,
+    imports: [],
+    includes: [],
+    checkpoint: null,
+    artifacts: [],
+    ...overrides,
+  };
+}
+
+// =========================================================================
+// F34: Checkpointing / Durable Execution
+// =========================================================================
+
+describe("Checkpoint / Durable Execution (F34)", () => {
+  it("parses checkpoint block with all fields", () => {
+    const src = `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    durable: true
+  }
+
+  checkpoint {
+    backend: postgres
+    connection: secret "vault://secret/data/prod/postgres#url"
+    strategy: every-node
+    ttl: 7d
+  }
+
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.durable).toBe(true);
+    expect(ast.checkpoint).not.toBeNull();
+    expect(ast.checkpoint!.backend).toBe("postgres");
+    expect(ast.checkpoint!.connection).toBe("vault://secret/data/prod/postgres#url");
+    expect(ast.checkpoint!.strategy).toBe("every-node");
+    expect(ast.checkpoint!.ttl).toBe("7d");
+  });
+
+  it("parses meta with durable: true", () => {
+    const src = `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    durable: true
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.durable).toBe(true);
+  });
+
+  it("durable defaults to undefined when not set", () => {
+    const src = `topology t : [pipeline] {
+  meta { version: "1.0.0" }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.topology.durable).toBeUndefined();
+  });
+
+  it("checkpoint defaults to null when not present", () => {
+    const src = `topology t : [pipeline] {
+  meta { version: "1.0.0" }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.checkpoint).toBeNull();
+  });
+
+  it("V67: invalid checkpoint backend -> error", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: mongodb
+    strategy: every-node
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v67 = results.filter((r) => r.rule === "V67");
+    expect(v67).toHaveLength(1);
+    expect(v67[0].level).toBe("error");
+    expect(v67[0].message).toContain("mongodb");
+  });
+
+  it("V67: valid backends pass", () => {
+    for (const backend of ["memory", "sqlite", "postgres", "redis", "s3", "custom"]) {
+      const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: ${backend}
+    strategy: every-node
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+      const ast = parse(src);
+      const results = validate(ast);
+      const v67 = results.filter((r) => r.rule === "V67");
+      expect(v67).toHaveLength(0);
+    }
+  });
+
+  it("V68: invalid checkpoint strategy -> error", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: periodic
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v68 = results.filter((r) => r.rule === "V68");
+    expect(v68).toHaveLength(1);
+    expect(v68[0].level).toBe("error");
+    expect(v68[0].message).toContain("periodic");
+  });
+
+  it("V68: invalid TTL format -> error", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: every-node
+    ttl: forever
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v68 = results.filter((r) => r.rule === "V68");
+    expect(v68).toHaveLength(1);
+    expect(v68[0].message).toContain("forever");
+  });
+
+  it("V68: valid TTL passes", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: every-node
+    ttl: 7d
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v68 = results.filter((r) => r.rule === "V68");
+    expect(v68).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// F37: Time-Travel / Replay
+// =========================================================================
+
+describe("Time-Travel / Replay (F37)", () => {
+  it("parses replay sub-block inside checkpoint", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: every-node
+    replay {
+      enabled: true
+      max-history: 100
+      branch: true
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.checkpoint).not.toBeNull();
+    expect(ast.checkpoint!.replay).toBeDefined();
+    expect(ast.checkpoint!.replay!.enabled).toBe(true);
+    expect(ast.checkpoint!.replay!.maxHistory).toBe(100);
+    expect(ast.checkpoint!.replay!.branch).toBe(true);
+  });
+
+  it("V69: replay with strategy on-error -> error", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: on-error
+    replay {
+      enabled: true
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v69 = results.filter((r) => r.rule === "V69");
+    expect(v69.some((r) => r.level === "error" && r.message.includes("every-node"))).toBe(true);
+  });
+
+  it("V69: replay with strategy every-node -> no error", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: every-node
+    replay {
+      enabled: true
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v69errors = results.filter((r) => r.rule === "V69" && r.level === "error");
+    expect(v69errors).toHaveLength(0);
+  });
+
+  it("V69: max-history must be positive integer", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: postgres
+    strategy: every-node
+    replay {
+      enabled: true
+      max-history: -5
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v69 = results.filter((r) => r.rule === "V69" && r.level === "error");
+    expect(v69.some((r) => r.message.includes("max-history"))).toBe(true);
+  });
+
+  it("V69: warn if replay enabled with memory backend", () => {
+    const src = `topology t : [pipeline] {
+  checkpoint {
+    backend: memory
+    strategy: every-node
+    replay {
+      enabled: true
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v69warnings = results.filter((r) => r.rule === "V69" && r.level === "warning");
+    expect(v69warnings).toHaveLength(1);
+    expect(v69warnings[0].message).toContain("memory");
+  });
+});
+
+// =========================================================================
+// F38: Asset / Artifact Lineage
+// =========================================================================
+
+describe("Asset / Artifact Lineage (F38)", () => {
+  it("parses artifacts block with nested artifact definitions", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact research-notes {
+      type: markdown
+      path: "workspace/research/"
+      retention: 30d
+    }
+    artifact analysis-report {
+      type: json
+      path: "workspace/reports/"
+      depends-on: [research-notes]
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent researcher {
+    model: sonnet
+    produces: [research-notes]
+  }
+  agent analyzer {
+    model: opus
+    consumes: [research-notes]
+    produces: [analysis-report]
+  }
+  flow { intake -> researcher -> analyzer }
+}`;
+    const ast = parse(src);
+    expect(ast.artifacts).toHaveLength(2);
+
+    const notes = ast.artifacts.find((a) => a.id === "research-notes")!;
+    expect(notes.type).toBe("markdown");
+    expect(notes.path).toBe("workspace/research/");
+    expect(notes.retention).toBe("30d");
+
+    const report = ast.artifacts.find((a) => a.id === "analysis-report")!;
+    expect(report.type).toBe("json");
+    expect(report.dependsOn).toEqual(["research-notes"]);
+
+    const researcher = ast.nodes.find((n) => n.id === "researcher") as AgentNode;
+    expect(researcher.produces).toEqual(["research-notes"]);
+
+    const analyzer = ast.nodes.find((n) => n.id === "analyzer") as AgentNode;
+    expect(analyzer.consumes).toEqual(["research-notes"]);
+    expect(analyzer.produces).toEqual(["analysis-report"]);
+  });
+
+  it("empty artifacts block returns empty array", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    expect(ast.artifacts).toEqual([]);
+  });
+
+  it("V70: duplicate artifact id -> error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact notes {
+      type: markdown
+    }
+    artifact notes {
+      type: json
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v70 = results.filter((r) => r.rule === "V70");
+    expect(v70).toHaveLength(1);
+    expect(v70[0].level).toBe("error");
+    expect(v70[0].message).toContain("notes");
+  });
+
+  it("V71: reference non-existent artifact in produces -> error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact notes {
+      type: markdown
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker {
+    model: sonnet
+    produces: [nonexistent]
+  }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v71 = results.filter((r) => r.rule === "V71");
+    expect(v71).toHaveLength(1);
+    expect(v71[0].level).toBe("error");
+    expect(v71[0].message).toContain("nonexistent");
+  });
+
+  it("V71: reference non-existent artifact in consumes -> error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact notes {
+      type: markdown
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker {
+    model: sonnet
+    consumes: [missing]
+  }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v71 = results.filter((r) => r.rule === "V71");
+    expect(v71).toHaveLength(1);
+    expect(v71[0].message).toContain("missing");
+  });
+
+  it("V71: reference non-existent artifact in depends-on -> error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact notes {
+      type: markdown
+      depends-on: [phantom]
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v71 = results.filter((r) => r.rule === "V71");
+    expect(v71).toHaveLength(1);
+    expect(v71[0].message).toContain("phantom");
+  });
+
+  it("V71: valid references pass", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact notes {
+      type: markdown
+    }
+    artifact report {
+      type: json
+      depends-on: [notes]
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent writer {
+    model: sonnet
+    produces: [notes]
+    consumes: [notes]
+  }
+  flow { intake -> writer }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v71 = results.filter((r) => r.rule === "V71");
+    expect(v71).toHaveLength(0);
+  });
+
+  it("V72: circular artifact dependency -> error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact a {
+      type: json
+      depends-on: [b]
+    }
+    artifact b {
+      type: json
+      depends-on: [a]
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v72 = results.filter((r) => r.rule === "V72");
+    expect(v72).toHaveLength(1);
+    expect(v72[0].level).toBe("error");
+    expect(v72[0].message).toContain("circular");
+  });
+
+  it("V72: no cycle in valid dependency chain -> no error", () => {
+    const src = `topology t : [pipeline] {
+  artifacts {
+    artifact raw {
+      type: csv
+    }
+    artifact clean {
+      type: json
+      depends-on: [raw]
+    }
+    artifact report {
+      type: markdown
+      depends-on: [clean]
+    }
+  }
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent worker { model: sonnet }
+  flow { intake -> worker }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v72 = results.filter((r) => r.rule === "V72");
+    expect(v72).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// F33: Evaluator/Reflection Loop Pattern
+// =========================================================================
+
+describe("Reflection edge attribute (F33)", () => {
+  it("parses [reflection] attribute — sets reflection to true", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent writer { model: sonnet }
+  agent evaluator { model: opus }
+  flow {
+    intake -> writer
+    writer -> evaluator
+    evaluator -> writer [max 3] [reflection]
+  }
+}`;
+    const ast = parse(src);
+    const reflectionEdge = ast.edges.find(
+      (e) => e.from === "evaluator" && e.to === "writer"
+    );
+    expect(reflectionEdge).toBeDefined();
+    expect(reflectionEdge!.reflection).toBe(true);
+    expect(reflectionEdge!.maxIterations).toBe(3);
+  });
+
+  it("V62: [reflection] without [max N] — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent writer { model: sonnet }
+  agent evaluator { model: opus }
+  flow {
+    intake -> writer
+    writer -> evaluator
+    evaluator -> writer [reflection]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v62 = results.filter((r) => r.rule === "V62");
+    expect(v62.length).toBeGreaterThanOrEqual(1);
+    const errMsg = v62.find((r) => r.level === "error");
+    expect(errMsg).toBeDefined();
+    expect(errMsg!.message).toContain("max N");
+  });
+
+  it("V62: [reflection] on non-back-edge — warning", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent writer { model: sonnet }
+  agent evaluator { model: opus }
+  flow {
+    intake -> writer -> evaluator [max 3] [reflection]
+  }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v62 = results.filter((r) => r.rule === "V62" && r.level === "warning");
+    expect(v62.length).toBeGreaterThanOrEqual(1);
+    expect(v62[0].message).toContain("back-edge");
+  });
+});
+
+// =========================================================================
+// F36: Group Chat Node Type
+// =========================================================================
+
+describe("Group chat node (F36)", () => {
+  it("parses group node with all fields", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent architect { model: opus }
+  agent critic { model: sonnet }
+  agent implementer { model: sonnet }
+  group design-review {
+    members: [architect, critic, implementer]
+    speaker-selection: auto
+    max-rounds: 10
+    termination: "consensus reached"
+    description: "Design review group chat"
+    timeout: 30m
+  }
+  flow { intake -> design-review }
+}`;
+    const ast = parse(src);
+    const groupNode = ast.nodes.find((n) => n.type === "group") as GroupNode;
+    expect(groupNode).toBeDefined();
+    expect(groupNode.id).toBe("design-review");
+    expect(groupNode.members).toEqual(["architect", "critic", "implementer"]);
+    expect(groupNode.speakerSelection).toBe("auto");
+    expect(groupNode.maxRounds).toBe(10);
+    expect(groupNode.termination).toBe("consensus reached");
+    expect(groupNode.description).toBe("Design review group chat");
+    expect(groupNode.timeout).toBe("30m");
+  });
+
+  it("group node appears in flow edges", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent a1 { model: sonnet }
+  agent a2 { model: sonnet }
+  group chat {
+    members: [a1, a2]
+  }
+  flow { intake -> chat -> a1 }
+}`;
+    const ast = parse(src);
+    const edgeToGroup = ast.edges.find((e) => e.to === "chat");
+    expect(edgeToGroup).toBeDefined();
+    const edgeFromGroup = ast.edges.find((e) => e.from === "chat");
+    expect(edgeFromGroup).toBeDefined();
+  });
+
+  it("V63: members reference non-existent agents — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent a1 { model: sonnet }
+  group chat {
+    members: [a1, nonexistent]
+  }
+  flow { intake -> chat }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v63 = results.filter((r) => r.rule === "V63");
+    expect(v63).toHaveLength(1);
+    expect(v63[0].level).toBe("error");
+    expect(v63[0].message).toContain("nonexistent");
+  });
+
+  it("V64: invalid speaker-selection — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent a1 { model: sonnet }
+  group chat {
+    members: [a1]
+    speaker-selection: invalid
+  }
+  flow { intake -> chat }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v64 = results.filter((r) => r.rule === "V64");
+    expect(v64).toHaveLength(1);
+    expect(v64[0].level).toBe("error");
+    expect(v64[0].message).toContain("invalid");
+  });
+
+  it("V65: max-rounds is 0 — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent a1 { model: sonnet }
+  group chat {
+    members: [a1]
+    max-rounds: 0
+  }
+  flow { intake -> chat }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v65 = results.filter((r) => r.rule === "V65");
+    expect(v65).toHaveLength(1);
+    expect(v65[0].level).toBe("error");
+  });
+
+  it("group node with minimal fields (just members) — succeeds", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent a1 { model: sonnet }
+  agent a2 { model: sonnet }
+  group chat {
+    members: [a1, a2]
+  }
+  flow { intake -> chat }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const groupNode = ast.nodes.find((n) => n.type === "group") as GroupNode;
+    expect(groupNode).toBeDefined();
+    expect(groupNode.members).toEqual(["a1", "a2"]);
+    expect(groupNode.speakerSelection).toBeUndefined();
+    expect(groupNode.maxRounds).toBeUndefined();
+    // No V63/V64/V65 errors
+    const groupErrors = results.filter((r) => ["V63", "V64", "V65"].includes(r.rule));
+    expect(groupErrors).toHaveLength(0);
+  });
+});
+
+// =========================================================================
+// F39: Rate Limiting
+// =========================================================================
+
+describe("Rate limiting (F39)", () => {
+  it("parses rate-limit: 60/min", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: 60/min
+  }
+  flow { intake -> api-caller }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "api-caller") as AgentNode;
+    expect(agent).toBeDefined();
+    expect(agent.rateLimit).toBe("60/min");
+  });
+
+  it("parses rate-limit: 1000/hour", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: 1000/hour
+  }
+  flow { intake -> api-caller }
+}`;
+    const ast = parse(src);
+    const agent = ast.nodes.find((n) => n.id === "api-caller") as AgentNode;
+    expect(agent.rateLimit).toBe("1000/hour");
+  });
+
+  it("V66: invalid format rate-limit: fast — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: fast
+  }
+  flow { intake -> api-caller }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v66 = results.filter((r) => r.rule === "V66");
+    expect(v66).toHaveLength(1);
+    expect(v66[0].level).toBe("error");
+    expect(v66[0].message).toContain("fast");
+  });
+
+  it("V66: invalid unit rate-limit: 60/week — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: 60/week
+  }
+  flow { intake -> api-caller }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v66 = results.filter((r) => r.rule === "V66");
+    expect(v66).toHaveLength(1);
+    expect(v66[0].level).toBe("error");
+  });
+
+  it("V66: zero rate rate-limit: 0/min — error", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: 0/min
+  }
+  flow { intake -> api-caller }
+}`;
+    const ast = parse(src);
+    const results = validate(ast);
+    const v66 = results.filter((r) => r.rule === "V66");
+    expect(v66).toHaveLength(1);
+    expect(v66[0].level).toBe("error");
+  });
+
+  it("valid rate-limit values pass validation", () => {
+    for (const rl of ["1/sec", "60/min", "1000/hour", "10000/day"]) {
+      const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent api-caller {
+    model: sonnet
+    rate-limit: ${rl}
+  }
+  flow { intake -> api-caller }
+}`;
+      const ast = parse(src);
+      const results = validate(ast);
+      const v66 = results.filter((r) => r.rule === "V66");
+      expect(v66).toHaveLength(0);
+    }
+  });
+});
+
+// =========================================================================
+// F28-F30: Registry Imports + Lock File + SHA256 Pinning
+// =========================================================================
+
+describe("Registry imports (F28-F30)", () => {
+  it("parses registry import with version", () => {
+    const body = `
+      import "registry/security-scanner@1.2.0" as scanner
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].registry).toBe(true);
+    expect(imports[0].registryPackage).toBe("registry/security-scanner");
+    expect(imports[0].registryVersion).toBe("1.2.0");
+  });
+
+  it("parses registry import with latest version", () => {
+    const body = `
+      import "registry/code-review@latest" as review
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].registry).toBe(true);
+    expect(imports[0].registryPackage).toBe("registry/code-review");
+    expect(imports[0].registryVersion).toBe("latest");
+  });
+
+  it("parses registry import with sha256", () => {
+    const body = `
+      import "registry/security-scanner@1.2.0" as scanner
+        sha256: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].sha256).toBe("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2");
+  });
+
+  it("parses registry import with 'with' clause and sha256", () => {
+    const body = `
+      import "registry/security-scanner@1.2.0" as scanner
+        with { strict: true }
+        sha256: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].registry).toBe(true);
+    expect(imports[0].params.strict).toBe(true);
+    expect(imports[0].sha256).toBe("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2");
+  });
+
+  it("local imports have registry flag undefined", () => {
+    const body = `
+      import "./topologies/research.at" as research
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].registry).toBeUndefined();
+    expect(imports[0].registryPackage).toBeUndefined();
+  });
+
+  it("parses registry import without version", () => {
+    const body = `
+      import "security/scanner" as scanner
+    `;
+    const imports = parseImports(body);
+    expect(imports).toHaveLength(1);
+    expect(imports[0].registry).toBe(true);
+    expect(imports[0].registryPackage).toBe("security/scanner");
+    expect(imports[0].registryVersion).toBeUndefined();
+  });
+
+  it("V73: invalid registry package name produces error", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "Registry/UPPER@1.0.0", alias: "upper", params: {}, registry: true, registryPackage: "Registry/UPPER", registryVersion: "1.0.0" },
+      ],
+    });
+    const results = validate(ast);
+    const v73 = results.filter((r) => r.rule === "V73");
+    expect(v73.length).toBeGreaterThan(0);
+    expect(v73[0].level).toBe("error");
+  });
+
+  it("V73: valid registry package name passes", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "security/scanner@1.0.0", alias: "scanner", params: {}, registry: true, registryPackage: "security/scanner", registryVersion: "1.0.0" },
+      ],
+    });
+    const results = validate(ast);
+    const v73 = results.filter((r) => r.rule === "V73");
+    expect(v73.length).toBe(0);
+  });
+
+  it("V74: invalid version produces error", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "security/scanner@bad", alias: "scanner", params: {}, registry: true, registryPackage: "security/scanner", registryVersion: "bad" },
+      ],
+    });
+    const results = validate(ast);
+    const v74 = results.filter((r) => r.rule === "V74");
+    expect(v74.length).toBeGreaterThan(0);
+    expect(v74[0].level).toBe("error");
+  });
+
+  it("V74: 'latest' version passes", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "security/scanner@latest", alias: "scanner", params: {}, registry: true, registryPackage: "security/scanner", registryVersion: "latest" },
+      ],
+    });
+    const results = validate(ast);
+    const v74 = results.filter((r) => r.rule === "V74");
+    expect(v74.length).toBe(0);
+  });
+
+  it("V75: invalid sha256 produces error", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "security/scanner@1.0.0", alias: "scanner", params: {}, sha256: "not-a-hash" },
+      ],
+    });
+    const results = validate(ast);
+    const v75 = results.filter((r) => r.rule === "V75");
+    expect(v75.length).toBeGreaterThan(0);
+    expect(v75[0].level).toBe("error");
+  });
+
+  it("V75: valid sha256 passes", () => {
+    const ast = minimalASTForWave6({
+      imports: [
+        { source: "security/scanner@1.0.0", alias: "scanner", params: {}, sha256: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" },
+      ],
+    });
+    const results = validate(ast);
+    const v75 = results.filter((r) => r.rule === "V75");
+    expect(v75.length).toBe(0);
+  });
+});
+
+// =========================================================================
+// F40: Prompt Variants / A/B Testing
+// =========================================================================
+
+describe("Prompt variants (F40)", () => {
+  it("parses variants block in agent", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent reviewer {
+    model: sonnet
+    variants {
+      variant concise {
+        prompt {
+          Review briefly.
+        }
+        weight: 0.5
+      }
+      variant detailed {
+        prompt {
+          Review thoroughly with examples.
+        }
+        weight: 0.5
+      }
+    }
+  }
+  flow { intake -> reviewer }
+}`;
+    const ast = parse(src);
+    const reviewer = ast.nodes.find((n) => n.id === "reviewer") as AgentNode;
+    expect(reviewer.variants).toBeDefined();
+    expect(reviewer.variants).toHaveLength(2);
+    expect(reviewer.variants![0].id).toBe("concise");
+    expect(reviewer.variants![0].weight).toBe(0.5);
+    expect(reviewer.variants![0].prompt).toContain("Review briefly");
+    expect(reviewer.variants![1].id).toBe("detailed");
+    expect(reviewer.variants![1].weight).toBe(0.5);
+  });
+
+  it("parses variant with model override", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent reviewer {
+    model: sonnet
+    variants {
+      variant cheap {
+        prompt {
+          Quick review.
+        }
+        weight: 0.7
+        model: haiku
+      }
+      variant expensive {
+        prompt {
+          Deep review.
+        }
+        weight: 0.3
+        temperature: 0.8
+      }
+    }
+  }
+  flow { intake -> reviewer }
+}`;
+    const ast = parse(src);
+    const reviewer = ast.nodes.find((n) => n.id === "reviewer") as AgentNode;
+    expect(reviewer.variants).toHaveLength(2);
+    expect(reviewer.variants![0].model).toBe("haiku");
+    expect(reviewer.variants![1].temperature).toBe(0.8);
+  });
+
+  it("V76: duplicate variant id produces error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+        { id: "intake", type: "action", label: "I" } as any,
+        {
+          id: "reviewer", type: "agent", label: "Reviewer", model: "sonnet",
+          variants: [
+            { id: "a", weight: 0.5, prompt: "p1" },
+            { id: "a", weight: 0.5, prompt: "p2" },
+          ],
+        } as AgentNode,
+      ],
+    });
+    const results = validate(ast);
+    const v76 = results.filter((r) => r.rule === "V76");
+    expect(v76.length).toBeGreaterThan(0);
+    expect(v76[0].level).toBe("error");
+  });
+
+  it("V77: variant weights not summing to 1.0 produces warning", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+        { id: "intake", type: "action", label: "I" } as any,
+        {
+          id: "reviewer", type: "agent", label: "Reviewer", model: "sonnet",
+          variants: [
+            { id: "a", weight: 0.3, prompt: "p1" },
+            { id: "b", weight: 0.3, prompt: "p2" },
+          ],
+        } as AgentNode,
+      ],
+    });
+    const results = validate(ast);
+    const v77 = results.filter((r) => r.rule === "V77");
+    expect(v77.length).toBeGreaterThan(0);
+    expect(v77[0].level).toBe("warning");
+  });
+
+  it("V77: weights summing to 1.0 passes", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+        { id: "intake", type: "action", label: "I" } as any,
+        {
+          id: "reviewer", type: "agent", label: "Reviewer", model: "sonnet",
+          variants: [
+            { id: "a", weight: 0.6, prompt: "p1" },
+            { id: "b", weight: 0.4, prompt: "p2" },
+          ],
+        } as AgentNode,
+      ],
+    });
+    const results = validate(ast);
+    const v77 = results.filter((r) => r.rule === "V77");
+    expect(v77.length).toBe(0);
+  });
+});
+
+// =========================================================================
+// F41: SOPS-Style Encrypted Values
+// =========================================================================
+
+describe("Encrypted values (F41)", () => {
+  it("parses encrypted value in env block", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent w { model: sonnet }
+  env {
+    API_KEY: encrypted "ENC[AES256_GCM,data:abc123]"
+  }
+  flow { intake -> w }
+}`;
+    const ast = parse(src);
+    const val = ast.env["API_KEY"] as SensitiveValue;
+    expect(val.encrypted).toBe(true);
+    expect(val.sensitive).toBe(true);
+    expect(val.sopsMethod).toBe("AES256_GCM");
+    expect(val.value).toBe("ENC[AES256_GCM,data:abc123]");
+  });
+
+  it("encrypted implies sensitive", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent w { model: sonnet }
+  env {
+    DB_URL: encrypted "ENC[RSA_OAEP,data:def456=]"
+  }
+  flow { intake -> w }
+}`;
+    const ast = parse(src);
+    const val = ast.env["DB_URL"] as SensitiveValue;
+    expect(val.sensitive).toBe(true);
+    expect(val.encrypted).toBe(true);
+  });
+
+  it("V78: invalid SOPS format produces warning", () => {
+    const ast = minimalASTForWave6({
+      env: {
+        BAD: { value: "not-sops-format", sensitive: true, encrypted: true },
+      },
+    });
+    const results = validate(ast);
+    const v78 = results.filter((r) => r.rule === "V78");
+    expect(v78.length).toBeGreaterThan(0);
+    expect(v78[0].level).toBe("warning");
+  });
+
+  it("V78: valid SOPS envelope passes", () => {
+    const ast = minimalASTForWave6({
+      env: {
+        GOOD: { value: "ENC[AES256_GCM,data:abc123]", sensitive: true, encrypted: true, sopsMethod: "AES256_GCM" },
+      },
+    });
+    const results = validate(ast);
+    const v78 = results.filter((r) => r.rule === "V78");
+    expect(v78.length).toBe(0);
+  });
+
+  it("V78: unknown SOPS method produces warning", () => {
+    const ast = minimalASTForWave6({
+      env: {
+        BAD_METHOD: { value: "ENC[BLOWFISH,data:abc123]", sensitive: true, encrypted: true, sopsMethod: "BLOWFISH" },
+      },
+    });
+    const results = validate(ast);
+    const v78 = results.filter((r) => r.rule === "V78");
+    expect(v78.length).toBeGreaterThan(0);
+    expect(v78[0].message).toContain("BLOWFISH");
+  });
+});
+
+// =========================================================================
+// F42: OIDC / Dynamic Credentials
+// =========================================================================
+
+describe("Auth block in providers (F42)", () => {
+  it("parses auth block in provider", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent w { model: sonnet }
+  providers {
+    anthropic {
+      auth {
+        type: oidc
+        issuer: "https://accounts.google.com"
+        audience: "api.anthropic.com"
+        token-url: "\${OIDC_TOKEN_URL}"
+      }
+      models: [opus, sonnet, haiku]
+    }
+  }
+  flow { intake -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.providers).toHaveLength(1);
+    expect(ast.providers[0].auth).toBeDefined();
+    expect(ast.providers[0].auth!.type).toBe("oidc");
+    expect(ast.providers[0].auth!.issuer).toBe("https://accounts.google.com");
+    expect(ast.providers[0].auth!.audience).toBe("api.anthropic.com");
+  });
+
+  it("provider without auth block (backward compat) passes", () => {
+    const src = `topology t : [pipeline] {
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: inline }
+  agent w { model: sonnet }
+  providers {
+    anthropic {
+      api-key: "\${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet]
+    }
+  }
+  flow { intake -> w }
+}`;
+    const ast = parse(src);
+    expect(ast.providers).toHaveLength(1);
+    expect(ast.providers[0].auth).toBeUndefined();
+  });
+
+  it("V79: invalid auth type produces error", () => {
+    const ast = minimalASTForWave6({
+      providers: [
+        { name: "anthropic", models: ["opus"], extra: {}, auth: { type: "magic-token" } },
+      ],
+    });
+    const results = validate(ast);
+    const v79 = results.filter((r) => r.rule === "V79");
+    expect(v79.length).toBeGreaterThan(0);
+    expect(v79[0].level).toBe("error");
+  });
+
+  it("V79: valid auth types pass", () => {
+    for (const authType of ["oidc", "oauth2", "api-key", "aws-iam", "gcp-sa", "azure-msi"]) {
+      const ast = minimalASTForWave6({
+        providers: [
+          { name: "prov", models: ["m1"], extra: {}, auth: { type: authType, issuer: "https://example.com" } },
+        ],
+      });
+      const results = validate(ast);
+      const v79 = results.filter((r) => r.rule === "V79");
+      expect(v79.length).toBe(0);
+    }
+  });
+
+  it("V80: OIDC without issuer produces error", () => {
+    const ast = minimalASTForWave6({
+      providers: [
+        { name: "anthropic", models: ["opus"], extra: {}, auth: { type: "oidc" } },
+      ],
+    });
+    const results = validate(ast);
+    const v80 = results.filter((r) => r.rule === "V80");
+    expect(v80.length).toBeGreaterThan(0);
+    expect(v80[0].level).toBe("error");
+    expect(v80[0].message).toContain("issuer");
+  });
+
+  it("V80: OIDC with issuer passes", () => {
+    const ast = minimalASTForWave6({
+      providers: [
+        { name: "anthropic", models: ["opus"], extra: {}, auth: { type: "oidc", issuer: "https://accounts.google.com" } },
+      ],
+    });
+    const results = validate(ast);
+    const v80 = results.filter((r) => r.rule === "V80");
+    expect(v80.length).toBe(0);
+  });
+
+  it("V80: api-key without issuer passes (issuer not required)", () => {
+    const ast = minimalASTForWave6({
+      providers: [
+        { name: "anthropic", models: ["opus"], extra: {}, auth: { type: "api-key" } },
+      ],
+    });
+    const results = validate(ast);
+    const v80 = results.filter((r) => r.rule === "V80");
+    expect(v80.length).toBe(0);
   });
 });

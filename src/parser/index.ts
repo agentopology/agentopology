@@ -21,6 +21,7 @@ import type {
   AgentNode,
   GateNode,
   HumanNode,
+  GroupNode,
   NodeDef,
   EdgeDef,
   DepthDef,
@@ -49,6 +50,11 @@ import type {
   InterfaceEndpoints,
   ImportDef,
   IncludeDef,
+  CheckpointDef,
+  ReplayConfig,
+  ArtifactDef,
+  PromptVariant,
+  AuthDef,
 } from "./ast.js";
 
 import {
@@ -265,6 +271,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
 
   if (fields.timeout) result.timeout = fields.timeout;
   if (fields["error-handler"]) result.errorHandler = fields["error-handler"];
+  if (fields.durable) result.durable = fields.durable === "true";
 
   return result;
 }
@@ -502,6 +509,38 @@ export function parseAgent(
     node.outputSchema = parseSchemaFields(outputSchemaBlock.body);
   }
 
+  // Artifact lineage: produces and consumes
+  const produces = parseMultilineList(body, "produces");
+  if (produces.length) node.produces = produces;
+  const consumes = parseMultilineList(body, "consumes");
+  if (consumes.length) node.consumes = consumes;
+
+  // Prompt variants (A/B testing)
+  const variantsBlock = extractBlock(body, "variants");
+  if (variantsBlock) {
+    const variants: PromptVariant[] = [];
+    const variantBlocks = extractAllBlocks(variantsBlock.body, "variant");
+    for (const vBlock of variantBlocks) {
+      if (!vBlock.id) continue;
+      const vFields = parseFields(vBlock.body);
+      const variant: PromptVariant = {
+        id: vBlock.id,
+        weight: vFields.weight ? parseFloat(vFields.weight) : 0,
+      };
+      const vPromptBlock = extractBlock(vBlock.body, "prompt");
+      if (vPromptBlock) {
+        variant.prompt = dedentBlock(vPromptBlock.body);
+      }
+      if (vFields.temperature) variant.temperature = parseFloat(vFields.temperature);
+      if (vFields.model) variant.model = vFields.model;
+      variants.push(variant);
+    }
+    if (variants.length > 0) node.variants = variants;
+  }
+
+  // Rate limit
+  if (fields["rate-limit"]) node.rateLimit = fields["rate-limit"];
+
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
   if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
@@ -571,6 +610,29 @@ export function parseHuman(id: string, body: string): HumanNode {
 }
 
 /**
+ * Parse a `group <id> { ... }` block into a {@link GroupNode}.
+ */
+export function parseGroup(id: string, body: string): GroupNode {
+  const fields = parseFields(body);
+  const members = parseList(fields.members ?? "");
+
+  const node: GroupNode = {
+    id,
+    type: "group",
+    label: toLabel(id),
+    members,
+  };
+
+  if (fields["speaker-selection"]) node.speakerSelection = fields["speaker-selection"];
+  if (fields["max-rounds"]) node.maxRounds = parseInt(fields["max-rounds"], 10);
+  if (fields.termination) node.termination = unquote(fields.termination);
+  if (fields.description) node.description = unquote(fields.description);
+  if (fields.timeout) node.timeout = fields.timeout;
+
+  return node;
+}
+
+/**
  * Parse the `flow { ... }` block into an array of {@link EdgeDef}.
  *
  * Supports chain syntax (`a -> b -> c`), fan-out (`a -> [b, c]`),
@@ -590,12 +652,14 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let tolerance: number | string | undefined;
     let race: boolean | undefined;
     let wait: string | undefined;
+    let weight: number | undefined;
+    let reflection: boolean | undefined;
     let flowPart = trimmed;
 
-    // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s]
-    // Must start with "when", "max", "per", "tolerance", "race", "wait", or "join" to avoid matching fan-out lists.
+    // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
+    // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?)\]\s*$/
     );
     if (bracketMatch) {
       flowPart = trimmed.slice(0, bracketMatch.index!).trim();
@@ -612,7 +676,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -637,6 +701,17 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       const waitMatch = annotation.match(/wait\s+(\d+[smhd])/);
       if (waitMatch) {
         wait = waitMatch[1];
+      }
+
+      // weight 0.7
+      const weightMatch = annotation.match(/weight\s+(\d+(?:\.\d+)?)/);
+      if (weightMatch) {
+        weight = parseFloat(weightMatch[1]);
+      }
+
+      // reflection
+      if (/\breflection\b/.test(annotation)) {
+        reflection = true;
       }
     }
 
@@ -712,6 +787,8 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && tolerance !== undefined) baseEdge.tolerance = tolerance;
       if (isLastSegment && race) baseEdge.race = true;
       if (isLastSegment && wait) baseEdge.wait = wait;
+      if (isLastSegment && weight !== undefined) baseEdge.weight = weight;
+      if (isLastSegment && reflection) baseEdge.reflection = true;
 
       if (fanOutMatch) {
         const targets = fanOutMatch[1].split(",").map((s) => s.trim());
@@ -727,6 +804,8 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.tolerance !== undefined ? { tolerance: baseEdge.tolerance } : {}),
             ...(baseEdge.race ? { race: true } : {}),
             ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
+            ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
+            ...(baseEdge.reflection ? { reflection: true } : {}),
           });
         }
       } else {
@@ -741,6 +820,8 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.tolerance !== undefined ? { tolerance: baseEdge.tolerance } : {}),
           ...(baseEdge.race ? { race: true } : {}),
           ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
+          ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
+          ...(baseEdge.reflection ? { reflection: true } : {}),
         });
       }
     }
@@ -1115,6 +1196,22 @@ export function parseEnv(body: string): Record<string, string | SensitiveValue> 
           secretRef,
         } satisfies SensitiveValue;
       }
+      // Check for `encrypted` modifier
+      else if (rawValue.startsWith("encrypted ")) {
+        const innerValue = rawValue.slice("encrypted ".length).trim();
+        const unquoted = unquote(innerValue);
+        const sv: SensitiveValue = {
+          value: unquoted,
+          sensitive: true,
+          encrypted: true,
+        };
+        // Parse SOPS envelope: ENC[METHOD,data:...]
+        const sopsMatch = unquoted.match(/^ENC\[([A-Z0-9_]+),data:/);
+        if (sopsMatch) {
+          sv.sopsMethod = sopsMatch[1];
+        }
+        result[kv[0]] = sv;
+      }
       // Check for `sensitive` modifier
       else if (rawValue.startsWith("sensitive ")) {
         const innerValue = rawValue.slice("sensitive ".length).trim();
@@ -1154,6 +1251,9 @@ export function parseProviders(body: string): ProviderDef[] {
       else if (body[i] === "}") depth--;
       i++;
     }
+    // Advance regex past the closing brace so we don't match sub-blocks
+    re.lastIndex = i;
+
     if (depth === 0) {
       const innerBody = body.slice(startIdx, i - 1);
       const fields = parseFields(innerBody);
@@ -1182,6 +1282,22 @@ export function parseProviders(body: string): ProviderDef[] {
       if (fields["api-key"]) provider.apiKey = unquote(fields["api-key"]);
       if (fields["base-url"]) provider.baseUrl = unquote(fields["base-url"]);
       if (fields["default"]) provider.default = fields["default"] === "true";
+
+      // Parse auth sub-block
+      const authBlock = extractBlock(innerBody, "auth");
+      if (authBlock) {
+        const aFields = parseFields(authBlock.body);
+        const auth: AuthDef = {
+          type: aFields.type ?? "api-key",
+        };
+        if (aFields.issuer) auth.issuer = unquote(aFields.issuer);
+        if (aFields.audience) auth.audience = unquote(aFields.audience);
+        if (aFields["token-url"]) auth.tokenUrl = unquote(aFields["token-url"]);
+        if (aFields["client-id"]) auth.clientId = unquote(aFields["client-id"]);
+        const scopes = parseMultilineList(authBlock.body, "scopes");
+        if (scopes.length) auth.scopes = scopes;
+        provider.auth = auth;
+      }
 
       providers.push(provider);
     }
@@ -1399,6 +1515,82 @@ export function parseObservability(body: string): ObservabilityDef {
   return def;
 }
 
+/**
+ * Parse the `checkpoint { ... }` block.
+ *
+ * Extracts KV fields plus an optional `replay { ... }` sub-block.
+ * Returns a {@link CheckpointDef} with parsed connection supporting
+ * the `secret "uri"` modifier.
+ */
+export function parseCheckpoint(body: string): CheckpointDef {
+  const fields = parseFields(body);
+
+  const def: CheckpointDef = {
+    backend: fields.backend ?? "memory",
+    strategy: fields.strategy ?? "every-node",
+  };
+
+  // Connection: may use `secret "uri"` modifier
+  if (fields.connection) {
+    const rawConn = fields.connection.trim();
+    if (rawConn.startsWith("secret ")) {
+      const uri = unquote(rawConn.slice("secret ".length).trim());
+      def.connection = uri;
+    } else {
+      def.connection = unquote(rawConn);
+    }
+  }
+
+  if (fields.ttl) def.ttl = fields.ttl;
+
+  // Parse replay sub-block
+  const replayBlock = extractBlock(body, "replay");
+  if (replayBlock) {
+    const rFields = parseFields(replayBlock.body);
+    const replay: ReplayConfig = {
+      enabled: rFields.enabled === "true",
+    };
+    if (rFields["max-history"]) {
+      replay.maxHistory = parseInt(rFields["max-history"], 10);
+    }
+    if (rFields.branch) {
+      replay.branch = rFields.branch === "true";
+    }
+    def.replay = replay;
+  }
+
+  return def;
+}
+
+/**
+ * Parse the top-level `artifacts { artifact <id> { ... } ... }` block.
+ *
+ * Returns an array of artifact definitions with their dependencies.
+ */
+export function parseArtifacts(topBody: string): ArtifactDef[] {
+  const artifactsBlock = extractBlock(topBody, "artifacts");
+  if (!artifactsBlock) return [];
+
+  const artifactBlocks = extractAllBlocks(artifactsBlock.body, "artifact");
+  const artifacts: ArtifactDef[] = [];
+
+  for (const block of artifactBlocks) {
+    if (!block.id) continue;
+    const fields = parseFields(block.body);
+    const artifact: ArtifactDef = {
+      id: block.id,
+      type: fields.type ?? "unknown",
+    };
+    if (fields.path) artifact.path = unquote(fields.path);
+    if (fields.retention) artifact.retention = fields.retention;
+    const dependsOn = parseMultilineList(block.body, "depends-on");
+    if (dependsOn.length) artifact.dependsOn = dependsOn;
+    artifacts.push(artifact);
+  }
+
+  return artifacts;
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -1421,7 +1613,7 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Match: agent <id> {, action <id> {, gate <id> {, human <id> {
-    const namedMatch = line.match(/^\s*(?:agent|action|gate|human)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
     if (namedMatch) {
       sourceMap[namedMatch[1]] = i + 1; // 1-based line number
       continue;
@@ -1565,7 +1757,32 @@ export function parseImports(body: string): ImportDef[] {
       }
     }
 
-    imports.push({ source, alias, params });
+    const importDef: ImportDef = { source, alias, params };
+
+    // Detect registry imports (not starting with ./ or ../)
+    const isRegistry = !source.startsWith("./") && !source.startsWith("../");
+    if (isRegistry) {
+      importDef.registry = true;
+      // Parse package@version format
+      const atIdx = source.lastIndexOf("@");
+      if (atIdx > 0) {
+        importDef.registryPackage = source.slice(0, atIdx);
+        importDef.registryVersion = source.slice(atIdx + 1);
+      } else {
+        importDef.registryPackage = source;
+      }
+    }
+
+    // Check for sha256 after the with block (or after alias if no with block)
+    const afterWithOrAlias = withMatch
+      ? afterImport.slice(withMatch[0].length)
+      : afterImport;
+    const sha256Match = afterWithOrAlias.match(/^\s*sha256\s*:\s*"([^"]+)"/);
+    if (sha256Match) {
+      importDef.sha256 = sha256Match[1];
+    }
+
+    imports.push(importDef);
   }
 
   return imports;
@@ -1630,6 +1847,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.domain ? { domain: metaFields.domain } : {}),
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
+    ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
   };
 
   // --- Roles ---
@@ -1677,6 +1895,14 @@ export function parse(source: string): TopologyAST {
   for (const block of humanBlocks) {
     if (block.id) {
       nodes.push(parseHuman(block.id, block.body));
+    }
+  }
+
+  // Group chat nodes
+  const groupBlocks = extractAllBlocks(topBody, "group");
+  for (const block of groupBlocks) {
+    if (block.id) {
+      nodes.push(parseGroup(block.id, block.body));
     }
   }
 
@@ -1790,6 +2016,13 @@ export function parse(source: string): TopologyAST {
   const observabilityBlock = extractBlock(topBody, "observability");
   const observability = observabilityBlock ? parseObservability(observabilityBlock.body) : null;
 
+  // --- Checkpoint ---
+  const checkpointBlock = extractBlock(topBody, "checkpoint");
+  const checkpoint = checkpointBlock ? parseCheckpoint(checkpointBlock.body) : null;
+
+  // --- Artifacts ---
+  const artifacts = parseArtifacts(topBody);
+
   // --- Top-level Extensions ---
   const topLevelExtensions = parseExtensionsBlock(topBody);
 
@@ -1814,6 +2047,7 @@ export function parse(source: string): TopologyAST {
     "triggers", "settings", "mcp-servers", "metering", "context", "env",
     "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
     "defaults", "schemas", "observability", "params", "interface",
+    "checkpoint", "artifacts",
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
@@ -1862,6 +2096,8 @@ export function parse(source: string): TopologyAST {
     interfaceEndpoints,
     imports,
     includes,
+    checkpoint,
+    artifacts,
     ...(isFragment ? { isFragment: true } : {}),
   };
 

@@ -175,8 +175,8 @@ function assertStructuralInvariants(files: GeneratedFile[]) {
 // ---------------------------------------------------------------------------
 
 describe("Binding registry", () => {
-  it("contains all 6 bindings", () => {
-    expect(Object.keys(bindings)).toHaveLength(6);
+  it("contains all 7 bindings", () => {
+    expect(Object.keys(bindings)).toHaveLength(7);
   });
 
   it("all bindings have a name and description", () => {
@@ -944,5 +944,96 @@ describe("kiro binding", () => {
   it("does NOT generate hook file for advisory gate", () => {
     const advisoryHook = files.find((f) => f.path === ".kiro/hooks/gate-soft-review.md");
     expect(advisoryHook).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// anthropic-sdk
+// ---------------------------------------------------------------------------
+
+describe("anthropic-sdk binding", () => {
+  const files = scaffoldBinding("anthropic-sdk");
+
+  assertStructuralInvariants(files);
+
+  it("produces package.json with anthropic SDK dependency", () => {
+    const pkg = files.find((f) => f.path === "package.json");
+    expect(pkg).toBeDefined();
+    const parsed = JSON.parse(pkg!.content);
+    expect(parsed.dependencies["@anthropic-ai/sdk"]).toBeDefined();
+    expect(parsed.scripts.start).toContain("tsx");
+  });
+
+  it("produces tsconfig.json", () => {
+    const tsconfig = files.find((f) => f.path === "tsconfig.json");
+    expect(tsconfig).toBeDefined();
+    const parsed = JSON.parse(tsconfig!.content);
+    expect(parsed.compilerOptions.strict).toBe(true);
+  });
+
+  it("produces src/types.ts with agent IDs", () => {
+    const types = files.find((f) => f.path === "src/types.ts");
+    expect(types).toBeDefined();
+    expect(types!.content).toContain("planner");
+    expect(types!.content).toContain("builder");
+    expect(types!.content).toContain("AgentConfig");
+    expect(types!.content).toContain("MemoryStore");
+  });
+
+  it("produces src/executor.ts with agentic loop", () => {
+    const executor = files.find((f) => f.path === "src/executor.ts");
+    expect(executor).toBeDefined();
+    expect(executor!.content).toContain("executeAgent");
+    expect(executor!.content).toContain("tool_use");
+    expect(executor!.content).toContain("end_turn");
+  });
+
+  it("produces src/orchestrator.ts with flow routing", () => {
+    const orch = files.find((f) => f.path === "src/orchestrator.ts");
+    expect(orch).toBeDefined();
+    expect(orch!.content).toContain("runTopology");
+    expect(orch!.content).toContain("getNextAgents");
+    expect(orch!.content).toContain('"planner"');
+    expect(orch!.content).toContain('"builder"');
+  });
+
+  it("produces src/memory.ts with file-based memory", () => {
+    const mem = files.find((f) => f.path === "src/memory.ts");
+    expect(mem).toBeDefined();
+    expect(mem!.content).toContain("FileMemory");
+    expect(mem!.content).toContain("readFile");
+    expect(mem!.content).toContain("writeFile");
+  });
+
+  it("produces src/tools.ts with built-in tools", () => {
+    const tools = files.find((f) => f.path === "src/tools.ts");
+    expect(tools).toBeDefined();
+    expect(tools!.content).toContain("read_file");
+    expect(tools!.content).toContain("write_file");
+    expect(tools!.content).toContain("bash");
+  });
+
+  it("produces src/index.ts entry point", () => {
+    const index = files.find((f) => f.path === "src/index.ts");
+    expect(index).toBeDefined();
+    expect(index!.content).toContain("runTopology");
+  });
+
+  it("produces .env.example with ANTHROPIC_API_KEY", () => {
+    const env = files.find((f) => f.path === ".env.example");
+    expect(env).toBeDefined();
+    expect(env!.content).toContain("ANTHROPIC_API_KEY");
+  });
+
+  it("produces .memory/.gitkeep for memory directory", () => {
+    const memDir = files.find((f) => f.path === ".memory/.gitkeep");
+    expect(memDir).toBeDefined();
+  });
+
+  it("maps agent models correctly in orchestrator", () => {
+    const orch = files.find((f) => f.path === "src/orchestrator.ts");
+    expect(orch).toBeDefined();
+    // The test topology uses "opus" which should map to claude-opus
+    expect(orch!.content).toContain("claude-");
   });
 });

@@ -16,11 +16,18 @@ import type {
   TopologyAST,
   AgentNode,
   GateNode,
+  GroupNode,
+  HumanNode,
   HookDef,
   InterfaceDef,
   ScheduleJobDef,
   SkillDef,
   ToolBlockDef,
+  SchemaFieldDef,
+  SchemaType,
+  RetryConfig,
+  CircuitBreakerConfig,
+  PromptVariant,
 } from "../parser/ast.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
@@ -108,6 +115,40 @@ function gitkeep(dirPath: string): GeneratedFile {
   return { path: `${dirPath}/.gitkeep`, content: "" };
 }
 
+/** Format a SchemaType to a human-readable string. */
+function formatSchemaType(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      return t.value;
+    case "array":
+      return `${formatSchemaType(t.itemType)}[]`;
+    case "enum":
+      return t.values.join(" | ");
+    case "ref":
+      return t.name;
+  }
+}
+
+/** Format a SchemaFieldDef to a readable line. */
+function formatSchemaField(f: SchemaFieldDef): string {
+  const opt = f.optional ? "?" : "";
+  return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
+}
+
+/** Format a RetryConfig to a readable string. */
+function formatRetryConfig(retry: number | RetryConfig): string {
+  if (typeof retry === "number") return String(retry);
+  const parts: string[] = [`max ${retry.max}`];
+  if (retry.backoff) parts.push(`backoff ${retry.backoff}`);
+  if (retry.interval) parts.push(`interval ${retry.interval}`);
+  if (retry.maxInterval) parts.push(`max-interval ${retry.maxInterval}`);
+  if (retry.jitter) parts.push("jitter");
+  if (retry.nonRetryable && retry.nonRetryable.length > 0) {
+    parts.push(`non-retryable: ${retry.nonRetryable.join(", ")}`);
+  }
+  return parts.join(", ");
+}
+
 // ---------------------------------------------------------------------------
 // TOML generation — codex.toml
 // ---------------------------------------------------------------------------
@@ -146,6 +187,16 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   }
 
   lines.push("");
+
+  // Model params from defaults or primary agent
+  const temp = ast.defaults?.temperature ?? agents[0]?.temperature;
+  const maxTok = ast.defaults?.maxTokens ?? agents[0]?.maxTokens;
+  if (temp != null || maxTok != null) {
+    lines.push("# Model parameters");
+    if (temp != null) lines.push(`# temperature = ${temp}`);
+    if (maxTok != null) lines.push(`# max_tokens = ${maxTok}`);
+    lines.push("");
+  }
 
   // History settings from extensions
   if (codexTopologyExt?.history) {
@@ -295,6 +346,25 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   }
   sections.push("");
 
+  // Defaults section
+  if (ast.defaults) {
+    sections.push("## Defaults");
+    sections.push("");
+    const d = ast.defaults;
+    if (d.temperature != null) sections.push(`- **Temperature:** ${d.temperature}`);
+    if (d.maxTokens != null) sections.push(`- **Max tokens:** ${d.maxTokens}`);
+    if (d.topP != null) sections.push(`- **Top-p:** ${d.topP}`);
+    if (d.topK != null) sections.push(`- **Top-k:** ${d.topK}`);
+    if (d.stop && d.stop.length > 0) sections.push(`- **Stop sequences:** ${d.stop.join(", ")}`);
+    if (d.seed != null) sections.push(`- **Seed:** ${d.seed}`);
+    if (d.thinking) sections.push(`- **Thinking:** ${d.thinking}`);
+    if (d.thinkingBudget != null) sections.push(`- **Thinking budget:** ${d.thinkingBudget}`);
+    if (d.outputFormat) sections.push(`- **Output format:** ${d.outputFormat}`);
+    if (d.timeout) sections.push(`- **Timeout:** ${d.timeout}`);
+    if (d.logLevel) sections.push(`- **Log level:** ${d.logLevel}`);
+    sections.push("");
+  }
+
   // Orchestrator section
   const orch = ast.nodes.find((n) => n.type === "orchestrator");
   if (orch) {
@@ -318,6 +388,12 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       let line = `${edge.from} -> ${edge.to}`;
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.isError) line += ` [error${edge.errorType ? `: ${edge.errorType}` : ""}]`;
+      if (edge.weight != null) line += ` [weight ${edge.weight}]`;
+      if (edge.reflection) line += ` [reflection]`;
+      if (edge.race) line += ` [race]`;
+      if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+      if (edge.wait) line += ` [wait ${edge.wait}]`;
       sections.push(`- ${line}`);
     }
     sections.push("");
@@ -392,12 +468,103 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Phase:** ${agent.phase}`);
       }
 
+      // Sampling parameters
+      if (agent.temperature != null) {
+        sections.push(`- **Temperature:** ${agent.temperature}`);
+      }
+      if (agent.maxTokens != null) {
+        sections.push(`- **Max tokens:** ${agent.maxTokens}`);
+      }
+      if (agent.topP != null) {
+        sections.push(`- **Top-p:** ${agent.topP}`);
+      }
+      if (agent.topK != null) {
+        sections.push(`- **Top-k:** ${agent.topK}`);
+      }
+      if (agent.stop && agent.stop.length > 0) {
+        sections.push(`- **Stop sequences:** ${agent.stop.join(", ")}`);
+      }
+      if (agent.seed != null) {
+        sections.push(`- **Seed:** ${agent.seed}`);
+      }
+
+      // Thinking / reasoning
+      if (agent.thinking) {
+        sections.push(`- **Reasoning level:** ${agent.thinking}`);
+      }
+      if (agent.thinkingBudget != null) {
+        sections.push(`- **Thinking budget:** ${agent.thinkingBudget}`);
+      }
+
+      // Output format
+      if (agent.outputFormat) {
+        sections.push(`- **Output format:** ${agent.outputFormat}`);
+      }
+
+      // Log level
+      if (agent.logLevel) {
+        sections.push(`- **Log level:** ${agent.logLevel}`);
+      }
+
+      // Timeout
+      if (agent.timeout) {
+        sections.push(`- **Maximum execution time:** ${agent.timeout}`);
+      }
+
+      // On-fail
+      if (agent.onFail) {
+        sections.push(`- **On failure:** ${agent.onFail}`);
+      }
+
+      // Retry
+      if (agent.retry != null) {
+        sections.push(`- **Retry:** ${formatRetryConfig(agent.retry)}`);
+      }
+
+      // Join semantics
+      if (agent.join) {
+        sections.push(`- **Wait for:** ${agent.join}`);
+      }
+
+      // Rate limit
+      if (agent.rateLimit) {
+        sections.push(`- **Rate limit:** ${agent.rateLimit}`);
+      }
+
+      // Circuit breaker
+      if (agent.circuitBreaker) {
+        const cb = agent.circuitBreaker;
+        sections.push(`- **Circuit breaker:** threshold ${cb.threshold}, window ${cb.window}, cooldown ${cb.cooldown}`);
+      }
+
+      // Compensates (saga)
+      if (agent.compensates) {
+        sections.push(`- **Compensates:** ${agent.compensates} (saga rollback)`);
+      }
+
       // Prompt
       if (agent.prompt) {
         sections.push("");
         sections.push("#### Instructions");
         sections.push("");
         sections.push(agent.prompt);
+        sections.push("");
+      }
+
+      // Prompt variants
+      if (agent.variants && agent.variants.length > 0) {
+        sections.push("");
+        sections.push("#### Prompt Variants");
+        sections.push("");
+        for (const v of agent.variants) {
+          const parts: string[] = [`**${v.id}** (weight ${v.weight})`];
+          if (v.model) parts.push(`model: ${v.model}`);
+          if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
+          sections.push(`- ${parts.join(", ")}`);
+          if (v.prompt) {
+            sections.push(`  > ${v.prompt.replace(/\n/g, "\n  > ")}`);
+          }
+        }
         sections.push("");
       }
 
@@ -424,12 +591,34 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Writes:** ${agent.writes.join(", ")}`);
       }
 
+      // Input/Output schemas
+      if (agent.inputSchema && agent.inputSchema.length > 0) {
+        sections.push("- **Input schema:**");
+        for (const field of agent.inputSchema) {
+          sections.push(`  ${formatSchemaField(field)}`);
+        }
+      }
+      if (agent.outputSchema && agent.outputSchema.length > 0) {
+        sections.push("- **Output schema:**");
+        for (const field of agent.outputSchema) {
+          sections.push(`  ${formatSchemaField(field)}`);
+        }
+      }
+
       // Outputs
       if (agent.outputs) {
         sections.push("- **Outputs:**");
         for (const [field, values] of Object.entries(agent.outputs)) {
           sections.push(`  - ${field}: ${values.join(" | ")}`);
         }
+      }
+
+      // Artifact lineage
+      if (agent.produces && agent.produces.length > 0) {
+        sections.push(`- **Produces:** ${agent.produces.join(", ")}`);
+      }
+      if (agent.consumes && agent.consumes.length > 0) {
+        sections.push(`- **Consumes:** ${agent.consumes.join(", ")}`);
       }
 
       // Behavior modifiers
@@ -444,9 +633,6 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       }
       if (agent.background) {
         sections.push(`- **Background:** true`);
-      }
-      if (agent.retry != null) {
-        sections.push(`- **Retry:** ${agent.retry}`);
       }
       if (agent.maxTurns != null) {
         sections.push(`- **Max turns:** ${agent.maxTurns}`);
@@ -471,6 +657,58 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Human nodes section
+  const humans = ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+  if (humans.length > 0) {
+    sections.push("## Human Checkpoints");
+    sections.push("");
+    for (const human of humans) {
+      sections.push(`### ${toTitle(human.id)}`);
+      sections.push("");
+      if (human.description) {
+        sections.push(human.description);
+        sections.push("");
+      }
+      sections.push(`- **Type:** Human pause point — requires manual input or approval`);
+      if (human.timeout) {
+        sections.push(`- **Timeout:** ${human.timeout}`);
+      }
+      if (human.onTimeout) {
+        sections.push(`- **On timeout:** ${human.onTimeout}`);
+      }
+      sections.push("");
+    }
+  }
+
+  // Group nodes section
+  const groups = ast.nodes.filter((n) => n.type === "group") as GroupNode[];
+  if (groups.length > 0) {
+    sections.push("## Group Chats");
+    sections.push("");
+    for (const group of groups) {
+      sections.push(`### ${toTitle(group.id)}`);
+      sections.push("");
+      if (group.description) {
+        sections.push(group.description);
+        sections.push("");
+      }
+      sections.push(`- **Members:** ${group.members.join(", ")}`);
+      if (group.speakerSelection) {
+        sections.push(`- **Speaker selection:** ${group.speakerSelection}`);
+      }
+      if (group.maxRounds != null) {
+        sections.push(`- **Max rounds:** ${group.maxRounds}`);
+      }
+      if (group.termination) {
+        sections.push(`- **Termination:** ${group.termination}`);
+      }
+      if (group.timeout) {
+        sections.push(`- **Timeout:** ${group.timeout}`);
+      }
+      sections.push("");
+    }
+  }
+
   // Gates section
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   if (gates.length > 0) {
@@ -487,6 +725,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       }
       if (gate.onFail) sections.push(`- **On fail:** ${gate.onFail}`);
       if (gate.retry != null) sections.push(`- **Retry:** ${gate.retry}`);
+      if (gate.timeout) sections.push(`- **Timeout:** ${gate.timeout}`);
       sections.push(`- **Enforcement:** script-level — run gate script manually between agents`);
       sections.push("");
     }
@@ -521,6 +760,67 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       sections.push(`- **Workspace:** .codex/runs/`);
     }
     sections.push("");
+  }
+
+  // Observability section
+  if (ast.observability) {
+    const o = ast.observability;
+    sections.push("## Observability");
+    sections.push("");
+    sections.push(`- **Enabled:** ${o.enabled}`);
+    sections.push(`- **Level:** ${o.level}`);
+    sections.push(`- **Exporter:** ${o.exporter}`);
+    if (o.endpoint) sections.push(`- **Endpoint:** ${o.endpoint}`);
+    if (o.service) sections.push(`- **Service:** ${o.service}`);
+    sections.push(`- **Sample rate:** ${o.sampleRate}`);
+    sections.push(`- **Capture:** prompts=${o.capture.prompts}, completions=${o.capture.completions}, toolArgs=${o.capture.toolArgs}, toolResults=${o.capture.toolResults}`);
+    sections.push(`- **Spans:** agents=${o.spans.agents}, tools=${o.spans.tools}, gates=${o.spans.gates}, memory=${o.spans.memory}`);
+    sections.push("");
+  }
+
+  // Checkpoint section
+  if (ast.checkpoint) {
+    const cp = ast.checkpoint;
+    sections.push("## Checkpoint");
+    sections.push("");
+    sections.push(`- **Backend:** ${cp.backend}`);
+    sections.push(`- **Strategy:** ${cp.strategy}`);
+    if (cp.connection) sections.push(`- **Connection:** ${cp.connection}`);
+    if (cp.ttl) sections.push(`- **TTL:** ${cp.ttl}`);
+    if (cp.replay) {
+      sections.push(`- **Replay:** enabled=${cp.replay.enabled}${cp.replay.maxHistory != null ? `, maxHistory=${cp.replay.maxHistory}` : ""}${cp.replay.branch != null ? `, branch=${cp.replay.branch}` : ""}`);
+    }
+    sections.push("");
+  }
+
+  // Artifacts section
+  if (ast.artifacts && ast.artifacts.length > 0) {
+    sections.push("## Artifacts");
+    sections.push("");
+    for (const art of ast.artifacts) {
+      const parts: string[] = [`type: ${art.type}`];
+      if (art.path) parts.push(`path: ${art.path}`);
+      if (art.retention) parts.push(`retention: ${art.retention}`);
+      if (art.dependsOn && art.dependsOn.length > 0) {
+        parts.push(`depends-on: ${art.dependsOn.join(", ")}`);
+      }
+      sections.push(`- **${art.id}**: ${parts.join(", ")}`);
+    }
+    sections.push("");
+  }
+
+  // Schemas section
+  if (ast.schemas && ast.schemas.length > 0) {
+    sections.push("## Schemas");
+    sections.push("");
+    for (const schema of ast.schemas) {
+      sections.push(`### ${toTitle(schema.id)}`);
+      sections.push("");
+      for (const field of schema.fields) {
+        sections.push(formatSchemaField(field));
+      }
+      sections.push("");
+    }
   }
 
   return {

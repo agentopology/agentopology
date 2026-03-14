@@ -32,10 +32,15 @@ import type {
   RetryConfig,
   ActionNode,
   HumanNode,
+  GroupNode,
   SchemaType,
   SchemaFieldDef,
   SensitiveValue,
   CircuitBreakerConfig,
+  CheckpointDef,
+  ArtifactDef,
+  PromptVariant,
+  AuthDef,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -130,7 +135,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   // Wave 2: Join semantics keywords
   "join", "all", "any", "all-done", "none-failed",
   // Wave 2: Edge attribute keywords
-  "tolerance", "race", "wait",
+  "tolerance", "race", "wait", "weight",
   // Wave 2: Error handler keyword
   "error-handler",
   // Wave 3: Schema system keywords
@@ -150,6 +155,15 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   // Wave 5: Advanced pattern keywords
   "circuit-breaker", "threshold", "window", "cooldown",
   "compensates", "human", "checkpoint", "durable",
+  // Wave 6: Checkpoint, replay, and artifact keywords
+  "backend", "connection", "strategy", "ttl", "replay",
+  "max-history", "branch", "every-node", "on-error", "explicit",
+  "memory", "sqlite", "postgres", "redis", "s3",
+  "artifacts", "artifact", "produces", "consumes",
+  "depends-on", "retention", "type",
+  // Wave 7: Group chat, reflection, and rate limiting keywords
+  "group", "members", "speaker-selection", "max-rounds", "termination",
+  "round-robin", "random", "reflection", "rate-limit",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -170,6 +184,10 @@ function isOrchestrator(n: NodeDef): n is OrchestratorNode {
 
 function isHuman(n: NodeDef): n is HumanNode {
   return n.type === "human";
+}
+
+function isGroup(n: NodeDef): n is GroupNode {
+  return n.type === "group";
 }
 
 /** Build a set of all declared node ids. */
@@ -1058,6 +1076,17 @@ function v30TimeoutFormat(ast: TopologyAST): ValidationResult[] {
         });
       }
     }
+    if (isGroup(node) && node.timeout) {
+      if (!durationRe.test(node.timeout)) {
+        results.push({
+          rule: "V30",
+          level: "error",
+          message: `Group node "${node.id}" has invalid timeout "${node.timeout}" — must match format like "30s", "5m", "2h", "1d"`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
   }
   return results;
 }
@@ -1336,28 +1365,36 @@ function v38MaxTokensPositive(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V39: Validate `join` is one of: all, any, all-done, none-failed. */
+/** Regex for N-of-M quorum join pattern. */
+const QUORUM_RE = /^\d+-of-\d+$/;
+
+/** Check whether a join value is valid (keyword or quorum pattern). */
+function isValidJoin(value: string): boolean {
+  const VALID_JOIN = new Set(["all", "any", "all-done", "none-failed"]);
+  return VALID_JOIN.has(value) || QUORUM_RE.test(value);
+}
+
+/** V39: Validate `join` is one of: all, any, all-done, none-failed, or N-of-M. */
 function v39JoinEnum(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  const VALID_JOIN = new Set(["all", "any", "all-done", "none-failed"]);
 
   for (const node of ast.nodes) {
-    if (isAgent(node) && node.join && !VALID_JOIN.has(node.join)) {
+    if (isAgent(node) && node.join && !isValidJoin(node.join)) {
       results.push({
         rule: "V39",
         level: "error",
-        message: `Agent "${node.id}" has invalid join "${node.join}" — must be one of: all, any, all-done, none-failed`,
+        message: `Agent "${node.id}" has invalid join "${node.join}" — must be one of: all, any, all-done, none-failed, or N-of-M (e.g. 2-of-3)`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
     }
     if (node.type === "action") {
       const action = node as ActionNode;
-      if (action.join && !VALID_JOIN.has(action.join)) {
+      if (action.join && !isValidJoin(action.join)) {
         results.push({
           rule: "V39",
           level: "error",
-          message: `Action "${action.id}" has invalid join "${action.join}" — must be one of: all, any, all-done, none-failed`,
+          message: `Action "${action.id}" has invalid join "${action.join}" — must be one of: all, any, all-done, none-failed, or N-of-M (e.g. 2-of-3)`,
           node: action.id,
           line: lookupLine(ast, action.id),
         });
@@ -1878,6 +1915,777 @@ function v58CompensatesTarget(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V60 – Quorum join validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V60: When `join` uses quorum syntax `N-of-M`, validate:
+ * - N >= 1
+ * - M >= 2
+ * - N <= M
+ */
+function v60QuorumJoin(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  function checkQuorum(nodeId: string, join: string): void {
+    if (!QUORUM_RE.test(join)) return;
+    const [nStr, mStr] = join.split("-of-");
+    const n = parseInt(nStr, 10);
+    const m = parseInt(mStr, 10);
+
+    if (n < 1) {
+      results.push({
+        rule: "V60",
+        level: "error",
+        message: `Node "${nodeId}" has invalid quorum join "${join}" — N must be >= 1`,
+        node: nodeId,
+        line: lookupLine(ast, nodeId),
+      });
+    }
+    if (m < 2) {
+      results.push({
+        rule: "V60",
+        level: "error",
+        message: `Node "${nodeId}" has invalid quorum join "${join}" — M must be >= 2`,
+        node: nodeId,
+        line: lookupLine(ast, nodeId),
+      });
+    }
+    if (n > m) {
+      results.push({
+        rule: "V60",
+        level: "error",
+        message: `Node "${nodeId}" has invalid quorum join "${join}" — N must be <= M`,
+        node: nodeId,
+        line: lookupLine(ast, nodeId),
+      });
+    }
+  }
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.join) checkQuorum(node.id, node.join);
+    if (node.type === "action") {
+      const action = node as ActionNode;
+      if (action.join) checkQuorum(action.id, action.join);
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V61 – Weight edge attribute validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V61: Validate `[weight N]` edge attributes:
+ * - Weight must be > 0 and <= 1.
+ * - Warning if weights from the same source don't sum to ~1.0 (within 0.01).
+ */
+function v61WeightRange(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  // Check individual weight values
+  for (const edge of ast.edges) {
+    if (edge.weight !== undefined) {
+      if (edge.weight <= 0) {
+        results.push({
+          rule: "V61",
+          level: "error",
+          message: `Edge "${edge.from}" -> "${edge.to}" has invalid weight ${edge.weight} — must be > 0`,
+          node: edge.from,
+        });
+      }
+      if (edge.weight > 1) {
+        results.push({
+          rule: "V61",
+          level: "error",
+          message: `Edge "${edge.from}" -> "${edge.to}" has invalid weight ${edge.weight} — must be <= 1`,
+          node: edge.from,
+        });
+      }
+    }
+  }
+
+  // Check weight sums per source node
+  const weightsBySource = new Map<string, number[]>();
+  for (const edge of ast.edges) {
+    if (edge.weight !== undefined) {
+      if (!weightsBySource.has(edge.from)) weightsBySource.set(edge.from, []);
+      weightsBySource.get(edge.from)!.push(edge.weight);
+    }
+  }
+
+  for (const [source, weights] of weightsBySource) {
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (Math.abs(sum - 1.0) > 0.01) {
+      results.push({
+        rule: "V61",
+        level: "warning",
+        message: `Edges from "${source}" have weights summing to ${sum.toFixed(4)} — expected ~1.0`,
+        node: source,
+      });
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V67 – Checkpoint backend validation
+// ---------------------------------------------------------------------------
+
+/** Valid checkpoint backends. */
+const VALID_CHECKPOINT_BACKENDS: ReadonlySet<string> = new Set([
+  "memory", "sqlite", "postgres", "redis", "s3", "custom",
+]);
+
+/**
+ * V67: checkpoint `backend` must be one of the known values.
+ */
+function v67CheckpointBackend(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.checkpoint) return results;
+
+  if (!VALID_CHECKPOINT_BACKENDS.has(ast.checkpoint.backend)) {
+    results.push({
+      rule: "V67",
+      level: "error",
+      message: `checkpoint backend "${ast.checkpoint.backend}" is invalid — must be one of: ${[...VALID_CHECKPOINT_BACKENDS].join(", ")}`,
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V68 – Checkpoint strategy and TTL validation
+// ---------------------------------------------------------------------------
+
+/** Valid checkpoint strategies. */
+const VALID_CHECKPOINT_STRATEGIES: ReadonlySet<string> = new Set([
+  "every-node", "on-error", "explicit", "none",
+]);
+
+/**
+ * V68: checkpoint `strategy` must be one of the known values,
+ * and `ttl` must be a valid duration string if present.
+ */
+function v68CheckpointStrategy(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.checkpoint) return results;
+
+  if (!VALID_CHECKPOINT_STRATEGIES.has(ast.checkpoint.strategy)) {
+    results.push({
+      rule: "V68",
+      level: "error",
+      message: `checkpoint strategy "${ast.checkpoint.strategy}" is invalid — must be one of: ${[...VALID_CHECKPOINT_STRATEGIES].join(", ")}`,
+    });
+  }
+
+  if (ast.checkpoint.ttl) {
+    const durationRe = /^\d+[smhd]$/;
+    if (!durationRe.test(ast.checkpoint.ttl)) {
+      results.push({
+        rule: "V68",
+        level: "error",
+        message: `checkpoint ttl "${ast.checkpoint.ttl}" is invalid — must match format like "30s", "5m", "2h", "7d"`,
+      });
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V69 – Replay configuration validation
+// ---------------------------------------------------------------------------
+
+/**
+ * V69: replay requires strategy "every-node"; max-history must be a positive
+ * integer; warn if backend is "memory" with replay enabled.
+ */
+function v69ReplayConfig(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.checkpoint?.replay) return results;
+
+  const replay = ast.checkpoint.replay;
+
+  // replay requires strategy "every-node"
+  if (ast.checkpoint.strategy !== "every-node") {
+    results.push({
+      rule: "V69",
+      level: "error",
+      message: `checkpoint replay requires strategy "every-node" but found "${ast.checkpoint.strategy}" — cannot replay without full checkpointing`,
+    });
+  }
+
+  // max-history must be positive integer
+  if (replay.maxHistory !== undefined) {
+    if (!Number.isInteger(replay.maxHistory) || replay.maxHistory < 1) {
+      results.push({
+        rule: "V69",
+        level: "error",
+        message: `checkpoint replay max-history "${replay.maxHistory}" must be a positive integer`,
+      });
+    }
+  }
+
+  // warn if backend is "memory" with replay enabled
+  if (replay.enabled && ast.checkpoint.backend === "memory") {
+    results.push({
+      rule: "V69",
+      level: "warning",
+      message: `checkpoint replay is enabled with backend "memory" — replay data will not survive restart`,
+    });
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V70 – Artifact IDs must be unique
+// ---------------------------------------------------------------------------
+
+/**
+ * V70: All artifact IDs in the artifacts block must be unique.
+ */
+function v70UniqueArtifactIds(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const artifact of ast.artifacts) {
+    if (seen.has(artifact.id)) {
+      results.push({
+        rule: "V70",
+        level: "error",
+        message: `duplicate artifact id "${artifact.id}" — artifact ids must be unique`,
+      });
+    }
+    seen.add(artifact.id);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V71 – Artifact references must resolve
+// ---------------------------------------------------------------------------
+
+/**
+ * V71: depends-on, produces, and consumes must reference declared artifact IDs.
+ */
+function v71ArtifactRefsResolve(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const artifactIds = new Set(ast.artifacts.map((a) => a.id));
+
+  // Check depends-on within artifacts
+  for (const artifact of ast.artifacts) {
+    if (artifact.dependsOn) {
+      for (const dep of artifact.dependsOn) {
+        if (!artifactIds.has(dep)) {
+          results.push({
+            rule: "V71",
+            level: "error",
+            message: `artifact "${artifact.id}" depends-on undeclared artifact "${dep}"`,
+          });
+        }
+      }
+    }
+  }
+
+  // Check produces/consumes on agents
+  for (const node of ast.nodes) {
+    if (isAgent(node)) {
+      if (node.produces) {
+        for (const ref of node.produces) {
+          if (!artifactIds.has(ref)) {
+            results.push({
+              rule: "V71",
+              level: "error",
+              message: `agent "${node.id}" produces undeclared artifact "${ref}"`,
+              node: node.id,
+              line: lookupLine(ast, node.id),
+            });
+          }
+        }
+      }
+      if (node.consumes) {
+        for (const ref of node.consumes) {
+          if (!artifactIds.has(ref)) {
+            results.push({
+              rule: "V71",
+              level: "error",
+              message: `agent "${node.id}" consumes undeclared artifact "${ref}"`,
+              node: node.id,
+              line: lookupLine(ast, node.id),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V72 – No circular artifact dependencies
+// ---------------------------------------------------------------------------
+
+/**
+ * V72: Artifact dependency graph must be acyclic.
+ */
+function v72ArtifactCycles(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (ast.artifacts.length === 0) return results;
+
+  // Build adjacency list
+  const adj = new Map<string, string[]>();
+  for (const artifact of ast.artifacts) {
+    adj.set(artifact.id, artifact.dependsOn ?? []);
+  }
+
+  // DFS cycle detection
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>();
+  for (const id of adj.keys()) color.set(id, WHITE);
+
+  function dfs(node: string, path: string[]): boolean {
+    color.set(node, GRAY);
+    path.push(node);
+
+    for (const dep of adj.get(node) ?? []) {
+      if (!adj.has(dep)) continue; // undeclared — caught by V71
+      if (color.get(dep) === GRAY) {
+        const cycleStart = path.indexOf(dep);
+        const cycle = path.slice(cycleStart).concat(dep);
+        results.push({
+          rule: "V72",
+          level: "error",
+          message: `circular artifact dependency detected: ${cycle.join(" -> ")}`,
+        });
+        return true;
+      }
+      if (color.get(dep) === WHITE) {
+        if (dfs(dep, path)) return true;
+      }
+    }
+
+    path.pop();
+    color.set(node, BLACK);
+    return false;
+  }
+
+  for (const id of adj.keys()) {
+    if (color.get(id) === WHITE) {
+      dfs(id, []);
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V73 – Registry package name validation
+// ---------------------------------------------------------------------------
+
+/** Valid registry package name pattern: lowercase kebab-case with optional namespace. */
+const REGISTRY_PACKAGE_RE = /^[a-z0-9-]+(\/[a-z0-9-]+)*$/;
+
+/**
+ * V73: Registry package names must match `[a-z0-9-]+(/[a-z0-9-]+)*`.
+ */
+function v73RegistryPackageName(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const imp of ast.imports) {
+    if (!imp.registry || !imp.registryPackage) continue;
+    if (!REGISTRY_PACKAGE_RE.test(imp.registryPackage)) {
+      results.push({
+        rule: "V73",
+        level: "error",
+        message: `import "${imp.source}": registry package name "${imp.registryPackage}" is invalid — must be lowercase kebab-case (a-z, 0-9, hyphens) with optional namespace separator "/"`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V74 – Registry version validation (semver or "latest")
+// ---------------------------------------------------------------------------
+
+/** Simple semver pattern. */
+const SEMVER_RE = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$/;
+
+/**
+ * V74: Registry package version must be valid semver or "latest".
+ */
+function v74RegistryVersion(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const imp of ast.imports) {
+    if (!imp.registry || !imp.registryVersion) continue;
+    if (imp.registryVersion !== "latest" && !SEMVER_RE.test(imp.registryVersion)) {
+      results.push({
+        rule: "V74",
+        level: "error",
+        message: `import "${imp.source}": version "${imp.registryVersion}" is invalid — must be valid semver (e.g. "1.2.0") or "latest"`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V75 – SHA-256 hash validation
+// ---------------------------------------------------------------------------
+
+/** Valid SHA-256: exactly 64 hex characters. */
+const SHA256_RE = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * V75: If sha256 is present on an import, it must be a valid 64-char hex string.
+ */
+function v75Sha256Format(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const imp of ast.imports) {
+    if (!imp.sha256) continue;
+    if (!SHA256_RE.test(imp.sha256)) {
+      results.push({
+        rule: "V75",
+        level: "error",
+        message: `import "${imp.source}": sha256 "${imp.sha256}" is invalid — must be exactly 64 hexadecimal characters`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V76 – Unique variant ids within agent
+// ---------------------------------------------------------------------------
+
+/**
+ * V76: Variant ids must be unique within each agent.
+ */
+function v76UniqueVariantIds(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (!isAgent(node) || !node.variants) continue;
+    const seen = new Set<string>();
+    for (const v of node.variants) {
+      if (seen.has(v.id)) {
+        results.push({
+          rule: "V76",
+          level: "error",
+          message: `agent "${node.id}": duplicate variant id "${v.id}" — variant ids must be unique within an agent`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+      seen.add(v.id);
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V77 – Variant weights must sum to ~1.0
+// ---------------------------------------------------------------------------
+
+/**
+ * V77: Variant weights must sum to approximately 1.0 (within 0.01 tolerance).
+ */
+function v77VariantWeightSum(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (!isAgent(node) || !node.variants || node.variants.length === 0) continue;
+    const sum = node.variants.reduce((acc, v) => acc + v.weight, 0);
+    if (Math.abs(sum - 1.0) > 0.01) {
+      results.push({
+        rule: "V77",
+        level: "warning",
+        message: `agent "${node.id}": variant weights sum to ${sum.toFixed(4)} — expected ~1.0`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V78 – Encrypted value SOPS envelope format
+// ---------------------------------------------------------------------------
+
+/** Valid SOPS methods. */
+const VALID_SOPS_METHODS: ReadonlySet<string> = new Set([
+  "AES256_GCM", "AES256_CBC", "RSA_OAEP",
+]);
+
+/** SOPS envelope pattern: ENC[METHOD,data:BASE64] */
+const SOPS_ENVELOPE_RE = /^ENC\[([A-Z0-9_]+),data:[A-Za-z0-9+/=]+\.*\]$/;
+
+/**
+ * V78: `encrypted` values must match SOPS envelope format ENC[METHOD,data:BASE64].
+ * Valid methods: AES256_GCM, AES256_CBC, RSA_OAEP.
+ */
+function v78EncryptedSopsFormat(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const [key, val] of Object.entries(ast.env)) {
+    if (typeof val === "object" && val !== null && val.encrypted) {
+      const m = val.value.match(SOPS_ENVELOPE_RE);
+      if (!m) {
+        results.push({
+          rule: "V78",
+          level: "warning",
+          message: `env "${key}": encrypted value does not match SOPS envelope format ENC[METHOD,data:BASE64]`,
+        });
+      } else if (!VALID_SOPS_METHODS.has(m[1])) {
+        results.push({
+          rule: "V78",
+          level: "warning",
+          message: `env "${key}": unknown SOPS method "${m[1]}" — valid methods: ${[...VALID_SOPS_METHODS].join(", ")}`,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V79 – Auth type enum
+// ---------------------------------------------------------------------------
+
+/** Valid auth types. */
+const VALID_AUTH_TYPES: ReadonlySet<string> = new Set([
+  "oidc", "oauth2", "api-key", "aws-iam", "gcp-sa", "azure-msi",
+]);
+
+/**
+ * V79: provider auth.type must be one of the known auth types.
+ */
+function v79AuthType(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const provider of ast.providers) {
+    if (!provider.auth) continue;
+    if (!VALID_AUTH_TYPES.has(provider.auth.type)) {
+      results.push({
+        rule: "V79",
+        level: "error",
+        message: `provider "${provider.name}": auth type "${provider.auth.type}" is invalid — must be one of: ${[...VALID_AUTH_TYPES].join(", ")}`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V80 – OIDC/OAuth2 require issuer
+// ---------------------------------------------------------------------------
+
+/**
+ * V80: OIDC and OAuth2 auth types require an issuer field.
+ */
+function v80AuthIssuerRequired(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const TYPES_REQUIRING_ISSUER = new Set(["oidc", "oauth2"]);
+  for (const provider of ast.providers) {
+    if (!provider.auth) continue;
+    if (TYPES_REQUIRING_ISSUER.has(provider.auth.type) && !provider.auth.issuer) {
+      results.push({
+        rule: "V80",
+        level: "error",
+        message: `provider "${provider.name}": auth type "${provider.auth.type}" requires an issuer field`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V62 – [reflection] requires [max N] and must be on back-edges
+// ---------------------------------------------------------------------------
+
+/**
+ * V62: `[reflection]` is only valid on back-edges (edges that form cycles)
+ * and MUST have `[max N]` to prevent infinite loops.
+ */
+function v62ReflectionEdge(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  // Build adjacency set for cycle detection
+  const nodeIds = allNodeIds(ast);
+
+  for (const edge of ast.edges) {
+    if (!edge.reflection) continue;
+
+    // reflection without max is an error
+    if (edge.maxIterations === null || edge.maxIterations === undefined) {
+      results.push({
+        rule: "V62",
+        level: "error",
+        message: `Edge ${edge.from} -> ${edge.to}: [reflection] requires [max N] to prevent infinite loops`,
+      });
+    }
+
+    // Check if this is a back-edge (forms a cycle).
+    // A simple heuristic: check if there is a path from `to` to `from` in the other edges.
+    const visited = new Set<string>();
+    const queue = [edge.to];
+    let isCycle = false;
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current === edge.from) {
+        // The target can reach the source via other edges — but we need to check
+        // via edges OTHER than this one (or any edge, since having a path back means cycle).
+        // Actually, for back-edge detection: if `to` can reach `from` through ANY forward edges,
+        // then from->to is a back edge. But the simpler check: does `from` appear as a target
+        // of edges originating from `to` (directly or transitively)?
+        // For the reflection edge itself: from->to with [reflection] means to->from should exist
+        // in the remaining edges for this to be a cycle.
+        isCycle = true;
+        break;
+      }
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const other of ast.edges) {
+        if (other === edge) continue; // Skip the reflection edge itself
+        if (other.from === current && !visited.has(other.to)) {
+          queue.push(other.to);
+        }
+      }
+    }
+
+    if (!isCycle) {
+      results.push({
+        rule: "V62",
+        level: "warning",
+        message: `Edge ${edge.from} -> ${edge.to}: [reflection] is intended for back-edges that form cycles`,
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V63 – Group node members must reference declared agent nodes
+// ---------------------------------------------------------------------------
+
+/**
+ * V63: `members` in a group node must reference declared agent nodes.
+ */
+function v63GroupMembers(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const agentIds = new Set(ast.nodes.filter(isAgent).map((n) => n.id));
+
+  for (const node of ast.nodes) {
+    if (isGroup(node)) {
+      for (const member of node.members) {
+        if (!agentIds.has(member)) {
+          results.push({
+            rule: "V63",
+            level: "error",
+            message: `group "${node.id}": member "${member}" is not a declared agent node`,
+            node: node.id,
+            line: lookupLine(ast, node.id),
+          });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V64 – Group node speaker-selection enum
+// ---------------------------------------------------------------------------
+
+/**
+ * V64: `speaker-selection` must be one of: auto, round-robin, random, manual.
+ */
+function v64SpeakerSelection(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const VALID = new Set(["auto", "round-robin", "random", "manual"]);
+
+  for (const node of ast.nodes) {
+    if (isGroup(node) && node.speakerSelection) {
+      if (!VALID.has(node.speakerSelection)) {
+        results.push({
+          rule: "V64",
+          level: "error",
+          message: `group "${node.id}": speaker-selection "${node.speakerSelection}" is invalid — must be one of: auto, round-robin, random, manual`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V65 – Group node max-rounds must be positive integer
+// ---------------------------------------------------------------------------
+
+/**
+ * V65: `max-rounds` must be a positive integer.
+ */
+function v65MaxRounds(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  for (const node of ast.nodes) {
+    if (isGroup(node) && node.maxRounds !== undefined) {
+      if (!Number.isInteger(node.maxRounds) || node.maxRounds < 1) {
+        results.push({
+          rule: "V65",
+          level: "error",
+          message: `group "${node.id}": max-rounds must be a positive integer, got ${node.maxRounds}`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V66 – Rate limit format
+// ---------------------------------------------------------------------------
+
+/**
+ * V66: `rate-limit` must match N/unit where N >= 1 and unit is sec|min|hour|day.
+ */
+function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const RATE_LIMIT_RE = /^(\d+)\/(sec|min|hour|day)$/;
+
+  for (const node of ast.nodes) {
+    if (isAgent(node) && node.rateLimit) {
+      const match = node.rateLimit.match(RATE_LIMIT_RE);
+      if (!match) {
+        results.push({
+          rule: "V66",
+          level: "error",
+          message: `agent "${node.id}": rate-limit "${node.rateLimit}" is invalid — must match format N/unit where unit is sec, min, hour, or day`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      } else {
+        const n = parseInt(match[1], 10);
+        if (n < 1) {
+          results.push({
+            rule: "V66",
+            level: "error",
+            message: `agent "${node.id}": rate-limit value must be >= 1, got ${n}`,
+            node: node.id,
+            line: lookupLine(ast, node.id),
+          });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1948,5 +2756,26 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v57CircuitBreakerFields(ast),
     ...v58CompensatesTarget(ast),
     ...v59HumanOnTimeout(ast),
+    ...v60QuorumJoin(ast),
+    ...v61WeightRange(ast),
+    ...v67CheckpointBackend(ast),
+    ...v68CheckpointStrategy(ast),
+    ...v69ReplayConfig(ast),
+    ...v70UniqueArtifactIds(ast),
+    ...v71ArtifactRefsResolve(ast),
+    ...v72ArtifactCycles(ast),
+    ...v73RegistryPackageName(ast),
+    ...v74RegistryVersion(ast),
+    ...v75Sha256Format(ast),
+    ...v76UniqueVariantIds(ast),
+    ...v77VariantWeightSum(ast),
+    ...v78EncryptedSopsFormat(ast),
+    ...v79AuthType(ast),
+    ...v80AuthIssuerRequired(ast),
+    ...v62ReflectionEdge(ast),
+    ...v63GroupMembers(ast),
+    ...v64SpeakerSelection(ast),
+    ...v65MaxRounds(ast),
+    ...v66RateLimitFormat(ast),
   ];
 }

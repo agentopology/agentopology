@@ -16,10 +16,17 @@ import type {
   TopologyAST,
   AgentNode,
   GateNode,
+  GroupNode,
+  HumanNode,
   OrchestratorNode,
   HookDef,
   SkillDef,
   ToolBlockDef,
+  SchemaFieldDef,
+  SchemaType,
+  RetryConfig,
+  CircuitBreakerConfig,
+  PromptVariant,
 } from "../parser/ast.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
@@ -97,6 +104,27 @@ function mapMatcherName(matcher: string): string {
   return matcherMap[matcher] ?? matcher;
 }
 
+/** Format a SchemaType to a human-readable string. */
+function formatSchemaType(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      return t.value;
+    case "array":
+      return `${formatSchemaType(t.itemType)}[]`;
+    case "enum":
+      return t.values.join(" | ");
+    case "ref":
+      return t.name;
+  }
+}
+
+/** Format schema fields as a markdown list. */
+function formatSchemaFields(fields: SchemaFieldDef[]): string {
+  return fields
+    .map((f) => `- \`${f.name}${f.optional ? "?" : ""}\`: ${formatSchemaType(f.type)}`)
+    .join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Agent JSON generation
 // ---------------------------------------------------------------------------
@@ -167,6 +195,24 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       agentJson.model = agent.model;
     }
 
+    // Timeout (Wave 1)
+    if (agent.timeout) {
+      agentJson.timeout = agent.timeout;
+    }
+
+    // Sampling params (Wave 1) — model config
+    if (agent.temperature != null) {
+      agentJson.temperature = agent.temperature;
+    }
+    if (agent.maxTokens != null) {
+      agentJson.maxTokens = agent.maxTokens;
+    }
+
+    // Thinking/reasoning (Wave 1)
+    if (agent.thinking) {
+      agentJson.reasoning = agent.thinking;
+    }
+
     // Max turns
     if (agent.maxTurns != null) {
       agentJson.maxTurns = agent.maxTurns;
@@ -227,6 +273,287 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/agents/${agent.id}.json`,
       content: JSON.stringify(agentJson, null, 2) + "\n",
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent steering docs for Wave 1-7 features
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.kiro/steering/agent-<id>.md` for agents with behavioral config
+ * that cannot be expressed in JSON (on-fail, retry, circuitBreaker, schemas,
+ * rate limits, artifacts, join semantics, output format, log level, variants).
+ */
+function generateAgentSteering(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+
+    const sections: string[] = [];
+    let hasContent = false;
+
+    // on-fail / retry (Wave 1)
+    if (agent.onFail) {
+      sections.push(`## Failure Handling`);
+      sections.push("");
+      sections.push(`On failure: **${agent.onFail}**`);
+      sections.push("");
+      hasContent = true;
+    }
+    if (agent.retry != null) {
+      if (!sections.some((s) => s.includes("Failure Handling"))) {
+        sections.push(`## Failure Handling`);
+        sections.push("");
+      }
+      if (typeof agent.retry === "number") {
+        sections.push(`Retry up to **${agent.retry}** times on failure.`);
+      } else {
+        const r = agent.retry as RetryConfig;
+        sections.push(`Retry up to **${r.max}** times.`);
+        if (r.backoff) sections.push(`- Backoff: ${r.backoff}`);
+        if (r.interval) sections.push(`- Interval: ${r.interval}`);
+        if (r.maxInterval) sections.push(`- Max interval: ${r.maxInterval}`);
+        if (r.jitter) sections.push(`- Jitter: enabled`);
+        if (r.nonRetryable && r.nonRetryable.length > 0) {
+          sections.push(`- Non-retryable: ${r.nonRetryable.join(", ")}`);
+        }
+      }
+      sections.push("");
+      hasContent = true;
+    }
+
+    // circuitBreaker (Wave 5)
+    if (agent.circuitBreaker) {
+      const cb = agent.circuitBreaker;
+      sections.push(`## Circuit Breaker`);
+      sections.push("");
+      sections.push(`- Threshold: ${cb.threshold} failures`);
+      sections.push(`- Window: ${cb.window}`);
+      sections.push(`- Cooldown: ${cb.cooldown}`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // compensates (Wave 5 — saga)
+    if (agent.compensates) {
+      sections.push(`## Compensation`);
+      sections.push("");
+      sections.push(`This agent compensates (undoes side effects of) **${agent.compensates}**.`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // inputSchema / outputSchema (Wave 3)
+    if (agent.inputSchema && agent.inputSchema.length > 0) {
+      sections.push(`## Input Schema`);
+      sections.push("");
+      sections.push(formatSchemaFields(agent.inputSchema));
+      sections.push("");
+      hasContent = true;
+    }
+    if (agent.outputSchema && agent.outputSchema.length > 0) {
+      sections.push(`## Output Schema`);
+      sections.push("");
+      sections.push(formatSchemaFields(agent.outputSchema));
+      sections.push("");
+      hasContent = true;
+    }
+
+    // rateLimit (Wave 6)
+    if (agent.rateLimit) {
+      sections.push(`## Rate Limit`);
+      sections.push("");
+      sections.push(`Rate limit: **${agent.rateLimit}**`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // produces / consumes (Wave 6 — artifacts)
+    if (agent.produces && agent.produces.length > 0) {
+      sections.push(`## Produces`);
+      sections.push("");
+      sections.push(agent.produces.map((a) => `- ${a}`).join("\n"));
+      sections.push("");
+      hasContent = true;
+    }
+    if (agent.consumes && agent.consumes.length > 0) {
+      sections.push(`## Consumes`);
+      sections.push("");
+      sections.push(agent.consumes.map((a) => `- ${a}`).join("\n"));
+      sections.push("");
+      hasContent = true;
+    }
+
+    // join (Wave 2)
+    if (agent.join) {
+      sections.push(`## Join Strategy`);
+      sections.push("");
+      sections.push(`Wait strategy: **${agent.join}**`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // outputFormat (Wave 1)
+    if (agent.outputFormat) {
+      sections.push(`## Output Format`);
+      sections.push("");
+      sections.push(`Expected output format: **${agent.outputFormat}**`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // logLevel (Wave 3)
+    if (agent.logLevel) {
+      sections.push(`## Log Level`);
+      sections.push("");
+      sections.push(`Log level: **${agent.logLevel}**`);
+      sections.push("");
+      hasContent = true;
+    }
+
+    // variants (Wave 7 — A/B testing)
+    if (agent.variants && agent.variants.length > 0) {
+      sections.push(`## Prompt Variants`);
+      sections.push("");
+      for (const v of agent.variants) {
+        const parts = [`**${v.id}** (weight: ${v.weight})`];
+        if (v.model) parts.push(`model: ${v.model}`);
+        if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
+        sections.push(`- ${parts.join(", ")}`);
+        if (v.prompt) {
+          sections.push(`  > ${v.prompt.replace(/\n/g, "\n  > ")}`);
+        }
+      }
+      sections.push("");
+      hasContent = true;
+    }
+
+    if (!hasContent) continue;
+
+    const header = [
+      "---",
+      `inclusion: agent:${agent.id}`,
+      "---",
+      "",
+      `# ${toTitle(agent.id)} — Behavioral Config`,
+      "",
+    ];
+
+    files.push({
+      path: `.kiro/steering/agent-${agent.id}.md`,
+      content: header.join("\n") + sections.join("\n") + "\n",
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// Human node steering docs
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.kiro/steering/human-<id>.md` for human-in-the-loop pause points.
+ */
+function generateHumanSteering(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "human") continue;
+    const human = node as HumanNode;
+
+    const sections: string[] = [
+      "---",
+      "inclusion: always",
+      "---",
+      "",
+      `# ${toTitle(human.id)} — Human Pause Point`,
+      "",
+    ];
+
+    if (human.description) {
+      sections.push(human.description);
+      sections.push("");
+    }
+
+    sections.push("## Behavior");
+    sections.push("");
+    sections.push("This is a human-in-the-loop pause point. Stop and wait for human input before continuing.");
+    sections.push("");
+
+    if (human.timeout) {
+      sections.push(`- Timeout: ${human.timeout}`);
+    }
+    if (human.onTimeout) {
+      sections.push(`- On timeout: ${human.onTimeout}`);
+    }
+    if (human.timeout || human.onTimeout) {
+      sections.push("");
+    }
+
+    files.push({
+      path: `.kiro/steering/human-${human.id}.md`,
+      content: sections.join("\n") + "\n",
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// Group node steering docs
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.kiro/steering/group-<id>.md` for group chat coordination nodes.
+ */
+function generateGroupSteering(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "group") continue;
+    const group = node as GroupNode;
+
+    const sections: string[] = [
+      "---",
+      "inclusion: always",
+      "---",
+      "",
+      `# ${toTitle(group.id)} — Group Chat`,
+      "",
+    ];
+
+    if (group.description) {
+      sections.push(group.description);
+      sections.push("");
+    }
+
+    sections.push("## Coordination");
+    sections.push("");
+    sections.push(`Members: ${group.members.join(", ")}`);
+    if (group.speakerSelection) {
+      sections.push(`Speaker selection: ${group.speakerSelection}`);
+    }
+    if (group.maxRounds != null) {
+      sections.push(`Max rounds: ${group.maxRounds}`);
+    }
+    if (group.termination) {
+      sections.push(`Termination: ${group.termination}`);
+    }
+    if (group.timeout) {
+      sections.push(`Timeout: ${group.timeout}`);
+    }
+    sections.push("");
+
+    files.push({
+      path: `.kiro/steering/group-${group.id}.md`,
+      content: sections.join("\n") + "\n",
     });
   }
 
@@ -601,14 +928,20 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
-  // Flow
+  // Flow (enhanced with Wave 2+ edge attributes)
   if (ast.edges.length > 0) {
     sections.push("## Flow");
     sections.push("");
     for (const edge of ast.edges) {
-      let line = `${edge.from} -> ${edge.to}`;
+      const arrow = edge.isError ? `-x${edge.errorType ? `[${edge.errorType}]` : ""}->` : "->";
+      let line = `${edge.from} ${arrow} ${edge.to}`;
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.weight != null) line += ` [weight ${edge.weight}]`;
+      if (edge.race) line += ` [race]`;
+      if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+      if (edge.wait) line += ` [wait ${edge.wait}]`;
+      if (edge.reflection) line += ` (reflection)`;
       sections.push(`- ${line}`);
     }
     sections.push("");
@@ -669,6 +1002,37 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`Checks: ${gate.checks.join(", ")}`);
       }
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
+      sections.push("");
+    }
+  }
+
+  // Human nodes
+  const humans = ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+  if (humans.length > 0) {
+    sections.push("## Human Pause Points");
+    sections.push("");
+    for (const human of humans) {
+      sections.push(`### ${toTitle(human.id)}`);
+      if (human.description) sections.push(human.description);
+      if (human.timeout) sections.push(`- **Timeout:** ${human.timeout}`);
+      if (human.onTimeout) sections.push(`- **On timeout:** ${human.onTimeout}`);
+      sections.push("");
+    }
+  }
+
+  // Group nodes
+  const groups = ast.nodes.filter((n) => n.type === "group") as GroupNode[];
+  if (groups.length > 0) {
+    sections.push("## Group Chats");
+    sections.push("");
+    for (const group of groups) {
+      sections.push(`### ${toTitle(group.id)}`);
+      if (group.description) sections.push(group.description);
+      sections.push(`- **Members:** ${group.members.join(", ")}`);
+      if (group.speakerSelection) sections.push(`- **Speaker selection:** ${group.speakerSelection}`);
+      if (group.maxRounds != null) sections.push(`- **Max rounds:** ${group.maxRounds}`);
+      if (group.termination) sections.push(`- **Termination:** ${group.termination}`);
+      if (group.timeout) sections.push(`- **Timeout:** ${group.timeout}`);
       sections.push("");
     }
   }
@@ -869,16 +1233,21 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
     const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
     const onFail = gate.onFail || "halt";
 
+    const triggerObj: Record<string, unknown> = {
+      type: "postToolUse",
+      matcher: gate.after || "*",
+    };
+    if (gate.timeout) {
+      triggerObj.timeout = gate.timeout;
+    }
+
     const content = [
       `# Gate: ${gate.id}`,
       "",
       "## Trigger",
       "",
       "```json",
-      JSON.stringify({
-        type: "postToolUse",
-        matcher: gate.after || "*",
-      }, null, 2),
+      JSON.stringify(triggerObj, null, 2),
       "```",
       "",
       "## Description",
@@ -926,6 +1295,15 @@ export const kiroBinding: BindingTarget = {
     files.push(generateProductSteering(ast));
     files.push(generateTechSteering(ast));
     files.push(generateStructureSteering(ast));
+
+    // 2b. Per-agent behavioral steering docs (Wave 1-7)
+    files.push(...generateAgentSteering(ast));
+
+    // 2c. Human node steering docs (Wave 5)
+    files.push(...generateHumanSteering(ast));
+
+    // 2d. Group node steering docs (Wave 5)
+    files.push(...generateGroupSteering(ast));
 
     // 3. MCP configuration
     const mcpFile = generateMcpJson(ast);

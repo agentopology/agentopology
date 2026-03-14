@@ -7,7 +7,21 @@
  * @module
  */
 
-import type { TopologyAST, AgentNode, GateNode, HookDef, SkillDef, ToolBlockDef } from "../parser/ast.js";
+import type {
+  TopologyAST,
+  AgentNode,
+  GateNode,
+  GroupNode,
+  HumanNode,
+  HookDef,
+  SkillDef,
+  ToolBlockDef,
+  SchemaFieldDef,
+  SchemaType,
+  RetryConfig,
+  CircuitBreakerConfig,
+  PromptVariant,
+} from "../parser/ast.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -95,6 +109,26 @@ function mapPermissionMode(perm: string): string | undefined {
     default:
       return perm; // unknown — pass through as-is
   }
+}
+
+/** Format a SchemaType to a human-readable string. */
+function formatSchemaType(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      return t.value;
+    case "array":
+      return `${formatSchemaType(t.itemType)}[]`;
+    case "enum":
+      return t.values.join(" | ");
+    case "ref":
+      return t.name;
+  }
+}
+
+/** Format a SchemaFieldDef to a readable line. */
+function formatSchemaField(f: SchemaFieldDef): string {
+  const opt = f.optional ? "?" : "";
+  return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +231,151 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    // Timeout instruction
+    if (agent.timeout) {
+      sections.push(`You have a maximum of ${agent.timeout} to complete your work.`);
+      sections.push("");
+    }
+
+    // On-fail instruction
+    if (agent.onFail) {
+      sections.push(`If you fail: ${agent.onFail}`);
+      sections.push("");
+    }
+
+    // Retry configuration
+    if (agent.retry != null) {
+      if (typeof agent.retry === "number") {
+        sections.push(`Retry up to ${agent.retry} times on failure.`);
+      } else {
+        const r = agent.retry as RetryConfig;
+        const parts = [`max ${r.max} attempts`];
+        if (r.backoff) parts.push(`${r.backoff} backoff`);
+        if (r.interval) parts.push(`interval ${r.interval}`);
+        if (r.maxInterval) parts.push(`max interval ${r.maxInterval}`);
+        if (r.jitter) parts.push(`with jitter`);
+        if (r.nonRetryable && r.nonRetryable.length > 0) {
+          parts.push(`non-retryable: ${r.nonRetryable.join(", ")}`);
+        }
+        sections.push(`Retry strategy: ${parts.join(", ")}.`);
+      }
+      sections.push("");
+    }
+
+    // Model Configuration section
+    const hasModelConfig =
+      agent.temperature != null ||
+      agent.maxTokens != null ||
+      agent.topP != null ||
+      agent.topK != null ||
+      agent.stop != null ||
+      agent.seed != null;
+    if (hasModelConfig) {
+      sections.push("## Model Configuration");
+      if (agent.temperature != null) sections.push(`- Temperature: ${agent.temperature}`);
+      if (agent.maxTokens != null) sections.push(`- Max tokens: ${agent.maxTokens}`);
+      if (agent.topP != null) sections.push(`- Top-p: ${agent.topP}`);
+      if (agent.topK != null) sections.push(`- Top-k: ${agent.topK}`);
+      if (agent.stop) sections.push(`- Stop sequences: ${agent.stop.join(", ")}`);
+      if (agent.seed != null) sections.push(`- Seed: ${agent.seed}`);
+      sections.push("");
+    }
+
+    // Thinking
+    if (agent.thinking) {
+      let thinkingLine = `Use ${agent.thinking} level reasoning.`;
+      if (agent.thinkingBudget != null) {
+        thinkingLine = `Use ${agent.thinking} level reasoning (budget: ${agent.thinkingBudget} tokens).`;
+      }
+      sections.push(thinkingLine);
+      sections.push("");
+    }
+
+    // Output format
+    if (agent.outputFormat) {
+      sections.push(`Output format: ${agent.outputFormat}`);
+      sections.push("");
+    }
+
+    // Log level
+    if (agent.logLevel) {
+      sections.push(`Log level: ${agent.logLevel}`);
+      sections.push("");
+    }
+
+    // Join semantics
+    if (agent.join) {
+      sections.push(`Wait strategy: ${agent.join} (wait for upstream agents)`);
+      sections.push("");
+    }
+
+    // Circuit breaker
+    if (agent.circuitBreaker) {
+      const cb = agent.circuitBreaker;
+      sections.push("## Circuit Breaker");
+      sections.push(`- Failure threshold: ${cb.threshold}`);
+      sections.push(`- Window: ${cb.window}`);
+      sections.push(`- Cooldown: ${cb.cooldown}`);
+      sections.push("");
+    }
+
+    // Compensates
+    if (agent.compensates) {
+      sections.push(`This agent compensates (can undo) the work of: ${agent.compensates}`);
+      sections.push("");
+    }
+
+    // Input Schema
+    if (agent.inputSchema && agent.inputSchema.length > 0) {
+      sections.push("## Input Schema");
+      for (const field of agent.inputSchema) {
+        sections.push(formatSchemaField(field));
+      }
+      sections.push("");
+    }
+
+    // Output Schema
+    if (agent.outputSchema && agent.outputSchema.length > 0) {
+      sections.push("## Output Schema");
+      for (const field of agent.outputSchema) {
+        sections.push(formatSchemaField(field));
+      }
+      sections.push("");
+    }
+
+    // Rate limit
+    if (agent.rateLimit) {
+      sections.push(`Rate limit: ${agent.rateLimit}`);
+      sections.push("");
+    }
+
+    // Artifacts: produces/consumes
+    if ((agent.produces && agent.produces.length > 0) || (agent.consumes && agent.consumes.length > 0)) {
+      sections.push("## Artifacts");
+      if (agent.produces && agent.produces.length > 0) {
+        sections.push(`Produces: ${agent.produces.join(", ")}`);
+      }
+      if (agent.consumes && agent.consumes.length > 0) {
+        sections.push(`Consumes: ${agent.consumes.join(", ")}`);
+      }
+      sections.push("");
+    }
+
+    // Variants
+    if (agent.variants && agent.variants.length > 0) {
+      sections.push("## Variants");
+      for (const v of agent.variants) {
+        const parts = [`**${v.id}** (weight: ${v.weight})`];
+        if (v.model) parts.push(`model: ${v.model}`);
+        if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
+        sections.push(`- ${parts.join(", ")}`);
+        if (v.prompt) {
+          sections.push(`  Prompt: ${v.prompt}`);
+        }
+      }
+      sections.push("");
+    }
+
     if (agent.skills && agent.skills.length > 0) {
       sections.push(`Skills: ${agent.skills.join(", ")}`);
     }
@@ -209,6 +388,77 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     files.push({
       path: `.claude/agents/${agent.id}/AGENT.md`,
+      content: sections.join("\n") + "\n",
+    });
+  }
+
+  return files;
+}
+
+/** Generate AGENT.md files for each human node. */
+function generateHumanNodes(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "human") continue;
+    const human = node as HumanNode;
+
+    const sections: string[] = [];
+    sections.push(`# ${toTitle(human.id)} (Human-in-the-Loop)`);
+    sections.push("");
+    if (human.description) {
+      sections.push(human.description);
+      sections.push("");
+    }
+    if (human.timeout) {
+      sections.push(`Timeout: ${human.timeout}`);
+    }
+    if (human.onTimeout) {
+      sections.push(`On timeout: ${human.onTimeout}`);
+    }
+    sections.push("");
+
+    files.push({
+      path: `.claude/agents/${human.id}/AGENT.md`,
+      content: sections.join("\n") + "\n",
+    });
+  }
+
+  return files;
+}
+
+/** Generate AGENT.md files for each group chat node. */
+function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "group") continue;
+    const group = node as GroupNode;
+
+    const sections: string[] = [];
+    sections.push(`# ${toTitle(group.id)} (Group Chat)`);
+    sections.push("");
+    if (group.description) {
+      sections.push(group.description);
+      sections.push("");
+    }
+    sections.push(`Members: ${group.members.join(", ")}`);
+    if (group.speakerSelection) {
+      sections.push(`Speaker selection: ${group.speakerSelection}`);
+    }
+    if (group.maxRounds != null) {
+      sections.push(`Max rounds: ${group.maxRounds}`);
+    }
+    if (group.termination) {
+      sections.push(`Termination: ${group.termination}`);
+    }
+    if (group.timeout) {
+      sections.push(`Timeout: ${group.timeout}`);
+    }
+    sections.push("");
+
+    files.push({
+      path: `.claude/agents/${group.id}/AGENT.md`,
       content: sections.join("\n") + "\n",
     });
   }
@@ -284,14 +534,20 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
   }
 
-  // Flow section
+  // Flow section (enhanced with error edges, join, weight, race, tolerance, reflection)
   if (ast.edges.length > 0) {
     sections.push("## Flow");
     sections.push("");
     for (const edge of ast.edges) {
-      let line = `${edge.from} -> ${edge.to}`;
+      const arrow = edge.isError ? `-x${edge.errorType ? `[${edge.errorType}]` : ""}>` : "->";
+      let line = `${edge.from} ${arrow} ${edge.to}`;
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.weight != null) line += ` [weight ${edge.weight}]`;
+      if (edge.race) line += ` [race]`;
+      if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+      if (edge.wait) line += ` [wait ${edge.wait}]`;
+      if (edge.reflection) line += ` [reflection]`;
       sections.push(`- ${line}`);
     }
     sections.push("");
@@ -640,6 +896,42 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (ask && ask.length > 0) settings.ask = ask;
   }
 
+  // Defaults documentation
+  if (ast.defaults) {
+    const d = ast.defaults;
+    const defaultsDoc: Record<string, unknown> = {};
+    if (d.temperature != null) defaultsDoc.temperature = d.temperature;
+    if (d.maxTokens != null) defaultsDoc.maxTokens = d.maxTokens;
+    if (d.topP != null) defaultsDoc.topP = d.topP;
+    if (d.topK != null) defaultsDoc.topK = d.topK;
+    if (d.stop) defaultsDoc.stop = d.stop;
+    if (d.seed != null) defaultsDoc.seed = d.seed;
+    if (d.thinking) defaultsDoc.thinking = d.thinking;
+    if (d.thinkingBudget != null) defaultsDoc.thinkingBudget = d.thinkingBudget;
+    if (d.outputFormat) defaultsDoc.outputFormat = d.outputFormat;
+    if (d.timeout) defaultsDoc.timeout = d.timeout;
+    if (d.logLevel) defaultsDoc.logLevel = d.logLevel;
+    if (Object.keys(defaultsDoc).length > 0) {
+      settings._defaults = defaultsDoc;
+    }
+  }
+
+  // Observability documentation
+  if (ast.observability) {
+    const o = ast.observability;
+    const obsDoc: Record<string, unknown> = {
+      enabled: o.enabled,
+      level: o.level,
+      exporter: o.exporter,
+      sampleRate: o.sampleRate,
+    };
+    if (o.endpoint) obsDoc.endpoint = o.endpoint;
+    if (o.service) obsDoc.service = o.service;
+    obsDoc.capture = o.capture;
+    obsDoc.spans = o.spans;
+    settings._observability = obsDoc;
+  }
+
   if (Object.keys(settings).length === 0) return null;
 
   return {
@@ -776,12 +1068,19 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    // Pipeline (from edges)
+    // Pipeline (from edges, enhanced)
     if (ast.edges.length > 0) {
       sections.push("## Pipeline");
       for (const edge of ast.edges) {
-        let line = `${edge.from} -> ${edge.to}`;
+        const arrow = edge.isError ? `-x${edge.errorType ? `[${edge.errorType}]` : ""}>` : "->";
+        let line = `${edge.from} ${arrow} ${edge.to}`;
         if (edge.condition) line += ` [when ${edge.condition}]`;
+        if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+        if (edge.weight != null) line += ` [weight ${edge.weight}]`;
+        if (edge.race) line += ` [race]`;
+        if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
+        if (edge.wait) line += ` [wait ${edge.wait}]`;
+        if (edge.reflection) line += ` [reflection]`;
         sections.push(`- ${line}`);
       }
       sections.push("");
@@ -890,6 +1189,56 @@ function generateContextFile(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // Defaults block
+  if (ast.defaults) {
+    const d = ast.defaults;
+    sections.push("## Defaults");
+    sections.push("");
+    if (d.temperature != null) sections.push(`- Temperature: ${d.temperature}`);
+    if (d.maxTokens != null) sections.push(`- Max tokens: ${d.maxTokens}`);
+    if (d.topP != null) sections.push(`- Top-p: ${d.topP}`);
+    if (d.topK != null) sections.push(`- Top-k: ${d.topK}`);
+    if (d.stop) sections.push(`- Stop sequences: ${d.stop.join(", ")}`);
+    if (d.seed != null) sections.push(`- Seed: ${d.seed}`);
+    if (d.thinking) sections.push(`- Thinking: ${d.thinking}`);
+    if (d.thinkingBudget != null) sections.push(`- Thinking budget: ${d.thinkingBudget}`);
+    if (d.outputFormat) sections.push(`- Output format: ${d.outputFormat}`);
+    if (d.timeout) sections.push(`- Timeout: ${d.timeout}`);
+    if (d.logLevel) sections.push(`- Log level: ${d.logLevel}`);
+    sections.push("");
+  }
+
+  // Checkpoint config
+  if (ast.checkpoint) {
+    const cp = ast.checkpoint;
+    sections.push("## Checkpoint");
+    sections.push("");
+    sections.push(`- Backend: ${cp.backend}`);
+    sections.push(`- Strategy: ${cp.strategy}`);
+    if (cp.connection) sections.push(`- Connection: ${cp.connection}`);
+    if (cp.ttl) sections.push(`- TTL: ${cp.ttl}`);
+    if (cp.replay) {
+      sections.push(`- Replay: ${cp.replay.enabled ? "enabled" : "disabled"}`);
+      if (cp.replay.maxHistory != null) sections.push(`  - Max history: ${cp.replay.maxHistory}`);
+      if (cp.replay.branch != null) sections.push(`  - Branching: ${cp.replay.branch}`);
+    }
+    sections.push("");
+  }
+
+  // Artifacts registry
+  if (ast.artifacts && ast.artifacts.length > 0) {
+    sections.push("## Artifacts");
+    sections.push("");
+    for (const a of ast.artifacts) {
+      let line = `- **${a.id}** (${a.type})`;
+      if (a.path) line += ` — path: ${a.path}`;
+      if (a.retention) line += `, retention: ${a.retention}`;
+      if (a.dependsOn && a.dependsOn.length > 0) line += `, depends on: ${a.dependsOn.join(", ")}`;
+      sections.push(line);
+    }
+    sections.push("");
+  }
+
   return {
     path: fileName,
     content: sections.join("\n") + "\n",
@@ -956,6 +1305,12 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Agent files
     files.push(...generateAgents(ast));
+
+    // Human nodes
+    files.push(...generateHumanNodes(ast));
+
+    // Group nodes
+    files.push(...generateGroupNodes(ast));
 
     // Main topology skill (with frontmatter)
     const skillFiles = generateTopologySkill(ast);

@@ -79,7 +79,7 @@ output-format, json-schema, text
 
 ```
 join, all, any, all-done, none-failed,
-tolerance, race, wait,
+tolerance, race, wait, weight,
 error-handler
 ```
 
@@ -113,6 +113,15 @@ entry, exit, sha256
 ```
 circuit-breaker, threshold, window, cooldown,
 compensates, human, checkpoint, durable
+```
+
+---
+
+## Wave 7 Keywords (Group Chat, Reflection, Rate Limiting)
+
+```
+group, members, speaker-selection, max-rounds, termination,
+round-robin, random, reflection, rate-limit
 ```
 
 ---
