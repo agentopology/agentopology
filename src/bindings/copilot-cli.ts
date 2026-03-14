@@ -20,6 +20,7 @@ import type {
   SchemaFieldDef,
   RetryConfig,
 } from "../parser/ast.js";
+import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -1234,6 +1235,6 @@ export const copilotCliBinding: BindingTarget = {
     // 6. Gate scripts
     files.push(...generateGateScripts(ast));
 
-    return files;
+    return deduplicateFiles(files);
   },
 };

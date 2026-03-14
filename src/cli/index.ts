@@ -21,6 +21,7 @@ import { bindings } from "../bindings/index.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
+import { exporters } from "../exporters/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -51,6 +52,7 @@ ${c.bold("Usage:")}
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
+  agentopology export <file.at> --format <markdown|mermaid> [--output <dir>]
   agentopology targets
 
 ${c.bold("Commands:")}
@@ -58,12 +60,14 @@ ${c.bold("Commands:")}
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
+  export     Export topology as Markdown documentation or Mermaid diagram.
   targets    List available binding targets.
 
 ${c.bold("Options:")}
   --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli, kiro)
+  --format <name>   Export format (markdown, mermaid).
   --dir <path>      Directory to read platform files from (used with sync).
-  --output, -o <dir> Output directory for generated files (scaffold, visualize).
+  --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
   --help, -h        Show this help message.
 `);
@@ -94,6 +98,7 @@ interface ParsedArgs {
   command: string | undefined;
   file: string | undefined;
   target: string | undefined;
+  format: string | undefined;
   dir: string | undefined;
   output: string | undefined;
   dryRun: boolean;
@@ -106,6 +111,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     command: undefined,
     file: undefined,
     target: undefined,
+    format: undefined,
     dir: undefined,
     output: undefined,
     dryRun: false,
@@ -128,6 +134,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--target" && i + 1 < args.length) {
       result.target = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--format" && i + 1 < args.length) {
+      result.format = args[i + 1];
       i += 2;
       continue;
     }
@@ -334,6 +345,42 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   }
 }
 
+function cmdExport(filePath: string, formatName: string, outputDir?: string): void {
+  const source = readFile(filePath);
+
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (err) {
+    console.error(c.red(`Parse error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  const exporter = exporters[formatName];
+  if (!exporter) {
+    console.error(c.red(`Unknown format: "${formatName}"`));
+    console.error(`Available formats: ${Object.keys(exporters).join(", ")}`);
+    process.exit(1);
+  }
+
+  console.log(
+    c.bold(`Exporting ${ast.topology.name} as ${exporter.description}`)
+  );
+  console.log("");
+
+  const files = exporter.export(ast);
+  const resolved = path.resolve(filePath);
+  const basePath = outputDir ? path.resolve(outputDir) : path.dirname(resolved);
+
+  for (const file of files) {
+    writeFile(basePath, file.path, file.content);
+    console.log(`  ${c.green("+")} ${file.path}`);
+  }
+  console.log("");
+  console.log(`  ${c.bold(`${files.length}`)} file(s) written to ${basePath}`);
+  console.log("");
+}
+
 function cmdTargets(): void {
   console.log(c.bold("Available binding targets:"));
   console.log("");
@@ -405,6 +452,20 @@ function main(): void {
         process.exit(1);
       }
       cmdVisualize(args.file, args.output);
+      break;
+
+    case "export":
+      if (!args.file) {
+        console.error(c.red("Error: export requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      if (!args.format) {
+        console.error(c.red("Error: export requires --format <markdown|mermaid>."));
+        usage();
+        process.exit(1);
+      }
+      cmdExport(args.file, args.format, args.output);
       break;
 
     case "targets":

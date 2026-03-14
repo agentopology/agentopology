@@ -17,6 +17,21 @@ export interface GeneratedFile {
   content: string;
 }
 
+/**
+ * Deduplicate generated files by path — when two generators emit the same path,
+ * keep the one with the longer content (the more complete version).
+ */
+export function deduplicateFiles(files: GeneratedFile[]): GeneratedFile[] {
+  const seen = new Map<string, GeneratedFile>();
+  for (const file of files) {
+    const existing = seen.get(file.path);
+    if (!existing || file.content.length > existing.content.length) {
+      seen.set(file.path, file);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 /** A binding target that can scaffold project structure from a TopologyAST. */
 export interface BindingTarget {
   /** Machine-readable name (e.g. "claude-code", "codex", "gemini-cli"). */

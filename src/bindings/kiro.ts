@@ -28,6 +28,7 @@ import type {
   CircuitBreakerConfig,
   PromptVariant,
 } from "../parser/ast.js";
+import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -1334,6 +1335,6 @@ export const kiroBinding: BindingTarget = {
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
 
-    return files;
+    return deduplicateFiles(files);
   },
 };

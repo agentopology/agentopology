@@ -1,14 +1,98 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skills/binding-factory/scripts/guard-destructive.sh",
+            "timeout": 5000
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skills/binding-factory/scripts/gate-type-and-coverage.sh"
+          }
+        ],
+        "matcher": "Task"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skills/binding-factory/scripts/gate-conformance-matrix.sh"
+          }
+        ],
+        "matcher": "Task"
+      }
+    ],
+    "AgentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skills/binding-factory/scripts/log-stage.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/skills/binding-factory/scripts/cache-fetch.sh"
+          }
+        ],
+        "matcher": "WebFetch"
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+    "NODE_ENV": "production"
+  },
   "allow": [
     "Read",
     "Write",
     "Edit",
-    "Bash",
-    "Grep",
     "Glob",
-    "Agent"
+    "Grep",
+    "Bash",
+    "WebFetch"
   ],
   "deny": [
-    "WebFetch"
-  ]
+    "Bash(rm -rf *)",
+    "Bash(git push *)"
+  ],
+  "ask": [
+    "Bash(npm install *)"
+  ],
+  "_defaults": {
+    "maxTokens": 16384,
+    "thinking": "high",
+    "thinkingBudget": 10000
+  },
+  "_observability": {
+    "enabled": true,
+    "level": "info",
+    "exporter": "stdout",
+    "sampleRate": 1,
+    "capture": {
+      "prompts": false,
+      "completions": false,
+      "toolArgs": true,
+      "toolResults": true
+    },
+    "spans": {
+      "agents": true,
+      "tools": true,
+      "gates": true,
+      "memory": true
+    }
+  }
 }

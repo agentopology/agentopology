@@ -1,11 +1,11 @@
 /**
  * Google Gemini CLI binding.
  *
- * Generates the `.gemini/` directory structure, `GEMINI.md`, and supporting
- * files from a parsed {@link TopologyAST}.
+ * Generates the `.gemini/` directory structure and supporting files from a
+ * parsed {@link TopologyAST}.
  *
  * Gemini CLI structure:
- *   GEMINI.md                     — Main instructions (like CLAUDE.md)
+ *   .gemini/CONTEXT.md            — Main instructions (never root GEMINI.md)
  *   .gemini/settings.json         — Tool permissions, model config, sandbox
  *   .gemini/instructions.md       — Detailed project instructions
  *   .gemini/commands/<name>.md    — Custom command files from triggers
@@ -28,6 +28,7 @@ import type {
   CircuitBreakerConfig,
   PromptVariant,
 } from "../parser/ast.js";
+import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -393,8 +394,16 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  const DEFAULT_PATH = ".gemini/CONTEXT.md";
+  let contextPath = ast.context.file ?? DEFAULT_PATH;
+
+  // Safety: never overwrite the user's root-level GEMINI.md
+  if (contextPath === "GEMINI.md" || contextPath === "./GEMINI.md") {
+    contextPath = DEFAULT_PATH;
+  }
+
   return {
-    path: ast.context.file ?? "GEMINI.md",
+    path: contextPath,
     content: sections.join("\n") + "\n",
   };
 }
@@ -1013,7 +1022,7 @@ export const geminiCliBinding: BindingTarget = {
   scaffold(ast: TopologyAST): GeneratedFile[] {
     const files: GeneratedFile[] = [];
 
-    // Main instructions file (GEMINI.md or custom context file)
+    // Main instructions file (.gemini/CONTEXT.md — never root GEMINI.md)
     files.push(generateGeminiMd(ast));
 
     // Settings file (permissions, tools, sandbox, env)
@@ -1045,6 +1054,6 @@ export const geminiCliBinding: BindingTarget = {
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
 
-    return files;
+    return deduplicateFiles(files);
   },
 };

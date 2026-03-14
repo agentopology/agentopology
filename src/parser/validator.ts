@@ -195,6 +195,19 @@ function allNodeIds(ast: TopologyAST): Set<string> {
   return new Set(ast.nodes.map((n) => n.id));
 }
 
+/** Build a set of agent ids that are members of any group node. */
+function groupMemberIds(ast: TopologyAST): Set<string> {
+  const members = new Set<string>();
+  for (const node of ast.nodes) {
+    if (isGroup(node)) {
+      for (const m of node.members) {
+        members.add(m);
+      }
+    }
+  }
+  return members;
+}
+
 /** Look up the source line number for a node ID from the AST's _sourceMap. */
 function lookupLine(ast: TopologyAST, nodeId: string): number | undefined {
   return (ast as TopologyASTWithParseErrors)._sourceMap?.[nodeId];
@@ -354,7 +367,7 @@ function v3FlowResolves(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V4: Every agent must appear in flow unless it has `invocation: manual`. */
+/** V4: Every agent must appear in flow unless it has `invocation: manual` or is a group member. */
 function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const flowNodes = new Set<string>();
@@ -362,9 +375,11 @@ function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
     flowNodes.add(edge.from);
     flowNodes.add(edge.to);
   }
+  const gMembers = groupMemberIds(ast);
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
     if (node.invocation === "manual") continue;
+    if (gMembers.has(node.id)) continue;
     if (!flowNodes.has(node.id)) {
       results.push({
         rule: "V4",
@@ -545,6 +560,20 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
     return false;
   }
 
+  // Build group co-membership lookup: if A and B are in the same group,
+  // they communicate via group chat and don't need explicit flow paths.
+  const coGroupMembers = new Map<string, Set<string>>();
+  for (const node of ast.nodes) {
+    if (isGroup(node)) {
+      for (const m of node.members) {
+        if (!coGroupMembers.has(m)) coGroupMembers.set(m, new Set());
+        for (const other of node.members) {
+          if (other !== m) coGroupMembers.get(m)!.add(other);
+        }
+      }
+    }
+  }
+
   // Collect writers: memory key -> agent ids
   const writers = new Map<string, string[]>();
   for (const node of ast.nodes) {
@@ -563,7 +592,8 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
       const keyWriters = writers.get(key);
       if (!keyWriters) continue; // no writer = could be external, skip
       const hasPath = keyWriters.some((writerId) =>
-        isReachable(writerId, node.id)
+        isReachable(writerId, node.id) ||
+        (coGroupMembers.get(node.id)?.has(writerId) ?? false)
       );
       if (!hasPath) {
         results.push({

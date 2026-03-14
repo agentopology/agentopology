@@ -23,6 +23,7 @@ import type {
   SchemaFieldDef,
   RetryConfig,
 } from "../parser/ast.js";
+import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -1417,6 +1418,6 @@ export const openClawBinding: BindingTarget = {
     const protocol = generateWorkspaceProtocol(ast);
     if (protocol) files.push(protocol);
 
-    return files;
+    return deduplicateFiles(files);
   },
 };

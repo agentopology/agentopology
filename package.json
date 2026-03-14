@@ -61,6 +61,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "ai": "^6.0.116",
     "dagre": "^0.8.5",
     "tsx": "^4.0.0",
     "typescript": "^5.9.3",

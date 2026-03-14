@@ -138,14 +138,16 @@ function extractCodexPrompts(files: PlatformFile[]): ExtractedPrompt[] {
 /**
  * Extract prompts from Gemini CLI files.
  *
- * Finds the GEMINI.md file, splits agent sections under `## Agents` > `### AgentName`,
+ * Finds the Gemini context file (`.gemini/CONTEXT.md` or legacy `GEMINI.md`),
+ * splits agent sections under `## Agents` > `### AgentName`,
  * and extracts body content after metadata bullet points.
  */
 function extractGeminiPrompts(files: PlatformFile[]): ExtractedPrompt[] {
   const prompts: ExtractedPrompt[] = [];
 
   const geminiFile = files.find(
-    (f) => f.path.endsWith("GEMINI.md") || f.path === "GEMINI.md",
+    (f) => f.path.endsWith("GEMINI.md") || f.path === "GEMINI.md" ||
+           f.path.endsWith(".gemini/CONTEXT.md"),
   );
   if (!geminiFile) return prompts;
 
