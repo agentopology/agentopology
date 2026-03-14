@@ -53,7 +53,7 @@ function shellStub(description: string): string {
 
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
-  return { path: `${dirPath}/.gitkeep`, content: "" };
+  return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
 }
 
 /**
@@ -408,6 +408,7 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
   return {
     path: "openclaw.json",
     content: JSON.stringify(config, null, 2) + "\n",
+    category: "machine",
   };
 }
 
@@ -597,6 +598,7 @@ function generateSoulMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "SOUL.md",
     content: sections.join("\n") + "\n",
+    category: "composite",
   };
 }
 
@@ -962,6 +964,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
+    category: "composite",
   };
 }
 
@@ -1023,6 +1026,7 @@ function generateToolsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "TOOLS.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1087,6 +1091,7 @@ function generateMemoryMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "MEMORY.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1150,6 +1155,7 @@ function generateBootstrapMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "BOOTSTRAP.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1227,6 +1233,7 @@ function generateTeamMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "TEAM.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1270,6 +1277,7 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
   return {
     path: "workspace-protocol.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1311,6 +1319,7 @@ function generateSkillFiles(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `skills/${skill.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
+      category: "composite",
     });
   }
 
@@ -1340,6 +1349,7 @@ function generateToolSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `skills/${tool.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
+      category: "composite",
     });
 
     // index.ts stub
@@ -1361,6 +1371,7 @@ function generateToolSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `skills/${tool.id}/index.${ext}`,
       content: stubLines.join("\n"),
+      category: "script",
     });
   }
 
@@ -1378,6 +1389,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       files.push({
         path: `scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} -- ${gate.run}`),
+        category: "script",
       });
     }
   }
@@ -1403,6 +1415,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         `echo "TODO: implement ${hook.name} hook"`,
         "",
       ].join("\n"),
+      category: "script",
     });
   }
 
@@ -1456,12 +1469,14 @@ function generateMetering(ast: TopologyAST): GeneratedFile[] {
   files.push({
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
+    category: "script",
   });
 
   // Empty metrics file
   files.push({
     path: "metrics.jsonl",
     content: "",
+    category: "machine",
   });
 
   return files;

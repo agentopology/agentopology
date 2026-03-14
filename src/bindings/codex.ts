@@ -113,7 +113,7 @@ function shellStub(description: string): string {
 
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
-  return { path: `${dirPath}/.gitkeep`, content: "" };
+  return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
 }
 
 /** Format a SchemaType to a human-readable string. */
@@ -283,6 +283,7 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   return {
     path: "codex.toml",
     content: lines.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -891,6 +892,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
+    category: "composite",
   };
 }
 
@@ -959,6 +961,7 @@ function generateInstructionsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: ".codex/instructions.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -980,6 +983,7 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: ".codex/metrics.jsonl",
       content: "",
+      category: "machine",
     });
   }
   if (ast.memory.workspace) {
@@ -1005,6 +1009,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       files.push({
         path: `.codex/scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+        category: "script",
       });
     }
   }
@@ -1034,6 +1039,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         `echo "TODO: implement ${hook.name} hook"`,
         "",
       ].join("\n"),
+      category: "script",
     });
   }
 
@@ -1081,6 +1087,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.codex/scripts/${tool.id}.${ext}`,
       content: lines.join("\n"),
+      category: "script",
     });
   }
 
@@ -1114,6 +1121,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
   return {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
+    category: "script",
   };
 }
 
@@ -1164,6 +1172,7 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
   return {
     path: `.codex/${protocol}`,
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1209,6 +1218,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.codex/skills/${skill.id}.md`,
       content: sections.join("\n") + "\n",
+      category: "composite",
     });
   }
 

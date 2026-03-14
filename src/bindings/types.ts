@@ -15,6 +15,8 @@ export interface GeneratedFile {
   path: string;
   /** Full file content. */
   content: string;
+  /** Merge category for incremental scaffold. Defaults to "machine". */
+  category?: "machine" | "agent" | "script" | "composite";
 }
 
 /**

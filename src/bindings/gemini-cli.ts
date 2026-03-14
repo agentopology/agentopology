@@ -58,7 +58,7 @@ function shellStub(description: string): string {
 
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
-  return { path: `${dirPath}/.gitkeep`, content: "" };
+  return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
 }
 
 /**
@@ -405,6 +405,7 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
   return {
     path: contextPath,
     content: sections.join("\n") + "\n",
+    category: "agent",
   };
 }
 
@@ -518,6 +519,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
   return {
     path: ".gemini/settings.json",
     content: JSON.stringify(settings, null, 2) + "\n",
+    category: "machine",
   };
 }
 
@@ -829,6 +831,7 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
   return {
     path: ".gemini/instructions.md",
     content: sections.join("\n") + "\n",
+    category: "agent",
   };
 }
 
@@ -886,6 +889,7 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.gemini/commands/${trigger.name}.md`,
       content: sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -905,6 +909,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       files.push({
         path: `.gemini/scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+        category: "script",
       });
     }
   }
@@ -930,6 +935,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         `echo "TODO: implement ${hook.name} hook"`,
         "",
       ].join("\n"),
+      category: "script",
     });
   }
 
@@ -972,6 +978,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.gemini/scripts/${tool.id}.${ext}`,
       content: lines.join("\n"),
+      category: "script",
     });
   }
 
@@ -993,6 +1000,7 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: ".gemini/metrics.jsonl",
       content: "",
+      category: "machine",
     });
   }
   if (memory.workspace) {
@@ -1029,6 +1037,7 @@ function generateMcpConfig(ast: TopologyAST): GeneratedFile | null {
   return {
     path: ".gemini/settings/mcp.json",
     content: JSON.stringify(mcpConfig, null, 2) + "\n",
+    category: "machine",
   };
 }
 
@@ -1055,6 +1064,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
   return {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
+    category: "script",
   };
 }
 

@@ -58,7 +58,7 @@ function shellStub(description: string): string {
 
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
-  return { path: `${dirPath}/.gitkeep`, content: "" };
+  return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
 }
 
 /**
@@ -274,6 +274,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/agents/${agent.id}.json`,
       content: JSON.stringify(agentJson, null, 2) + "\n",
+      category: "machine",
     });
   }
 
@@ -449,6 +450,7 @@ function generateAgentSteering(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/steering/agent-${agent.id}.md`,
       content: header.join("\n") + sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -501,6 +503,7 @@ function generateHumanSteering(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/steering/human-${human.id}.md`,
       content: sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -555,6 +558,7 @@ function generateGroupSteering(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/steering/group-${group.id}.md`,
       content: sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -766,6 +770,7 @@ function generateProductSteering(ast: TopologyAST): GeneratedFile {
   return {
     path: ".kiro/steering/product.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -849,6 +854,7 @@ function generateTechSteering(ast: TopologyAST): GeneratedFile {
   return {
     path: ".kiro/steering/tech.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -919,6 +925,7 @@ function generateStructureSteering(ast: TopologyAST): GeneratedFile {
   return {
     path: ".kiro/steering/structure.md",
     content: sections.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -959,6 +966,7 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   return {
     path: ".kiro/settings/mcp.json",
     content: JSON.stringify(mcpConfig, null, 2) + "\n",
+    category: "machine",
   };
 }
 
@@ -1015,6 +1023,7 @@ function generatePromptFiles(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/prompts/${trigger.name}.md`,
       content: sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -1188,6 +1197,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
+    category: "composite",
   };
 }
 
@@ -1213,6 +1223,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         `echo "TODO: implement ${hook.name} hook"`,
         "",
       ].join("\n"),
+      category: "script",
     });
   }
 
@@ -1235,6 +1246,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       files.push({
         path: `.kiro/scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+        category: "script",
       });
     }
   }
@@ -1283,6 +1295,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/scripts/${tool.id}.${ext}`,
       content: lines.join("\n"),
+      category: "script",
     });
   }
 
@@ -1307,6 +1320,7 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: ".kiro/metrics.jsonl",
       content: "",
+      category: "machine",
     });
   }
   if (ast.memory.workspace) {
@@ -1343,6 +1357,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
   return {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
+    category: "script",
   };
 }
 
@@ -1405,6 +1420,7 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.kiro/hooks/gate-${gate.id}.md`,
       content,
+      category: "machine",
     });
   }
 

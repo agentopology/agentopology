@@ -23,6 +23,9 @@ import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
 import { exporters } from "../exporters/index.js";
+import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
+import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
+import type { ScaffoldManifest } from "../scaffold/types.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -50,7 +53,7 @@ ${c.bold("agentopology")} — AgentTopology CLI
 
 ${c.bold("Usage:")}
   agentopology validate <file.at>
-  agentopology scaffold <file.at> --target <binding> [--dry-run] [--output <dir>]
+  agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid> [--output <dir>]
@@ -70,6 +73,8 @@ ${c.bold("Options:")}
   --dir <path>      Directory to read platform files from (used with sync).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
+  --force           Overwrite all files, ignoring manifest and conflicts.
+  --prune           Delete files that were previously scaffolded but are no longer generated.
   --help, -h        Show this help message.
 `);
 }
@@ -103,6 +108,8 @@ interface ParsedArgs {
   dir: string | undefined;
   output: string | undefined;
   dryRun: boolean;
+  force: boolean;
+  prune: boolean;
   help: boolean;
 }
 
@@ -116,6 +123,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     dir: undefined,
     output: undefined,
     dryRun: false,
+    force: false,
+    prune: false,
     help: false,
   };
 
@@ -130,6 +139,16 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--dry-run") {
       result.dryRun = true;
+      i++;
+      continue;
+    }
+    if (arg === "--force") {
+      result.force = true;
+      i++;
+      continue;
+    }
+    if (arg === "--prune") {
+      result.prune = true;
       i++;
       continue;
     }
@@ -218,7 +237,7 @@ function cmdValidate(filePath: string): void {
   }
 }
 
-function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string): void {
+function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean): void {
   const source = readFile(filePath);
 
   let ast;
@@ -248,24 +267,75 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     return;
   }
 
+  const basePath = outputDir ? path.resolve(outputDir) : process.cwd();
+
   if (dryRun) {
     console.log(c.cyan("  Dry run — files that would be generated:"));
     console.log("");
-    for (const file of files) {
-      const size = Buffer.byteLength(file.content, "utf-8");
-      const sizeStr = size > 0 ? c.dim(` (${size} bytes)`) : c.dim(" (empty)");
-      console.log(`  ${c.green("+")} ${file.path}${sizeStr}`);
+
+    const manifest = readManifest(basePath, targetName);
+    if (manifest && !force) {
+      const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+      for (const action of actions) {
+        switch (action.type) {
+          case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
+          case "update": console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`); break;
+          case "delete": console.log(`  ${c.red("-")} ${action.path}`); break;
+          case "unchanged": console.log(`  ${c.dim("=")} ${action.path}`); break;
+          case "conflict": console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`); break;
+        }
+      }
+    } else {
+      for (const file of files) {
+        console.log(`  ${c.green("+")} ${file.path} (${file.content.length} bytes)`);
+      }
     }
     console.log("");
-    console.log(`  ${c.bold(`${files.length}`)} file(s) would be generated.`);
+    console.log(`  ${files.length} file(s) would be generated.`);
   } else {
-    const basePath = outputDir ? path.resolve(outputDir) : process.cwd();
-    for (const file of files) {
-      writeFile(basePath, file.path, file.content);
-      console.log(`  ${c.green("+")} ${file.path}`);
+    const manifest = readManifest(basePath, targetName);
+
+    if (manifest && !force) {
+      // INCREMENTAL MODE
+      const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+      const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
+
+      for (const action of actions) {
+        switch (action.type) {
+          case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
+          case "update": console.log(`  ${c.yellow("~")} ${action.path}`); break;
+          case "delete": if (prune) console.log(`  ${c.red("-")} ${action.path}`); break;
+          case "unchanged": break;
+          case "conflict": console.log(`  ${c.bold("!")} ${action.path} (preserved — user edited)`); break;
+        }
+      }
+      console.log("");
+      console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${result.conflicts} conflicts${prune ? `, ${result.deleted} deleted` : ""}`);
+    } else {
+      // FIRST RUN or --force — write everything
+      for (const file of files) {
+        writeFile(basePath, file.path, file.content);
+        console.log(`  ${c.green("+")} ${file.path}`);
+      }
+      console.log("");
+      console.log(`  ${c.bold(`${files.length}`)} file(s) written to ${basePath}`);
     }
-    console.log("");
-    console.log(`  ${c.bold(`${files.length}`)} file(s) written to ${basePath}`);
+
+    // Always write manifest after successful scaffold
+    const newManifest: ScaffoldManifest = {
+      source: path.basename(filePath),
+      sourceHash: hashContent(source),
+      target: targetName,
+      generatedAt: new Date().toISOString(),
+      files: {},
+    };
+    for (const file of files) {
+      newManifest.files[file.path] = {
+        hash: hashContent(file.content),
+        category: file.category || "machine",
+      };
+    }
+    writeManifest(basePath, targetName, newManifest);
   }
   console.log("");
 }
@@ -424,7 +494,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdScaffold(args.file, args.target, args.dryRun, args.output || args.dir);
+      cmdScaffold(args.file, args.target, args.dryRun, args.output || args.dir, args.force, args.prune);
       break;
 
     case "sync":

@@ -3248,6 +3248,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
         'echo "TODO: implement gate checks"',
         "",
       ].join("\n"),
+      category: "script",
     });
   }
 
@@ -3489,62 +3490,62 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   // Package config
-  files.push({ path: "package.json", content: generatePackageJson(ast) });
-  files.push({ path: "tsconfig.json", content: generateTsConfig() });
-  files.push({ path: ".env.example", content: generateEnvExample(ast) });
+  files.push({ path: "package.json", content: generatePackageJson(ast), category: "machine" });
+  files.push({ path: "tsconfig.json", content: generateTsConfig(), category: "machine" });
+  files.push({ path: ".env.example", content: generateEnvExample(ast), category: "machine" });
 
   // Source files
-  files.push({ path: "src/types.ts", content: generateTypes(ast) });
-  files.push({ path: "src/client.ts", content: generateClient(ast) });
-  files.push({ path: "src/memory.ts", content: generateMemory() });
-  files.push({ path: "src/executor.ts", content: generateAgentExecutor() });
-  files.push({ path: "src/orchestrator.ts", content: generateOrchestrator(ast) });
-  files.push({ path: "src/tools.ts", content: generateToolsIndex(ast) });
-  files.push({ path: "src/schemas.ts", content: generateSchemas(ast) });
-  files.push({ path: "src/index.ts", content: generateIndex(ast) });
+  files.push({ path: "src/types.ts", content: generateTypes(ast), category: "machine" });
+  files.push({ path: "src/client.ts", content: generateClient(ast), category: "machine" });
+  files.push({ path: "src/memory.ts", content: generateMemory(), category: "machine" });
+  files.push({ path: "src/executor.ts", content: generateAgentExecutor(), category: "machine" });
+  files.push({ path: "src/orchestrator.ts", content: generateOrchestrator(ast), category: "machine" });
+  files.push({ path: "src/tools.ts", content: generateToolsIndex(ast), category: "machine" });
+  files.push({ path: "src/schemas.ts", content: generateSchemas(ast), category: "machine" });
+  files.push({ path: "src/index.ts", content: generateIndex(ast), category: "machine" });
 
   // Executor files
-  files.push({ path: "src/group-executor.ts", content: generateGroupExecutor() });
-  files.push({ path: "src/human-executor.ts", content: generateHumanExecutor() });
-  files.push({ path: "src/action-executor.ts", content: generateActionExecutor() });
+  files.push({ path: "src/group-executor.ts", content: generateGroupExecutor(), category: "machine" });
+  files.push({ path: "src/human-executor.ts", content: generateHumanExecutor(), category: "machine" });
+  files.push({ path: "src/action-executor.ts", content: generateActionExecutor(), category: "machine" });
 
   // Infrastructure files
-  files.push({ path: "src/observability.ts", content: generateObservability() });
-  files.push({ path: "src/checkpoint.ts", content: generateCheckpoint() });
-  files.push({ path: "src/scheduler.ts", content: generateScheduler() });
-  files.push({ path: "src/rate-limiter.ts", content: generateRateLimiter() });
-  files.push({ path: "src/circuit-breaker.ts", content: generateCircuitBreaker() });
-  files.push({ path: "src/permissions.ts", content: generatePermissions() });
-  files.push({ path: "src/metering.ts", content: generateMeteringFile(ast) });
-  files.push({ path: "src/variants.ts", content: generateVariantSelector() });
+  files.push({ path: "src/observability.ts", content: generateObservability(), category: "machine" });
+  files.push({ path: "src/checkpoint.ts", content: generateCheckpoint(), category: "machine" });
+  files.push({ path: "src/scheduler.ts", content: generateScheduler(), category: "machine" });
+  files.push({ path: "src/rate-limiter.ts", content: generateRateLimiter(), category: "machine" });
+  files.push({ path: "src/circuit-breaker.ts", content: generateCircuitBreaker(), category: "machine" });
+  files.push({ path: "src/permissions.ts", content: generatePermissions(), category: "machine" });
+  files.push({ path: "src/metering.ts", content: generateMeteringFile(ast), category: "machine" });
+  files.push({ path: "src/variants.ts", content: generateVariantSelector(), category: "machine" });
 
   // Artifacts
-  files.push({ path: "src/artifacts.ts", content: generateArtifacts(ast) });
+  files.push({ path: "src/artifacts.ts", content: generateArtifacts(ast), category: "machine" });
 
   // Depth
-  files.push({ path: "src/depth.ts", content: generateDepth(ast) });
+  files.push({ path: "src/depth.ts", content: generateDepth(ast), category: "machine" });
 
   // Params
-  files.push({ path: "src/params.ts", content: generateParams(ast) });
+  files.push({ path: "src/params.ts", content: generateParams(ast), category: "machine" });
 
   // Interface endpoints
   if (ast.interfaceEndpoints) {
-    files.push({ path: "src/interface.ts", content: generateInterfaceEndpoints(ast) });
+    files.push({ path: "src/interface.ts", content: generateInterfaceEndpoints(ast), category: "machine" });
   }
 
   // Imports and includes
   if (ast.imports.length || ast.includes.length) {
-    files.push({ path: "src/topology-imports.ts", content: generateImportsAndIncludes(ast) });
+    files.push({ path: "src/topology-imports.ts", content: generateImportsAndIncludes(ast), category: "machine" });
   }
 
   // Gate scripts
   files.push(...generateGateScripts(ast));
 
   // Memory directory
-  files.push({ path: ".memory/.gitkeep", content: "" });
+  files.push({ path: ".memory/.gitkeep", content: "", category: "machine" });
 
   // Checkpoint directory
-  files.push({ path: ".checkpoint/.gitkeep", content: "" });
+  files.push({ path: ".checkpoint/.gitkeep", content: "", category: "machine" });
 
   // .gitignore
   files.push({
@@ -3560,6 +3561,7 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
       "*.js.map",
       "",
     ].join("\n"),
+    category: "machine",
   });
 
   return deduplicateFiles(files);

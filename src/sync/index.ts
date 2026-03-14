@@ -90,7 +90,7 @@ function extractClaudeCodePrompts(files: PlatformFile[]): ExtractedPrompt[] {
 }
 
 /** Known structural headings in Claude Code AGENT.md files (not part of prompt content). */
-const CLAUDE_CODE_STRUCTURAL_HEADINGS = [
+export const CLAUDE_CODE_STRUCTURAL_HEADINGS = [
   "## Role",
   "## Reads",
   "## Writes",
@@ -99,7 +99,7 @@ const CLAUDE_CODE_STRUCTURAL_HEADINGS = [
 ];
 
 /** Known structural headings in Copilot .agent.md files. */
-const COPILOT_STRUCTURAL_HEADINGS = [
+export const COPILOT_STRUCTURAL_HEADINGS = [
   "## Role",
   "## Reads",
   "## Writes",
@@ -304,7 +304,7 @@ function extractSectionContent(
  *
  * Skips YAML frontmatter if present.
  */
-function extractSectionUntilKnownHeading(
+export function extractSectionUntilKnownHeading(
   fileContent: string,
   heading: string,
   knownHeadings: string[],

@@ -315,6 +315,7 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
   return {
     path: ".github/copilot-instructions.md",
     content: sections.join("\n") + "\n",
+    category: "agent",
   };
 }
 
@@ -603,6 +604,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.github/agents/${agent.id}.agent.md`,
       content: sections.join("\n") + "\n",
+      category: "agent",
     });
   }
 
@@ -652,6 +654,7 @@ function generateHumanAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.github/agents/${human.id}.agent.md`,
       content: sections.join("\n") + "\n",
+      category: "machine",
     });
   }
 
@@ -710,6 +713,7 @@ function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.github/agents/${group.id}.agent.md`,
       content: sections.join("\n") + "\n",
+      category: "composite",
     });
   }
 
@@ -883,6 +887,7 @@ function generateWorkflow(ast: TopologyAST): GeneratedFile | null {
   return {
     path: ".github/workflows/copilot-topology.yml",
     content: lines.join("\n") + "\n",
+    category: "machine",
   };
 }
 
@@ -1289,6 +1294,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `scripts/gate-${gate.id}.sh`,
       content,
+      category: "script",
     });
   }
 
