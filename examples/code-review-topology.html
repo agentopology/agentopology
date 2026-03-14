@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>code-review — AgentTopology Visualizer</title>
+<title>code-review — AgenTopology Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#08080c;--s:#10101a;--s2:#16162a;--b:rgba(255,255,255,.08);--b2:rgba(255,255,255,.14);
-  --t:#e4e4ef;--t2:#8888a8;--t3:#5858a0;
+  --bg:#0A0A0A;--s:#111111;--s2:#161616;--b:#1e1e1e;--b2:#2a2a2a;
+  --t:#e4e4ef;--t2:#878593;--t3:#56545e;
   --purple:#a78bfa;--purple-bg:rgba(167,139,250,.10);--purple-br:rgba(167,139,250,.25);
   --blue:#60a5fa;--blue-bg:rgba(96,165,250,.10);--blue-br:rgba(96,165,250,.25);
   --green:#4ade80;--green-bg:rgba(74,222,128,.10);--green-br:rgba(74,222,128,.25);
@@ -20,9 +23,9 @@
   --cyan:#22d3ee;--cyan-bg:rgba(34,211,238,.10);--cyan-br:rgba(34,211,238,.25);
   --amber:#f59e0b;--amber-bg:rgba(245,158,11,.10);--amber-br:rgba(245,158,11,.25);
   --pink:#f472b6;
-  --font-mono:ui-monospace,'Courier New',monospace;
-  --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --font-heading:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --font-body:'Noto Sans',sans-serif;
+  --font-heading:'Noto Sans',sans-serif;
 }
 body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-height:1.5;overflow:hidden;height:100vh}
 #app{display:flex;flex-direction:column;height:100vh}
@@ -34,8 +37,6 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 #side-panel{width:380px;background:var(--s);border-left:1px solid var(--b);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width .2s}
 #side-panel.collapsed{width:0;border-left:none}
 
-.logo{font-family:var(--font-heading);font-weight:700;font-size:15px;color:var(--t);letter-spacing:-.5px}
-.logo span{color:var(--purple)}
 .topo-name{font-family:var(--font-mono);font-size:12px;color:var(--t2);background:var(--s2);padding:3px 10px;border-radius:6px;border:1px solid var(--b)}
 .topo-ver{font-family:var(--font-mono);font-size:11px;color:var(--t3)}
 .topo-desc{font-family:var(--font-body);font-size:12px;color:var(--t2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -190,6 +191,14 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .node-group.search-dimmed{opacity:.15}
 .prompt-preview{cursor:pointer}
 .prompt-expanded+.prompt-full{display:block!important}
+
+.trigger-popover{position:absolute;z-index:100;background:var(--s2);border:1px solid var(--b2);border-radius:10px;padding:10px 0;min-width:180px;max-width:280px;box-shadow:0 8px 32px rgba(0,0,0,.5);pointer-events:auto;animation:popIn .15s ease-out}
+@keyframes popIn{from{opacity:0;transform:scale(.95) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.trigger-popover-title{font-family:var(--font-mono);font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:1px;padding:0 12px 6px;border-bottom:1px solid var(--b)}
+.trigger-popover-item{display:flex;align-items:center;gap:8px;padding:6px 12px;transition:background .1s}
+.trigger-popover-item:hover{background:rgba(255,255,255,.04)}
+.trigger-popover-cmd{font-family:var(--font-mono);font-size:12px;color:var(--cyan);font-weight:600}
+.trigger-popover-pattern{font-family:var(--font-mono);font-size:10px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 </style>
 </head>
@@ -4006,7 +4015,21 @@ function stubFalse(){return false}module.exports=stubFalse},{}],279:[function(re
 </script>
 <div id="app">
   <div id="header">
-    <div class="logo">Agent<span>Topology</span></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <svg viewBox="0 0 20 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:24px">
+        <line x1="4.5" y1="2" x2="15.5" y2="2" stroke="#878593" stroke-width="1.2"/>
+        <line x1="10" y1="2" x2="10" y2="9.5" stroke="#878593" stroke-width="1.2"/>
+        <line x1="10" y1="9.5" x2="2.5" y2="22" stroke="#878593" stroke-width="1.2"/>
+        <line x1="10" y1="9.5" x2="17.5" y2="22" stroke="#878593" stroke-width="1.2"/>
+        <circle cx="4.5" cy="2" r="1.8" stroke="#a78bfa" stroke-width="1.5" fill="none"/>
+        <circle cx="15.5" cy="2" r="1.8" stroke="#a78bfa" stroke-width="1.5" fill="none"/>
+        <circle cx="10" cy="9.5" r="2" stroke="#a78bfa" stroke-width="1.5" fill="none"/>
+        <circle cx="2.5" cy="22" r="1.8" stroke="#fff" stroke-width="1.5" fill="none"/>
+        <circle cx="17.5" cy="22" r="1.8" stroke="#fff" stroke-width="1.5" fill="none"/>
+      </svg>
+      <span style="font-size:13px;color:#878593;font-weight:500;letter-spacing:0.5px">AgenTopology</span>
+      <span style="color:#2a2a2a;margin:0 4px">|</span>
+    </div>
     <div class="topo-name" id="topo-name"></div>
     <div class="topo-ver" id="topo-ver"></div>
     <div class="topo-desc" id="topo-desc"></div>
@@ -4029,6 +4052,7 @@ function stubFalse(){return false}module.exports=stubFalse},{}],279:[function(re
       </div>
       <div id="legend"></div>
       <div class="svg-tooltip" id="tooltip"></div>
+      <div id="trigger-popover" class="trigger-popover" style="display:none"></div>
     </div>
     <div id="issues-panel" class="issues-panel collapsed">
       <div class="issues-panel-header">
@@ -4070,6 +4094,10 @@ function stubFalse(){return false}module.exports=stubFalse},{}],279:[function(re
       <button class="modal-btn primary" onclick="loadFromInput()">Load</button>
     </div>
   </div>
+</div>
+
+<div style="position:fixed;bottom:12px;right:16px;font-size:11px;color:#56545e;font-family:'Noto Sans',sans-serif">
+  Generated by <span style="color:#a78bfa">agentopology</span>
 </div>
 
 <script>
@@ -4551,7 +4579,9 @@ function renderGraph() {
     s += '</g>';
   });
 
-  // --- Trigger pills ---
+  // --- Trigger badge (compact, not inline) ---
+  // Triggers are shown as a small badge on the entry node, with a popover on click.
+  // This avoids pills stacking on top of nodes in the graph.
   if (data.triggers && data.triggers.length > 0) {
     const fwdEdges = data.edges.filter(e => !e.maxIterations);
     const allFlowIds = new Set();
@@ -4571,7 +4601,7 @@ function renderGraph() {
       if (!entry && rootNodes.length > 0) entry = rootNodes[0];
       if (entry) triggerEntryMap[name] = entry;
     });
-    // Group triggers by their entry node
+    // Group triggers by entry node
     const triggersByEntry = {};
     data.triggers.forEach(trigger => {
       const entryId = triggerEntryMap[trigger.name];
@@ -4579,36 +4609,21 @@ function renderGraph() {
       if (!triggersByEntry[entryId]) triggersByEntry[entryId] = [];
       triggersByEntry[entryId].push(trigger);
     });
-    // Render one grouped container per entry node
+    // Render a small "slash" badge on each entry node — clicking shows popover
     Object.keys(triggersByEntry).forEach(entryId => {
       const triggers = triggersByEntry[entryId];
       const entryPos = nodePositions[entryId];
       if (!entryPos) return;
-      const lineH = 26;
-      const padX = 12, padY = 8;
-      const longestLen = Math.max(...triggers.map(t => t.pattern.length));
-      const tw = Math.max(TRIGGER_W, longestLen * 7.5 + padX * 2);
-      const th = triggers.length * lineH + padY * 2;
-      const tx = entryPos.x, ty = entryPos.y - th - 30;
-      // Single dashed connector line
-      const fromTY = ty + th, toTY = entryPos.y;
-      const midTY = fromTY + (toTY - fromTY) / 2;
-      s += '<path d="M' + tx + ',' + fromTY + ' C' + tx + ',' + midTY + ' ' + entryPos.x + ',' + midTY + ' ' + entryPos.x + ',' + toTY + '" class="edge-path" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4 3" fill="none" opacity="0.5" marker-end="url(#arrow-trigger)"/>';
-      // Container
-      s += '<g class="trigger-pill" style="animation:nodeFadeIn .4s ease-out 0ms both">';
-      s += '<rect x="' + (tx - tw/2) + '" y="' + ty + '" width="' + tw + '" height="' + th + '" rx="10" fill="rgba(34,211,238,.06)" stroke="rgba(34,211,238,.3)" stroke-width="1"/>';
-      // Each trigger line
-      triggers.forEach((trigger, i) => {
-        const lineY = ty + padY + i * lineH + lineH / 2;
-        s += '<text x="' + tx + '" y="' + (lineY + 1) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="11" fill="#22d3ee" font-weight="600" letter-spacing="0.5">' + esc(trigger.pattern) + '</text>';
-        // Divider between lines (not after last)
-        if (i < triggers.length - 1) {
-          const divY = ty + padY + (i + 1) * lineH;
-          s += '<line x1="' + (tx - tw/2 + 8) + '" y1="' + divY + '" x2="' + (tx + tw/2 - 8) + '" y2="' + divY + '" stroke="rgba(34,211,238,.15)" stroke-width="0.5"/>';
-        }
-      });
+      const bx = entryPos.x - entryPos.w / 2 + 8;
+      const by = entryPos.y - 2;
+      s += '<g class="trigger-badge" style="cursor:pointer" onclick="toggleTriggerPopover(\'' + esc(entryId) + '\')">';
+      s += '<circle cx="' + bx + '" cy="' + by + '" r="9" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.4)" stroke-width="0.8"/>';
+      s += '<text x="' + bx + '" y="' + (by + 1) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="9" fill="#22d3ee" font-weight="700">/' + (triggers.length > 1 ? triggers.length : '') + '</text>';
       s += '</g>';
     });
+    // Store trigger data for popover rendering
+    window.__triggersByEntry = triggersByEntry;
+    window.__triggerNodePositions = nodePositions;
   }
 
   // --- Data flow overlay ---
@@ -4679,21 +4694,20 @@ function renderGraph() {
     if (node.behavior === 'advisory') nodeBadges.push({ icon: 'A', fill: '#fbbf24', bg: 'rgba(251,191,36,.15)', stroke: 'rgba(251,191,36,.35)', tip: 'Advisory', font: 'font-weight="700" font-family="monospace" font-size="7"' });
     if (isManual) nodeBadges.push({ icon: 'M', fill: '#94a3b8', bg: 'rgba(148,163,184,.12)', stroke: 'rgba(148,163,184,.25)', tip: 'Manual invocation', font: 'font-weight="700" font-family="monospace" font-size="7"' });
 
-    var badgeAnchorX = x + pos.w - 8;
-    if (nodeBadges.length === 1) {
-      var nb = nodeBadges[0];
-      s += '<g class="hook-badge" onmouseenter="showTooltip(event, \'' + nb.tip + '\')" onmouseleave="hideTooltip()">';
-      s += '<circle cx="' + badgeAnchorX + '" cy="' + badgeY + '" r="7" fill="' + nb.bg + '" stroke="' + nb.stroke + '" stroke-width="0.5"/>';
-      s += '<text x="' + badgeAnchorX + '" y="' + (badgeY + 1) + '" text-anchor="middle" dominant-baseline="central" ' + nb.font + ' fill="' + nb.fill + '">' + nb.icon + '</text>';
+    // Lay out badges horizontally from right edge, each spaced 18px apart
+    var badgeSpacing = 18;
+    var badgeStartX = x + pos.w - 8;
+    nodeBadges.forEach(function(nb, idx) {
+      var bx = badgeStartX - idx * badgeSpacing;
+      s += '<g class="hook-badge" onmouseenter="showTooltip(event, \'' + nb.tip + '\')" onmouseleave="hideTooltip()" style="cursor:pointer">';
+      s += '<circle cx="' + bx + '" cy="' + badgeY + '" r="7" fill="' + nb.bg + '" stroke="' + nb.stroke + '" stroke-width="0.5"/>';
+      s += '<text x="' + bx + '" y="' + (badgeY + 1) + '" text-anchor="middle" dominant-baseline="central" ' + nb.font + ' fill="' + nb.fill + '">' + nb.icon + '</text>';
       s += '</g>';
-    } else if (nodeBadges.length > 1) {
-      var allBadgeTips = nodeBadges.map(function(b){return b.icon + ' ' + b.tip}).join('\\n');
-      var topBdg = nodeBadges[0];
-      s += '<g class="hook-badge" onmouseenter="showTooltip(event, \'' + allBadgeTips + '\')" onmouseleave="hideTooltip()" style="cursor:pointer">';
-      s += '<circle cx="' + badgeAnchorX + '" cy="' + badgeY + '" r="8" fill="' + topBdg.bg + '" stroke="' + topBdg.stroke + '" stroke-width="0.5"/>';
-      s += '<text x="' + badgeAnchorX + '" y="' + (badgeY + 1) + '" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="700" font-family="monospace" fill="' + topBdg.fill + '">' + nodeBadges.length + '</text>';
-      s += '</g>';
-    }
+    });
+
+    // Track how far left the node badges extend for scale pill placement
+    var badgesRightEdge = badgeStartX + 8;
+    var badgesLeftEdge = nodeBadges.length > 0 ? (badgeStartX - (nodeBadges.length - 1) * badgeSpacing - 8) : badgesRightEdge;
 
     if (node.scale) {
       const sc = node.scale;
@@ -4702,7 +4716,8 @@ function renderGraph() {
       else if (sc.mode === 'config') scaleLabel = '\u00D7?';
       else scaleLabel = '\u00D7' + sc.min + '\u2013' + sc.max;
       const scW = scaleLabel.length * 5.5 + 10;
-      const scX = badgeAnchorX - 16 - scW / 2 + 2;
+      // Place scale pill to the left of all node badges with 6px gap
+      const scX = badgesLeftEdge - 6 - scW;
       const scY = badgeY - 7;
       s += '<rect x="' + scX + '" y="' + scY + '" width="' + scW + '" height="14" rx="7" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.35)" stroke-width="0.5"/>';
       s += '<text x="' + (scX + scW / 2) + '" y="' + (scY + 7.5) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="8.5" fill="#22d3ee" font-weight="600">' + esc(scaleLabel) + '</text>';
@@ -4810,6 +4825,66 @@ function showTooltip(evt, text) {
   tip.classList.add('visible');
 }
 function hideTooltip() { document.getElementById('tooltip').classList.remove('visible'); }
+
+// --- Trigger Popover ---
+let _activePopoverEntry = null;
+function toggleTriggerPopover(entryId) {
+  hideTooltip();
+  const pop = document.getElementById('trigger-popover');
+  if (_activePopoverEntry === entryId) {
+    pop.style.display = 'none';
+    _activePopoverEntry = null;
+    return;
+  }
+  _activePopoverEntry = entryId;
+  const triggers = window.__triggersByEntry && window.__triggersByEntry[entryId];
+  if (!triggers || !triggers.length) { pop.style.display = 'none'; return; }
+  const pos = window.__triggerNodePositions && window.__triggerNodePositions[entryId];
+  if (!pos) { pop.style.display = 'none'; return; }
+
+  let h = '<div class="trigger-popover-title">Triggers</div>';
+  triggers.forEach(t => {
+    h += '<div class="trigger-popover-item">';
+    h += '<span class="trigger-popover-cmd">/' + esc(t.name) + '</span>';
+    if (t.pattern && t.pattern !== '/' + t.name) {
+      h += '<span class="trigger-popover-pattern">' + esc(t.pattern) + '</span>';
+    }
+    h += '</div>';
+  });
+  pop.innerHTML = h;
+  pop.style.display = 'block';
+
+  // Position relative to graph-container using SVG coordinates -> screen coordinates
+  const svg = document.getElementById('graph-svg');
+  const container = document.getElementById('graph-container');
+  const cRect = container.getBoundingClientRect();
+  const badgeX = pos.x - pos.w / 2 + 8;
+  const badgeY = pos.y - 2;
+  // Convert SVG coords to screen coords using current transform
+  const screenX = badgeX * transform.scale + transform.x;
+  const screenY = badgeY * transform.scale + transform.y;
+  pop.style.left = (screenX + 16) + 'px';
+  pop.style.top = (screenY - 10) + 'px';
+
+  // Ensure popover stays within container bounds
+  requestAnimationFrame(() => {
+    const pRect = pop.getBoundingClientRect();
+    if (pRect.right > cRect.right - 10) {
+      pop.style.left = (screenX - pRect.width - 10) + 'px';
+    }
+    if (pRect.bottom > cRect.bottom - 10) {
+      pop.style.top = (screenY - pRect.height + 10) + 'px';
+    }
+  });
+}
+
+// Close popover on click outside
+document.addEventListener('click', function(e) {
+  if (_activePopoverEntry && !e.target.closest('.trigger-badge') && !e.target.closest('#trigger-popover')) {
+    document.getElementById('trigger-popover').style.display = 'none';
+    _activePopoverEntry = null;
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Interaction
