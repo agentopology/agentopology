@@ -772,6 +772,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
         sections.push(`Checks: ${gate.checks.join(", ")}`);
       }
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
+      if (gate.retry) sections.push(`Retry: ${gate.retry}`);
+      if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
       sections.push("");
     }
   }
@@ -850,6 +852,37 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       sections.push(`Fallback chain: ${fallbackChain}`);
     }
     sections.push("");
+  }
+
+  // Metering
+  if (ast.metering) {
+    sections.push("## Metering");
+    sections.push("");
+    sections.push(`- Track: ${ast.metering.track.join(", ")}`);
+    sections.push(`- Per: ${ast.metering.per.join(", ")}`);
+    sections.push(`- Output: ${ast.metering.output}`);
+    sections.push(`- Format: ${ast.metering.format}`);
+    sections.push(`- Pricing: ${ast.metering.pricing}`);
+    sections.push("");
+  }
+
+  // Memory
+  const memKeys = Object.keys(ast.memory);
+  if (memKeys.length > 0) {
+    sections.push("## Memory");
+    sections.push("");
+    for (const key of memKeys) {
+      const mem = ast.memory[key] as Record<string, unknown>;
+      sections.push(`### ${key}`);
+      for (const [k, v] of Object.entries(mem)) {
+        if (Array.isArray(v)) {
+          sections.push(`- ${k}: ${(v as string[]).join(", ")}`);
+        } else {
+          sections.push(`- ${k}: ${v}`);
+        }
+      }
+      sections.push("");
+    }
   }
 
   files.push({
@@ -1389,7 +1422,13 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       lines.push("");
     }
 
-    lines.push(`echo "TODO: implement ${tool.id}"`);
+    if (tool.lang === "python") {
+      lines.push(`print("TODO: implement ${tool.id}")`);
+    } else if (tool.lang === "node") {
+      lines.push(`console.log("TODO: implement ${tool.id}");`);
+    } else {
+      lines.push(`echo "TODO: implement ${tool.id}"`);
+    }
     lines.push("");
 
     files.push({
