@@ -507,6 +507,93 @@ function generateSoulMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // Depth levels
+  if (ast.depth && ast.depth.levels && ast.depth.levels.length > 0) {
+    sections.push("## Depth Levels");
+    sections.push("");
+    if (ast.depth.factors.length > 0) {
+      sections.push(`Factors: ${ast.depth.factors.join(", ")}`);
+    }
+    for (const level of ast.depth.levels) {
+      let line = `- **Level ${level.level}**: ${level.label}`;
+      if (level.omit.length > 0) line += ` (omit: ${level.omit.join(", ")})`;
+      sections.push(line);
+    }
+    sections.push("");
+  }
+
+  // Composition: params
+  if (ast.params && ast.params.length > 0) {
+    sections.push("## Parameters");
+    sections.push("");
+    for (const p of ast.params) {
+      const req = p.required ? " (required)" : "";
+      const def = p.default != null ? ` = ${p.default}` : "";
+      sections.push(`- **${p.name}**: ${p.type}${req}${def}`);
+    }
+    sections.push("");
+  }
+
+  // Composition: interface endpoints
+  if (ast.interfaceEndpoints) {
+    sections.push("## Interface");
+    sections.push("");
+    sections.push(`- Entry: ${ast.interfaceEndpoints.entry}`);
+    sections.push(`- Exit: ${ast.interfaceEndpoints.exit}`);
+    sections.push("");
+  }
+
+  // Composition: imports
+  if (ast.imports && ast.imports.length > 0) {
+    sections.push("## Imports");
+    sections.push("");
+    for (const imp of ast.imports) {
+      let line = `- **${imp.alias}** from \`${imp.source}\``;
+      if (imp.sha256) line += ` (sha256: ${imp.sha256})`;
+      if (imp.registry) line += ` [registry: ${imp.registryPackage}@${imp.registryVersion}]`;
+      sections.push(line);
+      if (Object.keys(imp.params).length > 0) {
+        for (const [k, v] of Object.entries(imp.params)) {
+          sections.push(`  - ${k}: ${v}`);
+        }
+      }
+    }
+    sections.push("");
+  }
+
+  // Composition: includes
+  if (ast.includes && ast.includes.length > 0) {
+    sections.push("## Includes");
+    sections.push("");
+    for (const inc of ast.includes) {
+      sections.push(`- ${inc.source}`);
+    }
+    sections.push("");
+  }
+
+  // Triggers
+  if (ast.triggers.length > 0) {
+    sections.push("## Triggers");
+    sections.push("");
+    for (const trigger of ast.triggers) {
+      sections.push(`### ${trigger.name}`);
+      sections.push(`Pattern: \`${trigger.pattern}\``);
+      if (trigger.argument) sections.push(`Argument: ${trigger.argument}`);
+      sections.push("");
+    }
+  }
+
+  // Environment variables
+  if (Object.keys(ast.env).length > 0) {
+    sections.push("## Environment");
+    sections.push("");
+    for (const [key, val] of Object.entries(ast.env)) {
+      const value = typeof val === "string" ? val : val.value;
+      sections.push(`- \`${key}\`: ${value}`);
+    }
+    sections.push("");
+  }
+
   return {
     path: "SOUL.md",
     content: sections.join("\n") + "\n",

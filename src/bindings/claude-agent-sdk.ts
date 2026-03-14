@@ -1,16 +1,19 @@
 /**
- * Anthropic SDK binding — the engine binding.
+ * Claude Agent SDK binding — the native agent binding.
  *
- * Unlike CLI bindings that generate config files, this binding compiles a
- * {@link TopologyAST} into **runnable TypeScript code** that orchestrates
- * agents via the Anthropic Messages API with tool use.
+ * Unlike the `anthropic-sdk` binding that generates a manual tool loop via
+ * `messages.create()`, this binding targets the Claude Agent SDK where each
+ * agent is a single `query()` call. The SDK handles tool execution, subagent
+ * delegation, hooks, MCP servers, and permissions natively.
  *
  * Output: a self-contained Node.js project with:
- *   - An orchestrator that manages the agent flow graph
- *   - Per-agent executors using the Messages API
+ *   - Per-agent `query()` configurations (no manual tool loop)
+ *   - Native subagent delegation via `options.agents`
+ *   - Native hooks via `options.hooks`
+ *   - Native MCP via `options.mcpServers`
+ *   - Native permissions via `options.permissionMode`
  *   - File-based memory (markdown read/write)
- *   - Tool definitions compiled from the topology
- *   - Edge routing with conditions, error handling, and fan-out
+ *   - Orchestrator for flow graph execution
  *   - Group chat, human-in-the-loop, action, gate executors
  *   - Observability, checkpointing, scheduling, rate limiting
  *   - Circuit breaker, saga compensation, prompt variants
@@ -119,16 +122,49 @@ function fieldsToJsonSchema(fields: SchemaFieldDef[]): string {
 // ---------------------------------------------------------------------------
 
 function mapModel(model: string | undefined): string {
-  if (!model) return "claude-sonnet-4-5-20250514";
+  if (!model) return "claude-sonnet-4-6";
   const m = model.toLowerCase();
-  // Anthropic model aliases
-  if (m === "opus" || m === "claude-opus") return "claude-opus-4-0-20250514";
-  if (m === "sonnet" || m === "claude-sonnet") return "claude-sonnet-4-5-20250514";
+  if (m === "opus" || m === "claude-opus") return "claude-opus-4-6";
+  if (m === "sonnet" || m === "claude-sonnet") return "claude-sonnet-4-6";
   if (m === "haiku" || m === "claude-haiku") return "claude-haiku-4-5-20251001";
-  // Pass through full model ids
   if (m.startsWith("claude-")) return model;
-  // Default for unknown
-  return "claude-sonnet-4-5-20250514";
+  return "claude-sonnet-4-6";
+}
+
+/** Map model alias to subagent-style alias (opus, sonnet, haiku). */
+function mapSubagentModel(model: string | undefined): string {
+  if (!model) return "sonnet";
+  const m = model.toLowerCase();
+  if (m === "opus" || m === "claude-opus" || m.includes("opus")) return "opus";
+  if (m === "sonnet" || m === "claude-sonnet" || m.includes("sonnet")) return "sonnet";
+  if (m === "haiku" || m === "claude-haiku" || m.includes("haiku")) return "haiku";
+  return mapModel(model);
+}
+
+// ---------------------------------------------------------------------------
+// Permission mapping
+// ---------------------------------------------------------------------------
+
+function mapPermission(perm: string | undefined): string {
+  if (!perm) return "default";
+  switch (perm.toLowerCase()) {
+    case "plan": return "plan";
+    case "auto": case "autonomous": return "bypassPermissions";
+    case "confirm": case "supervised": return "default";
+    case "accept-edits": return "acceptEdits";
+    case "deny-unasked": return "dontAsk";
+    default: return "default";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Thinking mapping
+// ---------------------------------------------------------------------------
+
+function mapThinking(thinking: string | undefined, budget?: number): string | null {
+  if (!thinking || thinking === "off") return null;
+  const budgetTokens = budget || 4096;
+  return `{ type: "enabled", budgetTokens: ${budgetTokens} }`;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +184,7 @@ function generatePackageJson(ast: TopologyAST): string {
         dev: "tsx watch src/index.ts",
       },
       dependencies: {
-        "@anthropic-ai/sdk": "^0.39.0",
+        "@anthropic-ai/claude-agent-sdk": "^0.1.0",
       },
       devDependencies: {
         tsx: "^4.7.0",
@@ -186,10 +222,8 @@ function generateTsConfig(): string {
 function generateEnvExample(ast: TopologyAST): string {
   const lines = ["# Environment variables for the topology runtime"];
 
-  // Always need the API key
   lines.push("ANTHROPIC_API_KEY=your-api-key-here");
 
-  // Provider-specific keys
   for (const provider of ast.providers) {
     if (provider.apiKey) {
       const envVar = provider.apiKey.replace(/^\$\{/, "").replace(/\}$/, "");
@@ -199,7 +233,6 @@ function generateEnvExample(ast: TopologyAST): string {
     }
   }
 
-  // Env vars from topology
   for (const [key, value] of Object.entries(ast.env)) {
     if (typeof value === "string") {
       lines.push(`${key}=${value}`);
@@ -225,8 +258,6 @@ function generateTypes(ast: TopologyAST): string {
     " * Auto-generated by agentopology scaffold — edit as needed.",
     " */",
     "",
-    'import Anthropic from "@anthropic-ai/sdk";',
-    "",
     "// ---------------------------------------------------------------------------",
     "// Agent identifiers",
     "// ---------------------------------------------------------------------------",
@@ -234,30 +265,15 @@ function generateTypes(ast: TopologyAST): string {
     `export type AgentId = ${agents.map((a) => `"${a.id}"`).join(" | ") || "string"};`,
     "",
     "// ---------------------------------------------------------------------------",
-    "// Message types",
+    "// Agent result types",
     "// ---------------------------------------------------------------------------",
-    "",
-    "export interface AgentMessage {",
-    "  role: \"user\" | \"assistant\";",
-    "  content: string;",
-    "  agentId?: AgentId;",
-    "  timestamp: number;",
-    "}",
     "",
     "export interface AgentResult {",
     "  agentId: AgentId;",
     "  output: string;",
-    "  toolCalls: ToolCallRecord[];",
     "  tokenUsage: { input: number; output: number };",
     "  durationMs: number;",
     "  error?: string;",
-    "}",
-    "",
-    "export interface ToolCallRecord {",
-    "  name: string;",
-    "  input: Record<string, unknown>;",
-    "  output: string;",
-    "  isError: boolean;",
     "}",
     "",
     "// ---------------------------------------------------------------------------",
@@ -271,40 +287,27 @@ function generateTypes(ast: TopologyAST): string {
     "}",
     "",
     "// ---------------------------------------------------------------------------",
-    "// Tool definition",
+    "// Agent configuration (for query() calls)",
     "// ---------------------------------------------------------------------------",
     "",
-    "export interface ToolDefinition {",
-    "  name: string;",
-    "  description: string;",
-    "  input_schema: Record<string, unknown>;",
-    "  execute: (input: Record<string, unknown>) => Promise<string>;",
-    "}",
-    "",
-    "// ---------------------------------------------------------------------------",
-    "// Agent configuration",
-    "// ---------------------------------------------------------------------------",
-    "",
-    "export interface AgentConfig {",
+    "export interface AgentQueryConfig {",
     "  id: AgentId;",
     "  model: string;",
     "  systemPrompt: string;",
-    "  tools: ToolDefinition[];",
+    "  allowedTools?: string[];",
+    "  disallowedTools?: string[];",
+    "  permissionMode: string;",
     "  maxTurns: number;",
-    "  temperature?: number;",
-    "  maxTokens?: number;",
-    "  topP?: number;",
-    "  topK?: number;",
-    "  stop?: string[];",
-    "  timeout?: number;",
-    "  seed?: number;",
-    "  thinking?: string;",
-    "  thinkingBudget?: number;",
-    "  outputFormat?: string;",
-    "  outputSchema?: Record<string, unknown>;",
+    "  hooks?: HookConfig[];",
+    "  mcpServers?: McpServerConfig[];",
+    "  subagents?: Record<string, SubagentDef>;",
+    "  skills?: string[];",
+    "  sandbox?: string | boolean;",
+    "  thinking?: { type: string; budgetTokens?: number };",
+    "  outputFormat?: OutputFormatConfig;",
+    "  // Polyfill fields (not native SDK options)",
     "  retry?: { max: number; backoff?: string; interval?: number };",
-    "  memoryReads?: string[];",
-    "  memoryWrites?: string[];",
+    "  timeout?: number;",
     "  onFail?: string;",
     "  skip?: string;",
     "  fallbackChain?: string[];",
@@ -313,6 +316,58 @@ function generateTypes(ast: TopologyAST): string {
     "  phase?: number;",
     "  rateLimit?: string;",
     "  variants?: PromptVariant[];",
+    "  memoryReads?: string[];",
+    "  memoryWrites?: string[];",
+    "  background?: boolean;",
+    "  isolation?: string;",
+    "  description?: string;",
+    "}",
+    "",
+    "// ---------------------------------------------------------------------------",
+    "// Subagent definition (for options.agents)",
+    "// ---------------------------------------------------------------------------",
+    "",
+    "export interface SubagentDef {",
+    "  description: string;",
+    "  prompt?: string;",
+    "  tools?: string[];",
+    "  model?: string;",
+    "  maxTurns?: number;",
+    "  skills?: string[];",
+    "  mcpServers?: McpServerConfig[];",
+    "}",
+    "",
+    "// ---------------------------------------------------------------------------",
+    "// Hook configuration",
+    "// ---------------------------------------------------------------------------",
+    "",
+    "export interface HookConfig {",
+    "  event: string;",
+    "  matcher?: string;",
+    "  run: string;",
+    "  type?: string;",
+    "  timeout?: number;",
+    "}",
+    "",
+    "// ---------------------------------------------------------------------------",
+    "// MCP server configuration",
+    "// ---------------------------------------------------------------------------",
+    "",
+    "export interface McpServerConfig {",
+    "  name: string;",
+    "  command?: string;",
+    "  args?: string[];",
+    "  env?: Record<string, string>;",
+    "  url?: string;",
+    "}",
+    "",
+    "// ---------------------------------------------------------------------------",
+    "// Output format configuration",
+    "// ---------------------------------------------------------------------------",
+    "",
+    "export interface OutputFormatConfig {",
+    "  type: string;",
+    "  schema?: Record<string, unknown>;",
     "}",
     "",
     "// ---------------------------------------------------------------------------",
@@ -330,7 +385,7 @@ function generateTypes(ast: TopologyAST): string {
     "}",
     "",
     "export interface GroupResult {",
-    "  messages: AgentMessage[];",
+    "  messages: Array<{ role: string; content: string; agentId?: string; timestamp: number }>;",
     "  finalOutput: string;",
     "  totalTokens: { input: number; output: number };",
     "  rounds: number;",
@@ -405,7 +460,7 @@ function generateTypes(ast: TopologyAST): string {
     "}",
     "",
     "export interface CircuitBreakerState {",
-    "  state: \"closed\" | \"open\" | \"half-open\";",
+    '  state: "closed" | "open" | "half-open";',
     "  failureCount: number;",
     "  lastFailure: number;",
     "  nextAttempt: number;",
@@ -499,7 +554,7 @@ function generateTypes(ast: TopologyAST): string {
     "export interface TopologyConfig {",
     "  name: string;",
     "  version: string;",
-    "  agents: Record<string, AgentConfig>;",
+    "  agents: Record<string, AgentQueryConfig>;",
     "  groups: Record<string, GroupChatConfig>;",
     "  humans: Record<string, HumanNodeConfig>;",
     "  actions: Record<string, ActionNodeConfig>;",
@@ -539,7 +594,6 @@ export class FileMemory implements MemoryStore {
   constructor(private basePath: string = "./.memory") {}
 
   private resolvePath(key: string): string {
-    // Keys use dot notation: "domain.research.findings" -> ".memory/domain/research/findings.md"
     const parts = key.split(".");
     const filename = parts.pop()! + ".md";
     return join(this.basePath, ...parts, filename);
@@ -585,37 +639,44 @@ export class FileMemory implements MemoryStore {
 }
 
 // ---------------------------------------------------------------------------
-// Agent executor generator
+// Agent runner generator — wraps query() for each agent
 // ---------------------------------------------------------------------------
 
-function generateAgentExecutor(): string {
+function generateAgentRunner(): string {
   return `/**
- * Agent executor — runs a single agent through the Messages API agentic loop.
+ * Agent runner — executes a single agent via the Claude Agent SDK query() call.
  * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * Unlike the Anthropic Messages API binding, there is NO manual tool loop here.
+ * The SDK's query() handles tool execution, subagent delegation, and conversation
+ * management internally. Each agent is a single query() call.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  AgentConfig,
+  AgentQueryConfig,
   AgentResult,
-  ToolCallRecord,
-  ToolDefinition,
   MemoryStore,
 } from "./types.js";
 
-const client = new Anthropic();
-
+/**
+ * Execute an agent via the Claude Agent SDK query() call.
+ *
+ * This is fundamentally simpler than the Anthropic Messages API binding:
+ * - No manual tool loop (query() handles it)
+ * - No tool definitions needed (Read, Write, Bash, etc. are built-in)
+ * - Native subagent delegation via options.agents
+ * - Native hooks via options.hooks
+ * - Native MCP via options.mcpServers
+ */
 export async function executeAgent(
-  config: AgentConfig,
+  config: AgentQueryConfig,
   input: string,
   memory: MemoryStore,
 ): Promise<AgentResult> {
   const startTime = Date.now();
-  const toolCalls: ToolCallRecord[] = [];
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
 
-  // Inject memory context into the system prompt
+  // Inject memory context into the prompt
   let systemPrompt = config.systemPrompt;
   if (config.memoryReads?.length) {
     const memoryContext: string[] = [];
@@ -630,212 +691,158 @@ export async function executeAgent(
     }
   }
 
-  // Build tool definitions for the API
-  const tools: Anthropic.Messages.Tool[] = config.tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.input_schema as Anthropic.Messages.Tool.InputSchema,
-  }));
-
-  // Build memory tools if the agent has write access
-  if (config.memoryWrites?.length) {
-    tools.push({
-      name: "memory_write",
-      description: \`Write to memory. Allowed keys: \${config.memoryWrites.join(", ")}\`,
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          key: { type: "string", description: "Memory key to write to" },
-          value: { type: "string", description: "Content to write" },
-        },
-        required: ["key", "value"],
-      },
-    });
-  }
-
-  // If structured output is requested, add it as a forced tool
-  if (config.outputSchema) {
-    tools.push({
-      name: "structured_output",
-      description: "Return your response as structured data matching the required schema.",
-      input_schema: config.outputSchema as Anthropic.Messages.Tool.InputSchema,
-    });
-  }
-
-  const messages: Anthropic.Messages.MessageParam[] = [
-    { role: "user", content: input },
-  ];
-
-  let turn = 0;
-  const maxTurns = config.maxTurns || 10;
-
-  // Create request params
-  const baseParams: Record<string, unknown> = {
+  // Build query options
+  const options: Record<string, unknown> = {
     model: config.model,
-    max_tokens: config.maxTokens || 4096,
-    system: systemPrompt,
-    ...(tools.length > 0 && { tools }),
-    ...(config.temperature !== undefined && { temperature: config.temperature }),
-    ...(config.topP !== undefined && { top_p: config.topP }),
-    ...(config.topK !== undefined && { top_k: config.topK }),
-    ...(config.stop?.length && { stop_sequences: config.stop }),
-    ...(config.seed !== undefined && { metadata: { user_id: String(config.seed) } }),
+    systemPrompt,
+    maxTurns: config.maxTurns,
+    permissionMode: config.permissionMode,
   };
 
-  // Add extended thinking support
-  if (config.thinking && config.thinking !== "off") {
-    (baseParams as Record<string, unknown>).thinking = {
-      type: "enabled",
-      budget_tokens: config.thinkingBudget || 4096,
-    };
-    // Thinking requires removing temperature
-    delete (baseParams as Record<string, unknown>).temperature;
+  // Allowed / disallowed tools
+  if (config.allowedTools?.length) {
+    options.allowedTools = config.allowedTools;
+  }
+  if (config.disallowedTools?.length) {
+    options.disallowedTools = config.disallowedTools;
   }
 
-  // Add output format
-  if (config.outputFormat === "json") {
-    (baseParams as Record<string, unknown>).response_format = { type: "json" };
+  // Sandbox
+  if (config.sandbox !== undefined) {
+    options.sandbox = config.sandbox;
   }
 
-  // Force structured output tool if outputSchema is set
-  if (config.outputSchema) {
-    (baseParams as Record<string, unknown>).tool_choice = {
-      type: "tool",
-      name: "structured_output",
-    };
+  // Thinking / extended reasoning
+  if (config.thinking) {
+    options.thinking = config.thinking;
   }
 
-  while (turn < maxTurns) {
-    turn++;
+  // Output format (json-schema -> outputFormat)
+  if (config.outputFormat) {
+    options.outputFormat = config.outputFormat;
+  }
 
-    let response: Anthropic.Messages.Message;
+  // Skills
+  if (config.skills?.length) {
+    options.skills = config.skills;
+  }
+
+  // MCP servers
+  if (config.mcpServers?.length) {
+    const mcpConfig: Record<string, Record<string, unknown>> = {};
+    for (const mcp of config.mcpServers) {
+      mcpConfig[mcp.name] = {};
+      if (mcp.command) mcpConfig[mcp.name].command = mcp.command;
+      if (mcp.args) mcpConfig[mcp.name].args = mcp.args;
+      if (mcp.env) mcpConfig[mcp.name].env = mcp.env;
+      if (mcp.url) mcpConfig[mcp.name].url = mcp.url;
+    }
+    options.mcpServers = mcpConfig;
+  }
+
+  // Hooks — compile HookConfig[] into SDK hook callbacks
+  if (config.hooks?.length) {
+    const hooks: Record<string, Array<Record<string, unknown>>> = {};
+    for (const hook of config.hooks) {
+      if (!hooks[hook.event]) hooks[hook.event] = [];
+      const entry: Record<string, unknown> = {};
+      if (hook.matcher) entry.matcher = hook.matcher;
+      entry.hooks = [\`async (input: unknown, toolUseID: string, ctx: { signal: AbortSignal }) => {
+        // Hook: \\\${hook.run}
+        const { exec } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execAsync = promisify(exec);
+        try {
+          await execAsync(hook.run, { timeout: \\\${hook.timeout || 30000}, signal: ctx.signal });
+          return undefined; // allow
+        } catch {
+          return { decision: "deny", reason: "Hook command failed: " + hook.run };
+        }
+      }\`];
+      hooks[hook.event].push(entry);
+    }
+    options.hooks = hooks;
+  }
+
+  // Subagents
+  if (config.subagents && Object.keys(config.subagents).length) {
+    options.agents = config.subagents;
+  }
+
+  // Background / isolation (Agent tool configuration)
+  if (config.background) {
+    options.runInBackground = true;
+  }
+  if (config.isolation === "worktree") {
+    options.isolation = "worktree";
+  }
+
+  try {
+    // Execute the query — this is the entire agent execution.
+    // No tool loop needed; the SDK handles everything.
+    const result: string[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    // AbortController for timeout
+    let controller: AbortController | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (config.timeout) {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => controller!.abort(), config.timeout);
+      options.signal = controller.signal;
+    }
 
     try {
-      const apiCall = client.messages.create({
-        ...baseParams,
-        messages,
-      } as Anthropic.Messages.MessageCreateParams);
-
-      // Wrap in timeout if configured
-      if (config.timeout) {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Agent execution timed out")), config.timeout)
-        );
-        response = await Promise.race([apiCall, timeoutPromise]);
-      } else {
-        response = await apiCall;
-      }
-    } catch (err) {
-      return {
-        agentId: config.id,
-        output: "",
-        toolCalls,
-        tokenUsage: { input: totalInputTokens, output: totalOutputTokens },
-        durationMs: Date.now() - startTime,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-
-    totalInputTokens += response.usage.input_tokens;
-    totalOutputTokens += response.usage.output_tokens;
-
-    // If the model is done (no tool use), extract text and return
-    if (response.stop_reason === "end_turn" || response.stop_reason === "max_tokens") {
-      const textBlocks = response.content.filter(
-        (b): b is Anthropic.Messages.TextBlock => b.type === "text",
-      );
-      const output = textBlocks.map((b) => b.text).join("\\n");
-      return {
-        agentId: config.id,
-        output,
-        toolCalls,
-        tokenUsage: { input: totalInputTokens, output: totalOutputTokens },
-        durationMs: Date.now() - startTime,
-      };
-    }
-
-    // Handle tool use
-    if (response.stop_reason === "tool_use") {
-      // Add assistant response to conversation
-      messages.push({ role: "assistant", content: response.content });
-
-      const toolUseBlocks = response.content.filter(
-        (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use",
-      );
-
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
-
-      for (const block of toolUseBlocks) {
-        let result: string;
-        let isError = false;
-
-        // Handle structured output tool — just return the input as JSON
-        if (block.name === "structured_output") {
-          result = JSON.stringify(block.input);
-        } else if (block.name === "memory_write") {
-          // Handle memory writes
-          const inp = block.input as { key: string; value: string };
-          if (config.memoryWrites?.includes(inp.key)) {
-            await memory.write(inp.key, inp.value);
-            result = \`Written to memory key: \${inp.key}\`;
-          } else {
-            result = \`Error: not allowed to write to key "\${inp.key}". Allowed: \${config.memoryWrites?.join(", ")}\`;
-            isError = true;
+      for await (const message of query({
+        prompt: input,
+        options,
+      })) {
+        if (typeof message === "string") {
+          result.push(message);
+        } else if (message && typeof message === "object") {
+          // Extract usage if available
+          const msg = message as Record<string, unknown>;
+          if (msg.usage && typeof msg.usage === "object") {
+            const usage = msg.usage as Record<string, number>;
+            totalInputTokens += usage.input_tokens || 0;
+            totalOutputTokens += usage.output_tokens || 0;
           }
-        } else {
-          // Find and execute the tool
-          const tool = config.tools.find((t) => t.name === block.name);
-          if (tool) {
-            try {
-              result = await tool.execute(block.input as Record<string, unknown>);
-            } catch (err) {
-              result = \`Error: \${err instanceof Error ? err.message : String(err)}\`;
-              isError = true;
-            }
-          } else {
-            result = \`Error: unknown tool "\${block.name}"\`;
-            isError = true;
+          if (msg.result && typeof msg.result === "string") {
+            result.push(msg.result);
+          } else if (msg.content && typeof msg.content === "string") {
+            result.push(msg.content);
           }
         }
-
-        toolCalls.push({
-          name: block.name,
-          input: block.input as Record<string, unknown>,
-          output: result,
-          isError,
-        });
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: result,
-          ...(isError && { is_error: true }),
-        });
       }
-
-      messages.push({ role: "user", content: toolResults });
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
-  }
 
-  // Max turns reached — extract whatever we have
-  const lastAssistant = messages.findLast((m) => m.role === "assistant");
-  let output = "[max turns reached]";
-  if (lastAssistant && Array.isArray(lastAssistant.content)) {
-    const textBlocks = (lastAssistant.content as Anthropic.Messages.ContentBlock[]).filter(
-      (b): b is Anthropic.Messages.TextBlock => b.type === "text",
-    );
-    if (textBlocks.length) {
-      output = textBlocks.map((b) => b.text).join("\\n");
+    const output = result.join("\\n");
+
+    // Write memory if configured
+    if (config.memoryWrites?.length && output) {
+      for (const key of config.memoryWrites) {
+        await memory.write(key, output);
+      }
     }
-  }
 
-  return {
-    agentId: config.id,
-    output,
-    toolCalls,
-    tokenUsage: { input: totalInputTokens, output: totalOutputTokens },
-    durationMs: Date.now() - startTime,
-  };
+    return {
+      agentId: config.id,
+      output,
+      tokenUsage: { input: totalInputTokens, output: totalOutputTokens },
+      durationMs: Date.now() - startTime,
+    };
+  } catch (err) {
+    return {
+      agentId: config.id,
+      output: "",
+      tokenUsage: { input: 0, output: 0 },
+      durationMs: Date.now() - startTime,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 `;
 }
@@ -846,29 +853,26 @@ export async function executeAgent(
 
 function generateGroupExecutor(): string {
   return `/**
- * Group chat executor — multi-agent conversation.
+ * Group chat executor — multi-agent conversation via query() calls.
  * Auto-generated by agentopology scaffold — edit as needed.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { executeAgent } from "./executor.js";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { executeAgent } from "./runner.js";
 import type {
-  AgentConfig,
-  AgentMessage,
+  AgentQueryConfig,
   GroupChatConfig,
   GroupResult,
   MemoryStore,
 } from "./types.js";
-
-const client = new Anthropic();
 
 /**
  * Select the next speaker based on the strategy.
  */
 async function selectSpeaker(
   groupConfig: GroupChatConfig,
-  agentConfigs: Record<string, AgentConfig>,
-  conversationHistory: AgentMessage[],
+  agentConfigs: Record<string, AgentQueryConfig>,
+  conversationHistory: Array<{ role: string; content: string; agentId?: string; timestamp: number }>,
   round: number,
 ): Promise<string> {
   const strategy = groupConfig.speakerSelection || "round-robin";
@@ -882,32 +886,30 @@ async function selectSpeaker(
       return members[Math.floor(Math.random() * members.length)];
 
     case "model-selected": {
-      // Use a lightweight Claude call to pick the next speaker
       const historyText = conversationHistory
         .map((m) => \`[\${m.agentId || "user"}]: \${m.content}\`)
         .join("\\n");
 
-      const response = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 50,
-        system: "You are a conversation moderator. Pick the next speaker from the available members. Respond with ONLY the member id, nothing else.",
-        messages: [
-          {
-            role: "user",
-            content: \`Available members: \${members.join(", ")}\\n\\nConversation so far:\\n\${historyText}\\n\\nWho should speak next?\`,
-          },
-        ],
-      });
-
-      const textBlock = response.content.find(
-        (b): b is Anthropic.Messages.TextBlock => b.type === "text",
-      );
-      const selected = textBlock?.text.trim() || "";
-
-      // Validate the selection; fall back to round-robin
-      if (members.includes(selected)) {
-        return selected;
+      // Use a lightweight query to pick the next speaker
+      const result: string[] = [];
+      for await (const message of query({
+        prompt: \`Available members: \${members.join(", ")}\\n\\nConversation so far:\\n\${historyText}\\n\\nWho should speak next? Respond with ONLY the member id.\`,
+        options: {
+          model: "haiku",
+          maxTurns: 1,
+          systemPrompt: "You are a conversation moderator. Pick the next speaker. Respond with ONLY the member id, nothing else.",
+        },
+      })) {
+        if (typeof message === "string") result.push(message);
+        else if (message && typeof message === "object") {
+          const msg = message as Record<string, unknown>;
+          if (msg.result && typeof msg.result === "string") result.push(msg.result);
+          else if (msg.content && typeof msg.content === "string") result.push(msg.content);
+        }
       }
+
+      const selected = result.join("").trim();
+      if (members.includes(selected)) return selected;
       return members[round % members.length];
     }
 
@@ -921,11 +923,11 @@ async function selectSpeaker(
  */
 export async function executeGroup(
   groupConfig: GroupChatConfig,
-  agentConfigs: Record<string, AgentConfig>,
+  agentConfigs: Record<string, AgentQueryConfig>,
   input: string,
   memory: MemoryStore,
 ): Promise<GroupResult> {
-  const conversationHistory: AgentMessage[] = [
+  const conversationHistory: Array<{ role: string; content: string; agentId?: string; timestamp: number }> = [
     { role: "user", content: input, timestamp: Date.now() },
   ];
 
@@ -943,7 +945,6 @@ export async function executeGroup(
       continue;
     }
 
-    // Build context from conversation history
     const historyText = conversationHistory
       .map((m) => \`[\${m.agentId || "user"}]: \${m.content}\`)
       .join("\\n\\n");
@@ -964,7 +965,6 @@ export async function executeGroup(
 
     finalOutput = result.output;
 
-    // Check termination condition
     if (groupConfig.termination && result.output.includes(groupConfig.termination)) {
       break;
     }
@@ -986,8 +986,11 @@ export async function executeGroup(
 
 function generateHumanExecutor(): string {
   return `/**
- * Human-in-the-loop executor — prompts for user input in terminal.
+ * Human-in-the-loop executor — uses the AskUserQuestion built-in tool.
  * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * The Claude Agent SDK has a native AskUserQuestion tool, but for direct
+ * human nodes in the flow graph, we use a terminal prompt as fallback.
  */
 
 import { createInterface } from "node:readline";
@@ -1034,7 +1037,6 @@ export async function executeHuman(
           const fallbackId = behavior.slice("fallback ".length);
           resolve({ input: \`__FALLBACK__:\${fallbackId}\`, timedOut: true });
         } else {
-          // "halt" — resolve with empty but mark timed out so orchestrator can halt
           resolve({ input: "", timedOut: true });
         }
       }, config.timeout);
@@ -1102,8 +1104,11 @@ export async function executeAction(
 
 function generateObservability(): string {
   return `/**
- * Observability — OpenTelemetry-style tracing for topology execution.
+ * Observability — telemetry via hooks for topology execution.
  * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * The Claude Agent SDK supports hooks for PreToolUse and PostToolUse,
+ * which can be used to emit OpenTelemetry-style spans.
  */
 
 import type { ObservabilitySpan, ObservabilityConfig } from "./types.js";
@@ -1120,16 +1125,10 @@ export class Tracer {
     this.traceId = generateId();
   }
 
-  /**
-   * Check if a span should be sampled based on the configured sample rate.
-   */
   private shouldSample(): boolean {
     return Math.random() < this.config.sampleRate;
   }
 
-  /**
-   * Start a new span.
-   */
   startSpan(name: string, parentSpanId?: string): ObservabilitySpan {
     const span: ObservabilitySpan = {
       traceId: this.traceId,
@@ -1142,21 +1141,13 @@ export class Tracer {
     return span;
   }
 
-  /**
-   * End a span and emit it if sampling allows.
-   */
   endSpan(span: ObservabilitySpan): void {
     span.endTime = Date.now();
-
     if (!this.shouldSample()) return;
-
     this.spans.push(span);
     this.exportSpan(span);
   }
 
-  /**
-   * Export a span to the configured backend.
-   */
   private exportSpan(span: ObservabilitySpan): void {
     const exporter = this.config.exporter;
 
@@ -1166,7 +1157,6 @@ export class Tracer {
         break;
 
       case "otlp":
-        // Non-blocking HTTP POST to OTLP endpoint
         if (this.config.endpoint) {
           fetch(this.config.endpoint, {
             method: "POST",
@@ -1177,9 +1167,7 @@ export class Tracer {
                 scopeSpans: [{ spans: [span] }],
               }],
             }),
-          }).catch(() => {
-            // Silently ignore export errors
-          });
+          }).catch(() => {});
         }
         break;
 
@@ -1189,16 +1177,10 @@ export class Tracer {
     }
   }
 
-  /**
-   * Get all collected spans.
-   */
   getSpans(): ObservabilitySpan[] {
     return [...this.spans];
   }
 
-  /**
-   * Reset trace state for a new run.
-   */
   reset(): void {
     this.traceId = generateId();
     this.spans = [];
@@ -1213,8 +1195,15 @@ export class Tracer {
 
 function generateCheckpoint(): string {
   return `/**
- * Checkpoint — save and restore topology state for durable execution.
+ * Checkpoint — session resume/fork for durable execution.
  * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * The Claude Agent SDK supports native session resume/fork via:
+ * - enableFileCheckpointing: true
+ * - resume / forkSession options
+ * - Query.rewindFiles() for rollback
+ *
+ * This module provides a polyfill for topology-level checkpoint state.
  */
 
 import { readFile, writeFile, readdir, mkdir, rm } from "node:fs/promises";
@@ -1237,9 +1226,6 @@ export class CheckpointManager {
     return join(this.basePath, \`\${runId}.json\`);
   }
 
-  /**
-   * Save a node's result to the checkpoint.
-   */
   async save(runId: string, topologyName: string, state: CheckpointState): Promise<void> {
     if (!existsSync(this.basePath)) {
       await mkdir(this.basePath, { recursive: true });
@@ -1267,9 +1253,6 @@ export class CheckpointManager {
     await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
   }
 
-  /**
-   * Load a checkpoint for replay.
-   */
   async load(runId: string): Promise<CheckpointData | null> {
     const filePath = this.getFilePath(runId);
     try {
@@ -1280,32 +1263,20 @@ export class CheckpointManager {
     }
   }
 
-  /**
-   * Get the set of completed node IDs from a checkpoint.
-   */
   async getCompletedNodes(runId: string): Promise<Set<string>> {
     const data = await this.load(runId);
     if (!data) return new Set();
     return new Set(data.states.map((s) => s.nodeId));
   }
 
-  /**
-   * Whether to save after this node (depends on strategy).
-   */
   shouldSaveAfterNode(): boolean {
     return this.strategy === "per-node";
   }
 
-  /**
-   * Whether to save after a phase completes.
-   */
   shouldSaveAfterPhase(): boolean {
     return this.strategy === "per-phase";
   }
 
-  /**
-   * Clean up old checkpoints beyond TTL.
-   */
   async cleanup(): Promise<void> {
     if (!this.ttl) return;
     if (!existsSync(this.basePath)) return;
@@ -1341,12 +1312,9 @@ function generateScheduler(): string {
  * Auto-generated by agentopology scaffold — edit as needed.
  */
 
-/**
- * Parse an "every" duration string like "5m", "1h", "30s" into milliseconds.
- */
 function parseEvery(every: string): number {
   const match = every.match(/^(\\d+(?:\\.\\d+)?)\\s*(ms|s|m|h|d)$/);
-  if (!match) return 60_000; // default 1 minute
+  if (!match) return 60_000;
   const value = parseFloat(match[1]);
   switch (match[2]) {
     case "ms": return value;
@@ -1358,21 +1326,12 @@ function parseEvery(every: string): number {
   }
 }
 
-/**
- * Parse a simple cron expression into the next interval in ms.
- * Supports: "* * * * *" (minute hour day month weekday).
- * This is a simplified implementation — for production, use a cron library.
- */
 function parseCronToInterval(cron: string): number {
   const parts = cron.trim().split(/\\s+/);
   if (parts.length < 5) return 60_000;
-
-  // If minute is a number and rest are *, it's "every hour at minute X"
   if (parts[0] !== "*" && parts.slice(1).every((p) => p === "*")) {
-    return 3_600_000; // every hour
+    return 3_600_000;
   }
-
-  // Default: every minute
   return 60_000;
 }
 
@@ -1386,25 +1345,16 @@ export interface ScheduledJob {
 export class Scheduler {
   private jobs: Map<string, ScheduledJob> = new Map();
 
-  /**
-   * Register a job with an "every" duration.
-   */
   addEveryJob(id: string, every: string, handler: () => Promise<void>): void {
     const interval = parseEvery(every);
     this.jobs.set(id, { id, interval, handler });
   }
 
-  /**
-   * Register a job with a cron expression.
-   */
   addCronJob(id: string, cron: string, handler: () => Promise<void>): void {
     const interval = parseCronToInterval(cron);
     this.jobs.set(id, { id, interval, handler });
   }
 
-  /**
-   * Start all registered jobs.
-   */
   start(): void {
     for (const [id, job] of this.jobs) {
       job.timer = setInterval(async () => {
@@ -1418,11 +1368,8 @@ export class Scheduler {
     }
   }
 
-  /**
-   * Stop all jobs.
-   */
   stop(): void {
-    for (const [id, job] of this.jobs) {
+    for (const [, job] of this.jobs) {
       if (job.timer) {
         clearInterval(job.timer);
         job.timer = undefined;
@@ -1443,9 +1390,6 @@ function generateRateLimiter(): string {
  * Auto-generated by agentopology scaffold — edit as needed.
  */
 
-/**
- * Parse a rate limit expression like "60/min", "1000/hour", "5/sec".
- */
 function parseRateLimit(expr: string): { tokens: number; intervalMs: number } {
   const match = expr.match(/^(\\d+)\\/(sec|min|hour|day)$/);
   if (!match) return { tokens: 60, intervalMs: 60_000 };
@@ -1488,18 +1432,12 @@ export class RateLimiter {
     }
   }
 
-  /**
-   * Wait until a token is available, then consume it.
-   */
   async acquire(): Promise<void> {
     this.refill();
-
     if (this.tokens > 0) {
       this.tokens--;
       return;
     }
-
-    // Wait until next refill
     const waitTime = this.refillInterval - (Date.now() - this.lastRefill);
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, waitTime)));
     this.refill();
@@ -1521,9 +1459,6 @@ function generateVariantSelector(): string {
 
 import type { PromptVariant, VariantSelection } from "./types.js";
 
-/**
- * Select a variant using weighted random selection.
- */
 export function selectVariant(
   variants: PromptVariant[],
   defaultPrompt: string,
@@ -1547,7 +1482,6 @@ export function selectVariant(
     }
   }
 
-  // Fallback to last variant
   const last = variants[variants.length - 1];
   return {
     variantId: last.id,
@@ -1570,17 +1504,9 @@ function generateOrchestrator(ast: TopologyAST): string {
   const groups = ast.nodes.filter((n): n is GroupNode => n.type === "group");
   const humans = ast.nodes.filter((n): n is HumanNode => n.type === "human");
 
-  // Find entry points: agents with no incoming edges
+  // Find entry points: nodes with no incoming edges
   const targets = new Set(ast.edges.map((e) => e.to));
   const entryPoints = agents.filter((a) => !targets.has(a.id));
-
-  // Build adjacency map
-  const edgesByFrom = new Map<string, EdgeDef[]>();
-  for (const edge of ast.edges) {
-    const list = edgesByFrom.get(edge.from) || [];
-    list.push(edge);
-    edgesByFrom.set(edge.from, list);
-  }
 
   // Generate condition functions for edges
   const conditionFns: string[] = [];
@@ -1590,7 +1516,6 @@ function generateOrchestrator(ast: TopologyAST): string {
       conditionFns.push(
         `function ${fnName}(result: AgentResult): boolean {\n` +
         `  // Condition: ${escapeString(edge.condition)}\n` +
-        `  // TODO: implement condition logic based on agent output\n` +
         `  return result.output.toLowerCase().includes("${escapeQuotes(edge.condition.toLowerCase())}");\n` +
         `}`,
       );
@@ -1621,26 +1546,99 @@ function generateOrchestrator(ast: TopologyAST): string {
     const prompt = agent.prompt
       ? escapeString(agent.prompt)
       : `You are ${toTitle(agent.id)}. ${agent.description || agent.role || "Complete the assigned task."}`;
+    const permMode = mapPermission(agent.permissions);
 
     const parts: string[] = [
       `    "${agent.id}": {`,
       `      id: "${agent.id}",`,
       `      model: "${model}",`,
       `      systemPrompt: \`${prompt}\`,`,
-      `      tools: [], // Add tools in src/tools/`,
+      `      permissionMode: "${permMode}",`,
       `      maxTurns: ${agent.maxTurns || 10},`,
     ];
 
-    if (agent.temperature !== undefined) parts.push(`      temperature: ${agent.temperature},`);
-    if (agent.maxTokens) parts.push(`      maxTokens: ${agent.maxTokens},`);
-    if (agent.topP !== undefined) parts.push(`      topP: ${agent.topP},`);
-    if (agent.topK !== undefined) parts.push(`      topK: ${agent.topK},`);
-    if (agent.stop?.length) parts.push(`      stop: ${JSON.stringify(agent.stop)},`);
+    // Allowed tools — these are built-in tool names for the SDK
+    if (agent.tools?.length) {
+      parts.push(`      allowedTools: ${JSON.stringify(agent.tools)},`);
+    }
+    if (agent.disallowedTools?.length) {
+      parts.push(`      disallowedTools: ${JSON.stringify(agent.disallowedTools)},`);
+    }
+
+    // Skills
+    if (agent.skills?.length) {
+      parts.push(`      skills: ${JSON.stringify(agent.skills)},`);
+    }
+
+    // Description (for subagent delegation)
+    if (agent.description) {
+      parts.push(`      description: "${escapeQuotes(agent.description)}",`);
+    }
+
+    // Sandbox
+    if (agent.sandbox !== undefined) {
+      if (typeof agent.sandbox === "boolean") {
+        parts.push(`      sandbox: ${agent.sandbox},`);
+      } else {
+        parts.push(`      sandbox: "${agent.sandbox}",`);
+      }
+    }
+
+    // Background / isolation
+    if (agent.background) parts.push(`      background: true,`);
+    if (agent.isolation) parts.push(`      isolation: "${agent.isolation}",`);
+
+    // Thinking — native SDK support
+    const thinkingConfig = mapThinking(agent.thinking, agent.thinkingBudget);
+    if (thinkingConfig) {
+      parts.push(`      thinking: ${thinkingConfig},`);
+    }
+
+    // Output format — native SDK support
+    if (agent.outputFormat) {
+      if (agent.outputFormat === "json-schema" && agent.outputSchema?.length) {
+        parts.push(`      outputFormat: { type: "json_schema", schema: ${fieldsToJsonSchema(agent.outputSchema)} },`);
+      } else if (agent.outputFormat === "json") {
+        parts.push(`      outputFormat: { type: "json" },`);
+      }
+    }
+
+    // MCP servers
+    if (agent.mcpServers?.length) {
+      const mcpConfigs: string[] = [];
+      for (const mcpName of agent.mcpServers) {
+        const mcpConfig = ast.mcpServers[mcpName];
+        if (mcpConfig) {
+          const mcpParts: string[] = [`name: "${mcpName}"`];
+          if (mcpConfig.command) mcpParts.push(`command: "${escapeQuotes(String(mcpConfig.command))}"`);
+          if (mcpConfig.args) mcpParts.push(`args: ${JSON.stringify(mcpConfig.args)}`);
+          if (mcpConfig.url) mcpParts.push(`url: "${escapeQuotes(String(mcpConfig.url))}"`);
+          mcpConfigs.push(`{ ${mcpParts.join(", ")} }`);
+        } else {
+          mcpConfigs.push(`{ name: "${mcpName}" }`);
+        }
+      }
+      parts.push(`      mcpServers: [${mcpConfigs.join(", ")}],`);
+    }
+
+    // Hooks — compile per-agent hooks to SDK format
+    if (agent.hooks?.length) {
+      const hookEntries: string[] = [];
+      for (const hook of agent.hooks) {
+        const hookParts: string[] = [
+          `event: "${hook.on}"`,
+        ];
+        if (hook.matcher) hookParts.push(`matcher: "${escapeQuotes(hook.matcher)}"`);
+        hookParts.push(`run: "${escapeQuotes(hook.run)}"`);
+        if (hook.type) hookParts.push(`type: "${hook.type}"`);
+        if (hook.timeout) hookParts.push(`timeout: ${hook.timeout}`);
+        hookEntries.push(`{ ${hookParts.join(", ")} }`);
+      }
+      parts.push(`      hooks: [${hookEntries.join(", ")}],`);
+    }
+
+    // Polyfill fields
     if (agent.timeout) parts.push(`      timeout: ${durationToMs(agent.timeout)},`);
-    if (agent.seed !== undefined) parts.push(`      seed: ${agent.seed},`);
-    if (agent.thinking) parts.push(`      thinking: "${agent.thinking}",`);
-    if (agent.thinkingBudget) parts.push(`      thinkingBudget: ${agent.thinkingBudget},`);
-    if (agent.outputFormat) parts.push(`      outputFormat: "${agent.outputFormat}",`);
     if (agent.onFail) parts.push(`      onFail: "${escapeQuotes(agent.onFail)}",`);
     if (agent.skip) parts.push(`      skip: "${escapeQuotes(agent.skip)}",`);
     if (agent.phase !== undefined) parts.push(`      phase: ${agent.phase},`);
@@ -1671,10 +1669,6 @@ function generateOrchestrator(ast: TopologyAST): string {
       parts.push(`      circuitBreaker: { threshold: ${cb.threshold}, window: ${durationToMs(cb.window)}, cooldown: ${durationToMs(cb.cooldown)} },`);
     }
 
-    if (agent.outputSchema?.length) {
-      parts.push(`      outputSchema: ${fieldsToJsonSchema(agent.outputSchema)},`);
-    }
-
     if (agent.variants?.length) {
       const variantArr = agent.variants.map((v) => {
         const vParts: string[] = [`id: "${v.id}"`, `weight: ${v.weight}`];
@@ -1685,6 +1679,14 @@ function generateOrchestrator(ast: TopologyAST): string {
       });
       parts.push(`      variants: [${variantArr.join(", ")}],`);
     }
+
+    // Sampling params — commented out (SDK manages internally)
+    if (agent.temperature !== undefined) parts.push(`      // temperature: ${agent.temperature}, // SDK manages internally`);
+    if (agent.maxTokens) parts.push(`      // maxTokens: ${agent.maxTokens}, // SDK manages internally`);
+    if (agent.topP !== undefined) parts.push(`      // topP: ${agent.topP}, // Not exposed by SDK`);
+    if (agent.topK !== undefined) parts.push(`      // topK: ${agent.topK}, // Not exposed by SDK`);
+    if (agent.stop?.length) parts.push(`      // stop: ${JSON.stringify(agent.stop)}, // Not exposed by SDK`);
+    if (agent.seed !== undefined) parts.push(`      // seed: ${agent.seed}, // Not exposed by SDK`);
 
     parts.push("    },");
     agentConfigs.push(parts.join("\n"));
@@ -1802,33 +1804,19 @@ function generateOrchestrator(ast: TopologyAST): string {
     if (d.outputFormat) defaultParts.push(`  outputFormat: "${d.outputFormat}"`);
     if (d.timeout) defaultParts.push(`  timeout: ${durationToMs(d.timeout)}`);
     if (defaultParts.length) {
-      defaultsCode = `\nconst defaults: Partial<AgentConfig> = {\n${defaultParts.join(",\n")}\n};\n`;
+      defaultsCode = `\nconst defaults: Partial<AgentQueryConfig> = {\n${defaultParts.join(",\n")}\n};\n`;
     }
   }
 
-  // Build global hooks config
-  let hooksConfig = "";
-  if (ast.hooks.length > 0) {
-    const hookParts: string[] = [];
-    for (const hook of ast.hooks) {
-      hookParts.push(`  {
-    name: "${hook.name}",
-    on: "${hook.on}",
-    matcher: "${escapeQuotes(hook.matcher)}",
-    run: "${escapeQuotes(hook.run)}",
-    type: "${hook.type || "command"}",
-    ${hook.timeout ? `timeout: ${hook.timeout},` : ""}
-  }`);
-    }
-    hooksConfig = `\nconst globalHooks = [\n${hookParts.join(",\n")}\n];\n`;
-  }
+  const hasRateLimits = agents.some((a) => a.rateLimit);
+  const hasVariants = agents.some((a) => a.variants?.length);
 
   // Build imports
   const imports: string[] = [
-    `import { executeAgent } from "./executor.js";`,
+    `import { executeAgent } from "./runner.js";`,
     `import { FileMemory } from "./memory.js";`,
     `import type {`,
-    `  AgentConfig,`,
+    `  AgentQueryConfig,`,
     `  AgentResult,`,
     `  EdgeRoute,`,
     `  TopologyConfig,`,
@@ -1869,13 +1857,6 @@ function generateOrchestrator(ast: TopologyAST): string {
   if (ast.checkpoint) {
     imports.push(`import { CheckpointManager } from "./checkpoint.js";`);
   }
-
-  // Check if we need rate limiter or variant selector
-  const hasRateLimits = agents.some((a) => a.rateLimit);
-  const hasVariants = agents.some((a) => a.variants?.length);
-  const hasCompensation = agents.some((a) => a.compensates);
-  const hasFallbackChain = agents.some((a) => a.fallbackChain?.length);
-
   if (hasRateLimits) {
     imports.push(`import { RateLimiter } from "./rate-limiter.js";`);
   }
@@ -1900,11 +1881,14 @@ function generateOrchestrator(ast: TopologyAST): string {
     : entryPoints.map((a) => `"${a.id}"`);
 
   return `/**
- * Topology orchestrator — manages the agent flow graph.
+ * Topology orchestrator — manages the agent flow graph via query() calls.
  * Auto-generated by agentopology scaffold — edit as needed.
  *
  * Topology: ${ast.topology.name} v${ast.topology.version}
  * ${ast.topology.description || ""}
+ *
+ * Key difference from anthropic-sdk binding: each agent is a single query()
+ * call to the Claude Agent SDK. No manual tool loop needed.
  */
 
 ${imports.join("\n")}
@@ -1946,6 +1930,9 @@ ${edgeRoutes.join("\n")}
   memory,
 ${observabilityConfig}
 ${checkpointConfig}
+${ast.hooks.length > 0 ? `  globalHooks: [
+${ast.hooks.map((h) => `    { name: "${escapeQuotes(h.name)}", on: "${escapeQuotes(h.on)}", matcher: "${escapeQuotes(h.matcher)}", run: "${escapeQuotes(h.run)}", type: "${h.type || "command"}"${h.timeout ? `, timeout: ${h.timeout}` : ""} },`).join("\n")}
+  ],` : ""}
 };
 ${ast.defaults ? `
 // Apply defaults to all agents that don't override
@@ -1982,12 +1969,12 @@ function checkCircuitBreaker(agentId: string, cbConfig: { threshold: number; win
   if (state.state === "open") {
     if (now >= state.nextAttempt) {
       state.state = "half-open";
-      return true; // allow one attempt
+      return true;
     }
-    return false; // circuit is open, reject
+    return false;
   }
 
-  return true; // closed or half-open, allow
+  return true;
 }
 
 function recordCircuitBreakerResult(agentId: string, cbConfig: { threshold: number; window: number; cooldown: number }, failed: boolean): void {
@@ -1995,20 +1982,16 @@ function recordCircuitBreakerResult(agentId: string, cbConfig: { threshold: numb
   const now = Date.now();
 
   if (failed) {
-    // Reset count if outside window
     if (now - state.lastFailure > cbConfig.window) {
       state.failureCount = 0;
     }
-
     state.failureCount++;
     state.lastFailure = now;
-
     if (state.failureCount >= cbConfig.threshold) {
       state.state = "open";
       state.nextAttempt = now + cbConfig.cooldown;
     }
   } else {
-    // Success: close the circuit
     state.state = "closed";
     state.failureCount = 0;
   }
@@ -2031,38 +2014,27 @@ function getRateLimiter(agentId: string, rateExpr: string): RateLimiter {
 // Flow engine
 // ---------------------------------------------------------------------------
 
-/** Results collected during a topology run. */
 const results = new Map<string, AgentResult>();
-
-/** Edge iteration counts for maxIterations enforcement. */
 const edgeIterations = new Map<string, number>();
 
-/**
- * Get the next agents to execute based on edges from the completed agent.
- */
 function getNextAgents(completedId: string, result: AgentResult): Array<{ id: string; wait?: number }> {
   const outgoing = config.edges.filter((e) => e.from === completedId);
-
   if (!outgoing.length) return [];
 
-  // Separate error edges from normal edges
   const errorEdges = outgoing.filter((e) => e.isError);
   const normalEdges = outgoing.filter((e) => !e.isError);
 
-  // If the agent errored, use error edges
   if (result.error && errorEdges.length) {
     return errorEdges
       .filter((e) => !e.errorType || result.error?.includes(e.errorType))
       .map((e) => ({ id: e.to, wait: e.wait }));
   }
 
-  // Check race edges — only first result matters
   const raceEdges = normalEdges.filter((e) => e.race);
   if (raceEdges.length) {
     return raceEdges.map((e) => ({ id: e.to, wait: e.wait }));
   }
 
-  // Weighted routing
   const weighted = normalEdges.filter((e) => e.weight !== undefined);
   if (weighted.length) {
     const rand = Math.random();
@@ -2074,25 +2046,19 @@ function getNextAgents(completedId: string, result: AgentResult): Array<{ id: st
     return [{ id: weighted[weighted.length - 1].to, wait: weighted[weighted.length - 1].wait }];
   }
 
-  // Conditional and maxIterations routing
   return normalEdges
     .filter((e) => {
-      // Check maxIterations
       if (e.maxIterations !== undefined) {
         const key = \`\${e.from}->\${e.to}\`;
         const count = edgeIterations.get(key) || 0;
         if (count >= e.maxIterations) return false;
         edgeIterations.set(key, count + 1);
       }
-      // Check condition
       return !e.condition || e.condition(result);
     })
     .map((e) => ({ id: e.to, wait: e.wait }));
 }
 
-/**
- * Run gate checks around an agent.
- */
 async function runGates(agentId: string, position: "before" | "after"): Promise<boolean> {
   for (const [gateId, gate] of Object.entries(config.gates)) {
     const matchesPosition = position === "before"
@@ -2100,10 +2066,8 @@ async function runGates(agentId: string, position: "before" | "after"): Promise<
       : gate.after === agentId;
 
     if (!matchesPosition) continue;
-
     if (!gate.run) continue;
 
-    // Execute gate script
     const { exec } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const execAsync = promisify(exec);
@@ -2118,51 +2082,43 @@ async function runGates(agentId: string, position: "before" | "after"): Promise<
         break;
       } catch {
         if (attempt < retries) {
-          console.log(\`  ↻ Gate "\${gateId}" failed, retry \${attempt + 1}/\${retries}\`);
+          console.log(\`  Gate "\${gateId}" failed, retry \${attempt + 1}/\${retries}\`);
         }
       }
     }
 
     if (!passed) {
       const behavior = gate.onFail || "halt";
-      console.log(\`  ✗ Gate "\${gateId}" failed (on-fail: \${behavior})\`);
+      console.log(\`  Gate "\${gateId}" failed (on-fail: \${behavior})\`);
       if (behavior === "halt") return false;
-      // "bounce-back" or other behaviors: continue for now
     }
   }
 
   return true;
 }
 
-/**
- * Execute a single agent with retry, fallback chain, and circuit breaker support.
- */
 async function runAgent(agentId: string, input: string): Promise<AgentResult> {
   const agentConfig = config.agents[agentId];
   if (!agentConfig) {
     throw new Error(\`Unknown agent: \${agentId}\`);
   }
 
-  // Check skip condition
   if (agentConfig.skip) {
-    console.log(\`  ⊘ Skipping \${agentId}: \${agentConfig.skip}\`);
+    console.log(\`  Skipping \${agentId}: \${agentConfig.skip}\`);
     return {
       agentId: agentConfig.id,
       output: "[skipped]",
-      toolCalls: [],
       tokenUsage: { input: 0, output: 0 },
       durationMs: 0,
     };
   }
 
-  // Check circuit breaker
   if (agentConfig.circuitBreaker) {
     if (!checkCircuitBreaker(agentId, agentConfig.circuitBreaker)) {
-      console.log(\`  ⚡ Circuit open for \${agentId}, skipping\`);
+      console.log(\`  Circuit open for \${agentId}, skipping\`);
       return {
         agentId: agentConfig.id,
         output: "",
-        toolCalls: [],
         tokenUsage: { input: 0, output: 0 },
         durationMs: 0,
         error: "Circuit breaker is open",
@@ -2170,22 +2126,18 @@ async function runAgent(agentId: string, input: string): Promise<AgentResult> {
     }
   }
 ${hasRateLimits ? `
-  // Apply rate limiting
   if (agentConfig.rateLimit) {
     const limiter = getRateLimiter(agentId, agentConfig.rateLimit);
     await limiter.acquire();
   }
 ` : ""}${hasVariants ? `
-  // Apply prompt variant if configured
   if (agentConfig.variants?.length) {
     const selection = selectVariant(agentConfig.variants, agentConfig.systemPrompt);
     agentConfig.systemPrompt = selection.prompt;
-    if (selection.temperature !== undefined) agentConfig.temperature = selection.temperature;
     if (selection.model) agentConfig.model = selection.model;
-    console.log(\`  ⚄ Using variant "\${selection.variantId}" for \${agentId}\`);
+    console.log(\`  Using variant "\${selection.variantId}" for \${agentId}\`);
   }
 ` : ""}
-  // Run "before" gates
   const gatesPassed = await runGates(agentId, "before");
   if (!gatesPassed) {
     const behavior = agentConfig.onFail || "halt";
@@ -2193,7 +2145,6 @@ ${hasRateLimits ? `
       return {
         agentId: agentConfig.id,
         output: "",
-        toolCalls: [],
         tokenUsage: { input: 0, output: 0 },
         durationMs: 0,
         error: "Gate check failed before execution",
@@ -2203,8 +2154,6 @@ ${hasRateLimits ? `
 
   const retryMax = agentConfig.retry?.max ?? 0;
   let lastError: string | undefined;
-
-  // Try with primary model first, then fallback chain
   const modelsToTry = [agentConfig.model, ...(agentConfig.fallbackChain || [])];
 
   for (const model of modelsToTry) {
@@ -2218,13 +2167,12 @@ ${hasRateLimits ? `
         if (backoff === "linear") delay = baseInterval * attempt;
         if (backoff === "exponential") delay = baseInterval * Math.pow(2, attempt - 1);
         await new Promise((resolve) => setTimeout(resolve, delay));
-        console.log(\`  ↻ Retry \${attempt}/\${retryMax} for \${agentId}\`);
+        console.log(\`  Retry \${attempt}/\${retryMax} for \${agentId}\`);
       }
 
       const result = await executeAgent(configWithModel, input, config.memory);
 
       if (!result.error) {
-        // Run "after" gates
         const afterGatesPassed = await runGates(agentId, "after");
         if (!afterGatesPassed) {
           const behavior = agentConfig.onFail || "halt";
@@ -2233,7 +2181,6 @@ ${hasRateLimits ? `
           }
         }
 
-        // Record circuit breaker success
         if (agentConfig.circuitBreaker) {
           recordCircuitBreakerResult(agentId, agentConfig.circuitBreaker, false);
         }
@@ -2244,10 +2191,9 @@ ${hasRateLimits ? `
       lastError = result.error;
     }
 
-    console.log(\`  ⚠ Model "\${model}" failed for \${agentId}, trying next fallback...\`);
+    console.log(\`  Model "\${model}" failed for \${agentId}, trying next fallback...\`);
   }
 
-  // All attempts failed
   if (agentConfig.circuitBreaker) {
     recordCircuitBreakerResult(agentId, agentConfig.circuitBreaker, true);
   }
@@ -2255,17 +2201,12 @@ ${hasRateLimits ? `
   return {
     agentId: agentConfig.id,
     output: "",
-    toolCalls: [],
     tokenUsage: { input: 0, output: 0 },
     durationMs: 0,
     error: lastError,
   };
 }
 
-/**
- * Handle onFail behavior for a failed agent.
- * Returns true if topology should continue, false if it should halt.
- */
 function handleOnFail(agentId: string, result: AgentResult, queue: Array<{ agentId: string; input: string }>): boolean {
   const agentConfig = config.agents[agentId];
   const behavior = agentConfig?.onFail || "halt";
@@ -2281,200 +2222,138 @@ function handleOnFail(agentId: string, result: AgentResult, queue: Array<{ agent
 
   return false;
 }
-${hasCompensation ? `
+
 /**
- * Run compensation for a failed agent (saga pattern).
- */
-async function runCompensation(failedAgentId: string, input: string): Promise<void> {
-  // Find agents that compensate the failed agent
-  for (const [id, agent] of Object.entries(config.agents)) {
-    if (agent.compensates === failedAgentId) {
-      console.log(\`  ↩ Running compensation agent "\${id}" for failed "\${failedAgentId}"\`);
-      await runAgent(id, input);
-    }
-  }
-}
-` : ""}
-/**
- * Run the full topology starting from entry points.
+ * Run the topology flow graph.
  */
 export async function runTopology(input: string): Promise<Map<string, AgentResult>> {
-  console.log(\`\\n⚡ Running topology: \${config.name} v\${config.version}\`);
-  console.log(\`  Entry points: \${config.entryPoints.join(", ")}\\n\`);
-${ast.observability?.enabled ? `
-  const tracer = new Tracer(config.observability!);
-  const topologySpan = tracer.startSpan("topology:" + config.name);
-` : ""}${ast.checkpoint ? `
-  const checkpointMgr = new CheckpointManager(config.checkpoint!);
-  const runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const completedNodes = await checkpointMgr.getCompletedNodes(runId);
-` : ""}
-  // Sort agents by phase for phase-aware execution
-  const phaseAgents = Object.values(config.agents)
-    .filter((a) => a.phase !== undefined)
-    .sort((a, b) => (a.phase || 0) - (b.phase || 0));
+  console.log(\`Running topology: \${config.name} v\${config.version}\`);
 
-  // Queue of agents to execute with their input
-  const queue: Array<{ agentId: string; input: string }> = config.entryPoints.map(
-    (id) => ({ agentId: id, input }),
-  );
-
-  const visited = new Set<string>();
+  const queue: Array<{ agentId: string; input: string }> = [];
+  for (const ep of config.entryPoints) {
+    queue.push({ agentId: ep, input });
+  }
 
   while (queue.length > 0) {
-    // Collect agents that can run in parallel (no dependencies on each other)
     const batch = queue.splice(0, queue.length);
-    const batchPromises = batch.map(async ({ agentId, input: agentInput }) => {
-      const runKey = agentId;
-      if (visited.has(runKey)) return; // prevent infinite loops
-      visited.add(runKey);
-${ast.checkpoint ? `
-      // Skip already-completed nodes on replay
-      if (completedNodes.has(agentId)) {
-        console.log(\`  ⟳ Skipping \${agentId} (already checkpointed)\`);
-        return;
-      }
-` : ""}${ast.depth.levels.length ? `
-      // Depth filtering — omit agents based on current depth level
-      if (shouldOmitAgent(agentId)) {
-        console.log(\`  ⊘ Omitting \${agentId} (depth level \${getDepthLevel()})\`);
-        return;
-      }
+
+    const batchResults = await Promise.allSettled(
+      batch.map(async ({ agentId, input: agentInput }) => {
+${ast.depth.levels.length ? `        // Depth filtering — omit agents based on current depth level
+        if (shouldOmitAgent(agentId)) {
+          console.log(\`  Omitting \${agentId} (depth level \${getDepthLevel()})\`);
+          const skipResult: AgentResult = {
+            agentId: agentId as AgentResult["agentId"],
+            output: "[omitted by depth]",
+            tokenUsage: { input: 0, output: 0 },
+            durationMs: 0,
+          };
+          results.set(agentId, skipResult);
+          return { agentId, result: skipResult };
+        }
 ` : ""}
-      // Check if this is a group node
-      if (config.groups[agentId]) {
-        console.log(\`  ▶ Running group: \${agentId}\`);
-        const groupResult = await executeGroup(
-          config.groups[agentId],
-          config.agents,
-          agentInput,
-          config.memory,
-        );
-        console.log(\`  ✓ Group \${agentId} completed (\${groupResult.rounds} rounds)\`);
-        // Store as an AgentResult for downstream routing
-        const groupAgentResult: AgentResult = {
-          agentId: agentId as AgentResult["agentId"],
-          output: groupResult.finalOutput,
-          toolCalls: [],
-          tokenUsage: groupResult.totalTokens,
-          durationMs: 0,
-        };
-        results.set(agentId, groupAgentResult);
-        const nextAgents = getNextAgents(agentId, groupAgentResult);
-        for (const next of nextAgents) {
-          if (next.wait) await new Promise((r) => setTimeout(r, next.wait));
-          queue.push({ agentId: next.id, input: groupResult.finalOutput });
+        // Check node type and route to appropriate executor
+        if (config.groups[agentId]) {
+          const groupResult = await executeGroup(config.groups[agentId], config.agents, agentInput, config.memory);
+          const agentResult: AgentResult = {
+            agentId: agentId as AgentResult["agentId"],
+            output: groupResult.finalOutput,
+            tokenUsage: groupResult.totalTokens,
+            durationMs: 0,
+          };
+          results.set(agentId, agentResult);
+          return { agentId, result: agentResult };
         }
-        return;
+
+        if (config.humans[agentId]) {
+          const humanResult = await executeHuman(config.humans[agentId]);
+          const agentResult: AgentResult = {
+            agentId: agentId as AgentResult["agentId"],
+            output: humanResult.input,
+            tokenUsage: { input: 0, output: 0 },
+            durationMs: 0,
+          };
+          results.set(agentId, agentResult);
+          return { agentId, result: agentResult };
+        }
+
+        if (config.actions[agentId]) {
+          const actionResult = await executeAction(config.actions[agentId]);
+          const agentResult: AgentResult = {
+            agentId: agentId as AgentResult["agentId"],
+            output: actionResult.stdout,
+            tokenUsage: { input: 0, output: 0 },
+            durationMs: 0,
+            error: actionResult.error,
+          };
+          results.set(agentId, agentResult);
+          return { agentId, result: agentResult };
+        }
+
+        // Default: agent node
+        const result = await runAgent(agentId, agentInput);
+        results.set(agentId, result);
+        return { agentId, result };
+      }),
+    );
+
+    for (const settled of batchResults) {
+      if (settled.status === "rejected") {
+        console.error("Batch item failed:", settled.reason);
+        continue;
       }
 
-      // Check if this is a human node
-      if (config.humans[agentId]) {
-        console.log(\`  ▶ Waiting for human: \${agentId}\`);
-        const humanResult = await executeHuman(config.humans[agentId]);
-        if (humanResult.timedOut && config.humans[agentId].onTimeout === "halt") {
-          console.log(\`  ✗ Human \${agentId} timed out (halting)\`);
-          return;
-        }
-        const humanAgentResult: AgentResult = {
-          agentId: agentId as AgentResult["agentId"],
-          output: humanResult.input,
-          toolCalls: [],
-          tokenUsage: { input: 0, output: 0 },
-          durationMs: 0,
-        };
-        results.set(agentId, humanAgentResult);
-        const nextAgents = getNextAgents(agentId, humanAgentResult);
-        for (const next of nextAgents) {
-          if (next.wait) await new Promise((r) => setTimeout(r, next.wait));
-          queue.push({ agentId: next.id, input: humanResult.input });
-        }
-        return;
-      }
-
-      // Check if this is an action node
-      if (config.actions[agentId]) {
-        console.log(\`  ▶ Running action: \${agentId}\`);
-        const actionResult = await executeAction(config.actions[agentId]);
-        const actionAgentResult: AgentResult = {
-          agentId: agentId as AgentResult["agentId"],
-          output: actionResult.stdout,
-          toolCalls: [],
-          tokenUsage: { input: 0, output: 0 },
-          durationMs: 0,
-          error: actionResult.error,
-        };
-        results.set(agentId, actionAgentResult);
-        if (actionResult.error) {
-          console.log(\`  ✗ Action \${agentId} failed: \${actionResult.error}\`);
-        } else {
-          console.log(\`  ✓ Action \${agentId} completed\`);
-        }
-        const nextAgents = getNextAgents(agentId, actionAgentResult);
-        for (const next of nextAgents) {
-          if (next.wait) await new Promise((r) => setTimeout(r, next.wait));
-          queue.push({ agentId: next.id, input: actionResult.stdout || agentInput });
-        }
-        return;
-      }
-
-      // Regular agent execution
-      console.log(\`  ▶ Running: \${agentId}\`);
-${ast.observability?.enabled ? `      const agentSpan = tracer.startSpan("agent:" + agentId, topologySpan.spanId);\n` : ""}      const result = await runAgent(agentId, agentInput);
-      results.set(agentId, result);
+      const { agentId, result } = settled.value;
 
       if (result.error) {
-        console.log(\`  ✗ \${agentId} failed: \${result.error}\`);
-${hasCompensation ? `        await runCompensation(agentId, agentInput);\n` : ""}
-        if (!handleOnFail(agentId, result, queue)) {
-          return; // halt
+        const shouldContinue = handleOnFail(agentId, result, queue);
+        if (!shouldContinue) {
+          console.error(\`Topology halted: agent "\${agentId}" failed: \${result.error}\`);
+          return results;
         }
-      } else {
-        console.log(
-          \`  ✓ \${agentId} completed (\${result.durationMs}ms, \${result.tokenUsage.input + result.tokenUsage.output} tokens)\`,
-        );
+        continue;
       }
-${ast.observability?.enabled ? `      agentSpan.attributes["agent.id"] = agentId;
-      agentSpan.attributes["agent.tokens.input"] = result.tokenUsage.input;
-      agentSpan.attributes["agent.tokens.output"] = result.tokenUsage.output;
-      agentSpan.attributes["agent.duration_ms"] = result.durationMs;
-      if (result.error) agentSpan.attributes["agent.error"] = result.error;
-      tracer.endSpan(agentSpan);
-` : ""}${ast.checkpoint ? `      // Checkpoint after node execution
-      if (checkpointMgr.shouldSaveAfterNode()) {
-        await checkpointMgr.save(runId, config.name, {
-          nodeId: agentId,
-          result,
-          timestamp: Date.now(),
-        });
-      }
-` : ""}
-      // Determine next agents
+
+      // Get next agents from edges
       const nextAgents = getNextAgents(agentId, result);
       for (const next of nextAgents) {
         if (next.wait) {
-          await new Promise((r) => setTimeout(r, next.wait));
+          await new Promise((resolve) => setTimeout(resolve, next.wait));
         }
-        queue.push({
-          agentId: next.id,
-          input: result.output || input,
-        });
+        queue.push({ agentId: next.id, input: result.output });
       }
-    });
-
-    await Promise.all(batchPromises);
+    }
   }
-${ast.observability?.enabled ? `
-  tracer.endSpan(topologySpan);
-` : ""}
-  console.log(\`\\n✓ Topology complete. \${results.size} agents executed.\\n\`);
+
   return results;
 }
+
+export { config };
 `;
 }
 
 // ---------------------------------------------------------------------------
-// Entry point generator
+// Settings generator (for .claude/settings.json)
+// ---------------------------------------------------------------------------
+
+function generateSettings(ast: TopologyAST): string {
+  const settings: Record<string, unknown> = {};
+
+  if (ast.settings && typeof ast.settings === "object") {
+    const perms = ast.settings as Record<string, unknown>;
+    if (perms.permissions && typeof perms.permissions === "object") {
+      const permRules = perms.permissions as Record<string, unknown>;
+      if (permRules.allow) settings.allow = permRules.allow;
+      if (permRules.deny) settings.deny = permRules.deny;
+      if (permRules.ask) settings.ask = permRules.ask;
+    }
+  }
+
+  return JSON.stringify(settings, null, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Index / entry point generator
 // ---------------------------------------------------------------------------
 
 function generateIndex(ast: TopologyAST): string {
@@ -2482,202 +2361,73 @@ function generateIndex(ast: TopologyAST): string {
   const hasParams = ast.params.length > 0;
 
   return `/**
- * ${ast.topology.name} — Topology entry point.
+ * Entry point for ${ast.topology.name} topology.
  * Auto-generated by agentopology scaffold — edit as needed.
+ *
+ * Uses the Claude Agent SDK — each agent is a query() call.
+ * No manual tool loop needed.
  */
 
-import { runTopology } from "./orchestrator.js";
+import { runTopology, config } from "./orchestrator.js";
 ${hasSchedules ? `import { Scheduler } from "./scheduler.js";\n` : ""}${hasParams ? `import { parseParams } from "./params.js";\n` : ""}
-${hasParams ? `// Parse topology parameters from CLI args / env vars
-const params = parseParams();
-console.log("Topology params:", params);
-` : ""}const input = process.argv.slice(2).join(" ") || "Begin the topology execution.";
+async function main() {
+${hasParams ? `  // Parse topology parameters from CLI args / env vars
+  const params = parseParams();
+  console.log("Topology params:", params);
+` : ""}  const input = process.argv.slice(2).join(" ") || "Start the topology";
+  console.log("Starting ${escapeQuotes(ast.topology.name)} topology...");
+  console.log(\`Input: \${input}\`);
+  console.log("");
 
-runTopology(input)
-  .then((results) => {
-    // Print summary
-    for (const [agentId, result] of results) {
-      console.log(\`--- \${agentId} ---\`);
-      if (result.error) {
-        console.log(\`ERROR: \${result.error}\`);
-      } else {
-        console.log(result.output.slice(0, 500));
-      }
-      console.log(\`Tokens: \${result.tokenUsage.input}in / \${result.tokenUsage.output}out\`);
-      console.log(\`Duration: \${result.durationMs}ms\`);
-      console.log(\`Tool calls: \${result.toolCalls.length}\`);
-      console.log();
+  const results = await runTopology(input);
+
+  console.log("");
+  console.log("=".repeat(60));
+  console.log("Results:");
+  console.log("=".repeat(60));
+
+  for (const [agentId, result] of results) {
+    console.log(\`\\n[\${agentId}]\`);
+    if (result.error) {
+      console.log(\`  Error: \${result.error}\`);
+    } else {
+      console.log(\`  Output: \${result.output.slice(0, 200)}\${result.output.length > 200 ? "..." : ""}\`);
     }
+    console.log(\`  Tokens: \${result.tokenUsage.input} in / \${result.tokenUsage.output} out\`);
+    console.log(\`  Duration: \${result.durationMs}ms\`);
+  }
 ${hasSchedules ? `
-    // Start scheduled jobs
-    const scheduler = new Scheduler();
+  // Start scheduled jobs
+  const scheduler = new Scheduler();
 ${ast.schedules
   .filter((s) => s.enabled)
   .map((s) => {
     if (s.cron) {
-      return `    scheduler.addCronJob("${s.id}", "${escapeQuotes(s.cron)}", async () => {
-      console.log("Running scheduled job: ${s.id}");
-      await runTopology("Scheduled run: ${s.id}");
-    });`;
+      return `  scheduler.addCronJob("${s.id}", "${escapeQuotes(s.cron)}", async () => {
+    console.log("Running scheduled job: ${s.id}");
+    await runTopology("Scheduled run: ${s.id}");
+  });`;
     } else if (s.every) {
-      return `    scheduler.addEveryJob("${s.id}", "${s.every}", async () => {
-      console.log("Running scheduled job: ${s.id}");
-      await runTopology("Scheduled run: ${s.id}");
-    });`;
+      return `  scheduler.addEveryJob("${s.id}", "${s.every}", async () => {
+    console.log("Running scheduled job: ${s.id}");
+    await runTopology("Scheduled run: ${s.id}");
+  });`;
     }
     return "";
   })
   .filter(Boolean)
   .join("\n")}
-    scheduler.start();
-    console.log("\\nScheduler started. Press Ctrl+C to stop.");
-    process.on("SIGINT", () => {
-      scheduler.stop();
-      process.exit(0);
-    });
-` : ""}  })
-  .catch((err) => {
-    console.error("Topology failed:", err);
-    process.exit(1);
+  scheduler.start();
+  console.log("\\nScheduler started. Press Ctrl+C to stop.");
+  process.on("SIGINT", () => {
+    scheduler.stop();
+    process.exit(0);
   });
-`;
+` : ""}
 }
 
-// ---------------------------------------------------------------------------
-// Tools generator
-// ---------------------------------------------------------------------------
-
-function generateToolsIndex(ast: TopologyAST): string {
-  const lines: string[] = [
-    "/**",
-    " * Tool definitions for the topology runtime.",
-    " * Auto-generated by agentopology scaffold — edit as needed.",
-    " */",
-    "",
-    'import type { ToolDefinition } from "./types.js";',
-    'import { readFile, writeFile } from "node:fs/promises";',
-    'import { exec } from "node:child_process";',
-    'import { promisify } from "node:util";',
-    "",
-    "const execAsync = promisify(exec);",
-    "",
-    "// ---------------------------------------------------------------------------",
-    "// Built-in tools",
-    "// ---------------------------------------------------------------------------",
-    "",
-    "export const readFileTool: ToolDefinition = {",
-    '  name: "read_file",',
-    '  description: "Read a file from the filesystem",',
-    "  input_schema: {",
-    '    type: "object",',
-    "    properties: {",
-    '      path: { type: "string", description: "File path to read" },',
-    "    },",
-    '    required: ["path"],',
-    "  },",
-    "  async execute(input) {",
-    '    return await readFile(input.path as string, "utf-8");',
-    "  },",
-    "};",
-    "",
-    "export const writeFileTool: ToolDefinition = {",
-    '  name: "write_file",',
-    '  description: "Write content to a file",',
-    "  input_schema: {",
-    '    type: "object",',
-    "    properties: {",
-    '      path: { type: "string", description: "File path to write" },',
-    '      content: { type: "string", description: "Content to write" },',
-    "    },",
-    '    required: ["path", "content"],',
-    "  },",
-    "  async execute(input) {",
-    '    await writeFile(input.path as string, input.content as string, "utf-8");',
-    "    return `Written to ${input.path}`;",
-    "  },",
-    "};",
-    "",
-    "export const bashTool: ToolDefinition = {",
-    '  name: "bash",',
-    '  description: "Execute a bash command and return its output",',
-    "  input_schema: {",
-    '    type: "object",',
-    "    properties: {",
-    '      command: { type: "string", description: "The command to execute" },',
-    "    },",
-    '    required: ["command"],',
-    "  },",
-    "  async execute(input) {",
-    "    const { stdout, stderr } = await execAsync(input.command as string, {",
-    "      timeout: 30_000,",
-    "    });",
-    '    return stdout + (stderr ? "\\nSTDERR:\\n" + stderr : "");',
-    "  },",
-    "};",
-    "",
-  ];
-
-  // Generate topology-defined tools
-  if (ast.toolDefs.length) {
-    lines.push(
-      "// ---------------------------------------------------------------------------",
-      "// Topology-defined tools",
-      "// ---------------------------------------------------------------------------",
-      "",
-    );
-
-    for (const tool of ast.toolDefs) {
-      const varName = toCamelCase(tool.id) + "Tool";
-      lines.push(
-        `export const ${varName}: ToolDefinition = {`,
-        `  name: "${tool.id}",`,
-        `  description: "${escapeQuotes(tool.description)}",`,
-        "  input_schema: {",
-        '    type: "object",',
-        "    properties: {",
-      );
-
-      if (tool.args?.length) {
-        for (const arg of tool.args) {
-          lines.push(`      ${arg}: { type: "string", description: "${arg}" },`);
-        }
-      }
-
-      lines.push(
-        "    },",
-        `    required: ${JSON.stringify(tool.args || [])},`,
-        "  },",
-        "  async execute(input) {",
-        `    // TODO: implement ${tool.id}`,
-        `    // Original script: ${tool.script}`,
-        '    return "TODO: implement this tool";',
-        "  },",
-        "};",
-        "",
-      );
-    }
-  }
-
-  // Export all tools as a map
-  lines.push(
-    "// ---------------------------------------------------------------------------",
-    "// Tool registry",
-    "// ---------------------------------------------------------------------------",
-    "",
-    "export const allTools: Record<string, ToolDefinition> = {",
-    "  read_file: readFileTool,",
-    "  write_file: writeFileTool,",
-    "  bash: bashTool,",
-  );
-
-  for (const tool of ast.toolDefs) {
-    const varName = toCamelCase(tool.id) + "Tool";
-    lines.push(`  "${tool.id}": ${varName},`);
-  }
-
-  lines.push("};", "");
-
-  return lines.join("\n");
+main().catch(console.error);
+`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2727,7 +2477,6 @@ function generateArtifacts(ast: TopologyAST): string {
     return `  "${a.id}": {\n${parts.join(",\n")}\n  }`;
   });
 
-  // Build producer/consumer maps from agent nodes
   const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
   const producerMap: Record<string, string[]> = {};
   const consumerMap: Record<string, string[]> = {};
@@ -2761,26 +2510,13 @@ export const artifactManifest: Record<string, ArtifactEntry> = {
 ${entries.join(",\n")}
 };
 
-/** Map of artifact id -> agent ids that produce it. */
 export const artifactProducers: Record<string, string[]> = ${JSON.stringify(producerMap, null, 2)};
-
-/** Map of artifact id -> agent ids that consume it. */
 export const artifactConsumers: Record<string, string[]> = ${JSON.stringify(consumerMap, null, 2)};
 
-/** Track which artifacts have been produced in this run. */
 const producedArtifacts = new Set<string>();
-
-export function markProduced(artifactId: string): void {
-  producedArtifacts.add(artifactId);
-}
-
-export function isProduced(artifactId: string): boolean {
-  return producedArtifacts.has(artifactId);
-}
-
-export function getProducedArtifacts(): string[] {
-  return [...producedArtifacts];
-}
+export function markProduced(artifactId: string): void { producedArtifacts.add(artifactId); }
+export function isProduced(artifactId: string): boolean { return producedArtifacts.has(artifactId); }
+export function getProducedArtifacts(): string[] { return [...producedArtifacts]; }
 `;
 }
 
@@ -2792,14 +2528,11 @@ function generateDepth(ast: TopologyAST): string {
   const depth = ast.depth;
   if (!depth.levels.length) return `/** No depth levels defined. */\nexport function shouldOmitAgent(_agentId: string): boolean { return false; }\nexport function getDepthLevel(): number { return 0; }\n`;
 
-  const levelsJson = JSON.stringify(depth.levels, null, 2);
-
   return `/**
  * Depth configuration — controls which agents to omit at each depth level.
  * Auto-generated by agentopology scaffold — edit as needed.
  *
  * Factors: ${depth.factors.join(", ") || "none"}
- * Set depth via TOPOLOGY_DEPTH env var or --depth CLI arg.
  */
 
 export interface DepthLevel {
@@ -2809,27 +2542,18 @@ export interface DepthLevel {
 }
 
 export const depthFactors: string[] = ${JSON.stringify(depth.factors)};
+export const depthLevels: DepthLevel[] = ${JSON.stringify(depth.levels, null, 2)};
 
-export const depthLevels: DepthLevel[] = ${levelsJson};
-
-/**
- * Get the current depth level from env or CLI args.
- */
 export function getDepthLevel(): number {
-  // Check CLI args: --depth=N or --depth N
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith("--depth=")) return parseInt(args[i].split("=")[1], 10) || 0;
     if (args[i] === "--depth" && args[i + 1]) return parseInt(args[i + 1], 10) || 0;
   }
-  // Check env var
   if (process.env.TOPOLOGY_DEPTH) return parseInt(process.env.TOPOLOGY_DEPTH, 10) || 0;
   return 0;
 }
 
-/**
- * Check if an agent should be omitted at the current depth level.
- */
 export function shouldOmitAgent(agentId: string): boolean {
   const level = getDepthLevel();
   const depthDef = depthLevels.find((d) => d.level === level);
@@ -2946,9 +2670,6 @@ const paramDefs: ParamDef[] = [
 ${paramDefs.join(",\n")}
 ];
 
-/**
- * Parse topology parameters from CLI args (--name=value) and env vars (TOPOLOGY_PARAM_NAME).
- */
 export function parseParams(): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const args = process.argv.slice(2);
@@ -2956,13 +2677,11 @@ export function parseParams(): Record<string, unknown> {
   for (const def of paramDefs) {
     let raw: string | undefined;
 
-    // CLI args: --name=value or --name value
     for (let i = 0; i < args.length; i++) {
       if (args[i] === \`--\${def.name}\` && args[i + 1]) { raw = args[i + 1]; break; }
       if (args[i].startsWith(\`--\${def.name}=\`)) { raw = args[i].split("=").slice(1).join("="); break; }
     }
 
-    // Env var fallback: TOPOLOGY_PARAM_<NAME>
     if (raw === undefined) {
       raw = process.env[\`TOPOLOGY_PARAM_\${def.name.toUpperCase()}\`];
     }
@@ -3017,11 +2736,7 @@ function generateImportsAndIncludes(ast: TopologyAST): string {
   if (ast.imports.length) {
     lines.push("// --- Imports ---");
     for (const imp of ast.imports) {
-      const parts: string[] = [`source: "${imp.source}"`, `alias: "${imp.alias}"`];
-      if (imp.sha256) parts.push(`sha256: "${imp.sha256}"`);
-      if (imp.registry) parts.push(`registry: true`);
-      if (Object.keys(imp.params).length) parts.push(`params: ${JSON.stringify(imp.params)}`);
-      lines.push(`// import ${imp.alias} from "${imp.source}" — ${parts.join(", ")}`);
+      lines.push(`// import ${imp.alias} from "${imp.source}"`);
     }
     lines.push("");
     lines.push("export const topologyImports = " + JSON.stringify(ast.imports.map((i) => ({
@@ -3059,13 +2774,6 @@ function generateImportsAndIncludes(ast: TopologyAST): string {
 function scaffold(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
-  const groups = ast.nodes.filter((n): n is GroupNode => n.type === "group");
-  const humans = ast.nodes.filter((n): n is HumanNode => n.type === "human");
-  const actions = ast.nodes.filter((n): n is ActionNode => n.type === "action");
-  const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
-  const hasRateLimits = agents.some((a) => a.rateLimit);
-  const hasVariants = agents.some((a) => a.variants?.length);
-
   // Package config
   files.push({ path: "package.json", content: generatePackageJson(ast) });
   files.push({ path: "tsconfig.json", content: generateTsConfig() });
@@ -3074,39 +2782,30 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
   // Source files
   files.push({ path: "src/types.ts", content: generateTypes(ast) });
   files.push({ path: "src/memory.ts", content: generateMemory() });
-  files.push({ path: "src/executor.ts", content: generateAgentExecutor() });
+  files.push({ path: "src/runner.ts", content: generateAgentRunner() });
   files.push({ path: "src/orchestrator.ts", content: generateOrchestrator(ast) });
-  files.push({ path: "src/tools.ts", content: generateToolsIndex(ast) });
   files.push({ path: "src/index.ts", content: generateIndex(ast) });
 
-  // New executor files
+  // Executor files
   files.push({ path: "src/group-executor.ts", content: generateGroupExecutor() });
   files.push({ path: "src/human-executor.ts", content: generateHumanExecutor() });
   files.push({ path: "src/action-executor.ts", content: generateActionExecutor() });
 
-  // Observability
+  // Runtime files
   files.push({ path: "src/observability.ts", content: generateObservability() });
-
-  // Checkpoint
   files.push({ path: "src/checkpoint.ts", content: generateCheckpoint() });
-
-  // Scheduler
   files.push({ path: "src/scheduler.ts", content: generateScheduler() });
-
-  // Rate limiter
   files.push({ path: "src/rate-limiter.ts", content: generateRateLimiter() });
-
-  // Variant selector
   files.push({ path: "src/variants.ts", content: generateVariantSelector() });
+
+  // Metering
+  files.push({ path: "src/metering.ts", content: generateMetering(ast) });
 
   // Artifacts
   files.push({ path: "src/artifacts.ts", content: generateArtifacts(ast) });
 
   // Depth
   files.push({ path: "src/depth.ts", content: generateDepth(ast) });
-
-  // Metering
-  files.push({ path: "src/metering.ts", content: generateMetering(ast) });
 
   // Params
   files.push({ path: "src/params.ts", content: generateParams(ast) });
@@ -3121,13 +2820,14 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
     files.push({ path: "src/topology-imports.ts", content: generateImportsAndIncludes(ast) });
   }
 
+  // Settings
+  files.push({ path: ".claude/settings.json", content: generateSettings(ast) });
+
   // Gate scripts
   files.push(...generateGateScripts(ast));
 
-  // Memory directory
+  // Directories
   files.push({ path: ".memory/.gitkeep", content: "" });
-
-  // Checkpoint directory
   files.push({ path: ".checkpoint/.gitkeep", content: "" });
 
   // .gitignore
@@ -3149,9 +2849,9 @@ function scaffold(ast: TopologyAST): GeneratedFile[] {
   return deduplicateFiles(files);
 }
 
-export const anthropicSdkBinding: BindingTarget = {
-  name: "anthropic-sdk",
+export const claudeAgentSdkBinding: BindingTarget = {
+  name: "claude-agent-sdk",
   description:
-    "Anthropic Messages API — compiles topology to runnable TypeScript agents with tool use, memory, and flow orchestration",
+    "Claude Agent SDK — compiles topology to native query() calls with built-in tools, subagents, hooks, MCP, and permissions",
   scaffold,
 };

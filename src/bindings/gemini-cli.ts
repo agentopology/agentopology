@@ -777,6 +777,55 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Composition: params
+  if (ast.params && ast.params.length > 0) {
+    sections.push("## Parameters");
+    sections.push("");
+    for (const p of ast.params) {
+      const req = p.required ? " (required)" : "";
+      const def = p.default != null ? ` = ${p.default}` : "";
+      sections.push(`- **${p.name}**: ${p.type}${req}${def}`);
+    }
+    sections.push("");
+  }
+
+  // Composition: interface endpoints
+  if (ast.interfaceEndpoints) {
+    sections.push("## Interface");
+    sections.push("");
+    sections.push(`- Entry: ${ast.interfaceEndpoints.entry}`);
+    sections.push(`- Exit: ${ast.interfaceEndpoints.exit}`);
+    sections.push("");
+  }
+
+  // Composition: imports
+  if (ast.imports && ast.imports.length > 0) {
+    sections.push("## Imports");
+    sections.push("");
+    for (const imp of ast.imports) {
+      let line = `- **${imp.alias}** from \`${imp.source}\``;
+      if (imp.sha256) line += ` (sha256: ${imp.sha256})`;
+      if (imp.registry) line += ` [registry: ${imp.registryPackage}@${imp.registryVersion}]`;
+      sections.push(line);
+      if (Object.keys(imp.params).length > 0) {
+        for (const [k, v] of Object.entries(imp.params)) {
+          sections.push(`  - ${k}: ${v}`);
+        }
+      }
+    }
+    sections.push("");
+  }
+
+  // Composition: includes
+  if (ast.includes && ast.includes.length > 0) {
+    sections.push("## Includes");
+    sections.push("");
+    for (const inc of ast.includes) {
+      sections.push(`- ${inc.source}`);
+    }
+    sections.push("");
+  }
+
   return {
     path: ".gemini/instructions.md",
     content: sections.join("\n") + "\n",

@@ -628,6 +628,141 @@ function generateProductSteering(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // Depth levels
+  if (ast.depth && ast.depth.levels && ast.depth.levels.length > 0) {
+    sections.push("## Depth Levels");
+    sections.push("");
+    if (ast.depth.factors.length > 0) {
+      sections.push(`Factors: ${ast.depth.factors.join(", ")}`);
+    }
+    for (const level of ast.depth.levels) {
+      let line = `- **Level ${level.level}**: ${level.label}`;
+      if (level.omit.length > 0) line += ` (omit: ${level.omit.join(", ")})`;
+      sections.push(line);
+    }
+    sections.push("");
+  }
+
+  // Composition: params
+  if (ast.params && ast.params.length > 0) {
+    sections.push("## Parameters");
+    sections.push("");
+    for (const p of ast.params) {
+      const req = p.required ? " (required)" : "";
+      const def = p.default != null ? ` = ${p.default}` : "";
+      sections.push(`- **${p.name}**: ${p.type}${req}${def}`);
+    }
+    sections.push("");
+  }
+
+  // Composition: interface endpoints
+  if (ast.interfaceEndpoints) {
+    sections.push("## Interface");
+    sections.push("");
+    sections.push(`- Entry: ${ast.interfaceEndpoints.entry}`);
+    sections.push(`- Exit: ${ast.interfaceEndpoints.exit}`);
+    sections.push("");
+  }
+
+  // Composition: imports
+  if (ast.imports && ast.imports.length > 0) {
+    sections.push("## Imports");
+    sections.push("");
+    for (const imp of ast.imports) {
+      let line = `- **${imp.alias}** from \`${imp.source}\``;
+      if (imp.sha256) line += ` (sha256: ${imp.sha256})`;
+      if (imp.registry) line += ` [registry: ${imp.registryPackage}@${imp.registryVersion}]`;
+      sections.push(line);
+      if (Object.keys(imp.params).length > 0) {
+        for (const [k, v] of Object.entries(imp.params)) {
+          sections.push(`  - ${k}: ${v}`);
+        }
+      }
+    }
+    sections.push("");
+  }
+
+  // Composition: includes
+  if (ast.includes && ast.includes.length > 0) {
+    sections.push("## Includes");
+    sections.push("");
+    for (const inc of ast.includes) {
+      sections.push(`- ${inc.source}`);
+    }
+    sections.push("");
+  }
+
+  // Defaults
+  if (ast.defaults) {
+    const d = ast.defaults;
+    const items: string[] = [];
+    if (d.thinking) items.push(`thinking: ${d.thinking}`);
+    if (d.thinkingBudget) items.push(`thinking-budget: ${d.thinkingBudget}`);
+    if (d.temperature != null) items.push(`temperature: ${d.temperature}`);
+    if (d.maxTokens != null) items.push(`max-tokens: ${d.maxTokens}`);
+    if (d.topP != null) items.push(`top-p: ${d.topP}`);
+    if (d.topK != null) items.push(`top-k: ${d.topK}`);
+    if (d.seed != null) items.push(`seed: ${d.seed}`);
+    if (d.timeout) items.push(`timeout: ${d.timeout}`);
+    if (d.outputFormat) items.push(`output-format: ${d.outputFormat}`);
+    if (d.logLevel) items.push(`log-level: ${d.logLevel}`);
+    if (d.stop && d.stop.length > 0) items.push(`stop: ${d.stop.join(", ")}`);
+    if (items.length > 0) {
+      sections.push("## Defaults");
+      sections.push("");
+      for (const item of items) sections.push(`- ${item}`);
+      sections.push("");
+    }
+  }
+
+  // Artifacts
+  if (ast.artifacts && ast.artifacts.length > 0) {
+    sections.push("## Artifacts");
+    sections.push("");
+    for (const art of ast.artifacts) {
+      let line = `- **${art.id}** (${art.type})`;
+      if (art.path) line += ` — path: ${art.path}`;
+      if (art.retention) line += `, retention: ${art.retention}`;
+      if (art.dependsOn && art.dependsOn.length > 0) line += `, depends on: ${art.dependsOn.join(", ")}`;
+      sections.push(line);
+    }
+    sections.push("");
+  }
+
+  // Observability
+  if (ast.observability && ast.observability.enabled) {
+    sections.push("## Observability");
+    sections.push("");
+    sections.push(`- Level: ${ast.observability.level}`);
+    sections.push(`- Exporter: ${ast.observability.exporter}`);
+    if (ast.observability.endpoint) sections.push(`- Endpoint: ${ast.observability.endpoint}`);
+    if (ast.observability.service) sections.push(`- Service: ${ast.observability.service}`);
+    sections.push(`- Sample rate: ${ast.observability.sampleRate}`);
+    const cap = ast.observability.capture;
+    if (cap) {
+      sections.push(`- Capture: prompts=${cap.prompts}, completions=${cap.completions}, tool-args=${cap.toolArgs}, tool-results=${cap.toolResults}`);
+    }
+    const sp = ast.observability.spans;
+    if (sp) {
+      sections.push(`- Spans: agents=${sp.agents}, tools=${sp.tools}, gates=${sp.gates}, memory=${sp.memory}`);
+    }
+    sections.push("");
+  }
+
+  // Checkpoint
+  if (ast.checkpoint) {
+    sections.push("## Checkpoint");
+    sections.push("");
+    sections.push(`- Backend: ${ast.checkpoint.backend}`);
+    sections.push(`- Strategy: ${ast.checkpoint.strategy}`);
+    if (ast.checkpoint.connection) sections.push(`- Connection: ${ast.checkpoint.connection}`);
+    if (ast.checkpoint.ttl) sections.push(`- TTL: ${ast.checkpoint.ttl}`);
+    if (ast.checkpoint.replay) {
+      sections.push(`- Replay: enabled=${ast.checkpoint.replay.enabled}${ast.checkpoint.replay.maxHistory ? `, maxHistory=${ast.checkpoint.replay.maxHistory}` : ""}${ast.checkpoint.replay.branch ? ", branching enabled" : ""}`);
+    }
+    sections.push("");
+  }
+
   return {
     path: ".kiro/steering/product.md",
     content: sections.join("\n") + "\n",

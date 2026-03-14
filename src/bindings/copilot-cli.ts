@@ -1099,6 +1099,123 @@ function generateCheckpointInstructions(ast: TopologyAST): string {
 }
 
 /**
+ * Generate depth levels documentation for copilot-instructions.
+ */
+function generateDepthInstructions(ast: TopologyAST): string {
+  if (!ast.depth || !ast.depth.levels || ast.depth.levels.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Depth Levels");
+  lines.push("");
+  if (ast.depth.factors.length > 0) {
+    lines.push(`Factors: ${ast.depth.factors.join(", ")}`);
+  }
+  for (const level of ast.depth.levels) {
+    let line = `- **Level ${level.level}**: ${level.label}`;
+    if (level.omit.length > 0) line += ` (omit: ${level.omit.join(", ")})`;
+    lines.push(line);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate params documentation for copilot-instructions.
+ */
+function generateParamsInstructions(ast: TopologyAST): string {
+  if (!ast.params || ast.params.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Parameters");
+  lines.push("");
+  for (const p of ast.params) {
+    const req = p.required ? " (required)" : "";
+    const def = p.default != null ? ` = ${p.default}` : "";
+    lines.push(`- **${p.name}**: ${p.type}${req}${def}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate interface endpoints documentation for copilot-instructions.
+ */
+function generateInterfaceEndpointsInstructions(ast: TopologyAST): string {
+  if (!ast.interfaceEndpoints) return "";
+
+  const lines: string[] = [];
+  lines.push("## Interface");
+  lines.push("");
+  lines.push(`- Entry: ${ast.interfaceEndpoints.entry}`);
+  lines.push(`- Exit: ${ast.interfaceEndpoints.exit}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate imports documentation for copilot-instructions.
+ */
+function generateImportsInstructions(ast: TopologyAST): string {
+  if (!ast.imports || ast.imports.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Imports");
+  lines.push("");
+  for (const imp of ast.imports) {
+    let line = `- **${imp.alias}** from \`${imp.source}\``;
+    if (imp.sha256) line += ` (sha256: ${imp.sha256})`;
+    if (imp.registry) line += ` [registry: ${imp.registryPackage}@${imp.registryVersion}]`;
+    lines.push(line);
+    if (Object.keys(imp.params).length > 0) {
+      for (const [k, v] of Object.entries(imp.params)) {
+        lines.push(`  - ${k}: ${v}`);
+      }
+    }
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate includes documentation for copilot-instructions.
+ */
+function generateIncludesInstructions(ast: TopologyAST): string {
+  if (!ast.includes || ast.includes.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Includes");
+  lines.push("");
+  for (const inc of ast.includes) {
+    lines.push(`- ${inc.source}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate environment variables documentation for copilot-instructions.
+ */
+function generateEnvInstructions(ast: TopologyAST): string {
+  if (Object.keys(ast.env).length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Environment");
+  lines.push("");
+  for (const [key, val] of Object.entries(ast.env)) {
+    const value = typeof val === "string" ? val : val.value;
+    lines.push(`- \`${key}\`: ${value}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
  * Generate artifacts documentation for copilot-instructions.
  */
 function generateArtifactsInstructions(ast: TopologyAST): string {
@@ -1212,6 +1329,18 @@ export const copilotCliBinding: BindingTarget = {
     if (checkpointInstr) supplementary.push(checkpointInstr);
     const artifactsInstr = generateArtifactsInstructions(ast);
     if (artifactsInstr) supplementary.push(artifactsInstr);
+    const depthInstr = generateDepthInstructions(ast);
+    if (depthInstr) supplementary.push(depthInstr);
+    const paramsInstr = generateParamsInstructions(ast);
+    if (paramsInstr) supplementary.push(paramsInstr);
+    const ifaceEndpointsInstr = generateInterfaceEndpointsInstructions(ast);
+    if (ifaceEndpointsInstr) supplementary.push(ifaceEndpointsInstr);
+    const importsInstr = generateImportsInstructions(ast);
+    if (importsInstr) supplementary.push(importsInstr);
+    const includesInstr = generateIncludesInstructions(ast);
+    if (includesInstr) supplementary.push(includesInstr);
+    const envInstr = generateEnvInstructions(ast);
+    if (envInstr) supplementary.push(envInstr);
 
     if (supplementary.length > 0) {
       instructions.content += supplementary.join("\n");

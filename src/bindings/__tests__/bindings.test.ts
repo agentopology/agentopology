@@ -176,7 +176,7 @@ function assertStructuralInvariants(files: GeneratedFile[]) {
 
 describe("Binding registry", () => {
   it("contains all 8 bindings", () => {
-    expect(Object.keys(bindings)).toHaveLength(8);
+    expect(Object.keys(bindings)).toHaveLength(9);
   });
 
   it("all bindings have a name and description", () => {
