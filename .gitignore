@@ -2,3 +2,38 @@ node_modules/
 dist/
 *.tgz
 .DS_Store
+
+# Private — binding factory infrastructure (MOAT)
+.claude/agents/ast-mapper/
+.claude/agents/binding-patcher/
+.claude/agents/binding-review/
+.claude/agents/binding-veteran/
+.claude/agents/code-generator/
+.claude/agents/conformance-checker/
+.claude/agents/gap-debate/
+.claude/agents/ir-updater/
+.claude/agents/platform-expert/
+.claude/agents/regression-guard/
+.claude/agents/sdk-differ/
+.claude/agents/sdk-installer/
+.claude/agents/sdk-specialist/
+.claude/agents/spec-writer/
+.claude/commands/build-binding.md
+.claude/commands/build-binding-minimal.md
+.claude/commands/update-binding.md
+.claude/skills/binding-factory/
+binding-factory.at
+binding-factory-topology.html
+domains/
+workspace/
+metrics/
+scripts/collect-metrics.sh
+
+# NOTE: SDK bindings (anthropic-sdk.ts, vercel-ai.ts) stay in git during development.
+# Before public release: extract to separate private repo per CLAUDE.md instructions.
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Temp files
+logo-concepts.html
