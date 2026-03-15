@@ -2620,3 +2620,405 @@ describe("cursor binding — ground-truth validation", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// cursor — Exotic features: groups, humans, variants, schemas, scale,
+// circuit breakers, artifacts, metering, conditional edges, env vars
+// ---------------------------------------------------------------------------
+
+describe("cursor binding — exotic features", () => {
+  const EXOTIC_SOURCE = `
+topology debate-test : [fan-out, debate, pipeline] {
+  meta {
+    version: "2.0.0"
+    description: "Debate topology testing exotic features"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
+
+  roles {
+    debater: "Argues a position"
+    judge: "Evaluates debate quality"
+  }
+
+  action intake {
+    kind: external
+    source: "user-input"
+    description: "Receive debate topic"
+  }
+
+  agent pro-debater {
+    role: debater
+    model: haiku
+    description: "Argues in favor"
+    prompt {
+      You are the PRO debater.
+      Argue strongly in favor of the proposition.
+    }
+    temperature: 0.9
+    max-tokens: 500
+    thinking: high
+    thinking-budget: 2000
+    output-format: text
+    timeout: "5m"
+    max-turns: 10
+    retry: 3
+  }
+
+  agent con-debater {
+    role: debater
+    model: haiku
+    description: "Argues against"
+    prompt {
+      You are the CON debater.
+      Argue strongly against the proposition.
+    }
+    temperature: 0.9
+    max-tokens: 500
+    on-fail: retry
+    circuit-breaker {
+      threshold: 3
+      window: "5m"
+      cooldown: "30s"
+    }
+  }
+
+  agent researcher {
+    role: debater
+    model: sonnet
+    description: "Gathers evidence"
+    tools: [Read, WebSearch, Grep]
+    scale {
+      mode: auto
+      by: "query-count"
+      min: 1
+      max: 3
+    }
+    background: true
+    sandbox: "network-only"
+    rate-limit: "10/min"
+    fallback-chain: [haiku, sonnet]
+  }
+
+  agent judge-agent {
+    role: judge
+    model: opus
+    description: "Evaluates arguments"
+    prompt {
+      Score each argument on evidence, logic, persuasion.
+    }
+    output-format: json
+    input-schema {
+      topic: string
+      pro_arguments: string
+    }
+    output-schema {
+      winner: string
+      score: number
+    }
+    produces: ["verdict"]
+    consumes: ["transcript"]
+  }
+
+  group debate-arena {
+    members: [pro-debater, con-debater]
+    speaker-selection: "round-robin"
+    max-rounds: 5
+    termination: "judge declares winner"
+    description: "Structured debate"
+    timeout: "30m"
+  }
+
+  human moderator {
+    description: "Human reviews debate"
+    timeout: "1h"
+    on-timeout: "skip"
+  }
+
+  gates {
+    gate fact-check {
+      after: debate-arena
+      before: judge-agent
+      run: "scripts/fact-check.sh"
+      checks: [sources, accuracy]
+      on-fail: halt
+      behavior: blocking
+    }
+  }
+
+  schemas {
+    schema debate-result {
+      winner: string
+      score: number
+    }
+  }
+
+  artifacts {
+    artifact transcript {
+      type: markdown
+      path: "workspace/debates/"
+      retention: "90d"
+    }
+    artifact verdict {
+      type: json
+      path: "workspace/verdicts/"
+      depends-on: [transcript]
+    }
+  }
+
+  skills {
+    skill research {
+      description: "Deep research"
+      scripts: ["research.sh"]
+    }
+    skill scoring {
+      description: "Score arguments"
+      user-invocable: true
+    }
+  }
+
+  env {
+    DEBATE_MODE: "formal"
+  }
+
+  mcp-servers {
+    web-search {
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-web-search"]
+      env {
+        SEARCH_API_KEY: "\${SEARCH_API_KEY}"
+      }
+    }
+  }
+
+  hooks {
+    hook log-round {
+      on: PostToolUse
+      matcher: "Write"
+      run: "scripts/log-round.sh"
+      timeout: 5000
+    }
+  }
+
+  metering {
+    track: [tokens-in, tokens-out, cost]
+    per: [agent, run]
+    output: "metrics/costs.jsonl"
+    format: jsonl
+    pricing: anthropic-2025
+  }
+
+  flow {
+    intake -> researcher
+    intake -> debate-arena
+    researcher -> debate-arena
+    debate-arena -> moderator
+    moderator -> judge-agent
+    judge-agent -> intake [when judge-agent.winner == "rematch"] [max 3]
+  }
+}
+`;
+
+  const exoticAst = parse(EXOTIC_SOURCE);
+  const exoticFiles = cursorBinding.scaffold(exoticAst);
+
+  describe("group node (debate-arena)", () => {
+    const groupRule = exoticFiles.find((f) => f.path === ".cursor/rules/debate-arena.mdc");
+
+    it("generates .mdc rule for group", () => {
+      expect(groupRule).toBeDefined();
+    });
+
+    it("lists members with @-mention syntax", () => {
+      expect(groupRule!.content).toContain("@pro-debater");
+      expect(groupRule!.content).toContain("@con-debater");
+    });
+
+    it("includes speaker selection, max rounds, termination, timeout", () => {
+      expect(groupRule!.content).toContain("round-robin");
+      expect(groupRule!.content).toContain("5");
+      expect(groupRule!.content).toContain("judge declares winner");
+      expect(groupRule!.content).toContain("30m");
+    });
+
+    it("has correct frontmatter (agent-requested, not always-apply)", () => {
+      const fm = groupRule!.content.split("---")[1];
+      expect(fm).toContain("description: Structured debate");
+      expect(fm).toContain("alwaysApply: false");
+    });
+  });
+
+  describe("human node (moderator)", () => {
+    const humanRule = exoticFiles.find((f) => f.path === ".cursor/rules/moderator.mdc");
+
+    it("generates rule with review process, timeout, on-timeout", () => {
+      expect(humanRule).toBeDefined();
+      expect(humanRule!.content).toContain("human review");
+      expect(humanRule!.content).toContain("1h");
+      expect(humanRule!.content).toContain("skip");
+    });
+  });
+
+  describe("agent sampling params (pro-debater)", () => {
+    const rule = exoticFiles.find((f) => f.path === ".cursor/rules/pro-debater.mdc")!;
+
+    it("includes model, temperature, max tokens", () => {
+      expect(rule.content).toContain("haiku");
+      expect(rule.content).toContain("0.9");
+      expect(rule.content).toContain("500");
+    });
+
+    it("includes thinking level and budget", () => {
+      expect(rule.content).toContain("high");
+      expect(rule.content).toContain("2000");
+    });
+
+    it("includes timeout, max turns, retry", () => {
+      expect(rule.content).toContain("5m");
+      expect(rule.content).toContain("10");
+      expect(rule.content).toContain("3 times");
+    });
+  });
+
+  describe("circuit breaker (con-debater)", () => {
+    const rule = exoticFiles.find((f) => f.path === ".cursor/rules/con-debater.mdc")!;
+
+    it("includes circuit breaker with threshold, window, cooldown", () => {
+      expect(rule.content).toContain("Circuit Breaker");
+      expect(rule.content).toContain("3");
+      expect(rule.content).toContain("5m");
+      expect(rule.content).toContain("30s");
+    });
+  });
+
+  describe("scale, sandbox, rate-limit, fallback (researcher)", () => {
+    const rule = exoticFiles.find((f) => f.path === ".cursor/rules/researcher.mdc")!;
+
+    it("includes scale config", () => {
+      expect(rule.content).toContain("auto");
+      expect(rule.content).toContain("query-count");
+      expect(rule.content).toContain("Min: 1");
+      expect(rule.content).toContain("Max: 3");
+    });
+
+    it("includes background, sandbox, rate-limit, fallback chain", () => {
+      expect(rule.content).toContain("background");
+      expect(rule.content).toContain("network-only");
+      expect(rule.content).toContain("10/min");
+      expect(rule.content).toContain("haiku -> sonnet");
+    });
+  });
+
+  describe("input/output schemas and artifacts (judge-agent)", () => {
+    const rule = exoticFiles.find((f) => f.path === ".cursor/rules/judge-agent.mdc")!;
+
+    it("includes input and output schema", () => {
+      expect(rule.content).toContain("Input Schema");
+      expect(rule.content).toContain("topic");
+      expect(rule.content).toContain("Output Schema");
+      expect(rule.content).toContain("winner");
+    });
+
+    it("includes produces/consumes", () => {
+      expect(rule.content).toContain("verdict");
+      expect(rule.content).toContain("transcript");
+    });
+  });
+
+  describe("schema definitions as rules", () => {
+    it("generates schema rule with fields", () => {
+      const rule = exoticFiles.find((f) => f.path === ".cursor/rules/schema-debate-result.mdc");
+      expect(rule).toBeDefined();
+      expect(rule!.content).toContain("winner");
+      expect(rule!.content).toContain("score");
+    });
+  });
+
+  describe("skills as rules", () => {
+    it("non-invocable skill has description in frontmatter", () => {
+      const rule = exoticFiles.find((f) => f.path === ".cursor/rules/skill-research.mdc")!;
+      expect(rule.content.split("---")[1]).toContain("description: Deep research");
+    });
+
+    it("user-invocable skill is manual (empty description)", () => {
+      const rule = exoticFiles.find((f) => f.path === ".cursor/rules/skill-scoring.mdc")!;
+      expect(rule.content.split("---")[1]).toMatch(/description:\s*$/m);
+    });
+  });
+
+  describe("conditional edges and loops", () => {
+    const overview = exoticFiles.find((f) => f.path === ".cursor/rules/topology-overview.mdc")!;
+
+    it("renders condition without parser artifacts", () => {
+      expect(overview.content).not.toMatch(/rematch"\]\s*\[max/);
+      expect(overview.content).toContain('judge-agent.winner == "rematch"');
+    });
+
+    it("renders max iterations", () => {
+      expect(overview.content).toContain("Repeat up to 3 times");
+    });
+  });
+
+  describe("MCP with env vars — no phantom servers", () => {
+    const mcpFile = exoticFiles.find((f) => f.path === ".cursor/mcp.json")!;
+    const config = JSON.parse(mcpFile.content);
+
+    it("includes env interpolation", () => {
+      expect(config.mcpServers["web-search"].env.SEARCH_API_KEY).toBe("${SEARCH_API_KEY}");
+    });
+
+    it("no phantom 'env' server", () => {
+      expect(config.mcpServers.env).toBeUndefined();
+    });
+
+    it("all servers have command or url", () => {
+      for (const [, server] of Object.entries(config.mcpServers) as [string, Record<string, unknown>][]) {
+        expect("command" in server || "url" in server).toBe(true);
+      }
+    });
+  });
+
+  describe("hooks timeout conversion and gate compilation", () => {
+    const hooksFile = exoticFiles.find((f) => f.path === ".cursor/hooks.json")!;
+    const config = JSON.parse(hooksFile.content);
+
+    it("converts 5000ms to 5s", () => {
+      const hook = (config.hooks.postToolUse as Record<string, unknown>[]).find(
+        (h) => (h.command as string).includes("log-round"),
+      );
+      expect(hook!.timeout).toBe(5);
+    });
+
+    it("gate on-fail:halt -> failClosed:true", () => {
+      // Gate with both after+before uses before -> preToolUse
+      const allHooks = (Object.values(config.hooks) as unknown[][]).flat() as Record<string, unknown>[];
+      const gate = allHooks.find((h) => (h.command as string).includes("fact-check"));
+      expect(gate).toBeDefined();
+      expect(gate!.failClosed).toBe(true);
+    });
+
+    it("metering hook exists", () => {
+      const metering = (config.hooks.postToolUse as Record<string, unknown>[]).find(
+        (h) => (h.command as string).includes("metering"),
+      );
+      expect(metering).toBeDefined();
+    });
+  });
+
+  describe("artifacts in overview and AGENTS.md", () => {
+    it("overview mentions artifacts", () => {
+      const overview = exoticFiles.find((f) => f.path === ".cursor/rules/topology-overview.mdc")!;
+      expect(overview.content).toContain("transcript");
+      expect(overview.content).toContain("verdict");
+    });
+
+    it("AGENTS.md mentions artifacts", () => {
+      const agentsMd = exoticFiles.find((f) => f.path === "AGENTS.md")!;
+      expect(agentsMd.content).toContain("transcript");
+      expect(agentsMd.content).toContain("verdict");
+    });
+  });
+});

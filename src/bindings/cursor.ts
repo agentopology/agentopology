@@ -158,8 +158,13 @@ function compileEdges(ast: TopologyAST): string {
         `${step}. On ${errType}error from **${label(edge.from)}**, route to **${label(edge.to)}**`,
       );
     } else if (edge.condition) {
+      // Clean up condition: parser may include trailing "] [max N" artifacts
+      const cleanCondition = edge.condition
+        .replace(/\]\s*\[max\s+\d+\s*$/i, "")
+        .replace(/\]\s*$/, "")
+        .trim();
       parts.push(
-        `${step}. If ${edge.condition}, proceed to **${label(edge.to)}**`,
+        `${step}. If ${cleanCondition}, proceed to **${label(edge.to)}**`,
       );
     } else if (edge.reflection) {
       parts.push(
@@ -1314,7 +1319,8 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
       }
       // Skip unknown fields — the parser may leak env vars to top level
     }
-    // Only include env when there are actual env vars (real Cursor configs omit it)
+    // Only include servers that have a command or url (filter parser artifacts)
+    if (!("command" in entry) && !("url" in entry)) continue;
     servers[name] = entry;
   }
 
