@@ -409,11 +409,45 @@ describe("openclaw binding", () => {
 
   assertStructuralInvariants(files);
 
-  it("produces openclaw.json", () => {
+  it("produces openclaw.json with correct schema", () => {
     const config = files.find((f) => f.path === "openclaw.json");
     expect(config).toBeDefined();
     const parsed = JSON.parse(config!.content);
     expect(parsed).toBeDefined();
+
+    // agents.defaults exists with workspace and model
+    expect(parsed.agents.defaults).toBeDefined();
+    expect(parsed.agents.defaults.workspace).toBe("~/.openclaw/workspace");
+    expect(parsed.agents.defaults.model.primary).toContain("anthropic/claude-");
+
+    // Agent models use provider/model-id format
+    const agentList = parsed.agents.list;
+    expect(agentList.length).toBeGreaterThan(0);
+    for (const agent of agentList) {
+      expect(agent.model.primary).toMatch(/^[a-z]+\/claude-/);
+    }
+
+    // Gateway auth uses mode: "token" format
+    expect(parsed.gateway.auth.mode).toBe("token");
+    expect(parsed.gateway.auth.token).toBeDefined();
+    expect(parsed.gateway.auth).not.toHaveProperty("requireToken");
+
+    // models.providers instead of top-level providers array
+    expect(parsed.models).toBeDefined();
+    expect(parsed.models.providers).toBeDefined();
+    expect(parsed.models.providers.anthropic).toBeDefined();
+    expect(parsed).not.toHaveProperty("providers");
+
+    // Tools have flat allow/deny, no "defaults" nesting
+    expect(parsed.tools.allow).toBeDefined();
+    expect(parsed.tools.deny).toBeDefined();
+    expect(parsed.tools.agentToAgent.enabled).toBe(true);
+    expect(parsed.tools).not.toHaveProperty("defaults");
+
+    // No unknown top-level keys
+    expect(parsed).not.toHaveProperty("modelFallbackChain");
+    expect(parsed).not.toHaveProperty("sandboxDefaults");
+    expect(parsed).not.toHaveProperty("defaults");
   });
 
   it("produces SOUL.md", () => {
@@ -421,10 +455,14 @@ describe("openclaw binding", () => {
     expect(soul).toBeDefined();
   });
 
-  it("produces AGENTS.md", () => {
+  it("produces AGENTS.md with tool restrictions and topology overview", () => {
     const agents = files.find((f) => f.path === "AGENTS.md");
     expect(agents).toBeDefined();
     expect(agents!.content).toContain("planner");
+    // Tool restrictions in AGENTS.md
+    expect(agents!.content).toContain("Tools allowed:");
+    // Topology overview merged from TEAM.md
+    expect(agents!.content).toContain("Topology Overview");
   });
 
   it("produces TOOLS.md", () => {
@@ -442,9 +480,29 @@ describe("openclaw binding", () => {
     expect(bootstrap).toBeDefined();
   });
 
-  it("produces TEAM.md", () => {
+  it("does NOT produce TEAM.md", () => {
     const team = files.find((f) => f.path === "TEAM.md");
-    expect(team).toBeDefined();
+    expect(team).toBeUndefined();
+  });
+
+  it("produces USER.md", () => {
+    const user = files.find((f) => f.path === "USER.md");
+    expect(user).toBeDefined();
+    expect(user!.content).toContain("User Profile");
+  });
+
+  it("produces IDENTITY.md", () => {
+    const identity = files.find((f) => f.path === "IDENTITY.md");
+    expect(identity).toBeDefined();
+    expect(identity!.content).toContain("Identity");
+    expect(identity!.content).toContain("Name:");
+  });
+
+  it("produces memory/ and skills/ directories", () => {
+    const memoryDir = files.find((f) => f.path === "memory/.gitkeep");
+    const skillsDir = files.find((f) => f.path === "skills/.gitkeep");
+    expect(memoryDir).toBeDefined();
+    expect(skillsDir).toBeDefined();
   });
 });
 

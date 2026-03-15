@@ -3,7 +3,7 @@
  *
  * Generates a complete OpenClaw workspace from a parsed {@link TopologyAST}:
  * openclaw.json, SOUL.md, AGENTS.md, TOOLS.md, MEMORY.md, BOOTSTRAP.md,
- * TEAM.md, skill directories, gate/hook scripts, and workspace structure.
+ * USER.md, IDENTITY.md, skill directories, gate/hook scripts, and workspace structure.
  *
  * OpenClaw is a multi-channel AI agent framework with gateway, channels,
  * and markdown-based agent identity. This binding adds security hardening
@@ -58,14 +58,18 @@ function gitkeep(dirPath: string): GeneratedFile {
 
 /**
  * Map topology model strings to OpenClaw model identifiers.
+ * OpenClaw uses `provider/model-id` format with hyphens.
  */
-function mapModel(model: string): string {
+function mapModel(model: string, defaultProvider?: string): string {
+  const provider = defaultProvider ?? "anthropic";
   const MODEL_MAP: Record<string, string> = {
-    opus: "claude-opus-4",
-    sonnet: "claude-sonnet-4.5",
-    haiku: "claude-haiku-4",
+    opus: `${provider}/claude-opus-4-6`,
+    sonnet: `${provider}/claude-sonnet-4-6`,
+    haiku: `${provider}/claude-haiku-4-5`,
   };
-  return MODEL_MAP[model] ?? model;
+  // If model already has provider prefix, return as-is
+  if (model.includes("/")) return model;
+  return MODEL_MAP[model] ?? `${provider}/${model}`;
 }
 
 /**
@@ -172,22 +176,41 @@ function formatRetry(retry: number | RetryConfig): string {
 // File generators
 // ---------------------------------------------------------------------------
 
+/** Get the default provider name from the AST providers list. */
+function getDefaultProviderName(ast: TopologyAST): string {
+  if (ast.providers && ast.providers.length > 0) {
+    const defaultProv = ast.providers.find((p) => p.default);
+    if (defaultProv) return defaultProv.name;
+    return ast.providers[0].name;
+  }
+  return "anthropic";
+}
+
 /** Generate openclaw.json — central system config. */
 function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
   const ext = getOpenClawExtensions(ast);
   const orchestrator = getOrchestrator(ast);
   const agents = getAgentsSorted(ast);
+  const defaultProvider = getDefaultProviderName(ast);
 
   // Build agent list for config
   const agentList: Record<string, unknown>[] = [];
 
+  // Determine default model for agents.defaults
+  const defaultModel = orchestrator
+    ? mapModel(orchestrator.model, defaultProvider)
+    : mapModel("sonnet", defaultProvider);
+
   // Orchestrator as primary agent
   if (orchestrator) {
     const agentIds = agents.map((a) => a.id);
+    const orchModel: Record<string, unknown> = {
+      primary: mapModel(orchestrator.model, defaultProvider),
+    };
     agentList.push({
       id: "orchestrator",
       name: toTitle(ast.topology.name) + " Coordinator",
-      model: mapModel(orchestrator.model),
+      model: orchModel,
       workspace: `~/.openclaw/workspace-${ast.topology.name}`,
       agentDir: `./config/agents/orchestrator/agent`,
       subagents: {
@@ -198,20 +221,24 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
 
   // Each agent node
   for (const agent of agents) {
+    const agentModel: Record<string, unknown> = {
+      primary: mapModel(agent.model ?? "sonnet", defaultProvider),
+    };
+
+    // Per-agent fallback chain goes into model.fallbacks
+    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
+      agentModel.fallbacks = agent.fallbackChain.map((m) => mapModel(m, defaultProvider));
+    }
+
     const entry: Record<string, unknown> = {
       id: agent.id,
       name: toTitle(agent.id),
-      model: mapModel(agent.model ?? "sonnet"),
+      model: agentModel,
       workspace: `~/.openclaw/workspace-${agent.id}`,
       agentDir: `./config/agents/${agent.id}/agent`,
     };
 
-    // Tools
-    const allow = agent.tools ?? [];
-    const deny = agent.disallowedTools ?? [];
-    if (allow.length > 0 || deny.length > 0) {
-      entry.tools = { allow, deny };
-    }
+    // No per-agent tools in openclaw.json — tool restrictions go in AGENTS.md
 
     // Sampling params
     if (agent.temperature != null) entry.temperature = agent.temperature;
@@ -219,16 +246,6 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
 
     // Timeout
     if (agent.timeout) entry.timeout = agent.timeout;
-
-    // First-class sandbox support (per-agent)
-    if (agent.sandbox != null) {
-      entry.sandbox = agent.sandbox;
-    }
-
-    // First-class fallback chain (per-agent)
-    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
-      entry.modelFallbackChain = agent.fallbackChain.map(mapModel);
-    }
 
     // Merge agent-level openclaw extensions
     if (agent.extensions?.openclaw) {
@@ -240,56 +257,81 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     agentList.push(entry);
   }
 
+  // Build fallback chain for agents.defaults.model
+  let defaultFallbacks: string[] | undefined;
+  const settingsFallback = ast.settings?.fallbackChain as string[] | undefined;
+  if (settingsFallback && settingsFallback.length > 0) {
+    defaultFallbacks = settingsFallback.map((m) => mapModel(m, defaultProvider));
+  } else if (ext?.["model-fallback-chain"]) {
+    const chain = ext["model-fallback-chain"] as string[];
+    defaultFallbacks = chain.map((m) => mapModel(m, defaultProvider));
+  }
+
+  // Build agents section with defaults
+  const agentsDefaults: Record<string, unknown> = {
+    workspace: "~/.openclaw/workspace",
+    model: defaultFallbacks
+      ? { primary: defaultModel, fallbacks: defaultFallbacks }
+      : { primary: defaultModel },
+  };
+
   // Build config object
   const config: Record<string, unknown> = {
     name: ast.topology.name,
     version: ast.topology.version,
-    agents: { list: agentList },
+    agents: {
+      defaults: agentsDefaults,
+      list: agentList,
+    },
     gateway: {
       port: (ext?.["gateway-port"] as number) ?? 18789,
       auth: {
-        requireToken: true, // HARDENED BY DEFAULT
-        tokens: (ext?.["auth-tokens"] as string[]) ?? ["${OPENCLAW_AUTH_TOKEN}"],
+        mode: "token",
+        token: ((ext?.["auth-tokens"] as string[]) ?? ["${OPENCLAW_AUTH_TOKEN}"])[0],
       },
     },
   };
 
-  // First-class interfaces support
+  // First-class interfaces support — channels as named keys
   if (ast.interfaces.length > 0) {
-    const channelConfig: Record<string, unknown> = {
-      enabled: ast.interfaces.map(i => i.id),
-    };
+    const channelConfig: Record<string, unknown> = {};
     for (const iface of ast.interfaces) {
       channelConfig[iface.id] = {
+        enabled: true,
         type: iface.type,
         ...iface.config,
       };
     }
     config.channels = channelConfig;
   } else if (ext?.channels) {
-    // Legacy extension fallback
-    const channelConfig: Record<string, unknown> = {
-      enabled: ext.channels,
-    };
+    // Legacy extension fallback — channels as named keys
     const channelNames = ext.channels as string[];
     if (Array.isArray(channelNames)) {
+      const channelConfig: Record<string, unknown> = {};
       for (const ch of channelNames) {
-        if (ext[ch]) {
-          channelConfig[ch] = ext[ch];
+        const chConfig: Record<string, unknown> = { enabled: true };
+        if (ext[ch] && typeof ext[ch] === "object") {
+          const chExt = ext[ch] as Record<string, unknown>;
+          // Map known channel fields
+          if (ch === "telegram") {
+            if (chExt["bot-token"]) chConfig.botToken = chExt["bot-token"];
+            if (chExt["dm-policy"]) chConfig.dmPolicy = chExt["dm-policy"];
+          } else if (ch === "slack") {
+            if (chExt["app-token"]) chConfig.appToken = chExt["app-token"];
+            if (chExt["bot-token"]) chConfig.botToken = chExt["bot-token"];
+          }
+          // Copy any remaining fields
+          for (const [k, v] of Object.entries(chExt)) {
+            const camelKey = k.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            if (!(camelKey in chConfig)) {
+              chConfig[camelKey] = v;
+            }
+          }
         }
+        channelConfig[ch] = chConfig;
       }
+      config.channels = channelConfig;
     }
-    config.channels = channelConfig;
-  }
-
-  // First-class fallback-chain support
-  const settingsFallback = ast.settings?.fallbackChain as string[] | undefined;
-  if (settingsFallback && settingsFallback.length > 0) {
-    config.modelFallbackChain = settingsFallback.map(mapModel);
-  } else if (ext?.["model-fallback-chain"]) {
-    // Legacy extension fallback
-    const chain = ext["model-fallback-chain"] as string[];
-    config.modelFallbackChain = chain.map(mapModel);
   }
 
   // First-class schedule support
@@ -302,7 +344,6 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
       enabled: job.enabled,
     }));
   } else if (ext?.["cron-jobs"]) {
-    // Legacy extension fallback
     config.cronJobs = ext["cron-jobs"];
   }
 
@@ -311,89 +352,24 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     config.plugins = ext.plugins;
   }
 
-  // First-class sandbox support
-  const topologySandbox = ast.settings?.sandbox;
-  if (topologySandbox != null) {
-    config.sandboxDefaults = typeof topologySandbox === 'boolean'
-      ? { enabled: topologySandbox }
-      : { enabled: true, type: topologySandbox };
-  } else if (ext?.["sandbox-defaults"]) {
-    // Legacy extension fallback
-    config.sandboxDefaults = ext["sandbox-defaults"];
-  }
-
-  // Node pairing
-  if (ext?.["node-pairing"]) {
-    config.nodePairing = ext["node-pairing"];
-  }
-
-  // Providers — API credentials and model routing
+  // Providers — models.providers object (not top-level array)
+  const modelsProviders: Record<string, Record<string, unknown>> = {};
   if (ast.providers && ast.providers.length > 0) {
-    const providersList: Record<string, unknown>[] = [];
     for (const p of ast.providers) {
-      const entry: Record<string, unknown> = { name: p.name };
-      if (p.apiKey) entry.apiKey = p.apiKey;
-      if (p.baseUrl) entry.baseUrl = p.baseUrl;
-      if (p.models.length > 0) entry.models = p.models.map(mapModel);
-      if (p.default) entry.default = true;
-      // Merge extra fields
-      for (const [k, v] of Object.entries(p.extra)) {
-        entry[k] = v;
+      const provEntry: Record<string, unknown> = {};
+      if (p.apiKey) provEntry.apiKey = p.apiKey;
+      if (p.baseUrl) provEntry.baseUrl = p.baseUrl;
+      if (p.models.length > 0) {
+        const modelsObj: Record<string, Record<string, unknown>> = {};
+        for (const m of p.models) {
+          const mapped = mapModel(m, p.name);
+          modelsObj[mapped] = { alias: toTitle(m) };
+        }
+        provEntry.models = modelsObj;
       }
-      providersList.push(entry);
-    }
-    config.providers = providersList;
-
-    // Build model fallback chain from provider model lists if not already set
-    if (!config.modelFallbackChain) {
-      const defaultProvider = ast.providers.find((p) => p.default);
-      if (defaultProvider && defaultProvider.models.length > 0) {
-        config.modelFallbackChain = defaultProvider.models.map(mapModel);
-      }
-    }
-  }
-
-  // MCP servers
-  if (Object.keys(ast.mcpServers).length > 0) {
-    config.mcpServers = ast.mcpServers;
-  }
-
-  // Tools settings
-  const settings = ast.settings;
-  config.tools = {
-    agentToAgent: { enabled: true },
-    defaults: {
-      allow: (settings?.allow as string[]) ?? [],
-      deny: (settings?.deny as string[]) ?? [],
-    },
-  };
-
-  // Defaults — topology-level sampling/model defaults
-  if (ast.defaults) {
-    const d = ast.defaults;
-    const defaultConfig: Record<string, unknown> = {};
-    if (d.temperature != null) defaultConfig.temperature = d.temperature;
-    if (d.maxTokens != null) defaultConfig.maxTokens = d.maxTokens;
-    if (d.topP != null) defaultConfig.topP = d.topP;
-    if (d.topK != null) defaultConfig.topK = d.topK;
-    if (d.stop && d.stop.length > 0) defaultConfig.stop = d.stop;
-    if (d.seed != null) defaultConfig.seed = d.seed;
-    if (d.thinking) defaultConfig.thinking = d.thinking;
-    if (d.thinkingBudget != null) defaultConfig.thinkingBudget = d.thinkingBudget;
-    if (d.outputFormat) defaultConfig.outputFormat = d.outputFormat;
-    if (d.timeout) defaultConfig.timeout = d.timeout;
-    if (d.logLevel) defaultConfig.logLevel = d.logLevel;
-    if (Object.keys(defaultConfig).length > 0) {
-      config.defaults = defaultConfig;
-    }
-  }
-
-  // Provider auth — document auth blocks in provider config
-  if (config.providers && Array.isArray(config.providers)) {
-    for (let i = 0; i < ast.providers.length; i++) {
-      const p = ast.providers[i];
+      if (p.default) provEntry.default = true;
+      // Provider auth
       if (p.auth) {
-        const provEntry = (config.providers as Record<string, unknown>[])[i];
         const authConfig: Record<string, unknown> = { type: p.auth.type };
         if (p.auth.issuer) authConfig.issuer = p.auth.issuer;
         if (p.auth.audience) authConfig.audience = p.auth.audience;
@@ -402,8 +378,32 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
         if (p.auth.scopes && p.auth.scopes.length > 0) authConfig.scopes = p.auth.scopes;
         provEntry.auth = authConfig;
       }
+      // Merge extra fields
+      for (const [k, v] of Object.entries(p.extra)) {
+        provEntry[k] = v;
+      }
+      modelsProviders[p.name] = provEntry;
     }
+  } else {
+    // Default anthropic provider if none specified
+    modelsProviders.anthropic = {
+      apiKey: "${ANTHROPIC_API_KEY}",
+    };
   }
+  config.models = { providers: modelsProviders };
+
+  // MCP servers
+  if (Object.keys(ast.mcpServers).length > 0) {
+    config.mcpServers = ast.mcpServers;
+  }
+
+  // Tools settings — flat allow/deny, no "defaults" nesting
+  const settings = ast.settings;
+  config.tools = {
+    allow: (settings?.allow as string[]) ?? [],
+    deny: (settings?.deny as string[]) ?? [],
+    agentToAgent: { enabled: true },
+  };
 
   return {
     path: "openclaw.json",
@@ -638,9 +638,14 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Role:** ${roleText}`);
       }
 
-      // Tools
+      // Tools (allowed/denied — enforced via AGENTS.md since openclaw.json doesn't support per-agent tools)
       if (agent.tools && agent.tools.length > 0) {
-        sections.push(`- **Tools:** ${agent.tools.join(", ")}`);
+        sections.push(`- **Tools allowed:** ${agent.tools.join(", ")}`);
+      }
+      if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+        sections.push(`- **Tools denied:** ${agent.disallowedTools.join(", ")}`);
+      } else if (agent.tools && agent.tools.length > 0) {
+        sections.push(`- **Tools denied:** none`);
       }
 
       // Memory access
@@ -961,6 +966,71 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Topology overview (merged from TEAM.md)
+  sections.push("---");
+  sections.push("");
+  sections.push(`## ${toTitle(ast.topology.name)} -- Topology Overview`);
+  sections.push("");
+  sections.push("### Architecture");
+  sections.push(`- Patterns: ${ast.topology.patterns.join(", ")}`);
+  sections.push(`- Agents: ${agents.length}`);
+  sections.push(`- Gates: ${gates.length}`);
+  sections.push(`- Version: ${ast.topology.version}`);
+  sections.push("");
+
+  // Flow diagram
+  if (ast.edges.length > 0) {
+    sections.push("### Flow Diagram");
+    sections.push("");
+    sections.push("```mermaid");
+    sections.push("graph TD");
+    for (const edge of ast.edges) {
+      const labelParts: string[] = [];
+      if (edge.condition) labelParts.push(edge.condition);
+      if (edge.maxIterations) labelParts.push(`max ${edge.maxIterations}`);
+      if (edge.isError) labelParts.push("error");
+      if (edge.errorType) labelParts.push(`type: ${edge.errorType}`);
+      if (edge.weight != null) labelParts.push(`weight: ${edge.weight}`);
+      if (edge.race) labelParts.push("race");
+      if (edge.tolerance != null) labelParts.push(`tolerance: ${edge.tolerance}`);
+      if (edge.wait) labelParts.push(`wait: ${edge.wait}`);
+      if (edge.reflection) labelParts.push("reflection");
+      const label = labelParts.join(", ");
+      if (label) {
+        if (edge.isError) {
+          sections.push(`  ${edge.from} -.->|${label}| ${edge.to}`);
+        } else {
+          sections.push(`  ${edge.from} -->|${label}| ${edge.to}`);
+        }
+      } else {
+        sections.push(`  ${edge.from} --> ${edge.to}`);
+      }
+    }
+    sections.push("```");
+    sections.push("");
+  }
+
+  // Roles table
+  if (Object.keys(ast.roles).length > 0) {
+    sections.push("### Roles");
+    sections.push("| Role | Description |");
+    sections.push("|------|-------------|");
+    for (const [role, desc] of Object.entries(ast.roles)) {
+      sections.push(`| ${role} | ${desc} |`);
+    }
+    sections.push("");
+  }
+
+  // Metering
+  if (ast.metering) {
+    sections.push("### Metering");
+    sections.push(`- Track: ${ast.metering.track.join(", ")}`);
+    sections.push(`- Per: ${ast.metering.per.join(", ")}`);
+    sections.push(`- Output: ${ast.metering.output} (${ast.metering.format})`);
+    sections.push(`- Pricing: ${ast.metering.pricing}`);
+    sections.push("");
+  }
+
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
@@ -1159,81 +1229,38 @@ function generateBootstrapMd(ast: TopologyAST): GeneratedFile {
   };
 }
 
-/** Generate TEAM.md — topology overview with mermaid flow diagram. */
-function generateTeamMd(ast: TopologyAST): GeneratedFile {
-  const agents = getAgentsSorted(ast);
-  const gates = getGates(ast);
+/** Generate USER.md — user profile for agent personalization. */
+function generateUserMd(): GeneratedFile {
   const sections: string[] = [];
-
-  sections.push(`# ${toTitle(ast.topology.name)} -- Topology Overview`);
+  sections.push("# User Profile");
   sections.push("");
-
-  // Architecture summary
-  sections.push("## Architecture");
-  sections.push(`- Patterns: ${ast.topology.patterns.join(", ")}`);
-  sections.push(`- Agents: ${agents.length}`);
-  sections.push(`- Gates: ${gates.length}`);
-  sections.push(`- Version: ${ast.topology.version}`);
+  sections.push("Describe who you are so the agent can personalize responses.");
   sections.push("");
-
-  // Flow diagram
-  if (ast.edges.length > 0) {
-    sections.push("## Flow Diagram");
-    sections.push("");
-    sections.push("```mermaid");
-    sections.push("graph TD");
-    for (const edge of ast.edges) {
-      const labelParts: string[] = [];
-      if (edge.condition) labelParts.push(edge.condition);
-      if (edge.maxIterations) labelParts.push(`max ${edge.maxIterations}`);
-      if (edge.isError) labelParts.push("error");
-      if (edge.errorType) labelParts.push(`type: ${edge.errorType}`);
-      if (edge.weight != null) labelParts.push(`weight: ${edge.weight}`);
-      if (edge.race) labelParts.push("race");
-      if (edge.tolerance != null) labelParts.push(`tolerance: ${edge.tolerance}`);
-      if (edge.wait) labelParts.push(`wait: ${edge.wait}`);
-      if (edge.reflection) labelParts.push("reflection");
-      const label = labelParts.join(", ");
-      const arrow = edge.isError ? "-.->|" : "-->|";
-      if (label) {
-        if (edge.isError) {
-          sections.push(`  ${edge.from} -.->|${label}| ${edge.to}`);
-        } else {
-          sections.push(`  ${edge.from} -->|${label}| ${edge.to}`);
-        }
-      } else {
-        sections.push(`  ${edge.from} --> ${edge.to}`);
-      }
-    }
-    sections.push("```");
-    sections.push("");
-  }
-
-  // Roles table
-  if (Object.keys(ast.roles).length > 0) {
-    sections.push("## Roles");
-    sections.push("| Role | Description |");
-    sections.push("|------|-------------|");
-    for (const [role, desc] of Object.entries(ast.roles)) {
-      sections.push(`| ${role} | ${desc} |`);
-    }
-    sections.push("");
-  }
-
-  // Metering
-  if (ast.metering) {
-    sections.push("## Metering");
-    sections.push(`- Track: ${ast.metering.track.join(", ")}`);
-    sections.push(`- Per: ${ast.metering.per.join(", ")}`);
-    sections.push(`- Output: ${ast.metering.output} (${ast.metering.format})`);
-    sections.push(`- Pricing: ${ast.metering.pricing}`);
-    sections.push("");
-  }
+  sections.push("<!-- Edit this file with your preferences, name, communication style, etc. -->");
+  sections.push("");
 
   return {
-    path: "TEAM.md",
-    content: sections.join("\n") + "\n",
-    category: "machine",
+    path: "USER.md",
+    content: sections.join("\n"),
+    category: "agent",
+  };
+}
+
+/** Generate IDENTITY.md — agent identity from topology meta. */
+function generateIdentityMd(ast: TopologyAST): GeneratedFile {
+  const sections: string[] = [];
+  sections.push("# Identity");
+  sections.push("");
+  sections.push(`- **Name:** ${toTitle(ast.topology.name)}`);
+  sections.push(`- **Emoji:** \uD83E\uDD9E`);
+  const vibe = ast.topology.description ?? "Coordinate agent topology.";
+  sections.push(`- **Vibe:** ${vibe}`);
+  sections.push("");
+
+  return {
+    path: "IDENTITY.md",
+    content: sections.join("\n"),
+    category: "agent",
   };
 }
 
@@ -1502,7 +1529,8 @@ export const openClawBinding: BindingTarget = {
     files.push(generateToolsMd(ast));
     files.push(generateMemoryMd(ast));
     files.push(generateBootstrapMd(ast));
-    files.push(generateTeamMd(ast));
+    files.push(generateUserMd());
+    files.push(generateIdentityMd(ast));
 
     // 2. Skills (from ast.skills + ast.toolDefs)
     files.push(...generateSkillFiles(ast));
@@ -1516,7 +1544,11 @@ export const openClawBinding: BindingTarget = {
     // 4. Memory directories
     files.push(...generateMemoryDirs(ast));
 
-    // 5. Workspace protocol
+    // 5. Memory and skills directory markers
+    files.push(gitkeep("memory"));
+    files.push(gitkeep("skills"));
+
+    // 6. Workspace protocol
     const protocol = generateWorkspaceProtocol(ast);
     if (protocol) files.push(protocol);
 
