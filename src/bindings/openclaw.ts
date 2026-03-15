@@ -598,7 +598,7 @@ function generateSoulMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "SOUL.md",
     content: sections.join("\n") + "\n",
-    category: "composite",
+    category: "agent",
   };
 }
 
@@ -964,7 +964,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
-    category: "composite",
+    category: "agent",
   };
 }
 
@@ -1319,7 +1319,7 @@ function generateSkillFiles(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `skills/${skill.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
   }
 
@@ -1349,7 +1349,7 @@ function generateToolSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `skills/${tool.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
 
     // index.ts stub

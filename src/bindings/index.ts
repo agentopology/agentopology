@@ -16,6 +16,7 @@ import { kiroBinding } from "./kiro.js";
 import { anthropicSdkBinding } from "./anthropic-sdk.js";
 import { vercelAiBinding } from "./vercel-ai.js";
 import { claudeAgentSdkBinding } from "./claude-agent-sdk.js";
+import { cursorBinding } from "./cursor.js";
 
 export type { GeneratedFile, BindingTarget } from "./types.js";
 export { claudeCodeBinding } from "./claude-code.js";
@@ -27,6 +28,7 @@ export { kiroBinding } from "./kiro.js";
 export { anthropicSdkBinding } from "./anthropic-sdk.js";
 export { vercelAiBinding } from "./vercel-ai.js";
 export { claudeAgentSdkBinding } from "./claude-agent-sdk.js";
+export { cursorBinding } from "./cursor.js";
 
 /** All available binding targets, keyed by name. */
 export const bindings: Record<string, BindingTarget> = {
@@ -39,4 +41,5 @@ export const bindings: Record<string, BindingTarget> = {
   "anthropic-sdk": anthropicSdkBinding,
   "vercel-ai": vercelAiBinding,
   "claude-agent-sdk": claudeAgentSdkBinding,
+  "cursor": cursorBinding,
 };

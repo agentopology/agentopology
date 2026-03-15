@@ -16,7 +16,7 @@ export interface GeneratedFile {
   /** Full file content. */
   content: string;
   /** Merge category for incremental scaffold. Defaults to "machine". */
-  category?: "machine" | "agent" | "script" | "composite";
+  category?: "machine" | "agent" | "script" | "shared-config";
 }
 
 /**

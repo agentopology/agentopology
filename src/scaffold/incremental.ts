@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 
 import type { GeneratedFile } from "../bindings/types.js";
 import type { FileAction, ScaffoldManifest } from "./types.js";
-import { mergeAgentFile, shouldOverwriteScript } from "./merge.js";
+import { mergeAgentFile, shouldOverwriteScript, deepMergeJson } from "./merge.js";
 
 /**
  * Compute an incremental scaffold plan.
@@ -97,8 +97,22 @@ export function computeIncrementalPlan(
         break;
       }
 
+      case "shared-config": {
+        const merged = deepMergeJson(existingContent, file.content);
+        if (merged === existingContent) {
+          actions.push({ type: "unchanged", path: file.path });
+        } else {
+          actions.push({
+            type: "update",
+            path: file.path,
+            content: merged,
+            detail: "config merged",
+          });
+        }
+        break;
+      }
+
       case "machine":
-      case "composite":
       default: {
         if (file.content === existingContent) {
           actions.push({ type: "unchanged", path: file.path });

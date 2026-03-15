@@ -111,3 +111,65 @@ export function shouldOverwriteScript(
 ): boolean {
   return hashContent(existingContent) === manifestHash;
 }
+
+/**
+ * Deep-merge two JSON config files.
+ *
+ * Scaffold-generated keys are added/updated into the existing config,
+ * but user-only keys (not present in generated) are preserved.
+ *
+ * For nested objects (like mcpServers), merges by key — scaffold stubs
+ * don't overwrite existing entries that have real config.
+ *
+ * @param existingRaw - Current file content on disk (JSON string)
+ * @param generatedRaw - Freshly generated file content (JSON string)
+ * @returns Merged JSON string, or existingRaw if parse fails
+ */
+export function deepMergeJson(existingRaw: string, generatedRaw: string): string {
+  let existing: Record<string, unknown>;
+  let generated: Record<string, unknown>;
+
+  try {
+    existing = JSON.parse(existingRaw);
+    generated = JSON.parse(generatedRaw);
+  } catch {
+    // If either file isn't valid JSON, return existing unchanged
+    return existingRaw;
+  }
+
+  const merged = mergeObjects(existing, generated);
+  return JSON.stringify(merged, null, 2) + "\n";
+}
+
+function mergeObjects(
+  existing: Record<string, unknown>,
+  generated: Record<string, unknown>,
+): Record<string, unknown> {
+  // Start with a copy of existing (preserves user-only keys)
+  const result: Record<string, unknown> = { ...existing };
+
+  for (const [key, genValue] of Object.entries(generated)) {
+    const exValue = existing[key];
+
+    if (
+      genValue !== null &&
+      typeof genValue === "object" &&
+      !Array.isArray(genValue) &&
+      exValue !== null &&
+      typeof exValue === "object" &&
+      !Array.isArray(exValue)
+    ) {
+      // Both are objects — recurse
+      result[key] = mergeObjects(
+        exValue as Record<string, unknown>,
+        genValue as Record<string, unknown>,
+      );
+    } else if (exValue === undefined) {
+      // Key only in generated — add it
+      result[key] = genValue;
+    }
+    // else: key exists in both and at least one is not an object — keep existing value
+  }
+
+  return result;
+}

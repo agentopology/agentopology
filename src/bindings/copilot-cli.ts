@@ -713,7 +713,7 @@ function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.github/agents/${group.id}.agent.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
   }
 

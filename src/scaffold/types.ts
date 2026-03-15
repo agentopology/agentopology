@@ -12,7 +12,7 @@ export interface ManifestEntry {
   /** SHA-256 hash of the file content at generation time. */
   hash: string;
   /** Merge category that determines how the file is handled on re-scaffold. */
-  category: "machine" | "agent" | "script" | "composite";
+  category: "machine" | "agent" | "script" | "shared-config";
 }
 
 /** Manifest written to disk after each scaffold run. */

@@ -8,6 +8,7 @@ import {
   copilotCliBinding,
   openClawBinding,
   kiroBinding,
+  cursorBinding,
 } from "../index.js";
 import type { GeneratedFile } from "../types.js";
 
@@ -2040,6 +2041,523 @@ describe("anthropic-sdk binding (deep)", () => {
       for (const f of files) {
         // Check for patterns that look like actual API keys (sk-ant-...)
         expect(f.content).not.toMatch(/sk-ant-[a-zA-Z0-9]{20,}/);
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cursor — Ground-truth validation against real-world Cursor IDE configs
+//
+// Reference configs sourced from GitHub:
+//   - maccman/ai-monorepo-scaffold (16 .mdc rules)
+//   - marcoemrich/mad-tdd-mob-ai-driven (TDD rules)
+//   - OthmanAdi/planning-with-files (hooks.json)
+//   - mpaiva/project-starter-template-cursor (mcp.json)
+//   - sanjeed5/awesome-cursor-rules-mdc (3,377 stars, 230+ rules)
+// ---------------------------------------------------------------------------
+
+describe("cursor binding — ground-truth validation", () => {
+  const files = scaffoldBinding("cursor");
+
+  assertStructuralInvariants(files);
+
+  // -----------------------------------------------------------------------
+  // .mdc frontmatter format — validated against real .mdc files
+  // -----------------------------------------------------------------------
+
+  describe("frontmatter matches real-world .mdc format", () => {
+    const mdcFiles = files.filter((f) => f.path.endsWith(".mdc"));
+
+    it("all .mdc files have YAML frontmatter", () => {
+      for (const f of mdcFiles) {
+        expect(f.content.startsWith("---\n"), `${f.path} missing frontmatter`).toBe(true);
+        const secondDash = f.content.indexOf("---", 4);
+        expect(secondDash).toBeGreaterThan(4);
+      }
+    });
+
+    it("frontmatter always contains all 3 fields: description, globs, alwaysApply", () => {
+      // Real .mdc files (maccman/ai-monorepo-scaffold) include all three fields
+      // even when empty. e.g.: description:\n globs:\n alwaysApply: false
+      for (const f of mdcFiles) {
+        const fm = f.content.split("---")[1];
+        expect(fm, `${f.path} missing description field`).toContain("description:");
+        expect(fm, `${f.path} missing globs field`).toContain("globs:");
+        expect(fm, `${f.path} missing alwaysApply field`).toContain("alwaysApply:");
+      }
+    });
+
+    it("alwaysApply is 'true' or 'false', never omitted", () => {
+      // Real configs always spell out the boolean value explicitly
+      for (const f of mdcFiles) {
+        const fm = f.content.split("---")[1];
+        expect(fm).toMatch(/alwaysApply: (true|false)/);
+      }
+    });
+
+    it("globs uses comma-separated string format (not YAML array)", () => {
+      // Real: globs: **/*.ts, **/*.tsx  (NOT globs:\n  - **/*.ts)
+      for (const f of mdcFiles) {
+        const fm = f.content.split("---")[1];
+        // Must NOT have YAML array syntax for globs
+        expect(fm).not.toMatch(/globs:\n\s+-/);
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Rule type mapping — matches Cursor docs rule type table
+  // -----------------------------------------------------------------------
+
+  describe("rule type mapping matches Cursor rule type table", () => {
+    it("topology-overview is 'Always Apply' (alwaysApply: true)", () => {
+      // Like maccman/ai-monorepo-scaffold always.mdc
+      const overview = files.find((f) => f.path === ".cursor/rules/topology-overview.mdc")!;
+      const fm = overview.content.split("---")[1];
+      expect(fm).toContain("alwaysApply: true");
+    });
+
+    it("regular agents are 'Apply Intelligently' (description set, alwaysApply: false)", () => {
+      // Like maccman/ai-monorepo-scaffold trpc.mdc
+      const planner = files.find((f) => f.path === ".cursor/rules/planner.mdc")!;
+      const fm = planner.content.split("---")[1];
+      expect(fm).toContain("alwaysApply: false");
+      expect(fm).toMatch(/description: .+/); // non-empty description
+      expect(fm).toMatch(/globs:\s*$/m); // empty globs
+    });
+
+    it("trigger rules are 'Apply Manually' (empty description, empty globs, alwaysApply: false)", () => {
+      // Like marcoemrich/mad-tdd-mob-ai-driven greeting.mdc
+      const trigger = files.find((f) => f.path === ".cursor/rules/trigger-run.mdc")!;
+      const fm = trigger.content.split("---")[1];
+      expect(fm).toContain("alwaysApply: false");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // .mdc body format
+  // -----------------------------------------------------------------------
+
+  describe("rule body is standard Markdown", () => {
+    it("agent rules have heading, instructions, tools sections", () => {
+      const planner = files.find((f) => f.path === ".cursor/rules/planner.mdc")!;
+      expect(planner.content).toContain("# Planner");
+      expect(planner.content).toContain("## Instructions");
+      expect(planner.content).toContain("## Tools");
+      expect(planner.content).toContain("- Read");
+      expect(planner.content).toContain("- Grep");
+    });
+
+    it("disallowed tools section exists for agents with disallowed-tools", () => {
+      const builder = files.find((f) => f.path === ".cursor/rules/builder.mdc")!;
+      expect(builder.content).toContain("Disallowed");
+      expect(builder.content).toContain("Edit");
+    });
+
+    it("memory reads/writes are documented in body", () => {
+      const planner = files.find((f) => f.path === ".cursor/rules/planner.mdc")!;
+      expect(planner.content).toContain("workspace/input.md");
+      expect(planner.content).toContain("workspace/plan.md");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // MCP config — validated against real .cursor/mcp.json files
+  // -----------------------------------------------------------------------
+
+  describe("MCP config matches real-world .cursor/mcp.json format", () => {
+    const mcpFile = files.find((f) => f.path === ".cursor/mcp.json");
+
+    it("produces .cursor/mcp.json", () => {
+      expect(mcpFile).toBeDefined();
+    });
+
+    it("has mcpServers top-level key (like mpaiva/project-starter-template-cursor)", () => {
+      const config = JSON.parse(mcpFile!.content);
+      expect(config.mcpServers).toBeDefined();
+      expect(typeof config.mcpServers).toBe("object");
+    });
+
+    it("server entries have command and args (stdio format)", () => {
+      // Matches real config from mpaiva/project-starter-template-cursor
+      const config = JSON.parse(mcpFile!.content);
+      const server = config.mcpServers.filesystem;
+      expect(server).toBeDefined();
+      expect(server.args).toBeInstanceOf(Array);
+      expect(server.args).toContain("-y");
+      expect(server.args).toContain("@modelcontextprotocol/server-filesystem");
+    });
+
+    it("does NOT force empty env object (real configs omit env when unused)", () => {
+      // Real: ZackHu-2001/apply-bot mcp.json has no env field at all
+      const config = JSON.parse(mcpFile!.content);
+      const server = config.mcpServers.filesystem;
+      expect(server.env).toBeUndefined();
+    });
+
+    it("no extra fields beyond command, args, env", () => {
+      // Real configs only have: command, args, optional env (or url for SSE)
+      const config = JSON.parse(mcpFile!.content);
+      const server = config.mcpServers.filesystem;
+      const keys = Object.keys(server);
+      for (const key of keys) {
+        expect(["command", "args", "env", "url"]).toContain(key);
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // hooks.json — validated against OthmanAdi/planning-with-files hooks.json
+  // -----------------------------------------------------------------------
+
+  describe("hooks.json matches real-world Cursor hooks format", () => {
+    const hooksFile = files.find((f) => f.path === ".cursor/hooks.json");
+
+    it("produces .cursor/hooks.json", () => {
+      expect(hooksFile).toBeDefined();
+    });
+
+    it("has version: 1 at top level", () => {
+      // Real: OthmanAdi/planning-with-files hooks.json
+      const config = JSON.parse(hooksFile!.content);
+      expect(config.version).toBe(1);
+    });
+
+    it("has hooks object at top level", () => {
+      const config = JSON.parse(hooksFile!.content);
+      expect(config.hooks).toBeDefined();
+      expect(typeof config.hooks).toBe("object");
+    });
+
+    it("hook event names are camelCase (NOT PascalCase like Claude Code)", () => {
+      // Real: preToolUse, postToolUse, stop (NOT PreToolUse, PostToolUse, Stop)
+      const config = JSON.parse(hooksFile!.content);
+      const events = Object.keys(config.hooks);
+      for (const event of events) {
+        // First char must be lowercase
+        expect(event[0], `Event "${event}" should be camelCase`).toBe(event[0].toLowerCase());
+        // Must NOT be PascalCase
+        expect(event).not.toMatch(/^[A-Z]/);
+      }
+    });
+
+    it("hook entries are flat objects (NOT nested hooks array like Claude Code)", () => {
+      // Real Cursor: { command, matcher, timeout }
+      // Claude Code: { matcher, hooks: [{ type, command, timeout }] }
+      const config = JSON.parse(hooksFile!.content);
+      for (const entries of Object.values(config.hooks) as unknown[][]) {
+        for (const entry of entries as Record<string, unknown>[]) {
+          expect(entry.command, "each hook entry must have a command").toBeDefined();
+          // Must NOT have nested hooks array (that's Claude Code format)
+          expect(entry).not.toHaveProperty("hooks");
+        }
+      }
+    });
+
+    it("hook entries do NOT have a 'type' field (Cursor has no prompt hooks)", () => {
+      // Real Cursor hooks have no type field — all hooks are command-based
+      // Claude Code has type: "command" | "prompt"
+      const config = JSON.parse(hooksFile!.content);
+      for (const entries of Object.values(config.hooks) as unknown[][]) {
+        for (const entry of entries as Record<string, unknown>[]) {
+          expect(entry).not.toHaveProperty("type");
+        }
+      }
+    });
+
+    it("failClosed is only present when true (default is false)", () => {
+      // Real: OthmanAdi/planning-with-files doesn't include failClosed at all
+      const config = JSON.parse(hooksFile!.content);
+      for (const entries of Object.values(config.hooks) as unknown[][]) {
+        for (const entry of entries as Record<string, unknown>[]) {
+          if ("failClosed" in entry) {
+            expect(entry.failClosed).toBe(true);
+          }
+        }
+      }
+    });
+
+    it("timeout is in seconds (NOT milliseconds like Claude Code)", () => {
+      // Real: timeout: 5 (seconds). Claude Code: timeout: 5000 (milliseconds)
+      const config = JSON.parse(hooksFile!.content);
+      for (const entries of Object.values(config.hooks) as unknown[][]) {
+        for (const entry of entries as Record<string, unknown>[]) {
+          if ("timeout" in entry) {
+            // No reasonable hook timeout would be > 3600 seconds
+            // If it's > 10000 it's probably in milliseconds (bug)
+            expect(entry.timeout as number).toBeLessThan(10000);
+          }
+        }
+      }
+    });
+
+    it("script paths use .cursor/hooks/ directory (like real configs)", () => {
+      // Real: OthmanAdi uses .cursor/hooks/pre-tool-use.sh
+      const config = JSON.parse(hooksFile!.content);
+      for (const entries of Object.values(config.hooks) as unknown[][]) {
+        for (const entry of entries as Record<string, unknown>[]) {
+          const cmd = entry.command as string;
+          if (cmd.includes(".cursor")) {
+            expect(cmd).toMatch(/\.cursor\/hooks\//);
+            // Must NOT use .cursor/scripts/hooks/ (non-standard)
+            expect(cmd).not.toContain("/scripts/hooks/");
+          }
+        }
+      }
+    });
+
+    it("gate with on-fail: halt compiles to failClosed: true", () => {
+      // quality-check gate has on-fail: halt -> blocking
+      const config = JSON.parse(hooksFile!.content);
+      const postHooks = config.hooks.postToolUse as Record<string, unknown>[];
+      const gateHook = postHooks.find((h) =>
+        (h.command as string).includes("gate-quality-check"),
+      );
+      expect(gateHook).toBeDefined();
+      expect(gateHook!.failClosed).toBe(true);
+    });
+
+    it("advisory gate does NOT have failClosed", () => {
+      // soft-review gate has behavior: advisory -> no failClosed
+      const config = JSON.parse(hooksFile!.content);
+      const postHooks = config.hooks.postToolUse as Record<string, unknown>[];
+      const gateHook = postHooks.find((h) =>
+        (h.command as string).includes("gate-soft-review"),
+      );
+      expect(gateHook).toBeDefined();
+      expect(gateHook).not.toHaveProperty("failClosed");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Gate script files
+  // -----------------------------------------------------------------------
+
+  describe("gate scripts are generated at correct paths", () => {
+    it("gate scripts live in .cursor/hooks/ (matching hooks.json references)", () => {
+      const gateScripts = files.filter((f) => f.path.includes("gate-"));
+      expect(gateScripts.length).toBeGreaterThanOrEqual(2);
+      for (const f of gateScripts) {
+        expect(f.path).toMatch(/^\.cursor\/hooks\/gate-/);
+      }
+    });
+
+    it("gate scripts are executable bash with set -euo pipefail", () => {
+      const gateScript = files.find((f) => f.path.includes("gate-quality-check"))!;
+      expect(gateScript.content).toContain("#!/usr/bin/env bash");
+      expect(gateScript.content).toContain("set -euo pipefail");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // AGENTS.md context file
+  // -----------------------------------------------------------------------
+
+  describe("AGENTS.md context file", () => {
+    const agentsMd = files.find((f) => f.path === "AGENTS.md");
+
+    it("produces AGENTS.md at project root (Cursor supports AGENTS.md)", () => {
+      expect(agentsMd).toBeDefined();
+    });
+
+    it("contains agent roster table", () => {
+      expect(agentsMd!.content).toContain("| Agent | ");
+      expect(agentsMd!.content).toContain("planner");
+      expect(agentsMd!.content).toContain("builder");
+    });
+
+    it("contains workflow section with delegation @-mention syntax", () => {
+      // Cursor uses @rule-name for manual rule activation
+      expect(agentsMd!.content).toContain("@planner");
+      expect(agentsMd!.content).toContain("@builder");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Directory structure
+  // -----------------------------------------------------------------------
+
+  describe("output directory structure matches Cursor conventions", () => {
+    it("all .mdc files are under .cursor/rules/", () => {
+      const mdcFiles = files.filter((f) => f.path.endsWith(".mdc"));
+      expect(mdcFiles.length).toBeGreaterThan(0);
+      for (const f of mdcFiles) {
+        expect(f.path).toMatch(/^\.cursor\/rules\//);
+      }
+    });
+
+    it("mcp.json is at .cursor/mcp.json (NOT project root .mcp.json)", () => {
+      const mcpFile = files.find((f) => f.path === ".cursor/mcp.json");
+      expect(mcpFile).toBeDefined();
+      // Must NOT generate .mcp.json at root (that's Claude Code convention)
+      const rootMcp = files.find((f) => f.path === ".mcp.json");
+      expect(rootMcp).toBeUndefined();
+    });
+
+    it("hooks.json is at .cursor/hooks.json", () => {
+      const hooksFile = files.find((f) => f.path === ".cursor/hooks.json");
+      expect(hooksFile).toBeDefined();
+    });
+
+    it("does NOT generate .cursorrules by default (only on opt-in)", () => {
+      const cursorrules = files.find((f) => f.path === ".cursorrules");
+      expect(cursorrules).toBeUndefined();
+    });
+
+    it("does NOT generate any .claude/ files", () => {
+      const claudeFiles = files.filter((f) => f.path.startsWith(".claude/"));
+      expect(claudeFiles.length).toBe(0);
+    });
+
+    it("does NOT generate any .github/ files", () => {
+      const githubFiles = files.filter((f) => f.path.startsWith(".github/"));
+      expect(githubFiles.length).toBe(0);
+    });
+
+    it("does NOT generate any .kiro/ files", () => {
+      const kiroFiles = files.filter((f) => f.path.startsWith(".kiro/"));
+      expect(kiroFiles.length).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Format anti-patterns (things we must NOT produce)
+  // -----------------------------------------------------------------------
+
+  describe("no Claude Code format leakage", () => {
+    it("no PascalCase hook events in hooks.json", () => {
+      const hooksFile = files.find((f) => f.path === ".cursor/hooks.json");
+      if (hooksFile) {
+        // Must not contain PascalCase events like PreToolUse, PostToolUse
+        expect(hooksFile.content).not.toContain('"PreToolUse"');
+        expect(hooksFile.content).not.toContain('"PostToolUse"');
+        expect(hooksFile.content).not.toContain('"Stop"');
+        expect(hooksFile.content).not.toContain('"SessionStart"');
+      }
+    });
+
+    it("no timeout in milliseconds (all timeouts must be in seconds)", () => {
+      const hooksFile = files.find((f) => f.path === ".cursor/hooks.json");
+      if (hooksFile) {
+        // Should not see "timeout": 5000 (that's Claude Code milliseconds)
+        const config = JSON.parse(hooksFile.content);
+        for (const entries of Object.values(config.hooks) as unknown[][]) {
+          for (const entry of entries as Record<string, unknown>[]) {
+            if ("timeout" in entry) {
+              expect(
+                entry.timeout as number,
+                "timeout should be in seconds, not milliseconds",
+              ).toBeLessThan(1000);
+            }
+          }
+        }
+      }
+    });
+
+    it("no AGENT.md files (that is Claude Code naming)", () => {
+      const agentMd = files.filter((f) => f.path.endsWith("/AGENT.md"));
+      expect(agentMd.length).toBe(0);
+    });
+
+    it("no settings.json (that is Claude Code config)", () => {
+      const settingsJson = files.find((f) => f.path.endsWith("settings.json"));
+      expect(settingsJson).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // All 5 example .at files — scaffold and validate format
+  // -----------------------------------------------------------------------
+
+  describe("scaffolds all example .at files with correct format", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const examplesDir = path.resolve(__dirname, "../../../examples");
+    const atFiles: string[] = fs.readdirSync(examplesDir).filter((f: string) => f.endsWith(".at"));
+
+    it("finds at least 5 example .at files", () => {
+      expect(atFiles.length).toBeGreaterThanOrEqual(5);
+    });
+
+    for (const atFile of atFiles) {
+      describe(`example: ${atFile}`, () => {
+        const src = fs.readFileSync(path.join(examplesDir, atFile), "utf-8");
+        const exAst = parse(src);
+        const exFiles = cursorBinding.scaffold(exAst);
+
+        it("scaffolds without errors", () => {
+          expect(exFiles.length).toBeGreaterThan(0);
+        });
+
+        it("all .mdc files have correct 3-field frontmatter", () => {
+          const mdcFiles = exFiles.filter((f: GeneratedFile) => f.path.endsWith(".mdc"));
+          for (const f of mdcFiles) {
+            expect(f.content.startsWith("---\n"), `${f.path}`).toBe(true);
+            const fm = f.content.split("---")[1];
+            expect(fm, `${f.path} missing description`).toContain("description:");
+            expect(fm, `${f.path} missing globs`).toContain("globs:");
+            expect(fm, `${f.path} missing alwaysApply`).toContain("alwaysApply:");
+            expect(fm, `${f.path} uses YAML array globs`).not.toMatch(/globs:\n\s+-/);
+          }
+        });
+
+        it("hooks.json (if present) uses Cursor format", () => {
+          const hooksFile = exFiles.find((f: GeneratedFile) => f.path === ".cursor/hooks.json");
+          if (!hooksFile) return;
+          const config = JSON.parse(hooksFile.content);
+          expect(config.version).toBe(1);
+          for (const event of Object.keys(config.hooks)) {
+            expect(event[0]).toBe(event[0].toLowerCase());
+          }
+          for (const entries of Object.values(config.hooks) as unknown[][]) {
+            for (const entry of entries as Record<string, unknown>[]) {
+              expect(entry).not.toHaveProperty("type");
+              if ("failClosed" in entry) expect(entry.failClosed).toBe(true);
+            }
+          }
+        });
+
+        it("mcp.json (if present) has only valid fields", () => {
+          const mcpFile = exFiles.find((f: GeneratedFile) => f.path === ".cursor/mcp.json");
+          if (!mcpFile) return;
+          const config = JSON.parse(mcpFile.content);
+          for (const server of Object.values(config.mcpServers) as Record<string, unknown>[]) {
+            for (const key of Object.keys(server)) {
+              expect(["command", "args", "env", "url"]).toContain(key);
+            }
+          }
+        });
+
+        it("no files from other binding targets", () => {
+          for (const f of exFiles) {
+            expect(f.path).not.toMatch(/^\.(claude|github|kiro)\//);
+            expect(f.path).not.toMatch(/AGENT\.md$/);
+          }
+        });
+      });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // MCP field filtering — only valid Cursor MCP fields pass through
+  // -----------------------------------------------------------------------
+
+  describe("MCP config filters unknown fields", () => {
+    it("does not leak env vars as top-level MCP server fields", () => {
+      // The parser sometimes places env vars at the server top level.
+      // The binding must filter these out, keeping only command/args/env/url.
+      const mcpFile = files.find((f) => f.path === ".cursor/mcp.json");
+      if (!mcpFile) return;
+      const config = JSON.parse(mcpFile.content);
+      for (const [name, server] of Object.entries(config.mcpServers) as [string, Record<string, unknown>][]) {
+        const validKeys = new Set(["command", "args", "env", "url"]);
+        for (const key of Object.keys(server)) {
+          expect(
+            validKeys.has(key),
+            `server "${name}" has invalid field "${key}"`,
+          ).toBe(true);
+        }
       }
     });
   });

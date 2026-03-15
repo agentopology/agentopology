@@ -892,7 +892,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   return {
     path: "AGENTS.md",
     content: sections.join("\n") + "\n",
-    category: "composite",
+    category: "agent",
   };
 }
 
@@ -1218,7 +1218,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.codex/skills/${skill.id}.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
   }
 
