@@ -1,0 +1,169 @@
+# OpenClaw battle test — exercises maximum binding surface area
+
+topology openclaw-battle-test : [supervisor, fan-out] {
+
+  meta {
+    version: "1.0.0"
+    description: "Battle test topology for OpenClaw binding validation"
+  }
+
+  roles {
+    coordinator: "Central coordinator — routes requests, synthesizes results"
+    researcher: "Deep research using web search and document analysis"
+    writer: "Draft responses and documents"
+  }
+
+  action intake {
+    kind: inline
+    description: "Parse incoming request"
+  }
+
+  action done {
+    kind: inline
+    description: "Deliver final output"
+  }
+
+  agent coordinator {
+    role: coordinator
+    model: openrouter/google/gemini-2.5-flash
+    permissions: autonomous
+    tools: [Read, WebSearch, WebFetch]
+    description: "Central coordinator — routes requests, synthesizes results"
+    max-turns: 20
+    phase: 1
+  }
+
+  agent researcher {
+    role: researcher
+    model: openrouter/google/gemini-2.5-flash
+    permissions: supervised
+    tools: [Read, Grep, Glob, WebSearch, WebFetch]
+    reads: ["workspace/queries/"]
+    writes: ["workspace/research/"]
+    description: "Research agent — searches web, reads docs, produces summaries"
+    phase: 2
+  }
+
+  agent writer {
+    role: writer
+    model: openrouter/anthropic/claude-sonnet-4-6
+    tools: [Read, Write, Edit]
+    writes: ["workspace/drafts/"]
+    description: "Writing agent — drafts responses and documents"
+    phase: 2
+  }
+
+  group review-panel {
+    members: [coordinator, researcher]
+    max-rounds: 3
+    termination: "consensus on quality"
+    description: "Quality review discussion"
+  }
+
+  flow {
+    intake -> coordinator
+    coordinator -> [researcher, writer]
+    researcher -> review-panel
+    writer -> review-panel
+    review-panel -> done
+  }
+
+  gates {
+    gate quality-check {
+      after: writer
+      before: review-panel
+      run: "scripts/quality-check.sh"
+      checks: [formatting, accuracy]
+      on-fail: bounce-back
+    }
+  }
+
+  schedule {
+    job daily-digest {
+      cron: "0 8 * * 0-4"
+      agent: coordinator
+      enabled: true
+    }
+  }
+
+  hooks {
+    hook log-tools {
+      on: PreToolUse
+      run: "scripts/log-tool-use.sh"
+      type: command
+    }
+  }
+
+  providers {
+    openrouter {
+      api-key: "${OPENROUTER_API_KEY}"
+      base-url: "https://openrouter.ai/api/v1"
+      models: [openrouter/google/gemini-2.5-flash, openrouter/anthropic/claude-sonnet-4-6]
+      default: true
+    }
+  }
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [queries, research, drafts, responses]
+    }
+    domains {
+      path: "domains/"
+    }
+  }
+
+  triggers {
+    command ask {
+      pattern: "/ask <QUERY>"
+      argument: QUERY
+    }
+  }
+
+  settings {
+    allow: [Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch]
+    deny: []
+  }
+
+  extensions {
+    openclaw {
+      gateway-port: 18789
+      channels: [telegram]
+      telegram: {
+        bot-token: "${TELEGRAM_BOT_TOKEN}"
+        dm-policy: "pairing"
+      }
+    }
+  }
+
+  env {
+    OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}"
+    TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+  }
+
+  skill web-research {
+    description: "Web research and summarization"
+    scripts: [search-web]
+    domains: ["domains/research-guide.md"]
+  }
+
+  depth {
+    factors: [complexity, urgency]
+
+    level 1 "quick" {
+      omit: [review-panel]
+    }
+
+    level 2 "thorough" {
+      omit: []
+    }
+  }
+
+  metering {
+    track: [tokens-in, tokens-out, cost]
+    per: [agent, run]
+    output: "metrics.jsonl"
+    format: jsonl
+    pricing: anthropic-current
+  }
+}

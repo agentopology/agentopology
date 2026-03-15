@@ -38,6 +38,21 @@ function toTitle(id: string): string {
     .join(" ");
 }
 
+/**
+ * Generate a human-readable model alias from a fully-qualified model string.
+ * E.g. "openrouter/google/gemini-2.5-flash" → "Gemini 2.5 Flash"
+ *      "openrouter/anthropic/claude-sonnet-4-6" → "Claude Sonnet 4.6"
+ */
+function modelAlias(model: string): string {
+  // Extract last segment after the last "/"
+  const lastSlash = model.lastIndexOf("/");
+  const baseName = lastSlash >= 0 ? model.slice(lastSlash + 1) : model;
+  // Title-case each hyphen-separated word
+  const words = baseName.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  // Join and convert version-like patterns: "4 6" → "4.6", "2 5" → "2.5"
+  return words.join(" ").replace(/(\d+)\s+(\d+)/g, "$1.$2");
+}
+
 /** Generate a shell script stub with a header comment. */
 function shellStub(description: string): string {
   return [
@@ -97,11 +112,18 @@ function mapPermissions(perm: string): string {
 }
 
 /**
- * Extract openclaw-specific extension fields from the topology settings.
+ * Extract openclaw-specific extension fields from the topology.
+ * Top-level `extensions { openclaw { ... } }` lives on `ast.extensions`.
  */
 function getOpenClawExtensions(
   ast: TopologyAST,
 ): Record<string, unknown> | null {
+  // Top-level extensions block (ast.extensions.openclaw)
+  const topExt = ast.extensions as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  if (topExt?.openclaw) return topExt.openclaw;
+  // Legacy fallback: settings.extensions
   const settingsExt = ast.settings?.extensions as
     | Record<string, Record<string, unknown>>
     | undefined;
@@ -197,9 +219,13 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
   const agentList: Record<string, unknown>[] = [];
 
   // Determine default model for agents.defaults
+  // If the orchestrator/first-agent model already has a provider prefix, use it
+  // as-is (mapModel already passes through slash-containing strings).
   const defaultModel = orchestrator
     ? mapModel(orchestrator.model, defaultProvider)
-    : mapModel("sonnet", defaultProvider);
+    : agents.length > 0
+      ? mapModel(agents[0].model ?? "sonnet", defaultProvider)
+      : mapModel("sonnet", defaultProvider);
 
   // Orchestrator as primary agent
   if (orchestrator) {
@@ -304,14 +330,26 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     }
     config.channels = channelConfig;
   } else if (ext?.channels) {
-    // Legacy extension fallback — channels as named keys
-    const channelNames = ext.channels as string[];
-    if (Array.isArray(channelNames)) {
+    // Extension fallback — channels as named keys
+    // ext.channels can be a real array or a parser-produced string like "[telegram]"
+    let channelNames: string[];
+    if (Array.isArray(ext.channels)) {
+      channelNames = ext.channels as string[];
+    } else if (typeof ext.channels === "string") {
+      // Parse "[telegram, slack]" or "[telegram]" string format
+      const raw = (ext.channels as string).replace(/^\[|\]$/g, "").trim();
+      channelNames = raw ? raw.split(/\s*,\s*/) : [];
+    } else {
+      channelNames = [];
+    }
+    if (channelNames.length > 0) {
       const channelConfig: Record<string, unknown> = {};
       for (const ch of channelNames) {
         const chConfig: Record<string, unknown> = { enabled: true };
-        if (ext[ch] && typeof ext[ch] === "object") {
-          const chExt = ext[ch] as Record<string, unknown>;
+        // Channel config may be a nested object or flattened into ext
+        const chData = ext[ch];
+        if (chData && typeof chData === "object" && chData !== null && String(chData) !== "{") {
+          const chExt = chData as Record<string, unknown>;
           // Map known channel fields
           if (ch === "telegram") {
             if (chExt["bot-token"]) chConfig.botToken = chExt["bot-token"];
@@ -322,10 +360,19 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
           }
           // Copy any remaining fields
           for (const [k, v] of Object.entries(chExt)) {
-            const camelKey = k.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            const camelKey = k.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
             if (!(camelKey in chConfig)) {
               chConfig[camelKey] = v;
             }
+          }
+        } else {
+          // Parser flattened the channel config into ext — look for known fields
+          if (ch === "telegram") {
+            if (ext["bot-token"]) chConfig.botToken = ext["bot-token"];
+            if (ext["dm-policy"]) chConfig.dmPolicy = ext["dm-policy"];
+          } else if (ch === "slack") {
+            if (ext["app-token"]) chConfig.appToken = ext["app-token"];
+            if (ext["bot-token"]) chConfig.botToken = ext["bot-token"];
           }
         }
         channelConfig[ch] = chConfig;
@@ -334,17 +381,9 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     }
   }
 
-  // First-class schedule support
-  if (ast.schedules.length > 0) {
-    config.cronJobs = ast.schedules.map(job => ({
-      name: job.id,
-      schedule: job.cron ?? job.every,
-      agent: job.agent,
-      action: job.action,
-      enabled: job.enabled,
-    }));
-  } else if (ext?.["cron-jobs"]) {
-    config.cronJobs = ext["cron-jobs"];
+  // Cron — just enable the system; job definitions go in cron/jobs.json
+  if (ast.schedules.length > 0 || ext?.["cron-jobs"]) {
+    config.cron = { enabled: true };
   }
 
   // Plugins
@@ -363,7 +402,7 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
         const modelsObj: Record<string, Record<string, unknown>> = {};
         for (const m of p.models) {
           const mapped = mapModel(m, p.name);
-          modelsObj[mapped] = { alias: toTitle(m) };
+          modelsObj[mapped] = { alias: modelAlias(m) };
         }
         provEntry.models = modelsObj;
       }
@@ -405,9 +444,77 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     agentToAgent: { enabled: true },
   };
 
+  // Environment variables
+  if (Object.keys(ast.env).length > 0) {
+    const envBlock: Record<string, string> = {};
+    for (const [k, v] of Object.entries(ast.env)) {
+      envBlock[k] = typeof v === "string" ? v : v.value;
+    }
+    config.env = envBlock;
+  }
+
+  // Channel bindings — route channel messages to the default/first agent
+  if (config.channels) {
+    const channelNames = Object.keys(config.channels as Record<string, unknown>);
+    const defaultAgentId = orchestrator
+      ? "orchestrator"
+      : agents.length > 0
+        ? agents[0].id
+        : "default";
+    config.bindings = channelNames.map((ch) => ({
+      agentId: defaultAgentId,
+      match: { channel: ch },
+    }));
+  }
+
   return {
     path: "openclaw.json",
     content: JSON.stringify(config, null, 2) + "\n",
+    category: "machine",
+  };
+}
+
+/** Generate cron/jobs.json — scheduled job definitions for OpenClaw. */
+function generateCronJobsJson(ast: TopologyAST): GeneratedFile | null {
+  const ext = getOpenClawExtensions(ast);
+  interface CronJob {
+    id: string;
+    name: string;
+    agentId: string;
+    enabled: boolean;
+    schedule: { kind: string; expr: string; tz?: string };
+    payload: { kind: string; message: string };
+    sessionTarget: string;
+  }
+  const jobs: CronJob[] = [];
+
+  if (ast.schedules.length > 0) {
+    for (const job of ast.schedules) {
+      const expr = job.cron ?? job.every ?? "";
+      jobs.push({
+        id: job.id,
+        name: toTitle(job.id),
+        agentId: job.agent ?? "default",
+        enabled: job.enabled !== false,
+        schedule: { kind: "cron", expr },
+        payload: { kind: "agentTurn", message: `Run ${job.id.replace(/-/g, " ")}` },
+        sessionTarget: "isolated",
+      });
+    }
+  } else if (ext?.["cron-jobs"]) {
+    // Legacy extension fallback — pass through
+    return {
+      path: "cron/jobs.json",
+      content: JSON.stringify({ jobs: ext["cron-jobs"] }, null, 2) + "\n",
+      category: "machine",
+    };
+  }
+
+  if (jobs.length === 0) return null;
+
+  return {
+    path: "cron/jobs.json",
+    content: JSON.stringify({ jobs }, null, 2) + "\n",
     category: "machine",
   };
 }
@@ -1531,6 +1638,10 @@ export const openClawBinding: BindingTarget = {
     files.push(generateBootstrapMd(ast));
     files.push(generateUserMd());
     files.push(generateIdentityMd(ast));
+
+    // 1b. Cron jobs file (separate from openclaw.json)
+    const cronJobs = generateCronJobsJson(ast);
+    if (cronJobs) files.push(cronJobs);
 
     // 2. Skills (from ast.skills + ast.toolDefs)
     files.push(...generateSkillFiles(ast));
