@@ -131,7 +131,7 @@ function mapPermissionMode(perm: string): string | undefined {
     case "autonomous":
       return undefined; // default, omit
     case "interactive":
-      return "askUser";
+      return "default";
     case "unrestricted":
       return "bypassPermissions";
     default:
