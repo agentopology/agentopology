@@ -4,6 +4,7 @@ import {
   exporters,
   markdownExporter,
   mermaidExporter,
+  jsonExporter,
 } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -225,9 +226,10 @@ topology minimal : [pipeline] {
 // ---------------------------------------------------------------------------
 
 describe("exporter registry", () => {
-  it("has markdown and mermaid exporters", () => {
+  it("has markdown, mermaid, and json exporters", () => {
     expect(exporters).toHaveProperty("markdown");
     expect(exporters).toHaveProperty("mermaid");
+    expect(exporters).toHaveProperty("json");
   });
 
   it("each exporter has required fields", () => {
@@ -720,5 +722,95 @@ describe("cross-exporter", () => {
       expect(mmd).toContain(edge.from.replace(/-/g, "_"));
       expect(mmd).toContain(edge.to.replace(/-/g, "_"));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JSON exporter tests
+// ---------------------------------------------------------------------------
+
+describe("jsonExporter", () => {
+  it("has correct metadata", () => {
+    expect(jsonExporter.name).toBe("json");
+    expect(jsonExporter.extension).toBe(".json");
+  });
+
+  it("produces a single .json file", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const files = jsonExporter.export(ast);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("simple-pipeline.json");
+  });
+
+  it("produces valid JSON", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const content = jsonExporter.export(ast)[0].content;
+    const parsed = JSON.parse(content);
+    expect(parsed).toBeDefined();
+    expect(parsed.topology.name).toBe("simple-pipeline");
+  });
+
+  it("preserves topology fields", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    expect(parsed.topology.version).toBe("1.0.0");
+    expect(parsed.topology.description).toBe("Research, write, and review");
+    expect(parsed.topology.patterns).toContain("pipeline");
+  });
+
+  it("includes nodes", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    const nodeIds = parsed.nodes.map((n: { id: string }) => n.id);
+    expect(nodeIds).toContain("researcher");
+    expect(nodeIds).toContain("writer");
+    expect(nodeIds).toContain("reviewer");
+  });
+
+  it("includes edges", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    expect(parsed.edges.length).toBeGreaterThan(0);
+    expect(parsed.edges[0]).toHaveProperty("from");
+    expect(parsed.edges[0]).toHaveProperty("to");
+  });
+
+  it("strips internal _-prefixed fields", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const content = jsonExporter.export(ast)[0].content;
+    const parsed = JSON.parse(content);
+    for (const key of Object.keys(parsed)) {
+      expect(key).not.toMatch(/^_/);
+    }
+  });
+
+  it("works with fan-out topology", () => {
+    const ast = parse(FAN_OUT_TOPOLOGY);
+    const files = jsonExporter.export(ast);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("code-review.json");
+    const parsed = JSON.parse(files[0].content);
+    expect(parsed.topology.name).toBe("code-review");
+  });
+
+  it("works with minimal topology", () => {
+    const ast = parse(MINIMAL_TOPOLOGY);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    const agents = parsed.nodes.filter((n: { id: string }) => n.id === "worker");
+    expect(agents).toHaveLength(1);
+  });
+
+  it("includes settings", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    expect(parsed.settings.allow).toContain("Read");
+    expect(parsed.settings.deny).toContain("Bash(rm -rf *)");
+  });
+
+  it("includes gate nodes", () => {
+    const ast = parse(SIMPLE_PIPELINE);
+    const parsed = JSON.parse(jsonExporter.export(ast)[0].content);
+    const gates = parsed.nodes.filter((n: { id: string }) => n.id === "quality-check");
+    expect(gates).toHaveLength(1);
   });
 });

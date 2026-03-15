@@ -9,6 +9,9 @@
  *   agentopology sync <file.at> --target <binding> --dir <path> — sync prompts back
  *   agentopology visualize <file.at>                          — generate HTML visualization
  *   agentopology targets                                   — list bindings
+ *   agentopology docs [topic]                              — language reference
+ *   agentopology docs --all                                — all docs (LLM ingestion)
+ *   agentopology docs --search <term>                      — search docs
  *
  * @module
  */
@@ -23,6 +26,9 @@ import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
 import { exporters } from "../exporters/index.js";
+import { analyze } from "../analyzer/index.js";
+import { listTopics, getTopic, getAllTopics, searchTopics } from "../docs/index.js";
+import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
 import type { ScaffoldManifest } from "../scaffold/types.js";
@@ -56,8 +62,13 @@ ${c.bold("Usage:")}
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
-  agentopology export <file.at> --format <markdown|mermaid> [--output <dir>]
+  agentopology export <file.at> --format <markdown|mermaid|json> [--output <dir>]
+  agentopology info <file.at>
+  agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
   agentopology targets
+  agentopology docs [topic]
+  agentopology docs --all
+  agentopology docs --search <term>
 
 ${c.bold("Commands:")}
   validate   Parse an .at file and run all 22 validation rules.
@@ -65,16 +76,22 @@ ${c.bold("Commands:")}
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
   export     Export topology as Markdown documentation or Mermaid diagram.
+  info       Analyze topology: detect patterns, compute layers, suggest improvements.
+  import     Reverse-engineer platform files into an .at topology file.
   targets    List available binding targets.
+  docs       Language reference — show documentation for .at syntax and features.
 
 ${c.bold("Options:")}
   --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli, kiro)
-  --format <name>   Export format (markdown, mermaid).
-  --dir <path>      Directory to read platform files from (used with sync).
+  --format <name>   Export format (markdown, mermaid, json).
+  --dir <path>      Directory to read platform files from (used with sync, import).
+  --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite all files, ignoring manifest and conflicts.
   --prune           Delete files that were previously scaffolded but are no longer generated.
+  --all             Show all documentation topics (for LLM ingestion).
+  --search <term>   Search across all documentation topics.
   --help, -h        Show this help message.
 `);
 }
@@ -107,9 +124,12 @@ interface ParsedArgs {
   format: string | undefined;
   dir: string | undefined;
   output: string | undefined;
+  name: string | undefined;
   dryRun: boolean;
   force: boolean;
   prune: boolean;
+  all: boolean;
+  search: string | undefined;
   help: boolean;
 }
 
@@ -122,9 +142,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     format: undefined,
     dir: undefined,
     output: undefined,
+    name: undefined,
     dryRun: false,
     force: false,
     prune: false,
+    all: false,
+    search: undefined,
     help: false,
   };
 
@@ -152,6 +175,16 @@ function parseArgs(argv: string[]): ParsedArgs {
       i++;
       continue;
     }
+    if (arg === "--all") {
+      result.all = true;
+      i++;
+      continue;
+    }
+    if (arg === "--search" && i + 1 < args.length) {
+      result.search = args[i + 1];
+      i += 2;
+      continue;
+    }
     if (arg === "--target" && i + 1 < args.length) {
       result.target = args[i + 1];
       i += 2;
@@ -169,6 +202,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if ((arg === "--output" || arg === "-o") && i + 1 < args.length) {
       result.output = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--name" && i + 1 < args.length) {
+      result.name = args[i + 1];
       i += 2;
       continue;
     }
@@ -452,6 +490,130 @@ function cmdExport(filePath: string, formatName: string, outputDir?: string): vo
   console.log("");
 }
 
+function cmdInfo(filePath: string): void {
+  const source = readFile(filePath);
+
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (err) {
+    console.error(c.red(`Parse error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  const result = analyze(ast);
+  const { summary, patterns, layers, suggestions } = result;
+
+  // Summary
+  console.log(
+    c.bold(`Topology: ${summary.name} v${summary.version}`)
+  );
+  if (summary.description) {
+    console.log(c.dim(`  ${summary.description}`));
+  }
+  console.log("");
+
+  const counts = summary.nodeCount;
+  const parts: string[] = [];
+  if (counts.agents) parts.push(`${counts.agents} agent${counts.agents !== 1 ? "s" : ""}`);
+  if (counts.actions) parts.push(`${counts.actions} action${counts.actions !== 1 ? "s" : ""}`);
+  if (counts.gates) parts.push(`${counts.gates} gate${counts.gates !== 1 ? "s" : ""}`);
+  if (counts.groups) parts.push(`${counts.groups} group${counts.groups !== 1 ? "s" : ""}`);
+  if (counts.humans) parts.push(`${counts.humans} human${counts.humans !== 1 ? "s" : ""}`);
+  if (counts.orchestrators) parts.push(`${counts.orchestrators} orchestrator${counts.orchestrators !== 1 ? "s" : ""}`);
+  console.log(`  ${parts.join(", ")}`);
+
+  const condEdges = ast.edges.filter((e) => e.condition).length;
+  const loopEdges = ast.edges.filter((e) => e.maxIterations).length;
+  const edgeParts = [`${summary.edgeCount} edge${summary.edgeCount !== 1 ? "s" : ""}`];
+  if (condEdges) edgeParts.push(`${condEdges} conditional`);
+  if (loopEdges) edgeParts.push(`${loopEdges} loop${loopEdges !== 1 ? "s" : ""}`);
+  console.log(`  ${edgeParts.join(", ")}`);
+
+  if (summary.declaredPatterns.length > 0) {
+    console.log(`  Declared patterns: ${summary.declaredPatterns.join(", ")}`);
+  }
+  console.log("");
+
+  // Detected patterns
+  if (patterns.length > 0) {
+    console.log(c.bold("Detected Patterns:"));
+    for (const p of patterns) {
+      const conf = p.confidence === "definite" ? "" : c.dim(" (likely)");
+      console.log(`  ${c.cyan(p.name)}${conf}`);
+      console.log(`    ${c.dim(p.description)}`);
+    }
+    console.log("");
+  }
+
+  // Layers
+  if (layers.length > 0) {
+    console.log(c.bold("Layers:"));
+    for (const layer of layers) {
+      const label = layer.depth === -1 ? "?" : String(layer.depth);
+      console.log(`  ${c.dim(label + ":")} ${layer.nodes.join(", ")}`);
+    }
+    console.log("");
+  }
+
+  // Suggestions
+  if (suggestions.length > 0) {
+    console.log(c.bold("Suggestions:"));
+    for (const s of suggestions) {
+      const prefix = s.level === "improvement" ? c.yellow("[improvement]") : c.dim("[info]");
+      const nodePart = s.node ? ` ${c.cyan(s.node)}:` : "";
+      console.log(`  ${prefix}${nodePart} ${s.message}`);
+    }
+    console.log("");
+  }
+}
+
+function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string): void {
+  const files = readDirRecursive(dirPath);
+
+  const name = topologyName ?? path.basename(path.resolve(dirPath)).replace(/^\./, "");
+
+  console.log(
+    c.bold(`Importing from ${targetName} files in ${dirPath}`)
+  );
+  console.log("");
+
+  let atSource: string;
+  try {
+    atSource = importFromPlatform(files, targetName, name);
+  } catch (err) {
+    console.error(c.red(`Import error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  // Determine output path
+  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
+  const outFile = path.join(outDir, `${name}.at`);
+
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(outFile, atSource, "utf-8");
+  console.log(c.green(`  Written: ${outFile}`));
+
+  // Validate the generated file
+  try {
+    const ast = parse(atSource);
+    const results = validate(ast);
+    const errors = results.filter((r) => r.level === "error");
+    const warnings = results.filter((r) => r.level === "warning");
+    if (errors.length > 0 || warnings.length > 0) {
+      console.log("");
+      console.log(`  ${c.yellow(`${errors.length} error(s), ${warnings.length} warning(s) in generated file.`)}`);
+      console.log(`  ${c.dim("Run")} agentopology validate ${outFile} ${c.dim("for details.")}`);
+    } else {
+      console.log(`  ${c.green("Generated file passes all validation rules.")}`);
+    }
+  } catch {
+    // Validation is best-effort; don't fail the import
+    console.log(`  ${c.yellow("Note: generated file may need manual review.")}`);
+  }
+  console.log("");
+}
+
 function cmdTargets(): void {
   console.log(c.bold("Available binding targets:"));
   console.log("");
@@ -532,15 +694,58 @@ function main(): void {
         process.exit(1);
       }
       if (!args.format) {
-        console.error(c.red("Error: export requires --format <markdown|mermaid>."));
+        console.error(c.red("Error: export requires --format <markdown|mermaid|json>."));
         usage();
         process.exit(1);
       }
       cmdExport(args.file, args.format, args.output);
       break;
 
+    case "info":
+      if (!args.file) {
+        console.error(c.red("Error: info requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      cmdInfo(args.file);
+      break;
+
+    case "import":
+      if (!args.target) {
+        console.error(c.red("Error: import requires --target <binding>."));
+        usage();
+        process.exit(1);
+      }
+      if (!args.dir) {
+        console.error(c.red("Error: import requires --dir <path>."));
+        usage();
+        process.exit(1);
+      }
+      cmdImport(args.target, args.dir, args.name, args.output);
+      break;
+
     case "targets":
       cmdTargets();
+      break;
+
+    case "docs":
+      if (args.all) {
+        console.log(getAllTopics());
+      } else if (args.search) {
+        console.log(searchTopics(args.search));
+      } else if (args.file) {
+        // args.file is actually the topic name (second positional arg)
+        const content = getTopic(args.file);
+        if (!content) {
+          console.error(c.red(`Unknown topic: "${args.file}"`));
+          console.log("");
+          console.log(listTopics());
+          process.exit(1);
+        }
+        console.log(content);
+      } else {
+        console.log(listTopics());
+      }
       break;
 
     default:
