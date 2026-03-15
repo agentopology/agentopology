@@ -287,6 +287,337 @@ describe("claude-code binding", () => {
 });
 
 // ---------------------------------------------------------------------------
+// claude-code — Exotic features: groups, humans, circuit breakers, scale,
+// isolation, variants, schemas, artifacts, conditional edges
+// ---------------------------------------------------------------------------
+
+describe("claude-code binding — exotic features", () => {
+  const EXOTIC_CC_SOURCE = `
+topology debate-test : [fan-out, debate, pipeline] {
+  meta {
+    version: "2.0.0"
+    description: "Debate topology for exotic feature tests"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
+
+  roles {
+    debater: "Argues a position"
+    judge: "Evaluates debate quality"
+  }
+
+  action intake {
+    kind: external
+    source: "user-input"
+    description: "Receive debate topic"
+  }
+
+  agent pro-debater {
+    role: debater
+    model: haiku
+    description: "Argues in favor"
+    prompt {
+      You are the PRO debater.
+      Argue strongly in favor.
+    }
+    temperature: 0.9
+    max-tokens: 500
+    thinking: high
+    thinking-budget: 2000
+    timeout: "5m"
+    max-turns: 10
+    retry: 3
+  }
+
+  agent con-debater {
+    role: debater
+    model: haiku
+    description: "Argues against"
+    prompt {
+      You are the CON debater.
+      Argue strongly against.
+    }
+    on-fail: retry
+    circuit-breaker {
+      threshold: 3
+      window: "5m"
+      cooldown: "30s"
+    }
+  }
+
+  agent researcher {
+    role: debater
+    model: sonnet
+    description: "Gathers evidence"
+    tools: [Read, WebSearch, Grep]
+    background: true
+    isolation: worktree
+    sandbox: "network-only"
+    fallback-chain: [haiku, sonnet]
+    scale {
+      mode: auto
+      by: "query-count"
+      min: 1
+      max: 3
+    }
+  }
+
+  agent judge-agent {
+    role: judge
+    model: opus
+    description: "Evaluates arguments"
+    output-format: json
+    input-schema {
+      topic: string
+    }
+    output-schema {
+      winner: string
+      score: number
+    }
+    produces: ["verdict"]
+    consumes: ["transcript"]
+  }
+
+  group debate-arena {
+    members: [pro-debater, con-debater]
+    speaker-selection: "round-robin"
+    max-rounds: 5
+    termination: "judge declares winner"
+    description: "Structured debate"
+    timeout: "30m"
+  }
+
+  human moderator {
+    description: "Human reviews debate"
+    timeout: "1h"
+    on-timeout: "skip"
+  }
+
+  gates {
+    gate fact-check {
+      after: debate-arena
+      before: judge-agent
+      run: "scripts/fact-check.sh"
+      checks: [sources, accuracy]
+      on-fail: halt
+    }
+  }
+
+  schemas {
+    schema debate-result {
+      winner: string
+      score: number
+    }
+  }
+
+  artifacts {
+    artifact transcript {
+      type: markdown
+      path: "workspace/debates/"
+      retention: "90d"
+    }
+  }
+
+  mcp-servers {
+    web-search {
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-web-search"]
+      env {
+        SEARCH_API_KEY: "\${SEARCH_API_KEY}"
+      }
+    }
+  }
+
+  hooks {
+    hook log-round {
+      on: PostToolUse
+      matcher: "Write"
+      run: "scripts/log-round.sh"
+      timeout: 5000
+    }
+  }
+
+  flow {
+    intake -> debate-arena
+    debate-arena -> moderator
+    moderator -> judge-agent
+    judge-agent -> intake [when judge-agent.winner == "rematch"] [max 3]
+  }
+}
+`;
+
+  const exoticAst = parse(EXOTIC_CC_SOURCE);
+  const exoticFiles = claudeCodeBinding.scaffold(exoticAst);
+
+  describe("group node → AGENT.md with frontmatter", () => {
+    const groupAgent = exoticFiles.find((f) => f.path === ".claude/agents/debate-arena/AGENT.md");
+
+    it("generates AGENT.md for group", () => {
+      expect(groupAgent).toBeDefined();
+    });
+
+    it("has frontmatter with name and description", () => {
+      expect(groupAgent!.content).toContain("---");
+      expect(groupAgent!.content).toContain("name: debate-arena");
+      expect(groupAgent!.content).toContain("Structured debate");
+    });
+
+    it("lists members", () => {
+      expect(groupAgent!.content).toContain("pro-debater");
+      expect(groupAgent!.content).toContain("con-debater");
+    });
+
+    it("includes speaker selection, max rounds, termination, timeout", () => {
+      expect(groupAgent!.content).toContain("round-robin");
+      expect(groupAgent!.content).toContain("5");
+      expect(groupAgent!.content).toContain("judge declares winner");
+      expect(groupAgent!.content).toContain("30m");
+    });
+  });
+
+  describe("human node → AGENT.md", () => {
+    const humanAgent = exoticFiles.find((f) => f.path === ".claude/agents/moderator/AGENT.md");
+
+    it("generates AGENT.md with timeout and on-timeout", () => {
+      expect(humanAgent).toBeDefined();
+      expect(humanAgent!.content).toContain("1h");
+      expect(humanAgent!.content).toContain("skip");
+    });
+  });
+
+  describe("agent frontmatter — Claude Code native fields", () => {
+    const researcher = exoticFiles.find((f) => f.path === ".claude/agents/researcher/AGENT.md")!;
+
+    it("includes isolation: worktree in frontmatter", () => {
+      expect(researcher.content).toContain("isolation: worktree");
+    });
+
+    it("includes background: true in frontmatter", () => {
+      expect(researcher.content).toContain("background: true");
+    });
+
+    it("includes sandbox in frontmatter", () => {
+      expect(researcher.content).toContain("sandbox:");
+    });
+
+    it("includes tools in frontmatter", () => {
+      expect(researcher.content).toContain("Read");
+      expect(researcher.content).toContain("WebSearch");
+      expect(researcher.content).toContain("Grep");
+    });
+
+    it("includes fallback-chain in frontmatter", () => {
+      expect(researcher.content).toContain("fallback-chain");
+      expect(researcher.content).toContain("haiku");
+    });
+
+    it("includes scale config in body", () => {
+      expect(researcher.content).toContain("Scale");
+      expect(researcher.content).toContain("auto");
+    });
+  });
+
+  describe("agent with thinking, retry, circuit breaker", () => {
+    it("pro-debater includes maxTurns in frontmatter", () => {
+      const pd = exoticFiles.find((f) => f.path === ".claude/agents/pro-debater/AGENT.md")!;
+      expect(pd.content).toContain("maxTurns: 10");
+    });
+
+    it("pro-debater includes thinking and temperature in body", () => {
+      const pd = exoticFiles.find((f) => f.path === ".claude/agents/pro-debater/AGENT.md")!;
+      expect(pd.content).toContain("high");
+      expect(pd.content).toContain("2000");
+      expect(pd.content).toContain("0.9");
+    });
+
+    it("con-debater includes circuit breaker in body", () => {
+      const cd = exoticFiles.find((f) => f.path === ".claude/agents/con-debater/AGENT.md")!;
+      expect(cd.content).toContain("Circuit Breaker");
+      expect(cd.content).toContain("3");
+    });
+  });
+
+  describe("MCP — no phantom servers, no leaked env vars", () => {
+    const mcpFile = exoticFiles.find((f) => f.path === ".mcp.json")!;
+    const config = JSON.parse(mcpFile.content);
+
+    it("web-search server is clean", () => {
+      expect(config.mcpServers["web-search"]).toBeDefined();
+      expect(config.mcpServers["web-search"].command).toBe("npx");
+    });
+
+    it("no phantom 'env' server", () => {
+      expect(config.mcpServers.env).toBeUndefined();
+    });
+
+    it("no leaked env vars at server top level", () => {
+      const server = config.mcpServers["web-search"];
+      const keys = Object.keys(server);
+      for (const key of keys) {
+        expect(["command", "args", "env", "url"]).toContain(key);
+      }
+    });
+  });
+
+  describe("flow — no duplicated [max N]", () => {
+    const skillFile = exoticFiles.find((f) => f.path === ".claude/skills/debate-test/SKILL.md")!;
+
+    it("conditional edge has single [max 3], not doubled", () => {
+      // Count occurrences of [max 3]
+      const matches = skillFile.content.match(/\[max 3\]/g) || [];
+      expect(matches.length).toBe(1);
+    });
+
+    it("condition is clean (no trailing ] artifact)", () => {
+      expect(skillFile.content).not.toMatch(/rematch"\]\s*\]\s*\[max/);
+    });
+  });
+
+  describe("schemas, artifacts, skills", () => {
+    it("schema generates markdown file", () => {
+      const schema = exoticFiles.find((f) => f.path.includes("schemas/debate-result"));
+      expect(schema).toBeDefined();
+      expect(schema!.content).toContain("winner");
+    });
+
+    it("artifacts documented in CONTEXT.md", () => {
+      const ctx = exoticFiles.find((f) => f.path === ".claude/CONTEXT.md")!;
+      expect(ctx.content).toContain("transcript");
+    });
+
+    it("skills generate SKILL.md files", () => {
+      const topSkill = exoticFiles.find((f) => f.path === ".claude/skills/debate-test/SKILL.md");
+      expect(topSkill).toBeDefined();
+    });
+  });
+
+  describe("hooks and gates in settings.json", () => {
+    const settingsFile = exoticFiles.find((f) => f.path === ".claude/settings.json")!;
+    const settings = JSON.parse(settingsFile.content);
+
+    it("PostToolUse hook with matcher and timeout in milliseconds", () => {
+      expect(settings.hooks.PostToolUse).toBeDefined();
+      const hook = settings.hooks.PostToolUse.find(
+        (h: Record<string, unknown>) => h.matcher === "Write",
+      );
+      expect(hook).toBeDefined();
+      expect(hook.hooks[0].timeout).toBe(5000);
+    });
+
+    it("gate compiles to PreToolUse hook", () => {
+      expect(settings.hooks.PreToolUse).toBeDefined();
+      const gateHook = settings.hooks.PreToolUse.find(
+        (h: Record<string, unknown>) => JSON.stringify(h).includes("fact-check"),
+      );
+      expect(gateHook).toBeDefined();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // codex
 // ---------------------------------------------------------------------------
 

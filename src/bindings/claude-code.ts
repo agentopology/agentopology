@@ -606,14 +606,25 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "group") continue;
     const group = node as GroupNode;
 
+    // Frontmatter for group agents
+    const fm: Record<string, string | boolean | string[]> = {};
+    fm.name = group.id;
+    if (group.description) fm.description = `"${group.description}"`;
+
     const sections: string[] = [];
+    sections.push(frontmatter(fm));
+    sections.push("");
     sections.push(`# ${toTitle(group.id)} (Group Chat)`);
     sections.push("");
     if (group.description) {
       sections.push(group.description);
       sections.push("");
     }
-    sections.push(`Members: ${group.members.join(", ")}`);
+    sections.push("## Members");
+    for (const member of group.members) {
+      sections.push(`- ${member}`);
+    }
+    sections.push("");
     if (group.speakerSelection) {
       sections.push(`Speaker selection: ${group.speakerSelection}`);
     }
@@ -804,7 +815,14 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     for (const edge of ast.edges) {
       const arrow = edge.isError ? `-x${edge.errorType ? `[${edge.errorType}]` : ""}>` : "->";
       let line = `${edge.from} ${arrow} ${edge.to}`;
-      if (edge.condition) line += ` [when ${edge.condition}]`;
+      if (edge.condition) {
+        // Clean up condition: parser may include trailing "] [max N" artifacts
+        const cleanCond = edge.condition
+          .replace(/\]\s*\[max\s+\d+\s*$/i, "")
+          .replace(/\]\s*$/, "")
+          .trim();
+        line += ` [when ${cleanCond}]`;
+      }
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
       if (edge.per) line += ` [per ${edge.per}]`;
       if (edge.weight != null) line += ` [weight ${edge.weight}]`;
@@ -1372,17 +1390,20 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
 
   for (const [name, config] of Object.entries(ast.mcpServers)) {
     const entry: Record<string, unknown> = {};
-    let hasEnv = false;
     for (const [key, value] of Object.entries(config)) {
-      if (key === "args" && Array.isArray(value)) {
-        entry.args = value;
-      } else {
+      if (key === "command" || key === "url") {
         entry[key] = value;
+      } else if (key === "args" && Array.isArray(value)) {
+        entry.args = value;
+      } else if (key === "env" && typeof value === "object" && value !== null) {
+        entry.env = value;
       }
-      if (key === "env") hasEnv = true;
+      // Skip unknown fields — parser may leak env vars to top level
     }
-    // Always include env field
-    if (!hasEnv) {
+    // Only include servers that have a command or url (filter parser artifacts)
+    if (!("command" in entry) && !("url" in entry)) continue;
+    // Always include env field for Claude Code .mcp.json
+    if (!("env" in entry)) {
       entry.env = {};
     }
     servers[name] = entry;
@@ -1598,7 +1619,13 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
       for (const edge of ast.edges) {
         const arrow = edge.isError ? `-x${edge.errorType ? `[${edge.errorType}]` : ""}>` : "->";
         let line = `${edge.from} ${arrow} ${edge.to}`;
-        if (edge.condition) line += ` [when ${edge.condition}]`;
+        if (edge.condition) {
+          const cleanCond = edge.condition
+            .replace(/\]\s*\[max\s+\d+\s*$/i, "")
+            .replace(/\]\s*$/, "")
+            .trim();
+          line += ` [when ${cleanCond}]`;
+        }
         if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
         if (edge.weight != null) line += ` [weight ${edge.weight}]`;
         if (edge.race) line += ` [race]`;
