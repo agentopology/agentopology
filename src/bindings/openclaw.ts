@@ -776,6 +776,11 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         );
       }
 
+      // Permissions
+      if (agent.permissions) {
+        sections.push(`- **Permissions:** ${agent.permissions}`);
+      }
+
       // Max turns
       if (agent.maxTurns != null) {
         sections.push(`- **Max turns:** ${agent.maxTurns}`);
@@ -1071,6 +1076,32 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Schedule
+  if (ast.schedules.length > 0) {
+    sections.push("## Schedule");
+    sections.push("");
+    for (const job of ast.schedules) {
+      sections.push(`### ${toTitle(job.id)}`);
+      sections.push(`- **Agent:** ${job.agent}`);
+      if (job.cron) sections.push(`- **Cron:** \`${job.cron}\``);
+      if (job.enabled != null) sections.push(`- **Enabled:** ${job.enabled}`);
+      sections.push("");
+    }
+  }
+
+  // Hooks
+  if (ast.hooks.length > 0) {
+    sections.push("## Hooks");
+    sections.push("");
+    for (const hook of ast.hooks) {
+      sections.push(`### ${toTitle(hook.name)}`);
+      if (hook.on) sections.push(`- **Event:** ${hook.on}`);
+      if (hook.run) sections.push(`- **Run:** ${hook.run}`);
+      if (hook.type) sections.push(`- **Type:** ${hook.type}`);
+      sections.push("");
+    }
+  }
+
   // Topology overview (merged from TEAM.md)
   sections.push("---");
   sections.push("");
@@ -1151,8 +1182,12 @@ function generateToolsMd(ast: TopologyAST): GeneratedFile {
   sections.push("# Available Tools");
   sections.push("");
 
-  // Core tools — unique tools across all agents
+  // Core tools — unique tools across all agents + settings.allow
   const allTools = new Set<string>();
+  const settingsAllow = ast.settings?.allow;
+  if (Array.isArray(settingsAllow)) {
+    for (const t of settingsAllow) allTools.add(String(t));
+  }
   for (const agent of agents) {
     if (agent.tools) {
       for (const t of agent.tools) allTools.add(t);
