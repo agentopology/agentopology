@@ -429,10 +429,9 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
   }
   config.models = { providers: modelsProviders };
 
-  // MCP servers
-  if (Object.keys(ast.mcpServers).length > 0) {
-    config.mcpServers = ast.mcpServers;
-  }
+  // Note: OpenClaw does NOT support MCP servers. MCP tools should be
+  // implemented as OpenClaw skills instead. ast.mcpServers is intentionally
+  // not emitted into openclaw.json.
 
   // Tools settings — flat allow/deny, no "defaults" nesting
   const settings = ast.settings;
@@ -1454,6 +1453,18 @@ function generateSkillFiles(ast: TopologyAST): GeneratedFile[] {
 
   for (const skill of ast.skills) {
     const sections: string[] = [];
+
+    // OpenClaw requires YAML frontmatter with name and description
+    sections.push("---");
+    sections.push(`name: ${skill.id}`);
+    if (skill.description) {
+      sections.push(`description: ${JSON.stringify(skill.description)}`);
+    }
+    if (skill.userInvocable != null) {
+      sections.push(`user-invocable: ${skill.userInvocable}`);
+    }
+    sections.push("---");
+    sections.push("");
     sections.push(`# ${toTitle(skill.id)} Skill`);
     sections.push("");
 
@@ -1498,8 +1509,13 @@ function generateToolSkills(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   for (const tool of ast.toolDefs) {
-    // SKILL.md wrapper
+    // SKILL.md wrapper — OpenClaw requires YAML frontmatter
     const sections: string[] = [];
+    sections.push("---");
+    sections.push(`name: ${tool.id}`);
+    sections.push(`description: ${JSON.stringify(tool.description)}`);
+    sections.push("---");
+    sections.push("");
     sections.push(`# ${toTitle(tool.id)} Tool`);
     sections.push("");
     sections.push(tool.description);
