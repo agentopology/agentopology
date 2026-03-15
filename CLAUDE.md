@@ -6,7 +6,7 @@ The universal declarative language for multi-agent systems. Write once, deploy t
 
 Parser, validator, CLI, visualizer, and bindings for 8 platform targets.
 
-- `src/parser/` — LL(2) parser, AST types (799 lines), 22 validation rules
+- `src/parser/` — LL(2) parser, AST types (799 lines), 29 validation rules
 - `src/bindings/` — 8 platform targets (6 CLI + 2 SDK)
 - `src/cli/` — validate, scaffold, sync, visualize, targets commands
 - `src/visualizer/` — HTML topology viewer

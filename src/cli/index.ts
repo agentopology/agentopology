@@ -71,7 +71,7 @@ ${c.bold("Usage:")}
   agentopology docs --search <term>
 
 ${c.bold("Commands:")}
-  validate   Parse an .at file and run all 22 validation rules.
+  validate   Parse an .at file and run all 29 validation rules.
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
@@ -246,7 +246,7 @@ function cmdValidate(filePath: string): void {
   const results = validate(ast);
 
   if (results.length === 0) {
-    console.log(c.green("  All 22 validation rules passed."));
+    console.log(c.green("  All 29 validation rules passed."));
     console.log("");
     return;
   }

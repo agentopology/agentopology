@@ -1323,7 +1323,7 @@ agent expensive-thinker {
 
 ## 5. Validation Rules
 
-See `validation.md` for the complete list of 22 validation rules with examples.
+See `validation.md` for the complete list of 29 validation rules with examples.
 
 ---
 
