@@ -302,9 +302,8 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
   };
 
   // Build config object
+  // Note: OpenClaw does NOT accept "name" or "version" at root level
   const config: Record<string, unknown> = {
-    name: ast.topology.name,
-    version: ast.topology.version,
     agents: {
       defaults: agentsDefaults,
       list: agentList,
@@ -398,15 +397,14 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
       const provEntry: Record<string, unknown> = {};
       if (p.apiKey) provEntry.apiKey = p.apiKey;
       if (p.baseUrl) provEntry.baseUrl = p.baseUrl;
+      // OpenClaw expects models as an array of objects with at minimum { id, name }
       if (p.models.length > 0) {
-        const modelsObj: Record<string, Record<string, unknown>> = {};
-        for (const m of p.models) {
+        provEntry.models = p.models.map((m) => {
           const mapped = mapModel(m, p.name);
-          modelsObj[mapped] = { alias: modelAlias(m) };
-        }
-        provEntry.models = modelsObj;
+          return { id: mapped, name: modelAlias(m) };
+        });
       }
-      if (p.default) provEntry.default = true;
+      // Note: OpenClaw does NOT accept "default" on providers
       // Provider auth
       if (p.auth) {
         const authConfig: Record<string, unknown> = { type: p.auth.type };
