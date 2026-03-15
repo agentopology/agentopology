@@ -470,8 +470,9 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(groupAgent!.content).toContain("con-debater");
     });
 
-    it("includes speaker selection, max rounds, termination, timeout", () => {
-      expect(groupAgent!.content).toContain("round-robin");
+    it("includes round-robin process, max rounds, termination, timeout", () => {
+      // Group orchestrator should have actual instructions for running rounds
+      expect(groupAgent!.content).toContain("round");
       expect(groupAgent!.content).toContain("5");
       expect(groupAgent!.content).toContain("judge declares winner");
       expect(groupAgent!.content).toContain("30m");
@@ -626,10 +627,16 @@ describe("codex binding", () => {
 
   assertStructuralInvariants(files);
 
-  it("produces codex.toml", () => {
-    const toml = files.find((f) => f.path === "codex.toml");
+  it("produces .codex/config.toml", () => {
+    const toml = files.find((f) => f.path === ".codex/config.toml");
     expect(toml).toBeDefined();
     expect(toml!.content).toContain("model");
+    // Must use valid Codex approval_policy values
+    expect(toml!.content).toMatch(/approval_policy\s*=\s*"(untrusted|on-request|on-failure|never)"/);
+    // Must NOT contain legacy values
+    expect(toml!.content).not.toContain('"suggest"');
+    expect(toml!.content).not.toContain('"auto-edit"');
+    expect(toml!.content).not.toContain('"full-auto"');
   });
 
   it("produces AGENTS.md", () => {
@@ -639,9 +646,9 @@ describe("codex binding", () => {
     expect(agentsMd!.content).toContain("builder");
   });
 
-  it("produces .codex/instructions.md", () => {
+  it("does NOT produce .codex/instructions.md (Codex uses AGENTS.md)", () => {
     const instructions = files.find((f) => f.path === ".codex/instructions.md");
-    expect(instructions).toBeDefined();
+    expect(instructions).toBeUndefined();
   });
 
   it("produces gate scripts under .codex/scripts/", () => {

@@ -344,12 +344,10 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     // Build body
     const sections: string[] = [fmStr, ""];
     const displayName = agent.label || toTitle(agent.id);
-    sections.push(`You are the ${displayName} agent.`);
-    sections.push("");
 
-    // Role section
+    // Role section — only when role text adds info beyond the prompt
     const roleText = ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
-    if (roleText) {
+    if (roleText && !agent.prompt) {
       sections.push("## Role");
       sections.push(roleText);
       sections.push("");
@@ -359,8 +357,13 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
     if (agent.prompt) {
       sections.push(downshiftHeadings(agent.prompt));
+    } else if (agent.description) {
+      sections.push(agent.description);
+      if (roleText) sections.push(`\n${roleText}`);
+    } else if (roleText) {
+      sections.push(roleText);
     } else {
-      sections.push(`You are ${displayName}. ${agent.description || agent.role || "Complete the assigned task."}`);
+      sections.push("Complete the assigned task.");
     }
     sections.push("");
 
@@ -606,7 +609,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "group") continue;
     const group = node as GroupNode;
 
-    // Frontmatter for group agents
+    // Frontmatter for group agents — they orchestrate subagents
     const fm: Record<string, string | boolean | string[]> = {};
     fm.name = group.id;
     if (group.description) fm.description = `"${group.description}"`;
@@ -614,29 +617,45 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     const sections: string[] = [];
     sections.push(frontmatter(fm));
     sections.push("");
-    sections.push(`# ${toTitle(group.id)} (Group Chat)`);
+
+    // Generate actual orchestration instructions so Claude knows what to do
+    sections.push("## Instructions");
     sections.push("");
     if (group.description) {
       sections.push(group.description);
       sections.push("");
     }
-    sections.push("## Members");
+
+    sections.push("You are an orchestrator for a group conversation. Your job is to coordinate the following participants by launching each one as a subagent (using the Agent tool) and collecting their responses.");
+    sections.push("");
+
+    sections.push("### Participants");
     for (const member of group.members) {
-      sections.push(`- ${member}`);
+      // Look up the member's description from the AST
+      const memberNode = ast.nodes.find((n) => n.id === member);
+      const memberDesc = memberNode?.type === "agent"
+        ? (memberNode as AgentNode).description ?? memberNode.label
+        : memberNode?.label ?? member;
+      sections.push(`- **${member}**: ${memberDesc}`);
     }
     sections.push("");
-    if (group.speakerSelection) {
-      sections.push(`Speaker selection: ${group.speakerSelection}`);
-    }
-    if (group.maxRounds != null) {
-      sections.push(`Max rounds: ${group.maxRounds}`);
+
+    sections.push("### Process");
+    const selectionMode = (group.speakerSelection ?? "sequential").replace(/^"|"$/g, "");
+    if (selectionMode === "round-robin") {
+      sections.push(`Run ${group.maxRounds ?? 1} round(s). In each round, launch each participant as a subagent in order, passing the conversation history so far.`);
+    } else {
+      sections.push(`Launch each participant as a subagent, one at a time. Pass the previous participant's response to the next one.`);
     }
     if (group.termination) {
-      sections.push(`Termination: ${group.termination}`);
+      sections.push(`Stop when: ${group.termination}`);
     }
     if (group.timeout) {
       sections.push(`Timeout: ${group.timeout}`);
     }
+    sections.push("");
+
+    sections.push("After all rounds complete, compile the full conversation and pass it to the next step in the workflow.");
     sections.push("");
 
     files.push({
