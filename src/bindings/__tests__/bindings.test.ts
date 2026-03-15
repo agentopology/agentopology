@@ -175,8 +175,8 @@ function assertStructuralInvariants(files: GeneratedFile[]) {
 // ---------------------------------------------------------------------------
 
 describe("Binding registry", () => {
-  it("contains all 8 bindings", () => {
-    expect(Object.keys(bindings)).toHaveLength(9);
+  it("contains all 10 bindings", () => {
+    expect(Object.keys(bindings)).toHaveLength(10);
   });
 
   it("all bindings have a name and description", () => {
@@ -247,10 +247,10 @@ describe("claude-code binding", () => {
     expect(rootClaudeMd).toBeUndefined();
   });
 
-  it("emits disallowed-tools in agent frontmatter", () => {
+  it("emits disallowedTools in agent frontmatter (camelCase per Claude Code spec)", () => {
     const builderFile = files.find((f) => f.path === ".claude/agents/builder/AGENT.md");
     expect(builderFile).toBeDefined();
-    expect(builderFile!.content).toContain("disallowed-tools:");
+    expect(builderFile!.content).toContain("disallowedTools:");
     expect(builderFile!.content).toContain("Edit");
   });
 

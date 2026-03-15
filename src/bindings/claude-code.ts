@@ -33,6 +33,29 @@ import type { BindingTarget, GeneratedFile } from "./types.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Convert .at MCP tool notation (mcp.server.method) to Claude Code format (mcp__server__method).
+ * Non-MCP tool names pass through unchanged.
+ */
+function convertMcpToolName(tool: string): string {
+  if (!tool.startsWith("mcp.")) return tool;
+  // mcp.server-name.method_name → mcp__server-name__method_name
+  // Only replace the first two dots (mcp + server separator)
+  const parts = tool.split(".");
+  if (parts.length >= 3) {
+    return `mcp__${parts[1]}__${parts.slice(2).join(".")}`;
+  }
+  return tool;
+}
+
+/**
+ * Downshift all markdown headings by one level so they nest properly
+ * inside ## Instructions. ## → ###, ### → ####, etc.
+ */
+function downshiftHeadings(text: string): string {
+  return text.replace(/^(#{2,6})\s/gm, (_, hashes) => `#${hashes} `);
+}
+
 /** Convert a kebab-case id to Title Case. */
 function toTitle(id: string): string {
   return id
@@ -236,16 +259,19 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     const fm: Record<string, string | boolean | string[]> = {};
     fm.name = agent.id;
 
-    // Description: prefer agent.description, then role description from roles block
-    const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
-    if (desc) {
-      fm.description = `"${desc}"`;
+    // Description: prefer agent.description, then role description from roles block.
+    // For manual agents, omit description to prevent Claude Code auto-delegation.
+    if (agent.invocation !== "manual") {
+      const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+      if (desc) {
+        fm.description = `"${desc}"`;
+      }
     }
 
     if (agent.model) fm.model = agent.model;
     if (agent.maxTurns != null) fm.maxTurns = String(agent.maxTurns);
-    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools;
-    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm["disallowed-tools"] = agent.disallowedTools;
+    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName);
+    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName);
     if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
     if (agent.background === true) fm.background = true;
 
@@ -256,6 +282,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     if (agent.isolation) fm.isolation = agent.isolation;
 
+    // Note: sandbox and fallback-chain are not recognized by Claude Code frontmatter
+    // but are included as informational metadata for other tooling.
     if (agent.sandbox != null) {
       fm.sandbox = typeof agent.sandbox === "boolean" ? agent.sandbox : agent.sandbox;
     }
@@ -263,6 +291,11 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (agent.fallbackChain && agent.fallbackChain.length > 0) {
       fm["fallback-chain"] = agent.fallbackChain.join(", ");
     }
+
+    // invocation: manual — Claude Code doesn't parse this field. Instead, omit
+    // description to prevent auto-delegation for manual agents.
+    if (agent.skills && agent.skills.length > 0) fm.skills = agent.skills;
+    // scale is NOT a Claude Code frontmatter field — rendered only in body as prompt text
 
     // Merge claude-code extension fields into frontmatter
     if (agent.extensions?.["claude-code"]) {
@@ -273,8 +306,43 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       }
     }
 
+    // Build frontmatter string — may include hooks YAML block
+    let fmStr = frontmatter(fm);
+
+    // Per-agent hooks → Claude Code AGENT.md frontmatter hooks
+    if (agent.hooks && agent.hooks.length > 0) {
+      const topologyName = ast.topology.name;
+      const hooksByEvent: Record<string, HookDef[]> = {};
+      for (const hook of agent.hooks) {
+        if (!hooksByEvent[hook.on]) hooksByEvent[hook.on] = [];
+        hooksByEvent[hook.on].push(hook);
+      }
+
+      const hookLines: string[] = ["hooks:"];
+      for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
+        hookLines.push(`  ${eventName}:`);
+        for (const hook of hooks) {
+          const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+          const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
+          if (hook.matcher) {
+            hookLines.push(`    - matcher: "${hook.matcher}"`);
+          } else {
+            hookLines.push(`    -`);
+          }
+          hookLines.push(`      hooks:`);
+          hookLines.push(`        - type: ${hook.type ?? "command"}`);
+          hookLines.push(`          command: "${command}"`);
+          if (hook.timeout) {
+            hookLines.push(`          timeout: ${hook.timeout}`);
+          }
+        }
+      }
+      // Insert hooks before the closing ---
+      fmStr = fmStr.replace(/\n---$/, "\n" + hookLines.join("\n") + "\n---");
+    }
+
     // Build body
-    const sections: string[] = [frontmatter(fm), ""];
+    const sections: string[] = [fmStr, ""];
     const displayName = agent.label || toTitle(agent.id);
     sections.push(`You are the ${displayName} agent.`);
     sections.push("");
@@ -290,7 +358,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     sections.push("## Instructions");
     sections.push("");
     if (agent.prompt) {
-      sections.push(agent.prompt);
+      sections.push(downshiftHeadings(agent.prompt));
     } else {
       sections.push(`You are ${displayName}. ${agent.description || agent.role || "Complete the assigned task."}`);
     }
@@ -480,15 +548,6 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    // Invocation
-    if (agent.invocation) {
-      sections.push(`Invocation: ${agent.invocation}`);
-      sections.push("");
-    }
-
-    if (agent.skills && agent.skills.length > 0) {
-      sections.push(`Skills: ${agent.skills.join(", ")}`);
-    }
     if (agent.behavior) {
       sections.push(`Behavior: ${agent.behavior}`);
     }
@@ -572,7 +631,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.claude/agents/${group.id}/AGENT.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
   }
 
@@ -613,7 +672,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     if (mainSkill.context) fm.context = mainSkill.context;
     if (mainSkill.agent) fm.agent = mainSkill.agent;
     if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
-      fm["allowed-tools"] = mainSkill.allowedTools;
+      fm["allowed-tools"] = mainSkill.allowedTools.map(convertMcpToolName);
     }
   }
 
@@ -888,7 +947,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   files.push({
     path: `.claude/skills/${name}/SKILL.md`,
     content: sections.join("\n") + "\n",
-    category: "composite",
+    category: "agent",
   });
 
   return files;
@@ -914,7 +973,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     if (skill.context) sfm.context = skill.context;
     if (skill.agent) sfm.agent = skill.agent;
     if (skill.allowedTools && skill.allowedTools.length > 0) {
-      sfm["allowed-tools"] = skill.allowedTools;
+      sfm["allowed-tools"] = skill.allowedTools.map(convertMcpToolName);
     }
     // Only emit frontmatter if there are fields beyond just the name
     if (Object.keys(sfm).length > 1) {
@@ -959,7 +1018,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: `.claude/skills/${skill.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
-      category: "composite",
+      category: "agent",
     });
 
     // Domain and reference directory markers
@@ -1200,37 +1259,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[eventName].push(hookEntry);
   }
 
-  // Per-agent hooks — scoped by agent id in matcher
-  for (const node of ast.nodes) {
-    if (node.type !== "agent") continue;
-    const agent = node as AgentNode;
-    if (!agent.hooks || agent.hooks.length === 0) continue;
-
-    for (const hook of agent.hooks) {
-      const eventName = hook.on;
-      if (!hooksByEvent[eventName]) {
-        hooksByEvent[eventName] = [];
-      }
-
-      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-      const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
-
-      const hookEntry: Record<string, unknown> = {
-        hooks: [
-          {
-            type: hook.type ?? "command",
-            command,
-            ...(hook.timeout ? { timeout: hook.timeout } : {}),
-          },
-        ],
-      };
-
-      // Scope matcher to this agent
-      hookEntry.matcher = hook.matcher ? `${hook.matcher}:${agent.id}` : agent.id;
-
-      hooksByEvent[eventName].push(hookEntry);
-    }
-  }
+  // Per-agent hooks are now rendered in AGENT.md frontmatter (not in settings.json).
+  // This is the Claude Code native approach: hooks in the agent file are scoped
+  // to that agent automatically.
 
   // Gate enforcement — compile gates with run: to PreToolUse hooks
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
@@ -1328,7 +1359,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   return {
     path: ".claude/settings.json",
     content: JSON.stringify(settings, null, 2) + "\n",
-    category: "machine",
+    category: "shared-config",
   };
 }
 
@@ -1360,7 +1391,7 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   return {
     path: ".mcp.json",
     content: JSON.stringify(mcpConfig, null, 2) + "\n",
-    category: "machine",
+    category: "shared-config",
   };
 }
 
