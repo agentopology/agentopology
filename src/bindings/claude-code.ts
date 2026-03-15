@@ -618,7 +618,9 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     sections.push(frontmatter(fm));
     sections.push("");
 
-    // Generate actual orchestration instructions so Claude knows what to do
+    // Generate orchestration instructions that Claude Code can execute.
+    // The key insight: Claude Code uses the Agent tool with subagent_type
+    // matching the agent's `name` field from AGENT.md frontmatter.
     sections.push("## Instructions");
     sections.push("");
     if (group.description) {
@@ -626,36 +628,72 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    sections.push("You are an orchestrator for a group conversation. Your job is to coordinate the following participants by launching each one as a subagent (using the Agent tool) and collecting their responses.");
+    sections.push("You orchestrate a multi-agent conversation. You MUST use the Agent tool to spawn each participant as a separate subagent. Do NOT role-play the participants yourself — each one must run as its own agent.");
     sections.push("");
 
+    // Build participant table with the exact subagent_type to use
     sections.push("### Participants");
+    sections.push("");
     for (const member of group.members) {
-      // Look up the member's description from the AST
       const memberNode = ast.nodes.find((n) => n.id === member);
       const memberDesc = memberNode?.type === "agent"
         ? (memberNode as AgentNode).description ?? memberNode.label
         : memberNode?.label ?? member;
-      sections.push(`- **${member}**: ${memberDesc}`);
+      const memberModel = memberNode?.type === "agent"
+        ? (memberNode as AgentNode).model : undefined;
+      const modelNote = memberModel ? ` (model: ${memberModel})` : "";
+      sections.push(`- **${member}**${modelNote}: ${memberDesc}`);
     }
     sections.push("");
 
+    // Explicit step-by-step process
     sections.push("### Process");
+    sections.push("");
     const selectionMode = (group.speakerSelection ?? "sequential").replace(/^"|"$/g, "");
+    const rounds = group.maxRounds ?? 1;
+
     if (selectionMode === "round-robin") {
-      sections.push(`Run ${group.maxRounds ?? 1} round(s). In each round, launch each participant as a subagent in order, passing the conversation history so far.`);
+      sections.push(`Execute ${rounds} round(s). In each round:`);
+      sections.push("");
+      let step = 1;
+      for (const member of group.members) {
+        const memberNode = ast.nodes.find((n) => n.id === member);
+        const memberModel = memberNode?.type === "agent"
+          ? (memberNode as AgentNode).model : undefined;
+        const modelParam = memberModel ? `, model: ${memberModel}` : "";
+        sections.push(`${step}. Use the Agent tool to launch **${member}** (subagent_type: "${member}"${modelParam}). Include the topic and any previous arguments in the prompt.`);
+        step++;
+      }
+      sections.push(`${step}. Collect all responses before starting the next round.`);
+      sections.push("");
+      if (rounds > 1) {
+        sections.push(`In round 2+, include the full conversation history from previous rounds in each agent's prompt so they can respond to each other's arguments.`);
+        sections.push("");
+      }
     } else {
-      sections.push(`Launch each participant as a subagent, one at a time. Pass the previous participant's response to the next one.`);
+      sections.push("Launch each participant sequentially:");
+      sections.push("");
+      let step = 1;
+      for (const member of group.members) {
+        const memberNode = ast.nodes.find((n) => n.id === member);
+        const memberModel = memberNode?.type === "agent"
+          ? (memberNode as AgentNode).model : undefined;
+        const modelParam = memberModel ? `, model: ${memberModel}` : "";
+        sections.push(`${step}. Use the Agent tool to launch **${member}** (subagent_type: "${member}"${modelParam}). Pass the previous participant's response.`);
+        step++;
+      }
+      sections.push("");
     }
+
     if (group.termination) {
-      sections.push(`Stop when: ${group.termination}`);
+      sections.push(`**Stop when:** ${group.termination}`);
     }
     if (group.timeout) {
-      sections.push(`Timeout: ${group.timeout}`);
+      sections.push(`**Timeout:** ${group.timeout}`);
     }
     sections.push("");
 
-    sections.push("After all rounds complete, compile the full conversation and pass it to the next step in the workflow.");
+    sections.push("After all rounds complete, compile the full conversation transcript and return it as your output.");
     sections.push("");
 
     files.push({
