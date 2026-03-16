@@ -1,8 +1,8 @@
 /**
  * OpenAI Codex CLI binding.
  *
- * Generates `codex.toml`, `AGENTS.md`, `.codex/instructions.md`, and
- * supporting scripts from a parsed {@link TopologyAST}.
+ * Generates `.codex/config.toml`, `AGENTS.md`, and supporting scripts
+ * from a parsed {@link TopologyAST}.
  *
  * Codex CLI uses TOML-based configuration and reads markdown instruction
  * files. Unlike Claude Code, Codex is a single-agent CLI — multi-agent
@@ -15,9 +15,11 @@
 import type {
   TopologyAST,
   AgentNode,
+  ActionNode,
   GateNode,
   GroupNode,
   HumanNode,
+  OrchestratorNode,
   HookDef,
   InterfaceDef,
   ScheduleJobDef,
@@ -28,6 +30,7 @@ import type {
   RetryConfig,
   CircuitBreakerConfig,
   PromptVariant,
+  SensitiveValue,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
@@ -47,37 +50,47 @@ function toTitle(id: string): string {
 /**
  * Map topology permission strings to Codex approval_policy values.
  *
- * Codex CLI supports three approval policies:
- *   - "suggest"    — shows diffs for approval (default, most restrictive)
- *   - "auto-edit"  — auto-applies file changes, asks for commands
- *   - "full-auto"  — auto-runs everything
+ * Codex CLI supports these approval policies:
+ *   - "untrusted"  — only run trusted commands without asking (default, most restrictive)
+ *   - "on-request" — model decides when to ask the user
+ *   - "never"      — never ask for user approval
+ *
+ * Legacy/deprecated:
+ *   - "on-failure"  — deprecated, prefer "on-request" for interactive or "never" for non-interactive
  */
 function mapApprovalPolicy(perm: string): string {
   // Codex-native values — pass through
-  const nativeValues = ["suggest", "auto-edit", "full-auto"];
+  const nativeValues = ["untrusted", "on-request", "on-failure", "never"];
   if (nativeValues.includes(perm)) return perm;
 
   // Topology-level semantic values
   switch (perm) {
     case "supervised":
-      return "suggest";
+      return "untrusted";
     case "autonomous":
-      return "auto-edit";
+      return "on-request";
     case "interactive":
-      return "suggest";
+      return "untrusted";
     case "unrestricted":
-      return "full-auto";
+      return "never";
+    // Legacy Codex values — map to current equivalents
+    case "suggest":
+      return "untrusted";
+    case "auto-edit":
+      return "on-request";
+    case "full-auto":
+      return "never";
     // Claude Code native values mapped to Codex equivalents
     case "plan":
-      return "suggest";
+      return "untrusted";
     case "auto":
-      return "auto-edit";
+      return "on-request";
     case "confirm":
-      return "suggest";
+      return "untrusted";
     case "bypassPermissions":
-      return "full-auto";
+      return "never";
     default:
-      return "suggest"; // safe default
+      return "untrusted"; // safe default
   }
 }
 
@@ -151,11 +164,11 @@ function formatRetryConfig(retry: number | RetryConfig): string {
 }
 
 // ---------------------------------------------------------------------------
-// TOML generation — codex.toml
+// TOML generation — .codex/config.toml
 // ---------------------------------------------------------------------------
 
 /**
- * Generate the main `codex.toml` configuration file.
+ * Generate the main `.codex/config.toml` configuration file.
  *
  * Maps topology metadata, the most permissive agent's approval policy,
  * model, sandbox, and provider settings. Extension fields from
@@ -213,13 +226,13 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   }
 
   // Sandbox settings — first-class AST field, then extension, then derived
+  // Codex supports: "read-only", "workspace-write", "danger-full-access"
   const topSandbox = ast.settings?.sandbox;
   const sandboxType = topSandbox != null
-    ? (typeof topSandbox === 'boolean' ? (topSandbox ? 'docker' : 'none') : String(topSandbox))
+    ? (typeof topSandbox === 'boolean' ? (topSandbox ? 'read-only' : 'danger-full-access') : mapSandboxMode(String(topSandbox)))
     : codexTopologyExt?.sandbox_type ?? deriveSandboxType(ast);
   if (sandboxType) {
-    lines.push("[sandbox]");
-    lines.push(`type = ${tomlString(String(sandboxType))}`);
+    lines.push(`sandbox_mode = ${tomlString(String(sandboxType))}`);
     lines.push("");
   }
 
@@ -248,6 +261,50 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
         // Convert ${ENV_VAR} to just ENV_VAR for Codex env_key format
         const envKey = p.apiKey.replace(/^\$\{(.+)\}$/, "$1");
         lines.push(`env_key = ${tomlString(envKey)}`);
+      }
+      if (p.default) lines.push(`default = true`);
+      if (p.models && p.models.length > 0) {
+        lines.push(`models = ${tomlStringArray(p.models)}`);
+      }
+      if (p.auth) {
+        lines.push(`# Auth type: ${p.auth.type}`);
+        if (p.auth.issuer) lines.push(`# Auth issuer: ${p.auth.issuer}`);
+        if (p.auth.audience) lines.push(`# Auth audience: ${p.auth.audience}`);
+        if (p.auth.tokenUrl) lines.push(`# Auth token URL: ${p.auth.tokenUrl}`);
+        if (p.auth.clientId) lines.push(`# Auth client ID: ${p.auth.clientId}`);
+        if (p.auth.scopes && p.auth.scopes.length > 0) {
+          lines.push(`# Auth scopes: ${p.auth.scopes.join(", ")}`);
+        }
+      }
+      if (p.extra) {
+        for (const [ek, ev] of Object.entries(p.extra)) {
+          if (typeof ev === "string") {
+            lines.push(`${ek} = ${tomlString(ev)}`);
+          } else if (typeof ev === "boolean") {
+            lines.push(`${ek} = ${ev}`);
+          } else if (typeof ev === "number") {
+            lines.push(`${ek} = ${ev}`);
+          }
+        }
+      }
+      lines.push("");
+    }
+  }
+
+  // MCP servers from ast.mcpServers — render as [mcp_servers.<name>] tables
+  if (ast.mcpServers && Object.keys(ast.mcpServers).length > 0) {
+    for (const [name, config] of Object.entries(ast.mcpServers)) {
+      lines.push(`[mcp_servers.${name}]`);
+      for (const [ck, cv] of Object.entries(config)) {
+        if (typeof cv === "string") {
+          lines.push(`${ck} = ${tomlString(cv)}`);
+        } else if (typeof cv === "boolean") {
+          lines.push(`${ck} = ${cv}`);
+        } else if (typeof cv === "number") {
+          lines.push(`${ck} = ${cv}`);
+        } else if (Array.isArray(cv)) {
+          lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
+        }
       }
       lines.push("");
     }
@@ -281,10 +338,36 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   }
 
   return {
-    path: "codex.toml",
+    path: ".codex/config.toml",
     content: lines.join("\n") + "\n",
     category: "machine",
   };
+}
+
+/**
+ * Map generic sandbox mode strings to Codex sandbox values.
+ * Codex supports: "read-only", "workspace-write", "danger-full-access"
+ */
+function mapSandboxMode(mode: string): string {
+  // Pass through native Codex values
+  const nativeValues = ["read-only", "workspace-write", "danger-full-access"];
+  if (nativeValues.includes(mode)) return mode;
+
+  switch (mode) {
+    case "docker":
+    case "container":
+    case "strict":
+      return "read-only";
+    case "write":
+    case "workspace":
+      return "workspace-write";
+    case "none":
+    case "disabled":
+    case "off":
+      return "danger-full-access";
+    default:
+      return "read-only"; // safe default
+  }
 }
 
 /**
@@ -300,7 +383,7 @@ function deriveSandboxType(ast: TopologyAST): string | null {
       a.permissions === "bypassPermissions"
   );
   // If any agent is unrestricted, no sandbox (user opted out of restrictions)
-  if (hasUnrestricted) return "none";
+  if (hasUnrestricted) return "danger-full-access";
   // Default: no explicit sandbox section needed
   return null;
 }
@@ -316,6 +399,8 @@ function getTopologyExtensions(
     | Record<string, Record<string, unknown>>
     | undefined;
   if (settingsExt?.codex) return settingsExt.codex;
+  // Also check top-level ast.extensions["codex"]
+  if (ast.extensions?.codex) return ast.extensions.codex as Record<string, unknown>;
   return null;
 }
 
@@ -338,6 +423,13 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   // Header
   sections.push(`# ${toTitle(name)} — Agent Instructions`);
   sections.push("");
+
+  // #17 — isFragment notice
+  if (ast.isFragment) {
+    sections.push("**Note:** This is a topology fragment — it defines a reusable sub-topology.");
+    sections.push("");
+  }
+
   if (ast.topology.description) {
     sections.push(ast.topology.description);
     sections.push("");
@@ -345,6 +437,25 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
   sections.push(`Version: ${ast.topology.version}`);
   if (ast.topology.patterns.length > 0) {
     sections.push(`Patterns: ${ast.topology.patterns.join(", ")}`);
+  }
+  // #7 — topology-level domain, timeout, errorHandler, durable, foundations, advanced
+  if (ast.topology.domain) {
+    sections.push(`Domain: ${ast.topology.domain}`);
+  }
+  if (ast.topology.timeout) {
+    sections.push(`Timeout: ${ast.topology.timeout}`);
+  }
+  if (ast.topology.errorHandler) {
+    sections.push(`Error handler: ${ast.topology.errorHandler}`);
+  }
+  if (ast.topology.durable) {
+    sections.push(`Durable: true`);
+  }
+  if (ast.topology.foundations && ast.topology.foundations.length > 0) {
+    sections.push(`Foundations: ${ast.topology.foundations.join(", ")}`);
+  }
+  if (ast.topology.advanced && ast.topology.advanced.length > 0) {
+    sections.push(`Advanced: ${ast.topology.advanced.join(", ")}`);
   }
   sections.push("");
 
@@ -367,17 +478,24 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
-  // Orchestrator section
-  const orch = ast.nodes.find((n) => n.type === "orchestrator");
+  // Orchestrator section (#14)
+  const orch = ast.nodes.find((n) => n.type === "orchestrator") as OrchestratorNode | undefined;
   if (orch) {
-    sections.push("## Orchestrator");
+    const orchTitle = orch.label || toTitle(orch.id);
+    sections.push(`## Orchestrator — ${orchTitle}`);
     sections.push("");
-    sections.push(`Model: ${(orch as any).model}`);
-    if ((orch as any).handles?.length > 0) {
-      sections.push(`Handles: ${(orch as any).handles.join(", ")}`);
+    sections.push(`Model: ${orch.model}`);
+    if (orch.handles?.length > 0) {
+      sections.push(`Handles: ${orch.handles.join(", ")}`);
     }
-    if ((orch as any).generates) {
-      sections.push(`Generates: ${(orch as any).generates}`);
+    if (orch.generates) {
+      sections.push(`Generates: ${orch.generates}`);
+    }
+    if (orch.outputs) {
+      sections.push("Outputs:");
+      for (const [field, values] of Object.entries(orch.outputs)) {
+        sections.push(`  - ${field}: ${values.join(" | ")}`);
+      }
     }
     sections.push("");
   }
@@ -390,6 +508,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       let line = `${edge.from} -> ${edge.to}`;
       if (edge.condition) line += ` [when ${edge.condition}]`;
       if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.per) line += ` [per ${edge.per}]`;
       if (edge.isError) line += ` [error${edge.errorType ? `: ${edge.errorType}` : ""}]`;
       if (edge.weight != null) line += ` [weight ${edge.weight}]`;
       if (edge.reflection) line += ` [reflection]`;
@@ -442,7 +561,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
 
     for (const agent of agents) {
-      sections.push(`### ${toTitle(agent.id)}`);
+      sections.push(`### ${agent.label || toTitle(agent.id)}`);
       sections.push("");
 
       // Role
@@ -640,11 +759,35 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Max turns:** ${agent.maxTurns}`);
       }
 
-      // Scale
+      // Scale (#10 — include batchSize)
       if (agent.scale) {
-        sections.push(
-          `- **Scale:** ${agent.scale.mode} by ${agent.scale.by} (${agent.scale.min}-${agent.scale.max})`
-        );
+        let scaleLine = `- **Scale:** ${agent.scale.mode} by ${agent.scale.by} (${agent.scale.min}-${agent.scale.max}`;
+        if (agent.scale.batchSize != null) {
+          scaleLine += `, batch ${agent.scale.batchSize}`;
+        }
+        scaleLine += `)`;
+        sections.push(scaleLine);
+      }
+
+      // #4 — per-agent MCP servers
+      if (agent.mcpServers && agent.mcpServers.length > 0) {
+        sections.push(`- **MCP servers:** ${agent.mcpServers.join(", ")}`);
+      }
+
+      // #5 — sandbox
+      if (agent.sandbox != null) {
+        sections.push(`- **Sandbox:** ${agent.sandbox}`);
+      }
+
+      // #5 — fallbackChain
+      if (agent.fallbackChain && agent.fallbackChain.length > 0) {
+        sections.push(`- **Fallback chain:** ${agent.fallbackChain.join(" -> ")}`);
+      }
+
+      // #5 — per-agent hooks
+      if (agent.hooks && agent.hooks.length > 0) {
+        const hookDesc = agent.hooks.map((h) => `${h.name} (on ${h.on})`).join(", ");
+        sections.push(`- **Hooks:** ${hookDesc}`);
       }
 
       // Codex-specific extensions
@@ -665,7 +808,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("## Human Checkpoints");
     sections.push("");
     for (const human of humans) {
-      sections.push(`### ${toTitle(human.id)}`);
+      sections.push(`### ${human.label || toTitle(human.id)}`);
       sections.push("");
       if (human.description) {
         sections.push(human.description);
@@ -688,7 +831,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("## Group Chats");
     sections.push("");
     for (const group of groups) {
-      sections.push(`### ${toTitle(group.id)}`);
+      sections.push(`### ${group.label || toTitle(group.id)}`);
       sections.push("");
       if (group.description) {
         sections.push(group.description);
@@ -717,7 +860,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("## Gates");
     sections.push("");
     for (const gate of gates) {
-      sections.push(`### ${toTitle(gate.id)}`);
+      sections.push(`### ${gate.label || toTitle(gate.id)}`);
       sections.push("");
       if (gate.after) sections.push(`- **After:** ${gate.after}`);
       if (gate.before) sections.push(`- **Before:** ${gate.before}`);
@@ -729,6 +872,30 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (gate.retry != null) sections.push(`- **Retry:** ${gate.retry}`);
       if (gate.timeout) sections.push(`- **Timeout:** ${gate.timeout}`);
       sections.push(`- **Enforcement:** script-level — run gate script manually between agents`);
+      sections.push("");
+    }
+  }
+
+  // #1 — Action nodes section
+  const actions = ast.nodes.filter((n) => n.type === "action") as ActionNode[];
+  if (actions.length > 0) {
+    sections.push("## Actions");
+    sections.push("");
+    for (const action of actions) {
+      sections.push(`### ${action.label || toTitle(action.id)}`);
+      sections.push("");
+      if (action.description) {
+        sections.push(action.description);
+        sections.push("");
+      }
+      if (action.kind) sections.push(`- **Kind:** ${action.kind}`);
+      if (action.source) sections.push(`- **Source:** ${action.source}`);
+      if (action.commands && action.commands.length > 0) {
+        sections.push(`- **Commands:** ${action.commands.join("; ")}`);
+      }
+      if (action.timeout) sections.push(`- **Timeout:** ${action.timeout}`);
+      if (action.onFail) sections.push(`- **On fail:** ${action.onFail}`);
+      if (action.join) sections.push(`- **Join:** ${action.join}`);
       sections.push("");
     }
   }
@@ -811,6 +978,30 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // #8 — Batch section
+  if (ast.batch && Object.keys(ast.batch).length > 0) {
+    sections.push("## Batch");
+    sections.push("");
+    for (const [key, val] of Object.entries(ast.batch)) {
+      sections.push(`- **${key}:** ${JSON.stringify(val)}`);
+    }
+    sections.push("");
+  }
+
+  // #9 — Environments section
+  if (ast.environments && Object.keys(ast.environments).length > 0) {
+    sections.push("## Environments");
+    sections.push("");
+    for (const [envName, overrides] of Object.entries(ast.environments)) {
+      sections.push(`### ${toTitle(envName)}`);
+      sections.push("");
+      for (const [key, val] of Object.entries(overrides)) {
+        sections.push(`- **${key}:** ${JSON.stringify(val)}`);
+      }
+      sections.push("");
+    }
+  }
+
   // Schemas section
   if (ast.schemas && ast.schemas.length > 0) {
     sections.push("## Schemas");
@@ -889,39 +1080,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
-  return {
-    path: "AGENTS.md",
-    content: sections.join("\n") + "\n",
-    category: "agent",
-  };
-}
-
-// ---------------------------------------------------------------------------
-// .codex/instructions.md
-// ---------------------------------------------------------------------------
-
-/**
- * Generate `.codex/instructions.md` — project-level instructions.
- *
- * This file contains topology-derived context: description, patterns,
- * skill summaries, and context includes.
- */
-function generateInstructionsMd(ast: TopologyAST): GeneratedFile {
-  const sections: string[] = [];
-
-  sections.push(`# ${toTitle(ast.topology.name)}`);
-  sections.push("");
-  if (ast.topology.description) {
-    sections.push(ast.topology.description);
-    sections.push("");
-  }
-  sections.push(`Version: ${ast.topology.version}`);
-  if (ast.topology.patterns.length > 0) {
-    sections.push(`Patterns: ${ast.topology.patterns.join(", ")}`);
-  }
-  sections.push("");
-
-  // Skills summary
+  // Skills summary (#11 — additional skill fields)
   if (ast.skills.length > 0) {
     sections.push("## Skills");
     sections.push("");
@@ -933,37 +1092,81 @@ function generateInstructionsMd(ast: TopologyAST): GeneratedFile {
       if (skill.scripts && skill.scripts.length > 0) {
         sections.push(`Scripts: ${skill.scripts.join(", ")}`);
       }
+      if (skill.prompt) {
+        sections.push(`Prompt file: ${skill.prompt}`);
+      }
+      if (skill.userInvocable != null) {
+        sections.push(`User-invocable: ${skill.userInvocable ? "yes" : "no"}`);
+      }
+      if (skill.allowedTools && skill.allowedTools.length > 0) {
+        sections.push(`Allowed tools: ${skill.allowedTools.join(", ")}`);
+      }
+      if (skill.context) {
+        sections.push(`Context: ${skill.context}`);
+      }
+      if (skill.agent) {
+        sections.push(`Agent: ${skill.agent}`);
+      }
+      if (skill.disableModelInvocation) {
+        sections.push(`Model invocation: disabled`);
+      }
       sections.push("");
     }
   }
 
-  // Context includes
-  if (ast.context.includes && ast.context.includes.length > 0) {
+  // Context includes (#16 — also show context.file)
+  if ((ast.context.includes && ast.context.includes.length > 0) || ast.context.file) {
     sections.push("## References");
     sections.push("");
-    for (const inc of ast.context.includes) {
-      sections.push(`- ${inc}`);
+    if (ast.context.file) {
+      sections.push(`- Context file: ${ast.context.file}`);
+    }
+    if (ast.context.includes) {
+      for (const inc of ast.context.includes) {
+        sections.push(`- ${inc}`);
+      }
     }
     sections.push("");
   }
 
-  // Environment variables
+  // Environment variables (#2 — handle sensitive, secretRef, encrypted)
   if (Object.keys(ast.env).length > 0) {
     sections.push("## Environment");
     sections.push("");
     for (const [key, val] of Object.entries(ast.env)) {
-      const value = typeof val === "string" ? val : val.value;
-      sections.push(`- \`${key}\`: ${value}`);
+      if (typeof val === "string") {
+        sections.push(`- \`${key}\`: ${val}`);
+      } else {
+        const sv = val as SensitiveValue;
+        let displayVal: string;
+        if (sv.secretRef) {
+          displayVal = `[secret: ${sv.secretRef.scheme}:${sv.secretRef.uri}]`;
+        } else if (sv.encrypted) {
+          displayVal = `[encrypted]`;
+        } else if (sv.sensitive) {
+          displayVal = `\${${key}}`;
+        } else {
+          displayVal = sv.value;
+        }
+        sections.push(`- \`${key}\`: ${displayVal}`);
+      }
     }
     sections.push("");
   }
 
   return {
-    path: ".codex/instructions.md",
+    path: "AGENTS.md",
     content: sections.join("\n") + "\n",
-    category: "machine",
+    category: "agent",
   };
 }
+
+// ---------------------------------------------------------------------------
+// .codex/instructions.md — REMOVED
+// ---------------------------------------------------------------------------
+// Codex CLI does NOT use .codex/instructions.md. It reads AGENTS.md files
+// from the workspace root and nested directories. Skills, context includes,
+// and environment info are now folded into AGENTS.md generation above.
 
 // ---------------------------------------------------------------------------
 // Memory directories
@@ -1025,22 +1228,60 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
 function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
+  // Global hooks
   for (const hook of ast.hooks) {
     if (!hook.run) continue;
     const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const hookLines = [
+      "#!/usr/bin/env bash",
+      `# Hook: ${hook.name} — fires on ${hook.on}`,
+    ];
+    // #12 — include matcher, type, timeout as comments
+    if (hook.matcher) hookLines.push(`# Matcher: ${hook.matcher}`);
+    if (hook.type) hookLines.push(`# Type: ${hook.type}`);
+    if (hook.timeout != null) hookLines.push(`# Timeout: ${hook.timeout}ms`);
+    hookLines.push(
+      "# Auto-generated by agentopology scaffold — edit as needed.",
+      "set -euo pipefail",
+      "",
+      `echo "TODO: implement ${hook.name} hook"`,
+      "",
+    );
     files.push({
       path: `.codex/scripts/${scriptName}`,
-      content: [
+      content: hookLines.join("\n"),
+      category: "script",
+    });
+  }
+
+  // #5 — per-agent hook script stubs
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (!agent.hooks) continue;
+    for (const hook of agent.hooks) {
+      if (!hook.run) continue;
+      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+      const hookLines = [
         "#!/usr/bin/env bash",
-        `# Hook: ${hook.name} — fires on ${hook.on}`,
+        `# Hook: ${hook.name} — fires on ${hook.on} (agent: ${agent.id})`,
+      ];
+      if (hook.matcher) hookLines.push(`# Matcher: ${hook.matcher}`);
+      if (hook.type) hookLines.push(`# Type: ${hook.type}`);
+      if (hook.timeout != null) hookLines.push(`# Timeout: ${hook.timeout}ms`);
+      hookLines.push(
         "# Auto-generated by agentopology scaffold — edit as needed.",
         "set -euo pipefail",
         "",
         `echo "TODO: implement ${hook.name} hook"`,
         "",
-      ].join("\n"),
-      category: "script",
-    });
+      );
+      files.push({
+        path: `.codex/scripts/${scriptName}`,
+        content: hookLines.join("\n"),
+        category: "script",
+      });
+    }
   }
 
   return files;
@@ -1214,6 +1455,31 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
       }
       sections.push("");
     }
+    // #11 — additional skill fields in skill docs
+    if (skill.prompt) {
+      sections.push(`Prompt file: ${skill.prompt}`);
+      sections.push("");
+    }
+    if (skill.userInvocable != null) {
+      sections.push(`User-invocable: ${skill.userInvocable ? "yes" : "no"}`);
+      sections.push("");
+    }
+    if (skill.allowedTools && skill.allowedTools.length > 0) {
+      sections.push(`Allowed tools: ${skill.allowedTools.join(", ")}`);
+      sections.push("");
+    }
+    if (skill.context) {
+      sections.push(`Context: ${skill.context}`);
+      sections.push("");
+    }
+    if (skill.agent) {
+      sections.push(`Agent: ${skill.agent}`);
+      sections.push("");
+    }
+    if (skill.disableModelInvocation) {
+      sections.push(`Model invocation: disabled`);
+      sections.push("");
+    }
 
     files.push({
       path: `.codex/skills/${skill.id}.md`,
@@ -1233,19 +1499,17 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
 export const codexBinding: BindingTarget = {
   name: "codex",
   description:
-    "OpenAI Codex CLI — generates codex.toml, AGENTS.md, .codex/ directory structure, and scripts.",
+    "OpenAI Codex CLI — generates .codex/config.toml, AGENTS.md, .codex/ directory structure, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     const files: GeneratedFile[] = [];
 
-    // 1. codex.toml — main configuration
+    // 1. .codex/config.toml — main configuration
     files.push(generateCodexToml(ast));
 
     // 2. AGENTS.md — agent instructions with roles, flow, memory paths
+    //    (Codex reads AGENTS.md from workspace root; no separate instructions.md)
     files.push(generateAgentsMd(ast));
-
-    // 3. .codex/instructions.md — project-level instructions
-    files.push(generateInstructionsMd(ast));
 
     // 4. Memory directories
     files.push(...generateMemory(ast));
