@@ -618,9 +618,17 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     sections.push(frontmatter(fm));
     sections.push("");
 
-    // Generate orchestration instructions that Claude Code can execute.
-    // The key insight: Claude Code uses the Agent tool with subagent_type
-    // matching the agent's `name` field from AGENT.md frontmatter.
+    // Generate group chat orchestration instructions.
+    //
+    // Group chat pattern (from AutoGen/CrewAI/LangGraph research):
+    //   - Sequential spawning with accumulated context
+    //   - Each agent sees the FULL conversation history, not just the topic
+    //   - The orchestrator appends each response to a growing transcript
+    //   - This is NOT fan-out/map-reduce (parallel + merge)
+    //
+    // In Claude Code: the orchestrator spawns one agent at a time via the
+    // Agent tool, collects the response, appends it to the transcript,
+    // then spawns the next agent with the updated transcript.
     sections.push("## Instructions");
     sections.push("");
     if (group.description) {
@@ -628,10 +636,12 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    sections.push("You orchestrate a multi-agent conversation. You MUST use the Agent tool to spawn each participant as a separate subagent. Do NOT role-play the participants yourself — each one must run as its own agent.");
+    sections.push("You orchestrate a group conversation between multiple agents. You MUST use the Agent tool to spawn each participant as a separate subagent — do NOT role-play or simulate their responses yourself.");
+    sections.push("");
+    sections.push("**Key rule:** This is a conversation, not parallel execution. Each agent must see the full conversation history from all previous speakers before responding. Spawn agents one at a time, sequentially.");
     sections.push("");
 
-    // Build participant table with the exact subagent_type to use
+    // Build participant table
     sections.push("### Participants");
     sections.push("");
     for (const member of group.members) {
@@ -646,41 +656,38 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push("");
 
-    // Explicit step-by-step process
+    // Process — sequential with accumulated context
     sections.push("### Process");
     sections.push("");
     const selectionMode = (group.speakerSelection ?? "sequential").replace(/^"|"$/g, "");
     const rounds = group.maxRounds ?? 1;
 
+    sections.push("Maintain a conversation transcript as a growing list of messages. Before each agent turn, include the FULL transcript in that agent's prompt.");
+    sections.push("");
+
     if (selectionMode === "round-robin") {
-      sections.push(`Execute ${rounds} round(s). In each round:`);
+      sections.push(`Execute ${rounds} round(s). The speaker order per round is: ${group.members.join(", ")}.`);
       sections.push("");
-      let step = 1;
+      sections.push("For each turn:");
+      sections.push("");
       for (const member of group.members) {
         const memberNode = ast.nodes.find((n) => n.id === member);
         const memberModel = memberNode?.type === "agent"
           ? (memberNode as AgentNode).model : undefined;
         const modelParam = memberModel ? `, model: ${memberModel}` : "";
-        sections.push(`${step}. Use the Agent tool to launch **${member}** (subagent_type: "${member}"${modelParam}). Include the topic and any previous arguments in the prompt.`);
-        step++;
+        sections.push(`1. Spawn **${member}** (subagent_type: "${member}"${modelParam}) with a prompt containing the topic AND the full conversation transcript so far. The agent should respond to what previous speakers said.`);
       }
-      sections.push(`${step}. Collect all responses before starting the next round.`);
+      sections.push(`1. Append each response to the transcript before spawning the next agent.`);
       sections.push("");
-      if (rounds > 1) {
-        sections.push(`In round 2+, include the full conversation history from previous rounds in each agent's prompt so they can respond to each other's arguments.`);
-        sections.push("");
-      }
     } else {
-      sections.push("Launch each participant sequentially:");
+      sections.push("Speaker order: " + group.members.join(", ") + ".");
       sections.push("");
-      let step = 1;
       for (const member of group.members) {
         const memberNode = ast.nodes.find((n) => n.id === member);
         const memberModel = memberNode?.type === "agent"
           ? (memberNode as AgentNode).model : undefined;
         const modelParam = memberModel ? `, model: ${memberModel}` : "";
-        sections.push(`${step}. Use the Agent tool to launch **${member}** (subagent_type: "${member}"${modelParam}). Pass the previous participant's response.`);
-        step++;
+        sections.push(`1. Spawn **${member}** (subagent_type: "${member}"${modelParam}) with the topic and full transcript. Append the response to the transcript.`);
       }
       sections.push("");
     }
@@ -693,7 +700,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push("");
 
-    sections.push("After all rounds complete, compile the full conversation transcript and return it as your output.");
+    sections.push("After all rounds complete, return the full conversation transcript as your output.");
     sections.push("");
 
     files.push({
