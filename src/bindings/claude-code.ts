@@ -728,29 +728,22 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
       }
     }
 
-    // --- 4. Orchestrator AGENT.md ---
-    const fm: Record<string, string | boolean | string[]> = {};
-    fm.name = group.id;
-    if (group.description) fm.description = `"${group.description}"`;
+    // --- 4. Build the orchestration body (shared between skill and agent) ---
+    const bodyLines: string[] = [];
 
-    const sections: string[] = [];
-    sections.push(frontmatter(fm));
-    sections.push("");
-    sections.push("## Instructions");
-    sections.push("");
     if (group.description) {
-      sections.push(group.description);
-      sections.push("");
+      bodyLines.push(group.description);
+      bodyLines.push("");
     }
 
-    sections.push("You orchestrate a group conversation using a shared transcript file. Each participant reads the transcript, sees what others wrote, and appends their response.");
-    sections.push("");
-    sections.push(`**Transcript file:** \`${transcriptPath}\``);
-    sections.push("");
+    bodyLines.push("You orchestrate a group conversation using a shared transcript file. Each participant reads the transcript, sees what others wrote, and appends their response.");
+    bodyLines.push("");
+    bodyLines.push(`**Transcript file:** \`${transcriptPath}\``);
+    bodyLines.push("");
 
     // Participant table
-    sections.push("### Participants");
-    sections.push("");
+    bodyLines.push("### Participants");
+    bodyLines.push("");
     for (const member of group.members) {
       const memberNode = ast.nodes.find((n) => n.id === member);
       const memberDesc = memberNode?.type === "agent"
@@ -759,23 +752,23 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
       const memberModel = memberNode?.type === "agent"
         ? (memberNode as AgentNode).model : undefined;
       const modelNote = memberModel ? ` (model: ${memberModel})` : "";
-      sections.push(`- **${member}**${modelNote}: ${memberDesc}`);
+      bodyLines.push(`- **${member}**${modelNote}: ${memberDesc}`);
     }
-    sections.push("");
+    bodyLines.push("");
 
     // Step-by-step orchestration
-    sections.push("### Step-by-step process");
-    sections.push("");
-    sections.push(`1. Write the debate topic at the top of \`${transcriptPath}\` (replace the placeholder comment)`);
-    sections.push("");
+    bodyLines.push("### Step-by-step process");
+    bodyLines.push("");
+    bodyLines.push(`1. Write the topic/prompt at the top of \`${transcriptPath}\` (replace the placeholder comment)`);
+    bodyLines.push("");
 
     const totalTurns = rounds * group.members.length;
     let step = 2;
 
     for (let round = 1; round <= rounds; round++) {
-      sections.push(`**Round ${round}:**`);
-      sections.push("");
-      sections.push(`${step}. Append \`## Round ${round}\` to the transcript`);
+      bodyLines.push(`**Round ${round}:**`);
+      bodyLines.push("");
+      bodyLines.push(`${step}. Append \`## Round ${round}\` to the transcript`);
       step++;
 
       for (const member of group.members) {
@@ -783,34 +776,70 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
         const memberModel = memberNode?.type === "agent"
           ? (memberNode as AgentNode).model : undefined;
         const modelParam = memberModel ? `, model: ${memberModel}` : "";
-        sections.push(`${step}. Spawn **${member}** (subagent_type: "${member}"${modelParam}). The agent will read the transcript, see what others wrote, and append its response.`);
+        bodyLines.push(`${step}. Spawn **${member}** (subagent_type: "${member}"${modelParam}). The agent will read the transcript, see what others wrote, and append its response.`);
         step++;
       }
-      sections.push("");
+      bodyLines.push("");
     }
 
-    sections.push(`${step}. After all ${totalTurns} turns, read the final transcript and return it as your output.`);
-    sections.push("");
+    bodyLines.push(`${step}. After all ${totalTurns} turns, read the final transcript and return it as your output.`);
+    bodyLines.push("");
 
     if (group.termination) {
-      sections.push(`**Termination condition:** ${group.termination} (but always complete the configured ${rounds} round(s) unless this condition is met earlier)`);
+      bodyLines.push(`**Termination condition:** ${group.termination} (but always complete the configured ${rounds} round(s) unless this condition is met earlier)`);
     }
     if (group.timeout) {
-      sections.push(`**Timeout:** ${group.timeout}`);
+      bodyLines.push(`**Timeout:** ${group.timeout}`);
     }
-    sections.push("");
+    bodyLines.push("");
 
-    sections.push("### Important");
-    sections.push("");
-    sections.push("- Spawn agents **one at a time, sequentially** — never in parallel");
-    sections.push("- Each agent reads the transcript BEFORE responding, so it sees all previous messages");
-    sections.push("- The transcript file is the shared state — do not pass conversation history in prompts");
-    sections.push("- Wait for each agent to finish before spawning the next one");
-    sections.push("");
+    bodyLines.push("### Important");
+    bodyLines.push("");
+    bodyLines.push("- Spawn agents **one at a time, sequentially** — never in parallel");
+    bodyLines.push("- Each agent reads the transcript BEFORE responding, so it sees all previous messages");
+    bodyLines.push("- The transcript file is the shared state — do not pass conversation history in prompts");
+    bodyLines.push("- Wait for each agent to finish before spawning the next one");
+    bodyLines.push("");
+
+    const orchestrationBody = bodyLines.join("\n");
+
+    // --- 5. Skill (primary — runs in main session, has Agent tool access) ---
+    const skillFm: Record<string, string | boolean | string[]> = {};
+    skillFm.name = group.id;
+    if (group.description) skillFm.description = `"${group.description}"`;
+    skillFm["user-invocable"] = true;
+
+    const skillSections: string[] = [];
+    skillSections.push(frontmatter(skillFm));
+    skillSections.push("");
+    skillSections.push(`# ${group.label || toTitle(group.id)}`);
+    skillSections.push("");
+    skillSections.push(orchestrationBody);
+
+    files.push({
+      path: `.claude/skills/${group.id}/SKILL.md`,
+      content: skillSections.join("\n") + "\n",
+      category: "agent",
+    });
+
+    // --- 6. Agent (fallback — for when spawned as subagent, may not have Agent tool) ---
+    const agentFm: Record<string, string | boolean | string[]> = {};
+    agentFm.name = group.id;
+    if (group.description) agentFm.description = `"${group.description}"`;
+
+    const agentSections: string[] = [];
+    agentSections.push(frontmatter(agentFm));
+    agentSections.push("");
+    agentSections.push("## Instructions");
+    agentSections.push("");
+    agentSections.push(orchestrationBody);
+    agentSections.push("");
+    agentSections.push("> **Note:** If the Agent tool is not available, simulate the group conversation by writing each participant's response yourself, following the round structure above. Write all responses to the transcript file.");
+    agentSections.push("");
 
     files.push({
       path: `.claude/agents/${group.id}/AGENT.md`,
-      content: sections.join("\n") + "\n",
+      content: agentSections.join("\n") + "\n",
       category: "agent",
     });
   }
