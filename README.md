@@ -32,11 +32,16 @@ topology code-review : [pipeline] {
 
 ```bash
 agentopology scaffold my-team.at --target claude-code   # → .claude/agents/
-agentopology scaffold my-team.at --target cursor         # → .cursor/rules/
+agentopology scaffold my-team.at --target openclaw       # → .openclaw/soul.md
 agentopology scaffold my-team.at --target codex          # → .codex/
+agentopology scaffold my-team.at --target cursor         # → .cursor/rules/
 ```
 
 One file. Seven platforms. Every agent, flow, gate, hook, and MCP server — defined once.
+
+<p align="center">
+  <strong>Claude Code</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
+</p>
 
 ---
 
@@ -50,11 +55,11 @@ AgentTopology is a **declarative language** (`.at` files) and a **CLI compiler**
 │  (you write) │      │  Validator │      │  (auto-generated)   │
 └──────────────┘      └────────────┘      └─────────────────────┘
                                             ├── .claude/agents/
-                                            ├── .cursor/rules/
+                                            ├── .openclaw/
                                             ├── .codex/
+                                            ├── .cursor/rules/
                                             ├── .github/agents/
                                             ├── .kiro/agents/
-                                            ├── .openclaw/
                                             └── ...
 ```
 
@@ -154,12 +159,12 @@ This defines three agents, their tools and memory, a quality gate, and a flow wi
 | Target | Command | What It Generates |
 |--------|---------|-------------------|
 | **Claude Code** | `--target claude-code` | `.claude/agents/`, `.claude/skills/`, `.mcp.json`, `.claude/settings.json` |
-| **Cursor** | `--target cursor` | `.cursor/rules/*.mdc`, `.cursor/mcp.json`, `.cursor/hooks.json` |
+| **OpenClaw** | `--target openclaw` | `.openclaw/soul.md`, `.openclaw/skills/`, `.openclaw/config.json` |
 | **Codex** | `--target codex` | `.codex/config.toml`, `AGENTS.md` |
-| **Copilot** | `--target copilot-cli` | `.github/agents/*.agent.md`, `.github/copilot-instructions.md` |
+| **Cursor** | `--target cursor` | `.cursor/rules/*.mdc`, `.cursor/mcp.json`, `.cursor/hooks.json` |
 | **Gemini CLI** | `--target gemini-cli` | `.gemini/`, `AGENTS.md` |
+| **Copilot** | `--target copilot-cli` | `.github/agents/*.agent.md`, `.github/copilot-instructions.md` |
 | **Kiro** | `--target kiro` | `.kiro/agents/*.json`, `.kiro/steering/` |
-| **OpenClaw** | `--target openclaw` | `.openclaw/soul.md`, `.openclaw/skills/` |
 
 Every binding is ground-truth validated against real-world configs from production repos.
 
