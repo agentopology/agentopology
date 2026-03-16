@@ -1360,7 +1360,7 @@ describe("Integration: example files", () => {
 
     const researcher = ast.nodes.find((n) => n.id === "researcher") as AgentNode;
     expect(researcher).toBeDefined();
-    expect(researcher.model).toBe("gpt-4o");
+    expect(researcher.model).toBe("sonnet");
     expect(researcher.phase).toBe(1);
     expect(researcher.tools).toEqual(["Read", "Grep", "Glob", "WebSearch"]);
     expect(researcher.prompt).toContain("research specialist");

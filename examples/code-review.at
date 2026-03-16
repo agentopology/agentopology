@@ -10,6 +10,14 @@ topology code-review : [pipeline, fan-out, human-gate] {
     description: "Automated code review — analyze, scan, review, and approve"
   }
 
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
   orchestrator {
     model: opus
     generates: "commands/review.md"
@@ -40,7 +48,7 @@ topology code-review : [pipeline, fan-out, human-gate] {
 
   agent analyzer {
     role: analyzer
-    model: gemini-2.0-flash
+    model: sonnet
     permissions: supervised
     prompt: "prompts/analyzer.md"
     phase: 1

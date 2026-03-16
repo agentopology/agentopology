@@ -29,7 +29,7 @@ import type {
   SchemaType,
   RetryConfig,
   CircuitBreakerConfig,
-  PromptVariant,
+
   SensitiveValue,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
@@ -39,54 +39,6 @@ import type { BindingTarget, GeneratedFile } from "./types.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Map topology model aliases to valid OpenAI model IDs.
- *
- * Codex CLI requires OpenAI model names. Topology files use
- * platform-agnostic aliases like "opus", "sonnet", "haiku" which
- * must be translated to their OpenAI equivalents.
- *
- * Pass-through: anything already containing "gpt", "o1", "o3", "o4",
- * a slash (provider-prefixed), or an unrecognized name.
- */
-function mapModel(model: string): string {
-  // Anthropic/Google aliases → Codex-native models (capability-matched)
-  //
-  // Official Codex CLI models (from docs.openai.com/codex/models):
-  //   gpt-5.4             — flagship, recommended default
-  //   gpt-5.3-codex       — industry-leading coding
-  //   gpt-5.2-codex       — previous gen coding
-  //   gpt-5.1-codex       — older coding model
-  //   gpt-5-codex         — base codex
-  //   gpt-5-codex-mini    — fast/cheap
-  const MODEL_MAP: Record<string, string> = {
-    // Anthropic shorthand aliases → capability-matched Codex models
-    // gpt-5.3-codex is the default/recommended — gpt-5.4 requires higher tier
-    opus: "gpt-5.3-codex",
-    sonnet: "gpt-5.2-codex",
-    haiku: "gpt-5.1-codex-mini",
-    // Full Anthropic model IDs
-    "claude-opus-4-6": "gpt-5.3-codex",
-    "claude-sonnet-4-6": "gpt-5.2-codex",
-    "claude-haiku-4-5": "gpt-5.1-codex-mini",
-    // Google aliases
-    "gemini-2.0-flash": "gpt-5-codex-mini",
-    "gemini-2.5-pro": "gpt-5.3-codex",
-  };
-
-  // Already an OpenAI/Codex model or provider-prefixed → pass through
-  if (
-    model.startsWith("gpt-") ||
-    model.startsWith("o1") ||
-    model.startsWith("o3") ||
-    model.startsWith("o4") ||
-    model.includes("/")
-  ) {
-    return model;
-  }
-
-  return MODEL_MAP[model] ?? model;
-}
 
 /** Convert a kebab-case id to Title Case. */
 function toTitle(id: string): string {
@@ -234,9 +186,8 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   // Use the first orchestrator or first agent's model, falling back to gpt-4o.
   const orchestrator = ast.nodes.find((n) => n.type === "orchestrator");
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  const primaryModel = mapModel(
-    (orchestrator as any)?.model ?? agents[0]?.model ?? "o4-mini"
-  );
+  const primaryModel =
+    (orchestrator as any)?.model ?? agents[0]?.model ?? "o4-mini";
   const primaryPermission = agents[0]?.permissions ?? "supervised";
 
   lines.push(`model = ${tomlString(primaryModel)}`);
@@ -314,7 +265,7 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
       }
       if (p.default) lines.push(`default = true`);
       if (p.models && p.models.length > 0) {
-        lines.push(`models = ${tomlStringArray(p.models.map(mapModel))}`);
+        lines.push(`models = ${tomlStringArray(p.models)}`);
       }
       if (p.auth) {
         lines.push(`# Auth type: ${p.auth.type}`);
@@ -363,7 +314,7 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   // Fallback chain — document if present (Codex doesn't natively support it)
   const fallbackChain = ast.settings?.["fallback-chain"] as string[] | undefined;
   if (fallbackChain && fallbackChain.length > 0) {
-    lines.push(`# Model fallback chain: ${fallbackChain.map(mapModel).join(" -> ")}`);
+    lines.push(`# Model fallback chain: ${fallbackChain.join(" -> ")}`);
     lines.push("");
   }
 
@@ -534,7 +485,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     const orchTitle = orch.label || toTitle(orch.id);
     sections.push(`## Orchestrator — ${orchTitle}`);
     sections.push("");
-    sections.push(`Model: ${mapModel(orch.model)}`);
+    sections.push(`Model: ${orch.model}`);
     if (orch.handles?.length > 0) {
       sections.push(`Handles: ${orch.handles.join(", ")}`);
     }
@@ -629,7 +580,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       }
 
       // Model and permissions
-      const model = mapModel(agent.model ?? "o4-mini");
+      const model = agent.model ?? "o4-mini";
       const policy = mapApprovalPolicy(agent.permissions ?? "supervised");
       sections.push(`- **Model:** ${model}`);
       sections.push(`- **Approval policy:** ${policy}`);
@@ -729,7 +680,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push("");
         for (const v of agent.variants) {
           const parts: string[] = [`**${v.id}** (weight ${v.weight})`];
-          if (v.model) parts.push(`model: ${mapModel(v.model)}`);
+          if (v.model) parts.push(`model: ${v.model}`);
           if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
           sections.push(`- ${parts.join(", ")}`);
           if (v.prompt) {
@@ -831,7 +782,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
 
       // #5 — fallbackChain
       if (agent.fallbackChain && agent.fallbackChain.length > 0) {
-        sections.push(`- **Fallback chain:** ${agent.fallbackChain.map(mapModel).join(" -> ")}`);
+        sections.push(`- **Fallback chain:** ${agent.fallbackChain.join(" -> ")}`);
       }
 
       // #5 — per-agent hooks

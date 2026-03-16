@@ -9,6 +9,14 @@ topology simple-pipeline : [pipeline, human-gate] {
     description: "Research, write, and review — a minimal content pipeline"
   }
 
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
   orchestrator {
     model: sonnet
     generates: "commands/create.md"
@@ -35,7 +43,7 @@ topology simple-pipeline : [pipeline, human-gate] {
 
   agent researcher {
     role: researcher
-    model: gpt-4o
+    model: sonnet
     permissions: supervised
     phase: 1
     tools: [Read, Grep, Glob, WebSearch]

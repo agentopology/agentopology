@@ -10,6 +10,14 @@ topology data-processing : [pipeline, fan-out] {
     description: "Batch data processing — ingest, extract, classify, and generate reports"
   }
 
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
   orchestrator {
     model: opus
     generates: "commands/process.md"
@@ -113,7 +121,7 @@ topology data-processing : [pipeline, fan-out] {
 
   agent classifier {
     role: classifier
-    model: gemini-2.0-flash
+    model: haiku
     permissions: autonomous
     prompt: "prompts/classifier.md"
     phase: 2

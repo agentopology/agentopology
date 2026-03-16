@@ -704,6 +704,19 @@ describe("codex binding", () => {
     const agentsMd = files.find((f) => f.path === "AGENTS.md");
     expect(agentsMd!.content).toContain("Enforcement:");
   });
+
+  it("passes model values through without mapping", () => {
+    const toml = files.find((f) => f.path === ".codex/config.toml");
+    // Model should be the raw value from the .at file, not mapped
+    expect(toml!.content).toContain('"opus"');
+    // Should NOT contain any OpenAI model IDs (no mapping)
+    expect(toml!.content).not.toContain("gpt-");
+
+    const agentsMd = files.find((f) => f.path === "AGENTS.md");
+    // Agent models should appear verbatim
+    expect(agentsMd!.content).toContain("**Model:** sonnet");
+    expect(agentsMd!.content).toContain("**Model:** opus");
+  });
 });
 
 // ---------------------------------------------------------------------------
