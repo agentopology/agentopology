@@ -35,5 +35,8 @@ scripts/collect-metrics.sh
 # Playwright MCP artifacts
 .playwright-mcp/
 
+# Internal validation tracker (not for public release)
+docs/binding-validation.md
+
 # Temp files
 logo-concepts.html
