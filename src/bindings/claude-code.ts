@@ -564,6 +564,12 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push(groupProto);
     }
 
+    // Inject group transcript note if this agent receives group output
+    const downstreamNote = groupDownstream.get(agent.id);
+    if (downstreamNote) {
+      sections.push(downstreamNote);
+    }
+
     files.push({
       path: `.claude/agents/${agent.id}/AGENT.md`,
       content: sections.join("\n") + "\n",
@@ -624,6 +630,9 @@ function generateHumanNodes(ast: TopologyAST): GeneratedFile[] {
 
 /** Map of agent-id → group protocol instructions to inject into their AGENT.md. */
 const groupProtocols = new Map<string, string>();
+
+/** Map of agent-id → group transcript note for downstream agents (receivers of group output). */
+const groupDownstream = new Map<string, string>();
 
 function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -692,15 +701,31 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
         "",
         "**Your response:**",
         `1. Append your response to \`${transcriptPath}\` under the current round heading`,
-        `2. Use the format: \`### ${member}\\n[your response]\``,
+        `2. Start with a \`### ${member}\` heading on its own line, then write your response below it`,
         "3. Respond directly to what previous speakers said — engage with their arguments",
         "4. Keep your response focused and concise",
         "",
-        `**Do NOT** overwrite the file. Only append to it.`,
+        `**Do NOT** overwrite or replace the file contents. Only append to the end.`,
         "",
       ].join("\n");
 
       groupProtocols.set(member, protocol);
+    }
+
+    // --- 3b. Register downstream agents (agents receiving group output via flow edges) ---
+    for (const edge of ast.edges) {
+      if (edge.from === group.id && !group.members.includes(edge.to)) {
+        const note = [
+          "",
+          "## Group Conversation Input",
+          "",
+          `This agent receives the output of a group conversation. The full debate/discussion transcript is available at: \`${transcriptPath}\``,
+          "",
+          `**Read \`${transcriptPath}\` first** to see the complete conversation before making your evaluation or response.`,
+          "",
+        ].join("\n");
+        groupDownstream.set(edge.to, note);
+      }
     }
 
     // --- 4. Orchestrator AGENT.md ---
@@ -768,7 +793,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
 
     if (group.termination) {
-      sections.push(`**Early termination:** Stop if ${group.termination}`);
+      sections.push(`**Termination condition:** ${group.termination} (but always complete the configured ${rounds} round(s) unless this condition is met earlier)`);
     }
     if (group.timeout) {
       sections.push(`**Timeout:** ${group.timeout}`);
