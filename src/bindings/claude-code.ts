@@ -558,6 +558,12 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push(`Skip when: ${agent.skip}`);
     }
 
+    // Inject group conversation protocol if this agent is a group member
+    const groupProto = groupProtocols.get(agent.id);
+    if (groupProto) {
+      sections.push(groupProto);
+    }
+
     files.push({
       path: `.claude/agents/${agent.id}/AGENT.md`,
       content: sections.join("\n") + "\n",
@@ -601,7 +607,24 @@ function generateHumanNodes(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
-/** Generate AGENT.md files for each group chat node. */
+/**
+ * Generate group chat artifacts:
+ *   - Orchestrator AGENT.md — spawns members sequentially
+ *   - Shared transcript file — the communication channel
+ *   - Group config JSON — metadata for reference
+ *   - Group protocol section injected into each member's AGENT.md (via groupProtocols map)
+ *
+ * Architecture: file-based group chat.
+ * Instead of passing context through prompts, agents communicate via a shared
+ * transcript file (`.claude/groups/<id>/transcript.md`). Each agent:
+ *   1. Reads the transcript to see all previous messages
+ *   2. Appends its response under the current round heading
+ * The orchestrator spawns agents sequentially — execution order IS the lock.
+ */
+
+/** Map of agent-id → group protocol instructions to inject into their AGENT.md. */
+const groupProtocols = new Map<string, string>();
+
 function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
@@ -609,7 +632,78 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "group") continue;
     const group = node as GroupNode;
 
-    // Frontmatter for group agents — they orchestrate subagents
+    const selectionMode = (group.speakerSelection ?? "sequential").replace(/^"|"$/g, "");
+    const rounds = group.maxRounds ?? 1;
+    const transcriptPath = `.claude/groups/${group.id}/transcript.md`;
+
+    // --- 1. Group config JSON ---
+    const config: Record<string, unknown> = {
+      id: group.id,
+      members: group.members,
+      speakerSelection: selectionMode,
+      maxRounds: rounds,
+      transcriptPath,
+    };
+    if (group.termination) config.termination = group.termination;
+    if (group.timeout) config.timeout = group.timeout;
+
+    files.push({
+      path: `.claude/groups/${group.id}/config.json`,
+      content: JSON.stringify(config, null, 2) + "\n",
+      category: "machine",
+    });
+
+    // --- 2. Transcript template ---
+    const transcriptLines: string[] = [];
+    transcriptLines.push(`# ${group.label || toTitle(group.id)}`);
+    transcriptLines.push("");
+    if (group.description) {
+      transcriptLines.push(group.description);
+      transcriptLines.push("");
+    }
+    transcriptLines.push(`**Participants:** ${group.members.join(", ")}`);
+    transcriptLines.push(`**Rounds:** ${rounds}`);
+    if (selectionMode !== "sequential") {
+      transcriptLines.push(`**Speaker order:** ${selectionMode}`);
+    }
+    transcriptLines.push("");
+    transcriptLines.push("---");
+    transcriptLines.push("");
+    transcriptLines.push("<!-- Topic will be written here by the orchestrator -->");
+    transcriptLines.push("");
+
+    files.push({
+      path: transcriptPath,
+      content: transcriptLines.join("\n"),
+      category: "agent",
+    });
+
+    // --- 3. Register protocol for each member agent ---
+    for (const member of group.members) {
+      const protocol = [
+        "",
+        "## Group Conversation Protocol",
+        "",
+        `You are participating in a group conversation via a shared transcript file: \`${transcriptPath}\``,
+        "",
+        "**Before responding:**",
+        `1. Read \`${transcriptPath}\` to see the full conversation so far`,
+        "2. Review what other participants have said",
+        "",
+        "**Your response:**",
+        `1. Append your response to \`${transcriptPath}\` under the current round heading`,
+        `2. Use the format: \`### ${member}\\n[your response]\``,
+        "3. Respond directly to what previous speakers said — engage with their arguments",
+        "4. Keep your response focused and concise",
+        "",
+        `**Do NOT** overwrite the file. Only append to it.`,
+        "",
+      ].join("\n");
+
+      groupProtocols.set(member, protocol);
+    }
+
+    // --- 4. Orchestrator AGENT.md ---
     const fm: Record<string, string | boolean | string[]> = {};
     fm.name = group.id;
     if (group.description) fm.description = `"${group.description}"`;
@@ -617,18 +711,6 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     const sections: string[] = [];
     sections.push(frontmatter(fm));
     sections.push("");
-
-    // Generate group chat orchestration instructions.
-    //
-    // Group chat pattern (from AutoGen/CrewAI/LangGraph research):
-    //   - Sequential spawning with accumulated context
-    //   - Each agent sees the FULL conversation history, not just the topic
-    //   - The orchestrator appends each response to a growing transcript
-    //   - This is NOT fan-out/map-reduce (parallel + merge)
-    //
-    // In Claude Code: the orchestrator spawns one agent at a time via the
-    // Agent tool, collects the response, appends it to the transcript,
-    // then spawns the next agent with the updated transcript.
     sections.push("## Instructions");
     sections.push("");
     if (group.description) {
@@ -636,12 +718,12 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    sections.push("You orchestrate a group conversation between multiple agents. You MUST use the Agent tool to spawn each participant as a separate subagent — do NOT role-play or simulate their responses yourself.");
+    sections.push("You orchestrate a group conversation using a shared transcript file. Each participant reads the transcript, sees what others wrote, and appends their response.");
     sections.push("");
-    sections.push("**Key rule:** This is a conversation, not parallel execution. Each agent must see the full conversation history from all previous speakers before responding. Spawn agents one at a time, sequentially.");
+    sections.push(`**Transcript file:** \`${transcriptPath}\``);
     sections.push("");
 
-    // Build participant table
+    // Participant table
     sections.push("### Participants");
     sections.push("");
     for (const member of group.members) {
@@ -656,51 +738,49 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push("");
 
-    // Process — sequential with accumulated context
-    sections.push("### Process");
+    // Step-by-step orchestration
+    sections.push("### Step-by-step process");
     sections.push("");
-    const selectionMode = (group.speakerSelection ?? "sequential").replace(/^"|"$/g, "");
-    const rounds = group.maxRounds ?? 1;
-
-    sections.push("Maintain a conversation transcript as a growing list of messages. Before each agent turn, include the FULL transcript in that agent's prompt.");
+    sections.push(`1. Write the debate topic at the top of \`${transcriptPath}\` (replace the placeholder comment)`);
     sections.push("");
 
-    if (selectionMode === "round-robin") {
-      sections.push(`Execute ${rounds} round(s). The speaker order per round is: ${group.members.join(", ")}.`);
+    const totalTurns = rounds * group.members.length;
+    let step = 2;
+
+    for (let round = 1; round <= rounds; round++) {
+      sections.push(`**Round ${round}:**`);
       sections.push("");
-      sections.push("For each turn:");
-      sections.push("");
+      sections.push(`${step}. Append \`## Round ${round}\` to the transcript`);
+      step++;
+
       for (const member of group.members) {
         const memberNode = ast.nodes.find((n) => n.id === member);
         const memberModel = memberNode?.type === "agent"
           ? (memberNode as AgentNode).model : undefined;
         const modelParam = memberModel ? `, model: ${memberModel}` : "";
-        sections.push(`1. Spawn **${member}** (subagent_type: "${member}"${modelParam}) with a prompt containing the topic AND the full conversation transcript so far. The agent should respond to what previous speakers said.`);
-      }
-      sections.push(`1. Append each response to the transcript before spawning the next agent.`);
-      sections.push("");
-    } else {
-      sections.push("Speaker order: " + group.members.join(", ") + ".");
-      sections.push("");
-      for (const member of group.members) {
-        const memberNode = ast.nodes.find((n) => n.id === member);
-        const memberModel = memberNode?.type === "agent"
-          ? (memberNode as AgentNode).model : undefined;
-        const modelParam = memberModel ? `, model: ${memberModel}` : "";
-        sections.push(`1. Spawn **${member}** (subagent_type: "${member}"${modelParam}) with the topic and full transcript. Append the response to the transcript.`);
+        sections.push(`${step}. Spawn **${member}** (subagent_type: "${member}"${modelParam}). The agent will read the transcript, see what others wrote, and append its response.`);
+        step++;
       }
       sections.push("");
     }
 
+    sections.push(`${step}. After all ${totalTurns} turns, read the final transcript and return it as your output.`);
+    sections.push("");
+
     if (group.termination) {
-      sections.push(`**Stop when:** ${group.termination}`);
+      sections.push(`**Early termination:** Stop if ${group.termination}`);
     }
     if (group.timeout) {
       sections.push(`**Timeout:** ${group.timeout}`);
     }
     sections.push("");
 
-    sections.push("After all rounds complete, return the full conversation transcript as your output.");
+    sections.push("### Important");
+    sections.push("");
+    sections.push("- Spawn agents **one at a time, sequentially** — never in parallel");
+    sections.push("- Each agent reads the transcript BEFORE responding, so it sees all previous messages");
+    sections.push("- The transcript file is the shared state — do not pass conversation history in prompts");
+    sections.push("- Wait for each agent to finish before spawning the next one");
     sections.push("");
 
     files.push({
@@ -1983,14 +2063,14 @@ export const claudeCodeBinding: BindingTarget = {
     // Action nodes
     files.push(...generateActionNodes(ast));
 
-    // Agent files
+    // Group nodes — MUST run before agents so group protocols are registered
+    files.push(...generateGroupNodes(ast));
+
+    // Agent files — may include group conversation protocol sections
     files.push(...generateAgents(ast));
 
     // Human nodes
     files.push(...generateHumanNodes(ast));
-
-    // Group nodes
-    files.push(...generateGroupNodes(ast));
 
     // Main topology skill (with frontmatter)
     const skillFiles = generateTopologySkill(ast);

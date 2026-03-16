@@ -470,12 +470,56 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(groupAgent!.content).toContain("con-debater");
     });
 
-    it("includes round-robin process, max rounds, termination, timeout", () => {
-      // Group orchestrator should have actual instructions for running rounds
-      expect(groupAgent!.content).toContain("round");
-      expect(groupAgent!.content).toContain("5");
+    it("includes round instructions, max rounds, termination, timeout", () => {
+      // Group orchestrator should have step-by-step round instructions
+      expect(groupAgent!.content).toContain("Round 1");
+      expect(groupAgent!.content).toContain("Round 5");
       expect(groupAgent!.content).toContain("judge declares winner");
       expect(groupAgent!.content).toContain("30m");
+    });
+
+    it("references shared transcript file", () => {
+      expect(groupAgent!.content).toContain(".claude/groups/debate-arena/transcript.md");
+    });
+
+    it("generates transcript template file", () => {
+      const transcript = exoticFiles.find((f) => f.path === ".claude/groups/debate-arena/transcript.md");
+      expect(transcript).toBeDefined();
+      expect(transcript!.content).toContain("pro-debater");
+      expect(transcript!.content).toContain("con-debater");
+    });
+
+    it("generates group config.json", () => {
+      const config = exoticFiles.find((f) => f.path === ".claude/groups/debate-arena/config.json");
+      expect(config).toBeDefined();
+      const parsed = JSON.parse(config!.content);
+      expect(parsed.members).toContain("pro-debater");
+      expect(parsed.members).toContain("con-debater");
+      expect(parsed.speakerSelection).toBe("round-robin");
+      expect(parsed.maxRounds).toBe(5);
+    });
+  });
+
+  describe("group member agents get protocol injected", () => {
+    it("pro-debater AGENT.md includes Group Conversation Protocol", () => {
+      const pro = exoticFiles.find((f) => f.path === ".claude/agents/pro-debater/AGENT.md")!;
+      expect(pro.content).toContain("Group Conversation Protocol");
+      expect(pro.content).toContain(".claude/groups/debate-arena/transcript.md");
+      expect(pro.content).toContain("Append your response");
+      expect(pro.content).toContain("Do NOT");
+    });
+
+    it("con-debater AGENT.md includes Group Conversation Protocol", () => {
+      const con = exoticFiles.find((f) => f.path === ".claude/agents/con-debater/AGENT.md")!;
+      expect(con.content).toContain("Group Conversation Protocol");
+      expect(con.content).toContain("transcript.md");
+    });
+
+    it("non-member agents do NOT get group protocol", () => {
+      const researcher = exoticFiles.find((f) => f.path === ".claude/agents/researcher/AGENT.md")!;
+      expect(researcher.content).not.toContain("Group Conversation Protocol");
+      const judge = exoticFiles.find((f) => f.path === ".claude/agents/judge-agent/AGENT.md")!;
+      expect(judge.content).not.toContain("Group Conversation Protocol");
     });
   });
 
