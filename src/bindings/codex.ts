@@ -5,9 +5,10 @@
  * from a parsed {@link TopologyAST}.
  *
  * Codex CLI uses TOML-based configuration and reads markdown instruction
- * files. Unlike Claude Code, Codex is a single-agent CLI — multi-agent
- * topologies are expressed as instruction sections in AGENTS.md rather
- * than separate agent directories.
+ * files. Multi-agent topologies generate per-agent TOML files under
+ * `.codex/agents/<name>.toml` and an `[agents]` section in config.toml.
+ * AGENTS.md provides a high-level topology overview with references to
+ * individual agent TOML files.
  *
  * @module
  */
@@ -338,6 +339,27 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Multi-agent support: [agents] section with per-agent references
+  if (agents.length > 0) {
+    lines.push("");
+    lines.push("[agents]");
+    lines.push(`max_threads = ${Math.min(agents.length, 10)}`);
+    lines.push(`max_depth = 1`);
+    lines.push("");
+
+    for (const agent of agents) {
+      const desc = agent.description
+        ?? ast.roles[agent.role ?? ""]
+        ?? ast.roles[agent.id]
+        ?? agent.role
+        ?? toTitle(agent.id);
+      lines.push(`[agents.${agent.id}]`);
+      lines.push(`description = ${tomlString(desc)}`);
+      lines.push(`config_file = ${tomlString(`agents/${agent.id}.toml`)}`);
+      lines.push("");
+    }
+  }
+
   return {
     path: ".codex/config.toml",
     content: lines.join("\n") + "\n",
@@ -368,6 +390,57 @@ function mapSandboxMode(mode: string): string {
       return "danger-full-access";
     default:
       return "read-only"; // safe default
+  }
+}
+
+/**
+ * Map agent sandbox values to Codex sandbox_mode for per-agent TOML.
+ * true/"docker"/"strict" → "read-only", "write"/"workspace" → "workspace-write",
+ * false/"none" → "danger-full-access", "network-only" → "read-only"
+ */
+function mapAgentSandbox(sandbox: string | boolean): string {
+  if (typeof sandbox === "boolean") {
+    return sandbox ? "read-only" : "danger-full-access";
+  }
+  switch (sandbox) {
+    case "docker":
+    case "strict":
+    case "container":
+    case "network-only":
+    case "read-only":
+      return "read-only";
+    case "write":
+    case "workspace":
+    case "workspace-write":
+      return "workspace-write";
+    case "none":
+    case "disabled":
+    case "off":
+    case "danger-full-access":
+      return "danger-full-access";
+    default:
+      return "read-only"; // safe default
+  }
+}
+
+/**
+ * Map thinking/reasoning level to Codex model_reasoning_effort.
+ * off → "" (omit), low → "low", medium → "medium", high → "high", max → "high"
+ */
+function mapReasoningEffort(thinking: string): string | null {
+  switch (thinking) {
+    case "off":
+      return null; // omit from TOML
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    case "max":
+      return "high";
+    default:
+      return null;
   }
 }
 
@@ -563,6 +636,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
 
     for (const agent of agents) {
       sections.push(`### ${agent.label || toTitle(agent.id)}`);
+      sections.push("");
+      sections.push(`> See \`.codex/agents/${agent.id}.toml\` for full configuration.`);
       sections.push("");
 
       // Role
@@ -1493,6 +1568,140 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
 }
 
 // ---------------------------------------------------------------------------
+// Per-agent TOML files — .codex/agents/<name>.toml
+// ---------------------------------------------------------------------------
+
+/**
+ * Build developer_instructions for an agent that has no explicit prompt.
+ * Constructs instructions from role description, tools, reads/writes, and outputs.
+ */
+function buildDeveloperInstructions(agent: AgentNode, ast: TopologyAST): string {
+  const parts: string[] = [];
+
+  // Role description
+  const roleText =
+    ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+  if (roleText) {
+    parts.push(`You are a ${toTitle(agent.id)} agent. ${roleText}`);
+  } else {
+    parts.push(`You are the ${toTitle(agent.id)} agent.`);
+  }
+
+  // Tools
+  if (agent.tools && agent.tools.length > 0) {
+    parts.push(`\nAvailable tools: ${agent.tools.join(", ")}`);
+  }
+  if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+    parts.push(`Disallowed tools: ${agent.disallowedTools.join(", ")}`);
+  }
+
+  // Memory access
+  if (agent.reads && agent.reads.length > 0) {
+    parts.push(`\nReads from: ${agent.reads.join(", ")}`);
+  }
+  if (agent.writes && agent.writes.length > 0) {
+    parts.push(`Writes to: ${agent.writes.join(", ")}`);
+  }
+
+  // Outputs
+  if (agent.outputs) {
+    const outputLines: string[] = [];
+    for (const [field, values] of Object.entries(agent.outputs)) {
+      outputLines.push(`  ${field}: ${values.join(" | ")}`);
+    }
+    parts.push(`\nOutputs:\n${outputLines.join("\n")}`);
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Generate per-agent TOML files under `.codex/agents/<name>.toml`.
+ *
+ * Each agent in the topology gets its own TOML configuration file with
+ * name, description, developer_instructions, model, sandbox_mode,
+ * model_reasoning_effort, nickname_candidates, and optional MCP servers.
+ */
+function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+
+  for (const agent of agents) {
+    const lines: string[] = [];
+
+    // name
+    lines.push(`name = ${tomlString(agent.id)}`);
+
+    // description
+    const desc = agent.description
+      ?? ast.roles[agent.role ?? ""]
+      ?? ast.roles[agent.id]
+      ?? agent.role
+      ?? toTitle(agent.id);
+    lines.push(`description = ${tomlString(desc)}`);
+
+    // developer_instructions — use prompt if available, otherwise construct
+    const instructions = agent.prompt ?? buildDeveloperInstructions(agent, ast);
+    lines.push(`developer_instructions = """\n${instructions}\n"""`);
+
+    // model
+    if (agent.model) {
+      lines.push(`model = ${tomlString(agent.model)}`);
+    }
+
+    // sandbox_mode
+    if (agent.sandbox != null) {
+      lines.push(`sandbox_mode = ${tomlString(mapAgentSandbox(agent.sandbox))}`);
+    }
+
+    // model_reasoning_effort
+    if (agent.thinking) {
+      const effort = mapReasoningEffort(agent.thinking);
+      if (effort) {
+        lines.push(`model_reasoning_effort = ${tomlString(effort)}`);
+      }
+    }
+
+    // nickname_candidates — derive from agent id
+    const nickname = agent.id
+      .split(/[-_]/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join("");
+    lines.push(`nickname_candidates = [${tomlString(nickname)}]`);
+
+    // MCP servers — include sections for agent-specific MCP servers
+    if (agent.mcpServers && agent.mcpServers.length > 0 && ast.mcpServers) {
+      lines.push("");
+      for (const serverName of agent.mcpServers) {
+        const config = ast.mcpServers[serverName];
+        if (!config) continue;
+        lines.push(`[mcp_servers.${serverName}]`);
+        for (const [ck, cv] of Object.entries(config)) {
+          if (typeof cv === "string") {
+            lines.push(`${ck} = ${tomlString(cv)}`);
+          } else if (typeof cv === "boolean") {
+            lines.push(`${ck} = ${cv}`);
+          } else if (typeof cv === "number") {
+            lines.push(`${ck} = ${cv}`);
+          } else if (Array.isArray(cv)) {
+            lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
+          }
+        }
+        lines.push("");
+      }
+    }
+
+    files.push({
+      path: `.codex/agents/${agent.id}.toml`,
+      content: lines.join("\n") + "\n",
+      category: "agent",
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
 // Binding export
 // ---------------------------------------------------------------------------
 
@@ -1511,6 +1720,9 @@ export const codexBinding: BindingTarget = {
     // 2. AGENTS.md — agent instructions with roles, flow, memory paths
     //    (Codex reads AGENTS.md from workspace root; no separate instructions.md)
     files.push(generateAgentsMd(ast));
+
+    // 3. Per-agent TOML files under .codex/agents/
+    files.push(...generateAgentTomlFiles(ast));
 
     // 4. Memory directories
     files.push(...generateMemory(ast));
