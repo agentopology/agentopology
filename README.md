@@ -11,11 +11,28 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
+<p align="center">
+  <strong>Claude Code</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
+</p>
+
 <br/>
 
-You have 5 agents across 3 tools. Each tool wants its own config format. You maintain 47 files that do the same thing differently. One agent changes — you update everywhere.
+## The Problem
 
-**Stop.**
+Building one AI agent is easy. Building a **team** of agents that actually works together is brutal.
+
+You figure out how to make 3 agents collaborate in Claude Code — the file structure, the prompts, the flow, the gates. It takes hours. It works. Then someone says "let's also run this in OpenClaw." Now you're rewriting everything from scratch because OpenClaw wants a completely different config format. Then Cursor. Then Codex. Same agents, same logic, same flow — but 4 different implementations that drift apart over time.
+
+And that's just the platform problem. The architecture problem is worse:
+
+- **How do you even see your topology?** It's scattered across 15 AGENT.md files, 3 SKILL.md files, a settings.json, and a bunch of scripts. No single picture.
+- **How do agents talk to each other?** You hack together file-based protocols, environment variables, or just copy-paste context between prompts.
+- **How do you enforce quality?** You want a security scan before deploy, but there's no standard way to define gates between agents.
+- **How do you hand this off?** A new team member joins and has to reverse-engineer the entire system from config files.
+
+**AgentTopology solves all of this.**
+
+Write your agent team in one `.at` file — the structure, the flow, the gates, the tools, everything. Visualize it. Validate it. Then compile it to any platform.
 
 ```
 topology code-review : [pipeline] {
@@ -37,11 +54,7 @@ agentopology scaffold my-team.at --target codex          # → .codex/
 agentopology scaffold my-team.at --target cursor         # → .cursor/rules/
 ```
 
-One file. Seven platforms. Every agent, flow, gate, hook, and MCP server — defined once.
-
-<p align="center">
-  <strong>Claude Code</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
-</p>
+One file. Seven platforms. The topology IS the documentation.
 
 ---
 
@@ -328,16 +341,26 @@ export const myBinding: BindingTarget = {
 
 ---
 
-## Why Not Just Write Config Files?
+## Focus on Structure, Not Config Files
+
+The `.at` file IS your architecture diagram. When you open it, you see:
+- Who the agents are
+- What tools they have
+- How work flows between them
+- Where the quality gates are
+- What happens when things fail
+
+You can `agentopology visualize` it into an interactive graph. You can hand it to a new team member and they understand the system in 30 seconds. Try doing that with 15 scattered AGENT.md files.
 
 | | Config files | AgentTopology |
 |---|---|---|
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |
-| **Review topology** | Read YAML, JSON, TOML, Markdown across dirs | Read one `.at` file |
-| **Validate** | Hope for the best | `agentopology validate` catches 29 error types |
-| **Visualize** | Draw it yourself | `agentopology visualize` → interactive HTML |
+| **See the architecture** | Read YAML, JSON, TOML, Markdown across 6 dirs | One `.at` file. Or `visualize` it. |
+| **Validate** | Hope for the best | 29 built-in rules catch errors before deploy |
+| **Onboard someone** | "Read these 15 files and figure it out" | "Read this `.at` file" |
 | **Version control** | Diff 47 generated files | Diff one `.at` file |
+| **Move to a new tool** | Start over | `--target new-tool` |
 
 ---
 
