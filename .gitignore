@@ -32,6 +32,17 @@ scripts/collect-metrics.sh
 # NOTE: SDK bindings (anthropic-sdk.ts, vercel-ai.ts) stay in git during development.
 # Before public release: extract to separate private repo per CLAUDE.md instructions.
 
+# MatchMat QA (wrong repo)
+.claude/agents/db-verifier/
+.claude/agents/issue-collector/
+.claude/agents/qa-*/
+.claude/agents/qa-analyst/
+.claude/skills/matchmat-qa/
+.claude/commands/e2e-*.md
+
+# Claude local project memory
+.claude/projects/
+
 # Playwright MCP artifacts
 .playwright-mcp/
 
