@@ -1,4 +1,4 @@
-# Creating AgentTopology Bindings
+# Creating AgenTopology Bindings
 
 Created by Nadav Naveh
 

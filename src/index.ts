@@ -1,5 +1,5 @@
 /**
- * AgentTopology — public API.
+ * AgenTopology — public API.
  *
  * Re-exports the parser, validator, bindings, and all public types.
  *

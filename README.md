@@ -1,4 +1,4 @@
-<h1 align="center">AgentTopology</h1>
+<h1 align="center">AgenTopology</h1>
 
 <p align="center">
   <strong>The Terraform for AI agents.</strong><br/>
@@ -21,18 +21,20 @@
 
 Building one AI agent is easy. Building a **team** of agents that actually works together is brutal.
 
-You figure out how to make 3 agents collaborate in Claude Code — the file structure, the prompts, the flow, the gates. It takes hours. It works. Then someone says "let's also run this in OpenClaw." Now you're rewriting everything from scratch because OpenClaw wants a completely different config format. Then Cursor. Then Codex. Same agents, same logic, same flow — but 4 different implementations that drift apart over time.
+You want a marketing team? A dev pipeline? A support squad? You spend hours wiring up AGENT.md files, soul.md configs, MCP servers, hooks, and scripts. You get it working in Claude Code. Then you need the same team in OpenClaw — and you start from scratch. Different config format. Different directory structure. Different conventions. Same agents, same logic, zero portability.
+
+**OpenClaw alone** needs soul.md, skill files, channel configs, gateway setup, and workspace definitions — for each agent. Multiply that by 5 agents and you're maintaining 20+ files that you can't visualize, validate, or hand off to anyone.
 
 And that's just the platform problem. The architecture problem is worse:
 
-- **How do you even see your topology?** It's scattered across 15 AGENT.md files, 3 SKILL.md files, a settings.json, and a bunch of scripts. No single picture.
-- **How do agents talk to each other?** You hack together file-based protocols, environment variables, or just copy-paste context between prompts.
-- **How do you enforce quality?** You want a security scan before deploy, but there's no standard way to define gates between agents.
-- **How do you hand this off?** A new team member joins and has to reverse-engineer the entire system from config files.
+- **How do you see the big picture?** Your topology is scattered across 15 files in nested directories. No diagram. No single source of truth.
+- **How do agents talk to each other?** You hack together file-based protocols or copy-paste context between prompts. There's no standard.
+- **How do you enforce quality?** You want a gate between stages but there's no standard way to define one.
+- **How do you move fast?** Every new agent means touching 5-12 files across multiple tools.
 
-**AgentTopology solves all of this.**
+**AgenTopology fixes all of this.**
 
-Write your agent team in one `.at` file — the structure, the flow, the gates, the tools, everything. Visualize it. Validate it. Then compile it to any platform.
+Write your agent team in one `.at` file. Marketing, development, support, copywriting — any team, any structure. Visualize it. Validate it. Scaffold it to any platform in one command.
 
 ```
 topology code-review : [pipeline] {
@@ -60,7 +62,7 @@ One file. Seven platforms. The topology IS the documentation.
 
 ## What It Does
 
-AgentTopology is a **declarative language** (`.at` files) and a **CLI compiler** that transforms agent definitions into platform-native configuration files.
+AgenTopology is a **declarative language** (`.at` files) and a **CLI compiler** that transforms agent definitions into platform-native configuration files.
 
 ```
 ┌──────────────┐      ┌────────────┐      ┌─────────────────────┐
@@ -300,6 +302,39 @@ In Claude Code, this compiles to a **file-based protocol** — a shared transcri
 
 ---
 
+## Interactive Skill — Build Teams in Minutes
+
+AgenTopology ships with an **interactive skill** that turns Claude Code into a topology designer. You don't need to learn the `.at` syntax — just describe what you want and the skill builds it for you.
+
+```bash
+# Link the skill into your project
+ln -s $(npm root -g)/agentopology/skill .claude/skills/agentopology
+
+# Then in Claude Code:
+/agentopology
+```
+
+```
+┌─────────────────────────────────────┐
+│  AgenTopology                       │
+│  Build agent teams in minutes.      │
+├─────────────────────────────────────┤
+│                                     │
+│  build       Design a new topology  │
+│  templates   Pick a proven team     │
+│  validate    Check an .at file      │
+│  scaffold    Generate platform files│
+│  visualize   Open graph viewer      │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+Say "I want a marketing team with a researcher, copywriter, and editor" — the skill generates the `.at` file, validates it (29 rules), and scaffolds it to Claude Code, OpenClaw, Cursor, or any target. Full topology in under 2 minutes.
+
+The skill abstracts the entire AgenTopology system. You focus on **what your team should do** — the skill handles the syntax, validation, and platform-specific config generation.
+
+---
+
 ## Programmatic API
 
 ```typescript
@@ -352,7 +387,7 @@ The `.at` file IS your architecture diagram. When you open it, you see:
 
 You can `agentopology visualize` it into an interactive graph. You can hand it to a new team member and they understand the system in 30 seconds. Try doing that with 15 scattered AGENT.md files.
 
-| | Config files | AgentTopology |
+| | Config files | AgenTopology |
 |---|---|---|
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |

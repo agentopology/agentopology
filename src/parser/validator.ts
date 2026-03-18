@@ -1,7 +1,7 @@
 /**
- * AgentTopology AST validator.
+ * AgenTopology AST validator.
  *
- * Implements the 29 validation rules from the AgentTopology specification
+ * Implements the 29 validation rules from the AgenTopology specification
  * (section 6). Takes a parsed {@link TopologyAST} and returns an array of
  * {@link ValidationResult} entries describing errors and warnings.
  *
@@ -2720,7 +2720,7 @@ function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate a parsed AgentTopology AST against all specification rules.
+ * Validate a parsed AgenTopology AST against all specification rules.
  *
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.

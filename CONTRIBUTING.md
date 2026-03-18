@@ -1,6 +1,6 @@
-# Contributing to AgentTopology
+# Contributing to AgenTopology
 
-Thanks for your interest in contributing. AgentTopology is an open standard — the more people contribute, the stronger it gets.
+Thanks for your interest in contributing. AgenTopology is an open standard — the more people contribute, the stronger it gets.
 
 ## Quick Start
 

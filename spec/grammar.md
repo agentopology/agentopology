@@ -1,9 +1,9 @@
-# AgentTopology Language Specification v1.0
+# AgenTopology Language Specification v1.0
 
 Created by Nadav Naveh
 
 **Extension:** `.at`
-**Language:** AgentTopology
+**Language:** AgenTopology
 
 ---
 

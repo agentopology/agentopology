@@ -1,5 +1,5 @@
 /**
- * AgentTopology parser.
+ * AgenTopology parser.
  *
  * Takes the raw text of an `.at` file and produces a fully-typed
  * {@link TopologyAST}. Individual section parsers are also exported for
@@ -1596,7 +1596,7 @@ export function parseArtifacts(topBody: string): ArtifactDef[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse an AgentTopology `.at` source string into a complete {@link TopologyAST}.
+ * Parse an AgenTopology `.at` source string into a complete {@link TopologyAST}.
  *
  * @param source - The raw `.at` file content.
  * @returns The fully-parsed AST.

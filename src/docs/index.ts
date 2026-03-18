@@ -1,5 +1,5 @@
 /**
- * AgentTopology documentation system.
+ * AgenTopology documentation system.
  *
  * Provides a built-in language reference accessible via `agentopology docs`.
  * All content is plain markdown — readable in terminals and consumable by LLMs.
@@ -33,7 +33,7 @@ export function listTopics(): string {
   const lines: string[] = [];
 
   lines.push("");
-  lines.push(c.bold("AgentTopology Language Reference"));
+  lines.push(c.bold("AgenTopology Language Reference"));
   lines.push("");
   lines.push(c.bold("Available topics:"));
 
@@ -61,7 +61,7 @@ export function getTopic(name: string): string | null {
 export function getAllTopics(): string {
   const sections: string[] = [];
 
-  sections.push("# AgentTopology Language Reference");
+  sections.push("# AgenTopology Language Reference");
   sections.push("");
 
   for (const topic of Object.values(topics)) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AgentTopology CLI.
+ * AgenTopology CLI.
  *
  * Commands:
  *   agentopology validate <file.at>                        — parse and validate
@@ -55,7 +55,7 @@ const c = {
 
 function usage(): void {
   console.log(`
-${c.bold("agentopology")} — AgentTopology CLI
+${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology validate <file.at>

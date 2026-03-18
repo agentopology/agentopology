@@ -1,4 +1,4 @@
-# AgentTopology — The Open Standard
+# AgenTopology — The Open Standard
 
 The universal declarative language for multi-agent systems. Write once, deploy to any agentic framework.
 

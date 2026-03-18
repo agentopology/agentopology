@@ -238,7 +238,7 @@ After generating and validating, offer the next actions:
   visualize   See the topology graph
   edit        Modify the topology
 
-Which platform? (claude-code, openclaw, codex, cursor, gemini-cli, copilot-cli, kiro)
+Which platform? (claude-code, codex, gemini-cli, copilot-cli, openclaw, kiro)
 ```
 
 If they pick a platform, run scaffold immediately. If they want to visualize, run that. Keep the momentum going.
@@ -280,11 +280,10 @@ Ask for target if not specified:
 ```
 Targets:
   claude-code    Anthropic Claude Code CLI
-  openclaw       OpenClaw framework
   codex          OpenAI Codex CLI
-  cursor         Cursor IDE
   gemini-cli     Google Gemini CLI
   copilot-cli    GitHub Copilot CLI
+  openclaw       OpenClaw framework
   kiro           AWS Kiro CLI
 ```
 

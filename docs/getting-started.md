@@ -1,10 +1,10 @@
-# Getting Started with AgentTopology
+# Getting Started with AgenTopology
 
 Created by Nadav Naveh
 
-## What is AgentTopology?
+## What is AgenTopology?
 
-AgentTopology is a declarative language for defining multi-agent systems. You write a single `.at` file that describes your agents, how they connect, what tools they use, and how work flows between them. Then a compiler generates the platform-specific configuration for your chosen runtime.
+AgenTopology is a declarative language for defining multi-agent systems. You write a single `.at` file that describes your agents, how they connect, what tools they use, and how work flows between them. Then a compiler generates the platform-specific configuration for your chosen runtime.
 
 The `.at` file is the single source of truth. Everything else is generated from it.
 

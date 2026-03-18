@@ -1,10 +1,10 @@
-# AgentTopology Skill Guide
+# AgenTopology Skill Guide
 
 Created by Nadav Naveh
 
-## What is the AgentTopology Skill?
+## What is the AgenTopology Skill?
 
-The AgentTopology skill is an interactive builder that ships with the `agentopology` package. Describe what you want your agents to do, and it generates a complete `.at` topology file, validates it, scaffolds platform configs, and optionally visualizes the architecture — all in under 2 minutes.
+The AgenTopology skill is an interactive builder that ships with the `agentopology` package. Describe what you want your agents to do, and it generates a complete `.at` topology file, validates it, scaffolds platform configs, and optionally visualizes the architecture — all in under 2 minutes.
 
 ## Installation
 

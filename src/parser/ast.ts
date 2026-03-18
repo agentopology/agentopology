@@ -1,8 +1,8 @@
 /**
- * AgentTopology AST type definitions.
+ * AgenTopology AST type definitions.
  *
  * These interfaces describe the complete abstract syntax tree produced by
- * parsing an `.at` (AgentTopology) file. The types are intentionally
+ * parsing an `.at` (AgenTopology) file. The types are intentionally
  * open -- model names, permission modes, and hook events are plain strings
  * so the parser works with any topology, not just Claude Code topologies.
  *
@@ -678,7 +678,7 @@ export interface IncludeDef {
 // Complete AST
 // ---------------------------------------------------------------------------
 
-/** The complete abstract syntax tree for an AgentTopology file. */
+/** The complete abstract syntax tree for an AgenTopology file. */
 export interface TopologyAST {
   /** Topology metadata (header + meta block). */
   topology: TopologyMeta;

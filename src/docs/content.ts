@@ -1,5 +1,5 @@
 /**
- * AgentTopology language reference documentation content.
+ * AgenTopology language reference documentation content.
  *
  * Each topic is a static reference page for `npx agentopology docs [topic]`.
  * Content is derived from the formal grammar (spec/grammar.md) and AST types
@@ -23,7 +23,7 @@ export const topics: Record<string, DocTopic> = {
     description: "Top-level block that wraps an entire .at file",
     content: () => `# topology
 
-The \`topology\` block is the root container for every AgentTopology file. It declares the system name, pattern tags, and contains all other blocks.
+The \`topology\` block is the root container for every AgenTopology file. It declares the system name, pattern tags, and contains all other blocks.
 
 ## Syntax
 
@@ -96,7 +96,7 @@ topology content-pipeline : [pipeline, human-gate] {
     description: "Agent node -- the primary compute unit (47 fields)",
     content: () => `# agent
 
-The \`agent\` node is the primary compute unit in AgentTopology. Each agent represents an LLM-powered worker with a model, prompt, tools, and data access.
+The \`agent\` node is the primary compute unit in AgenTopology. Each agent represents an LLM-powered worker with a model, prompt, tools, and data access.
 
 ## Syntax
 
@@ -2184,7 +2184,7 @@ artifacts {
     description: "Imports, includes, params, fragments, and libraries",
     content: () => `# composition
 
-AgentTopology supports composing topologies from reusable parts: imports, includes, params, fragments, and libraries.
+AgenTopology supports composing topologies from reusable parts: imports, includes, params, fragments, and libraries.
 
 ## import
 
@@ -2311,7 +2311,7 @@ import reviewer from ./review.at sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e
     description: "All 29 validation rules with descriptions and fixes",
     content: () => `# validation
 
-AgentTopology enforces 29 validation rules during parsing. Errors prevent compilation; warnings are informational.
+AgenTopology enforces 29 validation rules during parsing. Errors prevent compilation; warnings are informational.
 
 ## Rules
 
@@ -2533,7 +2533,7 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
     description: "All 10 topology patterns with descriptions and examples",
     content: () => `# patterns
 
-AgentTopology supports 10 built-in patterns. Patterns are declared in the topology header and document the system's coordination style.
+AgenTopology supports 10 built-in patterns. Patterns are declared in the topology header and document the system's coordination style.
 
 ## pipeline
 
@@ -2881,7 +2881,7 @@ Environment block field names, custom role names, and user-defined enum values a
     description: "Full annotated .at examples -- pipeline, fan-out, advanced",
     content: () => `# examples
 
-Complete, annotated AgentTopology examples demonstrating common patterns.
+Complete, annotated AgenTopology examples demonstrating common patterns.
 
 ## Example 1: Simple 3-Agent Pipeline
 
@@ -3254,7 +3254,7 @@ topology data-pipeline : [pipeline, fan-out] {
     description: "All binding targets and what they generate",
     content: () => `# bindings
 
-AgentTopology compiles to multiple target platforms via bindings. Each binding reads the parsed AST and generates platform-specific configuration files.
+AgenTopology compiles to multiple target platforms via bindings. Each binding reads the parsed AST and generates platform-specific configuration files.
 
 ## Available Bindings
 
@@ -3268,7 +3268,7 @@ AgentTopology compiles to multiple target platforms via bindings. Each binding r
 
 **Target:** OpenAI Codex CLI
 **Generates:** \`codex.yaml\`, agent configuration files
-**Description:** Generates Codex CLI configuration for OpenAI-powered agent workflows. Maps AgentTopology permissions to Codex approval modes (suggest, auto-edit, full-auto).
+**Description:** Generates Codex CLI configuration for OpenAI-powered agent workflows. Maps AgenTopology permissions to Codex approval modes (suggest, auto-edit, full-auto).
 
 ### gemini-cli
 
@@ -3280,7 +3280,7 @@ AgentTopology compiles to multiple target platforms via bindings. Each binding r
 
 **Target:** GitHub Copilot CLI
 **Generates:** \`.github/copilot/\` configuration
-**Description:** Generates GitHub Copilot CLI agent configuration. Maps AgentTopology concepts to Copilot's instruction and tool systems.
+**Description:** Generates GitHub Copilot CLI agent configuration. Maps AgenTopology concepts to Copilot's instruction and tool systems.
 
 ### openclaw
 

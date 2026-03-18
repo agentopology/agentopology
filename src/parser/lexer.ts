@@ -1,9 +1,9 @@
 /**
- * Lexical utilities for the AgentTopology parser.
+ * Lexical utilities for the AgenTopology parser.
  *
  * These low-level functions handle comment stripping, block extraction,
  * key-value parsing, and list parsing. They operate on raw source strings
- * and know nothing about the AgentTopology grammar beyond brace-matched
+ * and know nothing about the AgenTopology grammar beyond brace-matched
  * blocks and `key: value` lines.
  *
  * @module

@@ -483,7 +483,7 @@ describe("markdownExporter", () => {
   });
 
   describe("footer", () => {
-    it("includes AgentTopology link", () => {
+    it("includes AgenTopology link", () => {
       const ast = parse(SIMPLE_PIPELINE);
       const md = markdownExporter.export(ast)[0].content;
       expect(md).toContain("agentopology.com");

@@ -23,4 +23,4 @@ Where do config files live? Example:
 Link to the platform's official configuration docs.
 
 **Why this platform?**
-How many people use it? Why should AgentTopology support it?
+How many people use it? Why should AgenTopology support it?
