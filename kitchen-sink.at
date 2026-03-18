@@ -1,0 +1,795 @@
+# kitchen-sink.at -- Incident response topology exercising every AgentTopology primitive
+#
+# Demonstrates: all 6 node types (agent, orchestrator, human, group, action, gate),
+# all infrastructure blocks, complex flow with conditionals, loops, error edges,
+# fan-out, and edge attributes.
+
+topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker, debate] {
+
+  meta {
+    version: "2.0.0"
+    description: "Production incident response system with detection, triage, fix, verification, and reporting"
+    domain: devops
+    timeout: 4h
+    durable: true
+    error-handler: reporter
+  }
+
+  # --- Providers ---
+
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+      auth {
+        type: api-key
+      }
+    }
+
+    openai {
+      api-key: "${OPENAI_API_KEY}"
+      base-url: "https://api.openai.com/v1"
+      models: [gpt-4o, gpt-4o-mini]
+    }
+  }
+
+  # --- Defaults ---
+
+  defaults {
+    temperature: 0.3
+    max-tokens: 8192
+    top-p: 0.95
+    thinking: medium
+    thinking-budget: 5000
+    output-format: text
+    timeout: 15m
+    log-level: info
+  }
+
+  # --- Env ---
+
+  env {
+    PAGER_TOKEN: secret "vault://secret/data/prod#pager-token"
+    DEPLOY_REGION: "us-east-1"
+    LOG_LEVEL: "${LOG_LEVEL}"
+    REDIS_URL: "${REDIS_URL}"
+    SLACK_WEBHOOK: "${SLACK_WEBHOOK_URL}"
+  }
+
+  # --- Roles ---
+
+  roles {
+    detection: "Monitor systems and detect anomalies, outages, and performance degradation"
+    triage: "Classify incident severity, identify affected services, and assign priority"
+    remediation: "Apply fixes, rollbacks, and patches to resolve the incident"
+    verification: "Verify that the fix resolved the incident and no regressions exist"
+    reporting: "Compile incident timeline, root cause analysis, and post-mortem report"
+  }
+
+  # --- Schemas ---
+
+  schemas {
+    schema incident-info {
+      incident-id: string
+      title: string
+      severity: string
+      affected-services: array of string
+      detected-at: string
+      description?: string
+    }
+
+    schema fix-result {
+      success: boolean
+      actions-taken: array of string
+      rollback-needed?: boolean
+      details?: string
+    }
+
+    schema post-mortem {
+      incident: string
+      timeline: array of string
+      root-cause: string
+      resolution: string
+      follow-ups?: array of string
+    }
+  }
+
+  # --- Custom Tools ---
+
+  tools {
+    tool check-health {
+      script: "scripts/check-health.sh"
+      args: [service-name]
+      lang: bash
+      description: "Check the health of a given service endpoint"
+    }
+
+    tool rollback-deploy {
+      script: "scripts/rollback-deploy.py"
+      args: [service-name, target-version]
+      lang: python
+      description: "Rollback a service deployment to a previous version"
+    }
+
+    tool run-smoke-tests {
+      script: "scripts/run-smoke-tests.sh"
+      args: [service-name, environment]
+      lang: bash
+      description: "Run smoke tests against a deployed service"
+    }
+
+    tool query-metrics {
+      script: "scripts/query-metrics.py"
+      args: [service-name, time-range]
+      lang: python
+      description: "Query Prometheus metrics for a service over a time range"
+    }
+  }
+
+  # --- Skills ---
+
+  skill incident-detection {
+    description: "Anomaly detection and alerting from system metrics"
+    scripts: [check-health, query-metrics]
+    domains: ["domains/runbooks.md"]
+    user-invocable: true
+  }
+
+  skill deployment-ops {
+    description: "Deployment rollback and smoke testing"
+    scripts: [rollback-deploy, run-smoke-tests]
+    references: ["references/deploy-guide.md"]
+    context: fork
+    agent: fixer
+    allowed-tools: ["Bash", "Read"]
+  }
+
+  # --- MCP Servers ---
+
+  mcp-servers {
+    pagerduty {
+      type: stdio
+      command: "npx"
+      args: ["-y", "pagerduty-mcp-server"]
+      env: {
+        PAGER_TOKEN: "${PAGER_TOKEN}"
+      }
+    }
+
+    observability-platform {
+      type: http
+      url: "https://mcp.observability.example.com"
+    }
+
+    log-search {
+      type: sse
+      url: "https://mcp.logs.example.com/sse"
+    }
+  }
+
+  # --- Orchestrator ---
+
+  orchestrator {
+    model: opus
+    generates: "commands/incident-plan.md"
+    handles: [intake, deploy-rollback, wrap-up]
+    outputs {
+      priority: immediate | deferred
+    }
+  }
+
+  # --- Actions ---
+
+  action intake {
+    kind: external
+    source: "pagerduty-webhook"
+    description: "Receive incident alert from PagerDuty"
+    timeout: 2m
+    on-fail: halt
+  }
+
+  action deploy-rollback {
+    kind: git
+    source: "deployment-repo"
+    description: "Execute deployment rollback via git revert"
+    commands: ["git revert HEAD --no-edit", "git push origin main"]
+    timeout: 10m
+    on-fail: retry
+  }
+
+  action wrap-up {
+    kind: report
+    description: "Compile and distribute post-mortem report"
+    join: all
+  }
+
+  # --- Agents ---
+
+  agent detector {
+    role: detection
+    model: haiku
+    permissions: autonomous
+    phase: 1
+    tools: [Read, Grep, Glob, check-health, query-metrics]
+    skills: [incident-detection]
+    writes: ["workspace/alerts/"]
+    mcp-servers: [pagerduty, observability-platform]
+    sandbox: docker
+    background: true
+    temperature: 0.1
+    maxTokens: 4096
+    thinking: low
+    logLevel: debug
+    fallback-chain: [sonnet, haiku]
+    outputs {
+      severity: critical | major | minor
+    }
+    retry {
+      max: 3
+      backoff: exponential
+      interval: 2s
+      max-interval: 30s
+      jitter: true
+      non-retryable: ["AuthError", "NotFound"]
+    }
+    scale {
+      mode: auto
+      by: source-count
+      min: 1
+      max: 4
+      batch-size: 10
+    }
+    circuit-breaker {
+      threshold: 5
+      window: 1m
+      cooldown: 5m
+    }
+    rate-limit: 100/min
+    prompt {
+      You are an incident detector. Monitor all configured services
+      and identify anomalies. Classify severity as critical, major,
+      or minor based on impact scope and duration.
+    }
+    description: "Detects and classifies system incidents from monitoring data"
+  }
+
+  agent triager {
+    role: triage
+    model: sonnet
+    permissions: supervised
+    phase: 2
+    tools: [Read, Grep, Glob, query-metrics]
+    reads: ["workspace/alerts/"]
+    writes: ["workspace/triage/"]
+    mcp-servers: [log-search]
+    timeout: 10m
+    on-fail: continue
+    behavior: blocking
+    join: all
+    outputFormat: json
+    output-schema {
+      priority: string
+      affected: array of string
+      summary: string
+    }
+    outputs {
+      route: fix-now | investigate | defer
+    }
+    seed: 42
+    maxTurns: 10
+    thinking: high
+    thinkingBudget: 8192
+    isolation: worktree
+    prompt {
+      You are the incident triager. Assess the detection report,
+      cross-reference with runbooks, and determine:
+      1. Severity (P0-P3)
+      2. Affected services and blast radius
+      3. Recommended action (rollback, scale, hotfix, or manual)
+
+      Be thorough but fast -- every minute counts in an incident.
+    }
+    description: "Triages incidents and routes to appropriate response"
+  }
+
+  agent fixer {
+    role: remediation
+    model: opus
+    permissions: supervised
+    phase: 3
+    tools: [Read, Write, Bash, rollback-deploy, run-smoke-tests]
+    skills: [deployment-ops]
+    reads: ["workspace/triage/"]
+    writes: ["workspace/fixes/"]
+    timeout: 30m
+    on-fail: fallback verifier
+    thinking: high
+    thinkingBudget: 10000
+    maxTurns: 20
+    maxTokens: 16384
+    topP: 0.9
+    topK: 40
+    stop: ["DONE", "ABORT"]
+    sandbox: network-only
+    compensates: deploy-rollback
+    outputs {
+      result: success | partial | failed
+    }
+    hooks {
+      hook pre-fix-safety {
+        on: PreToolUse
+        matcher: "Bash"
+        run: "scripts/safety-check.sh"
+        type: command
+      }
+    }
+    variants {
+      variant conservative {
+        weight: 0.7
+        temperature: 0.1
+        model: sonnet
+      }
+      variant aggressive {
+        weight: 0.3
+        temperature: 0.5
+      }
+    }
+    extensions {
+      codex {
+        sandbox-mode: "workspace-write"
+      }
+    }
+    prompt {
+      You are the incident fixer. Apply the remediation plan:
+      rollback if needed, apply hotfixes, and verify basic health.
+      Document every action taken.
+    }
+    description: "Applies fixes and rollbacks to resolve incidents"
+  }
+
+  agent verifier {
+    role: verification
+    model: sonnet
+    permissions: autonomous
+    phase: 4
+    tools: [Read, Grep, run-smoke-tests, check-health]
+    reads: ["workspace/fixes/"]
+    writes: ["workspace/verification/"]
+    mcp-servers: [observability-platform]
+    timeout: 20m
+    on-fail: retry
+    retry: 2
+    rate-limit: 30/min
+    seed: 42
+    outputs {
+      status: verified | failed | inconclusive
+    }
+    input-schema {
+      fix-id: string
+      service-name: string
+      expected-state?: string
+    }
+    prompt {
+      You are the incident verifier. Run comprehensive smoke tests
+      and health checks to confirm the fix resolved the incident.
+      Check for any regressions in related services.
+    }
+    description: "Verifies fixes via smoke tests and health checks"
+  }
+
+  agent reporter {
+    role: reporting
+    model: sonnet
+    permissions: autonomous
+    phase: 5
+    tools: [Read, Write]
+    reads: ["workspace/verification/", "workspace/fixes/", "workspace/triage/", "workspace/alerts/"]
+    writes: ["workspace/reports/"]
+    invocation: auto
+    skip: "not verifier"
+    variants {
+      variant detailed {
+        weight: 0.7
+        temperature: 0.4
+      }
+      variant concise {
+        weight: 0.3
+        temperature: 0.2
+        model: haiku
+      }
+    }
+    prompt {
+      You are the incident reporter. Compile a comprehensive
+      post-mortem report including timeline, root cause analysis,
+      actions taken, and follow-up recommendations.
+    }
+    description: "Generates post-mortem reports for resolved incidents"
+  }
+
+  # --- Human Node ---
+
+  human ops-approval {
+    description: "On-call engineer reviews and approves critical remediation actions before execution"
+    timeout: 30m
+    on-timeout: fallback fixer
+  }
+
+  # --- Group Node ---
+
+  group war-room {
+    members: [detector, triager, fixer]
+    speaker-selection: round-robin
+    max-rounds: 5
+    termination: "All members agree on root cause and remediation plan"
+    description: "War room discussion for critical incidents"
+    timeout: 45m
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate triage-validation {
+      after: triager
+      before: fixer
+      run: "scripts/validate-triage.sh"
+      checks: [severity, affected-services, priority]
+      retry: 2
+      on-fail: bounce-back
+      behavior: blocking
+      timeout: 3m
+    }
+
+    gate fix-verification {
+      after: fixer
+      before: verifier
+      run: "scripts/verify-fix-safe.sh"
+      checks: [no-regressions, rollback-ready]
+      retry: 1
+      on-fail: halt
+      behavior: blocking
+      timeout: 5m
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    # Entry: intake triggers detection
+    intake -> detector
+
+    # Detector fans out to triager; war-room for critical
+    detector -> triager                    [when detector.severity == minor]
+    detector -> triager                    [when detector.severity == major]
+    detector -> [triager, war-room]        [when detector.severity == critical]
+
+    # Triage routes to different paths
+    triager -> fixer                       [when triager.route == fix-now]
+    triager -> fixer                       [when triager.route == investigate]
+    triager -> wrap-up                     [when triager.route == defer]
+
+    # Human approval before fixer proceeds
+    fixer -> ops-approval
+    ops-approval -> verifier
+
+    # Verifier checks results
+    verifier -> reporter                   [when verifier.status == verified]
+    verifier -> fixer                      [when verifier.status == failed, max 3]
+    verifier -> reporter                   [when verifier.status == inconclusive]
+
+    # Reporter finishes
+    reporter -> wrap-up
+
+    # Error edges
+    detector -x-> reporter
+    fixer -x[TimeoutError]-> reporter
+
+    # War room feeds back into triage
+    war-room -> triager                    [max 2]
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      protocol: "protocols/incident-workspace.md"
+      structure: [alerts, triage, fixes, verification, reports]
+    }
+
+    domains {
+      path: "domains/"
+      routing: "domains/routing.md"
+    }
+
+    references {
+      path: "references/"
+    }
+
+    external-docs {
+      path: "docs/"
+    }
+
+    metrics {
+      path: "metrics/incidents.jsonl"
+      mode: append-only
+    }
+  }
+
+  # --- Hooks ---
+
+  hooks {
+    hook notify-on-start {
+      on: AgentStart
+      run: "scripts/notify-start.sh"
+      type: command
+      timeout: 5000
+    }
+
+    hook log-completions {
+      on: AgentStop
+      run: "scripts/log-completion.sh"
+      type: command
+    }
+
+    hook block-dangerous-commands {
+      on: PreToolUse
+      matcher: "Bash(rm -rf *)"
+      run: "exit 1"
+      type: command
+    }
+
+    hook audit-tool-use {
+      on: ToolUse
+      run: "scripts/audit-tool.sh"
+      type: command
+    }
+
+    hook on-error-alert {
+      on: Error
+      run: "scripts/alert-on-error.sh"
+      type: command
+      timeout: 10000
+    }
+  }
+
+  # --- Interfaces ---
+
+  interfaces {
+    slack-alerts {
+      type: webhook
+      webhook: "${SLACK_WEBHOOK}"
+      channel: "incidents"
+    }
+
+    pagerduty-inbound {
+      type: http
+      webhook: "${PAGER_TOKEN}"
+    }
+
+    status-page {
+      type: http
+      port: "8080"
+      path: "/status"
+    }
+  }
+
+  # --- Interface (entry/exit for composition) ---
+
+  interface {
+    entry: detector
+    exit: reporter
+  }
+
+  # --- Schedule ---
+
+  schedule {
+    job health-sweep {
+      cron: "*/5 * * * *"
+      agent: detector
+      enabled: true
+    }
+
+    job daily-report {
+      cron: "0 9 * * 1-5"
+      agent: reporter
+    }
+
+    job weekly-deep-scan {
+      every: "monday 2:00"
+      agent: detector
+      enabled: true
+    }
+  }
+
+  # --- Observability ---
+
+  observability {
+    enabled: true
+    level: "info"
+    exporter: otlp
+    endpoint: "https://otel.example.com:4317"
+    service: "incident-response"
+    sample-rate: 0.8
+
+    capture {
+      prompts: true
+      completions: true
+      tool-args: true
+      tool-results: false
+    }
+
+    spans {
+      agents: true
+      tools: true
+      gates: true
+      memory: false
+    }
+  }
+
+  # --- Checkpoint ---
+
+  checkpoint {
+    backend: redis
+    connection: "${REDIS_URL}"
+    strategy: every-node
+    ttl: 14d
+
+    replay {
+      enabled: true
+      max-history: 100
+      branch: true
+    }
+  }
+
+  # --- Artifacts ---
+
+  artifacts {
+    detection-report {
+      type: "json"
+      path: "workspace/alerts/"
+      retention: "30d"
+    }
+
+    triage-report {
+      type: "json"
+      path: "workspace/triage/"
+      retention: "90d"
+      depends-on: [detection-report]
+    }
+
+    fix-log {
+      type: "markdown"
+      path: "workspace/fixes/"
+      retention: "90d"
+      depends-on: [triage-report]
+    }
+
+    post-mortem-doc {
+      type: "markdown"
+      path: "workspace/reports/"
+      retention: "1y"
+      depends-on: [fix-log, triage-report]
+    }
+  }
+
+  # --- Depth ---
+
+  depth {
+    factors: [severity, blast-radius]
+
+    level 1 "quick-triage" {
+      omit: [verifier, reporter]
+    }
+
+    level 2 "standard" {
+      omit: [reporter]
+    }
+
+    level 3 "full-response" {
+      omit: []
+    }
+  }
+
+  # --- Metering ---
+
+  metering {
+    track: [tokens-in, tokens-out, cost, wall-time, agent-count]
+    per: [agent, run, phase]
+    output: "metrics/metering.jsonl"
+    format: jsonl
+    pricing: anthropic-current
+  }
+
+  # --- Batch ---
+
+  batch {
+    parallel: true
+    per: ticket
+    conflicts: {
+      detect: ["workspace/reports/"]
+      resolve: sequential-rebase
+    }
+    workspace: "runs/_incidents/{BATCH_ID}/"
+  }
+
+  # --- Environments ---
+
+  environments {
+    development {
+      api-url: "http://localhost:3000"
+      log-level: "debug"
+      pager-enabled: "false"
+    }
+
+    staging {
+      api-url: "https://staging.incident-api.example.com"
+      log-level: "info"
+      pager-enabled: "true"
+    }
+
+    production {
+      api-url: "https://incident-api.example.com"
+      log-level: "warn"
+      pager-enabled: "true"
+      replicas: "3"
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: [Read, Write, Grep, Glob, Bash, WebFetch]
+    deny: ["Bash(rm -rf *)"]
+    ask: ["Bash(git push --force *)"]
+    sandbox: docker
+    fallback-chain: [opus, sonnet, haiku]
+  }
+
+  # --- Params (for composition) ---
+
+  params {
+    param default-model {
+      type: string
+      default: "sonnet"
+    }
+
+    param max-retries {
+      type: number
+      default: 3
+    }
+
+    param strict-mode {
+      type: boolean
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command respond {
+      pattern: "/respond <INCIDENT_ID>"
+      argument: INCIDENT_ID
+    }
+
+    command check-status {
+      pattern: "/status"
+    }
+
+    command do-rollback {
+      pattern: "/rollback <SERVICE> <VERSION>"
+      argument: SERVICE
+    }
+  }
+
+  # --- Extensions ---
+
+  extensions {
+    claude-code {
+      project-type: "monorepo"
+    }
+    codex {
+      sandbox-mode: "workspace-write"
+    }
+  }
+}

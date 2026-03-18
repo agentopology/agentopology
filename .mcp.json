@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "supabase",
+        "--experimental",
+        "mcp"
+      ],
+      "env": {}
+    },
+    "trigger": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "trigger.dev@latest",
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}

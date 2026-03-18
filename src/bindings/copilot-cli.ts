@@ -1,10 +1,16 @@
 /**
  * GitHub Copilot CLI binding.
  *
- * Generates the `.github/` directory structure for GitHub Copilot Coding Agent:
+ * Generates the `.github/` directory structure for GitHub Copilot CLI
+ * (terminal agent) and Copilot Coding Agent (server-side):
  * - `.github/copilot-instructions.md` — project-level instructions
- * - `.github/agents/{id}.agent.md` — per-agent definitions with YAML frontmatter
- * - `.github/workflows/copilot-topology.yml` — workflow file for flow-based topologies
+ * - `.github/instructions/{id}.instructions.md` — per-agent scoped instructions
+ * - `.github/agents/{id}.agent.md` — per-agent definitions with tools and prompt
+ * - `.github/copilot/settings.json` — CLI config (MCP, permissions)
+ * - `.github/skills/{name}/SKILL.md` — agent skills
+ * - `.github/hooks/{name}.json` — preToolUse/postToolUse hooks
+ * - `.github/workflows/copilot-setup-steps.yml` — server-side env setup
+ * - `AGENTS.md` — topology overview
  *
  * @module
  */
@@ -12,13 +18,14 @@
 import type {
   TopologyAST,
   AgentNode,
+  ActionNode,
   GateNode,
   HumanNode,
   GroupNode,
   HookDef,
-  EdgeDef,
   SchemaFieldDef,
   RetryConfig,
+  SensitiveValue,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
@@ -36,25 +43,17 @@ function toTitle(id: string): string {
 }
 
 /**
- * Build YAML frontmatter block for a `.agent.md` file.
+ * Build YAML frontmatter block for a `.instructions.md` file.
  *
- * Supports scalar values, arrays (rendered as YAML lists), and booleans.
+ * Copilot `.instructions.md` files support only:
+ * - `applyTo` — glob pattern(s) for path-scoping
+ * - `excludeAgent` — optional, `"code-review"` or `"coding-agent"`
  */
-function frontmatter(fields: Record<string, string | boolean | string[]>): string {
+function frontmatter(fields: Record<string, string>): string {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      if (value.length === 0) continue;
-      lines.push(`${key}:`);
-      for (const item of value) {
-        lines.push(`  - ${item}`);
-      }
-    } else if (typeof value === "boolean") {
-      lines.push(`${key}: ${value}`);
-    } else {
-      lines.push(`${key}: ${value}`);
-    }
+    lines.push(`${key}: "${value}"`);
   }
   lines.push("---");
   return lines.join("\n");
@@ -65,26 +64,28 @@ function frontmatter(fields: Record<string, string | boolean | string[]>): strin
 // ---------------------------------------------------------------------------
 
 /**
- * Map topology-level tool names to Copilot Coding Agent tool names.
+ * Map topology-level tool names to Copilot Coding Agent tool aliases.
  *
- * Copilot tools: read_file, edit_file, run_command, web_search, create_pull_request
+ * Copilot tool aliases: read, edit, execute, search, web, agent, todo
  */
 const TOOL_MAP: Record<string, string> = {
-  // Claude Code tools -> Copilot tools
-  Read: "read_file",
-  Write: "edit_file",
-  Edit: "edit_file",
-  Bash: "run_command",
-  WebSearch: "web_search",
-  WebFetch: "web_search",
-  Grep: "run_command",
-  Glob: "run_command",
-  // Pass through Copilot-native names
-  read_file: "read_file",
-  edit_file: "edit_file",
-  run_command: "run_command",
-  web_search: "web_search",
-  create_pull_request: "create_pull_request",
+  // Claude Code tools -> Copilot aliases
+  Read: "read",
+  Write: "edit",
+  Edit: "edit",
+  Bash: "execute",
+  Grep: "search",
+  Glob: "search",
+  WebFetch: "web",
+  WebSearch: "web",
+  // Pass through Copilot-native aliases
+  read: "read",
+  edit: "edit",
+  execute: "execute",
+  search: "search",
+  web: "web",
+  agent: "agent",
+  todo: "todo",
 };
 
 /** Map a single tool name to its Copilot equivalent. Unknown tools pass through. */
@@ -138,20 +139,6 @@ function formatRetry(retry: number | RetryConfig): string {
     parts.push(`non-retryable: ${retry.nonRetryable.join(", ")}`);
   }
   return parts.join(", ");
-}
-
-/** Parse a duration string like "5m", "2h", "30s" to minutes (for workflow timeout-minutes). */
-function durationToMinutes(duration: string): number | null {
-  const match = duration.match(/^(\d+(?:\.\d+)?)\s*(s|m|h|d)$/);
-  if (!match) return null;
-  const value = parseFloat(match[1]);
-  switch (match[2]) {
-    case "s": return Math.max(1, Math.ceil(value / 60));
-    case "m": return Math.ceil(value);
-    case "h": return Math.ceil(value * 60);
-    case "d": return Math.ceil(value * 1440);
-    default: return null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,11 +307,29 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
 }
 
 /**
- * Generate `.github/agents/{id}.agent.md` for each agent node.
+ * Build an `applyTo` glob pattern from an agent's reads/writes paths.
  *
- * Each file has YAML frontmatter with name, description, tools, and optional
- * model override. The markdown body contains role, reads/writes, outputs,
- * skills, and behavior information.
+ * If the agent has file paths, they are joined with commas.
+ * If no paths are available, returns `"**"` as a general scope.
+ */
+function buildApplyTo(agent: AgentNode): string {
+  const paths: string[] = [];
+  if (agent.reads && agent.reads.length > 0) paths.push(...agent.reads);
+  if (agent.writes && agent.writes.length > 0) paths.push(...agent.writes);
+
+  if (paths.length === 0) return "**";
+
+  // Convert directory paths (ending with /) to glob patterns
+  const globs = paths.map((p) => (p.endsWith("/") ? `${p}**` : p));
+  return globs.join(",");
+}
+
+/**
+ * Generate `.github/instructions/{id}.instructions.md` for each agent node.
+ *
+ * Each file has YAML frontmatter with `applyTo` (the only supported Copilot
+ * frontmatter key for scoping). The markdown body contains role, tools,
+ * reads/writes, outputs, skills, and behavior information.
  */
 function generateAgents(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -333,9 +338,16 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "agent") continue;
     const agent = node as AgentNode;
 
-    // --- Build frontmatter ---
-    const fm: Record<string, string | boolean | string[]> = {};
-    fm.name = agent.id;
+    // --- Build frontmatter (only supported keys: applyTo, excludeAgent) ---
+    const fm: Record<string, string> = {};
+    fm.applyTo = buildApplyTo(agent);
+
+    // --- Build body ---
+    const sections: string[] = [frontmatter(fm), ""];
+
+    // Title
+    sections.push(`# ${toTitle(agent.id)} Agent`);
+    sections.push("");
 
     // Description
     const desc =
@@ -344,59 +356,57 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       ast.roles[agent.id] ??
       agent.role;
     if (desc) {
-      fm.description = `"${desc}"`;
+      sections.push(desc);
+      sections.push("");
     }
-
-    // Tools: map topology tools to Copilot tools
-    if (agent.tools && agent.tools.length > 0) {
-      fm.tools = mapTools(agent.tools);
-    } else {
-      // Default Copilot tools when none specified
-      fm.tools = ["read_file", "edit_file", "run_command"];
-    }
-
-    // Model override
-    if (agent.model) fm.model = agent.model;
-
-    // Sandbox mode
-    if (agent.sandbox != null) {
-      fm.sandbox = typeof agent.sandbox === "boolean" ? agent.sandbox : agent.sandbox;
-    }
-
-    // Merge copilot-cli extension fields into frontmatter
-    if (agent.extensions?.["copilot-cli"]) {
-      for (const [k, v] of Object.entries(agent.extensions["copilot-cli"])) {
-        if (typeof v === "string") fm[k] = v;
-        else if (typeof v === "boolean") fm[k] = v;
-        else if (Array.isArray(v)) fm[k] = v as string[];
-      }
-    }
-
-    // --- Build body ---
-    const sections: string[] = [frontmatter(fm), ""];
-    sections.push(`You are the ${toTitle(agent.id)} agent.`);
-    sections.push("");
 
     // Role section
     const roleText =
       ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
-    if (roleText) {
+    if (roleText && roleText !== desc) {
       sections.push("## Role");
       sections.push(roleText);
       sections.push("");
     }
 
-    // Phase info
-    if (agent.phase != null) {
-      sections.push(`Phase: ${agent.phase}`);
+    if (agent.prompt) {
+      sections.push("## Instructions");
+      sections.push(agent.prompt);
       sections.push("");
     }
 
-    if (agent.prompt) {
-      sections.push("## Instructions");
+    // Tools section
+    if (agent.tools && agent.tools.length > 0) {
+      const mapped = mapTools(agent.tools);
+      sections.push("## Tools");
+      sections.push(mapped.join(", "));
       sections.push("");
-      sections.push(agent.prompt);
+    }
+
+    // Disallowed tools — document deny-tool flags in agent body
+    if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+      const mapped = mapTools(agent.disallowedTools);
+      sections.push("## Disallowed Tools");
       sections.push("");
+      sections.push("The following tools are denied for this agent via `--deny-tool` flags:");
+      for (const t of mapped) {
+        sections.push(`- \`--deny-tool ${t}\``);
+      }
+      sections.push("");
+    }
+
+    // Constraints section (phase, timeout, model, etc.)
+    {
+      const constraints: string[] = [];
+      if (agent.phase != null) constraints.push(`- Phase: ${agent.phase}`);
+      if (agent.model) constraints.push(`- Model: ${agent.model}`);
+      if (agent.timeout) constraints.push(`- Timeout: ${agent.timeout}`);
+      if (agent.permissions) constraints.push(`- Permissions: ${agent.permissions}`);
+      if (constraints.length > 0) {
+        sections.push("## Constraints");
+        sections.push(...constraints);
+        sections.push("");
+      }
     }
 
     // Reads section
@@ -456,30 +466,10 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    // Disallowed tools — document deny-tool flags in agent body
-    if (agent.disallowedTools && agent.disallowedTools.length > 0) {
-      const mapped = mapTools(agent.disallowedTools);
-      sections.push("## Disallowed Tools");
-      sections.push("");
-      sections.push("The following tools are denied for this agent via `--deny-tool` flags:");
-      for (const t of mapped) {
-        sections.push(`- \`--deny-tool ${t}\``);
-      }
-      sections.push("");
-    }
-
     // Fallback chain
     if (agent.fallbackChain && agent.fallbackChain.length > 0) {
       sections.push("## Fallback Chain");
       sections.push(`Models: ${agent.fallbackChain.join(" -> ")}`);
-      sections.push("");
-    }
-
-    // --- Wave 1-7 fields ---
-
-    // Timeout
-    if (agent.timeout) {
-      sections.push(`Maximum execution time: ${agent.timeout}`);
       sections.push("");
     }
 
@@ -602,7 +592,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     files.push({
-      path: `.github/agents/${agent.id}.agent.md`,
+      path: `.github/instructions/${agent.id}.instructions.md`,
       content: sections.join("\n") + "\n",
       category: "agent",
     });
@@ -612,10 +602,12 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 }
 
 /**
- * Generate `.github/agents/{id}.agent.md` for each human node.
+ * Generate `.github/instructions/{id}.instructions.md` for each human node.
  *
- * Human nodes represent approval/input points. The agent.md instructs
- * Copilot to pause and request human intervention.
+ * Human nodes represent approval/input points. The instructions file tells
+ * Copilot to pause and request human intervention. These are informational
+ * context files only — no `.agent.md` is generated for human nodes since
+ * they are not automated agents.
  */
 function generateHumanAgents(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -624,14 +616,9 @@ function generateHumanAgents(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "human") continue;
     const human = node as HumanNode;
 
-    const fm: Record<string, string | boolean | string[]> = {};
-    fm.name = human.id;
-    fm.description = `"Human approval point: ${human.description ?? toTitle(human.id)}"`;
-
-    const sections: string[] = [frontmatter(fm), ""];
-    sections.push(`You are the ${toTitle(human.id)} approval agent.`);
+    const sections: string[] = ["<!-- Informational: human-in-the-loop node (not an automated agent) -->", ""];
+    sections.push(`# ${toTitle(human.id)} (Human Approval)`);
     sections.push("");
-    sections.push("## Role");
     sections.push("This is a human-in-the-loop checkpoint. You must pause execution and request human input or approval before proceeding.");
     sections.push("");
 
@@ -652,7 +639,7 @@ function generateHumanAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     files.push({
-      path: `.github/agents/${human.id}.agent.md`,
+      path: `.github/instructions/${human.id}.instructions.md`,
       content: sections.join("\n") + "\n",
       category: "machine",
     });
@@ -662,9 +649,11 @@ function generateHumanAgents(ast: TopologyAST): GeneratedFile[] {
 }
 
 /**
- * Generate `.github/agents/{id}.agent.md` for each group node.
+ * Generate `.github/instructions/{id}.instructions.md` for each group node.
  *
  * Group nodes represent multi-agent conversation/debate coordination points.
+ * These are informational context files only — no `.agent.md` is generated
+ * for group nodes since they are coordination constructs, not automated agents.
  */
 function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -673,13 +662,15 @@ function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "group") continue;
     const group = node as GroupNode;
 
-    const fm: Record<string, string | boolean | string[]> = {};
-    fm.name = group.id;
-    fm.description = `"Group chat coordinator: ${group.description ?? toTitle(group.id)}"`;
-
-    const sections: string[] = [frontmatter(fm), ""];
-    sections.push(`You are the ${toTitle(group.id)} group chat coordinator.`);
+    const sections: string[] = ["<!-- Informational: group chat coordination node (not an automated agent) -->", ""];
+    sections.push(`# ${toTitle(group.id)} (Group Chat)`);
     sections.push("");
+
+    if (group.description) {
+      sections.push(group.description);
+      sections.push("");
+    }
+
     sections.push("## Role");
     sections.push("Coordinate a multi-agent conversation among the participating members.");
     sections.push("");
@@ -711,7 +702,7 @@ function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
     }
 
     files.push({
-      path: `.github/agents/${group.id}.agent.md`,
+      path: `.github/instructions/${group.id}.instructions.md`,
       content: sections.join("\n") + "\n",
       category: "agent",
     });
@@ -721,171 +712,190 @@ function generateGroupAgents(ast: TopologyAST): GeneratedFile[] {
 }
 
 /**
- * Generate `.github/workflows/copilot-topology.yml` when the topology
- * has flow edges, enabling Copilot Coding Agent to run as a GitHub Action.
+ * Build YAML frontmatter block for a `.agent.md` file.
  *
- * Non-advisory gates with `run:` are compiled to workflow steps that execute
- * the gate script between the `after` and `before` agent steps.  If a gate
- * has `on-fail: halt`, the workflow naturally stops on a non-zero exit code.
- *
- * Agents with `disallowedTools` get `--deny-tool` flags appended to the
- * copilot invocation step.
+ * Copilot `.agent.md` files support:
+ * - `name` — agent identifier
+ * - `description` — agent description
+ * - `tools` — list of Copilot tool aliases
  */
-function generateWorkflow(ast: TopologyAST): GeneratedFile | null {
-  if (ast.edges.length === 0) return null;
+function agentFrontmatter(fields: {
+  name: string;
+  description: string;
+  tools: string[];
+  model?: string;
+}): string {
+  const lines = ["---"];
+  lines.push(`name: ${fields.name}`);
+  lines.push(`description: ${fields.description}`);
+  if (fields.model) {
+    lines.push(`model: ${fields.model}`);
+  }
+  if (fields.tools.length > 0) {
+    lines.push("tools:");
+    for (const tool of fields.tools) {
+      lines.push(`  - ${tool}`);
+    }
+  }
+  lines.push("---");
+  return lines.join("\n");
+}
+
+/**
+ * Generate `.github/agents/{id}.agent.md` for each agent node.
+ *
+ * Each file has YAML frontmatter with `name`, `description`, and `tools`
+ * (mapped to Copilot tool aliases). The markdown body contains the agent
+ * prompt and role information.
+ *
+ * Human and group nodes do NOT get `.agent.md` files since they are not agents.
+ */
+function generateAgentMdFiles(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+
+    // Build description from available sources
+    const desc =
+      agent.description ??
+      ast.roles[agent.role ?? ""] ??
+      ast.roles[agent.id] ??
+      agent.role ??
+      toTitle(agent.id);
+
+    // Map tools to Copilot aliases
+    const tools = agent.tools ? mapTools(agent.tools) : [];
+
+    const sections: string[] = [];
+    sections.push(agentFrontmatter({ name: agent.id, description: desc, tools, model: agent.model }));
+    sections.push("");
+
+    // Agent prompt as body
+    if (agent.prompt) {
+      sections.push(agent.prompt);
+      sections.push("");
+    }
+
+    // Role context
+    const roleText =
+      ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    if (roleText && roleText !== agent.prompt) {
+      sections.push(`## Role`);
+      sections.push(roleText);
+      sections.push("");
+    }
+
+    // Description if different from prompt
+    if (agent.description && agent.description !== agent.prompt) {
+      sections.push(`## Description`);
+      sections.push(agent.description);
+      sections.push("");
+    }
+
+    // Behavior constraints
+    if (agent.permissions) {
+      sections.push(`Permissions: ${agent.permissions}`);
+      sections.push("");
+    }
+
+    if (agent.onFail) {
+      sections.push(`On failure: ${agent.onFail}`);
+      sections.push("");
+    }
+
+    files.push({
+      path: `.github/agents/${agent.id}.agent.md`,
+      content: sections.join("\n") + "\n",
+      category: "agent",
+    });
+  }
+
+  return files;
+}
+
+/**
+ * Generate `.github/workflows/copilot-setup-steps.yml` — the REQUIRED
+ * Copilot environment setup workflow.
+ *
+ * This file must have the exact job name `copilot-setup-steps` and is used
+ * for environment setup only (checkout, install deps, set env vars, make
+ * scripts executable). It is NOT a topology orchestration workflow.
+ *
+ * Generated from the topology's gate scripts, tool scripts, and env vars.
+ */
+function generateSetupSteps(ast: TopologyAST): GeneratedFile | null {
+  const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
+  const hasGateScripts = gates.some((g) => g.run && g.behavior !== "advisory");
+  const hasPythonTools = ast.toolDefs.some((t) => t.lang === "python");
+  const hasEnv = Object.keys(ast.env).length > 0;
+
+  // Only generate if there's something to set up
+  if (!hasGateScripts && !hasPythonTools && ast.toolDefs.length === 0 && !hasEnv) {
+    return null;
+  }
 
   const name = ast.topology.name;
-  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
-
-  // Index gates by `after` agent id for insertion after that agent's step
-  const gatesAfter = new Map<string, GateNode[]>();
-  for (const gate of gates) {
-    if (!gate.run || gate.behavior === "advisory") continue;
-    const key = gate.after ?? "__none__";
-    if (!gatesAfter.has(key)) gatesAfter.set(key, []);
-    gatesAfter.get(key)!.push(gate);
-  }
-
-  // Build a simple sequential workflow based on flow edges
   const lines: string[] = [];
   lines.push(`# Auto-generated by agentopology scaffold for topology: ${name}`);
-  lines.push(`# This workflow orchestrates the Copilot Coding Agent topology.`);
+  lines.push(`# Copilot setup steps — environment preparation for the coding agent.`);
   lines.push("");
-  lines.push(`name: "Copilot Topology: ${toTitle(name)}"`);
-  lines.push("");
-  lines.push("on:");
-  lines.push("  workflow_dispatch:");
-  lines.push("    inputs:");
-  lines.push("      task:");
-  lines.push('        description: "Task description for the topology"');
-  lines.push("        required: true");
-  lines.push('        type: string');
-
-  // Add trigger patterns if they exist
-  if (ast.triggers.length > 0) {
-    lines.push("  issue_comment:");
-    lines.push("    types: [created]");
-  }
-
-  // Add schedule triggers from topology schedules
-  const cronJobs = ast.schedules.filter((s) => s.cron && s.enabled !== false);
-  if (cronJobs.length > 0) {
-    lines.push("  schedule:");
-    for (const job of cronJobs) {
-      lines.push(`    - cron: '${job.cron}'  # ${job.id}`);
-    }
-  }
-
-  lines.push("");
-  lines.push("permissions:");
-  lines.push("  contents: write");
-  lines.push("  pull-requests: write");
-  lines.push("  issues: write");
+  lines.push(`name: "Copilot Setup Steps"`);
+  lines.push("on: workflow_dispatch");
   lines.push("");
   lines.push("jobs:");
+  lines.push("  copilot-setup-steps:");
+  lines.push("    runs-on: ubuntu-latest");
 
-  // Generate one job per agent, respecting edge ordering
-  const emitted = new Set<string>();
-  const edgesByTo = new Map<string, EdgeDef[]>();
-  for (const edge of ast.edges) {
-    if (!edgesByTo.has(edge.to)) edgesByTo.set(edge.to, []);
-    edgesByTo.get(edge.to)!.push(edge);
+  // Set env vars from topology
+  if (hasEnv) {
+    lines.push("    env:");
+    for (const [key, val] of Object.entries(ast.env)) {
+      const value = typeof val === "string" ? val : val.value;
+      // Skip secret references — those should be in GitHub Secrets
+      if (typeof val !== "string" && val.sensitive) {
+        lines.push(`      ${key}: \${{ secrets.${key} }}`);
+      } else {
+        lines.push(`      ${key}: "${value}"`);
+      }
+    }
   }
 
-  for (const agent of agents) {
-    const jobId = agent.id.replace(/[^a-zA-Z0-9_-]/g, "-");
+  lines.push("    steps:");
+  lines.push("      - uses: actions/checkout@v4");
+
+  // Make gate scripts executable
+  if (hasGateScripts) {
     lines.push("");
-    lines.push(`  ${jobId}:`);
-    lines.push(`    name: "${toTitle(agent.id)}"`);
-    lines.push("    runs-on: ubuntu-latest");
+    lines.push("      - name: Make gate scripts executable");
+    lines.push("        run: |");
+    lines.push("          chmod +x scripts/*.sh 2>/dev/null || true");
+  }
 
-    // Add needs (dependencies from flow edges)
-    const deps = edgesByTo.get(agent.id);
-    if (deps && deps.length > 0) {
-      const needs = deps
-        .map((d) => d.from.replace(/[^a-zA-Z0-9_-]/g, "-"))
-        .filter((d) => emitted.has(d));
-      if (needs.length > 0) {
-        lines.push(`    needs: [${needs.join(", ")}]`);
-      }
-    }
-
-    // Add condition from edge if present
-    const edgesTo = edgesByTo.get(agent.id);
-    if (edgesTo) {
-      for (const edge of edgesTo) {
-        if (edge.condition) {
-          lines.push(`    # Condition: ${edge.condition}`);
-        }
-        if (edge.isError) {
-          lines.push(`    # Error edge from ${edge.from}${edge.errorType ? ` (type: ${edge.errorType})` : ""}`);
-        }
-        if (edge.race) {
-          lines.push(`    # Race: first completed result wins`);
-        }
-        if (edge.tolerance != null) {
-          lines.push(`    # Tolerance: ${edge.tolerance} failures allowed`);
-        }
-        if (edge.wait) {
-          lines.push(`    # Wait: ${edge.wait} before proceeding`);
-        }
-      }
-    }
-
-    // Timeout for the job
-    if (agent.timeout) {
-      const minutes = durationToMinutes(agent.timeout);
-      if (minutes != null) {
-        lines.push(`    timeout-minutes: ${minutes}`);
-      }
-    }
-
-    lines.push("    steps:");
-    lines.push("      - uses: actions/checkout@v4");
+  // Make tool scripts executable
+  const bashTools = ast.toolDefs.filter((t) => t.lang === "bash");
+  if (bashTools.length > 0) {
     lines.push("");
-    lines.push(`      - name: Run ${toTitle(agent.id)} agent`);
-    lines.push("        uses: github/copilot-coding-agent@v1");
-    lines.push("        with:");
-    lines.push(`          agent: ${agent.id}`);
-
-    if (agent.model) {
-      lines.push(`          model: ${agent.model}`);
+    lines.push("      - name: Make tool scripts executable");
+    lines.push("        run: |");
+    for (const tool of bashTools) {
+      lines.push(`          chmod +x ${tool.script}`);
     }
+  }
 
-    // Append --deny-tool flags for disallowed tools
-    if (agent.disallowedTools && agent.disallowedTools.length > 0) {
-      const denyFlags = agent.disallowedTools
-        .map((t) => `--deny-tool ${mapTool(t)}`)
-        .join(" ");
-      lines.push(`          args: "${denyFlags}"`);
-    }
-
-    // Insert gate steps after this agent's step
-    const agentGates = gatesAfter.get(agent.id);
-    if (agentGates) {
-      for (const gate of agentGates) {
-        lines.push("");
-        lines.push(`      - name: "Gate: ${gate.id}"`);
-        lines.push(`        run: bash scripts/gate-${gate.id}.sh`);
-      }
-    }
-
-    // Error handling step for agents with on-fail
-    if (agent.onFail && agent.onFail !== "halt") {
-      lines.push("");
-      lines.push(`      - name: "Error handler: ${agent.id}"`);
-      lines.push("        if: failure()");
-      lines.push(`        run: echo "Agent ${agent.id} failed — on-fail strategy: ${agent.onFail}"`);
-    }
-
-    emitted.add(jobId);
+  // Install Python dependencies if Python tools exist
+  if (hasPythonTools) {
+    lines.push("");
+    lines.push("      - name: Install Python dependencies");
+    lines.push("        run: |");
+    lines.push("          pip install -r requirements.txt 2>/dev/null || true");
   }
 
   lines.push("");
 
   return {
-    path: ".github/workflows/copilot-topology.yml",
+    path: ".github/workflows/copilot-setup-steps.yml",
     content: lines.join("\n") + "\n",
     category: "machine",
   };
@@ -1263,12 +1273,9 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run) continue;
     if (gate.behavior === "advisory") continue;
 
-    const onFailExit =
-      gate.onFail === "halt"
-        ? 'exit 1'
-        : 'echo "Gate failed — bounce-back requested (advisory)"';
+    const isHalt = gate.onFail === "halt";
 
-    const content = [
+    const scriptLines = [
       "#!/usr/bin/env bash",
       `# Gate: ${gate.id}`,
       `# Auto-generated by agentopology scaffold — edit as needed.`,
@@ -1284,12 +1291,21 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       "",
       'if [ "$GATE_RESULT" -ne 0 ]; then',
       `  echo "Gate '${gate.id}' FAILED (exit code $GATE_RESULT)"`,
-      `  ${onFailExit}`,
-      "fi",
-      "",
-      `echo "Gate '${gate.id}' PASSED"`,
-      "",
-    ].join("\n");
+    ];
+
+    if (isHalt) {
+      scriptLines.push("  exit 1");
+    } else {
+      scriptLines.push(`  echo "Gate failed — bounce-back requested"`);
+      scriptLines.push("  exit 0  # allow continuation for bounce-back");
+    }
+
+    scriptLines.push("fi");
+    scriptLines.push("");
+    scriptLines.push(`echo "Gate '${gate.id}' PASSED"`);
+    scriptLines.push("");
+
+    const content = scriptLines.join("\n");
 
     files.push({
       path: `scripts/gate-${gate.id}.sh`,
@@ -1302,6 +1318,235 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
 }
 
 // ---------------------------------------------------------------------------
+// Settings, MCP, Skills, Hooks, AGENTS.md — Copilot CLI terminal features
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.github/copilot/settings.json` with MCP servers and permissions.
+ */
+function generateSettings(ast: TopologyAST): GeneratedFile {
+  const settings: Record<string, unknown> = {
+    trusted_folders: ["."],
+  };
+
+  // URL allow/deny from settings block
+  const allow = ast.settings?.allow as string[] | undefined;
+  const deny = ast.settings?.deny as string[] | undefined;
+  const allowedUrls = (allow ?? []).filter((t) => t.startsWith("http"));
+  const deniedUrls = (deny ?? []).filter((t) => t.startsWith("http"));
+  if (allowedUrls.length > 0) settings.allowed_urls = allowedUrls;
+  if (deniedUrls.length > 0) settings.denied_urls = deniedUrls;
+
+  // MCP servers
+  if (Object.keys(ast.mcpServers).length > 0) {
+    const mcpServers: Record<string, unknown> = {};
+    for (const [name, config] of Object.entries(ast.mcpServers)) {
+      const entry: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(config)) {
+        entry[key] = value;
+      }
+      // Copilot CLI uses "local" for stdio servers
+      if (entry.command && (!entry.type || entry.type === "stdio")) {
+        entry.type = "local";
+      }
+      if (!entry.env && entry.command) {
+        entry.env = {};
+      }
+      mcpServers[name] = entry;
+    }
+    settings.mcpServers = mcpServers;
+  }
+
+  return {
+    path: ".github/copilot/settings.json",
+    content: JSON.stringify(settings, null, 2) + "\n",
+    category: "machine",
+  };
+}
+
+/**
+ * Generate `.github/skills/{name}/SKILL.md` files.
+ */
+function generateSkills(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const skill of ast.skills) {
+    const lines: string[] = [];
+    lines.push("---");
+    lines.push(`name: ${skill.id}`);
+    lines.push(`description: ${skill.description}`);
+    lines.push("---");
+    lines.push("");
+
+    if (skill.prompt) {
+      lines.push(skill.prompt);
+    } else {
+      const bodyParts: string[] = [];
+      if (skill.scripts && skill.scripts.length > 0) {
+        bodyParts.push(`Scripts: ${skill.scripts.join(", ")}`);
+      }
+      if (skill.domains && skill.domains.length > 0) {
+        bodyParts.push(`Domains: ${skill.domains.join(", ")}`);
+      }
+      if (skill.references && skill.references.length > 0) {
+        bodyParts.push(`References: ${skill.references.join(", ")}`);
+      }
+      lines.push(bodyParts.length > 0 ? bodyParts.join("\n") : skill.description);
+    }
+    lines.push("");
+
+    files.push({
+      path: `.github/skills/${skill.id}/SKILL.md`,
+      content: lines.join("\n"),
+      category: "agent",
+    });
+  }
+
+  return files;
+}
+
+/** Map hook event names to Copilot CLI hook events. */
+function mapCopilotHookEvent(event: string): string {
+  switch (event) {
+    case "PreToolUse":
+      return "preToolUse";
+    case "PostToolUse":
+    case "ToolUse":
+      return "postToolUse";
+    default:
+      return "preToolUse";
+  }
+}
+
+/**
+ * Generate `.github/hooks/{name}.json` files for preToolUse/postToolUse hooks.
+ */
+function generateHookFiles(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  // Collect all hooks from topology-level and per-agent
+  const allHooks: HookDef[] = [...ast.hooks];
+  for (const node of ast.nodes) {
+    if (node.type === "agent") {
+      const agent = node as AgentNode;
+      if (agent.hooks) allHooks.push(...agent.hooks);
+    }
+  }
+
+  // Only generate hook files for tool-use events
+  const toolHooks = allHooks.filter(
+    (h) => h.on === "PreToolUse" || h.on === "PostToolUse" || h.on === "ToolUse"
+  );
+
+  for (const hook of toolHooks) {
+    if (!hook.run) continue;
+    const hookObj: Record<string, unknown> = {
+      event: mapCopilotHookEvent(hook.on),
+    };
+    if (hook.matcher) hookObj.matcher = hook.matcher;
+
+    // Inline commands vs file paths
+    const isInline = /^(exit|true|false|echo)\b/.test(hook.run);
+    hookObj.command = isInline ? hook.run : `./${hook.run}`;
+
+    if (hook.timeout != null) hookObj.timeout = hook.timeout;
+
+    files.push({
+      path: `.github/hooks/${hook.name}.json`,
+      content: JSON.stringify(hookObj, null, 2) + "\n",
+      category: "machine",
+    });
+  }
+
+  // Gate hooks — compile gates as postToolUse hooks
+  const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
+  for (const gate of gates) {
+    if (!gate.run) continue;
+    const hookObj: Record<string, unknown> = {
+      event: "postToolUse",
+      command: `./scripts/gate-${gate.id}.sh`,
+    };
+    files.push({
+      path: `.github/hooks/gate-${gate.id}.json`,
+      content: JSON.stringify(hookObj, null, 2) + "\n",
+      category: "machine",
+    });
+  }
+
+  return files;
+}
+
+/**
+ * Generate `AGENTS.md` at project root — topology overview.
+ */
+function generateAgentsMd(ast: TopologyAST): GeneratedFile {
+  const sections: string[] = [];
+
+  sections.push(`# ${toTitle(ast.topology.name)}`);
+  sections.push("");
+  if (ast.topology.description) {
+    sections.push(ast.topology.description);
+    sections.push("");
+  }
+
+  // Agents
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+  if (agents.length > 0) {
+    sections.push("## Agents");
+    sections.push("");
+    for (const agent of agents) {
+      const desc = agent.description ?? agent.role ?? toTitle(agent.id);
+      const model = agent.model ? ` (${agent.model})` : "";
+      sections.push(`- **${toTitle(agent.id)}**${model}: ${desc}`);
+    }
+    sections.push("");
+  }
+
+  // Flow
+  if (ast.edges.length > 0) {
+    sections.push("## Flow");
+    sections.push("");
+    for (const edge of ast.edges) {
+      let line = `${edge.from} → ${edge.to}`;
+      if (edge.condition) line += ` [when ${edge.condition}]`;
+      if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+      if (edge.isError) line = `${edge.from} ⚠→ ${edge.to}`;
+      sections.push(`- ${line}`);
+    }
+    sections.push("");
+  }
+
+  // Gates
+  const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
+  if (gates.length > 0) {
+    sections.push("## Gates");
+    sections.push("");
+    for (const gate of gates) {
+      const checks = gate.checks?.join(", ") ?? "";
+      sections.push(`- **${toTitle(gate.id)}**: ${checks} (on fail: ${gate.onFail ?? "halt"})`);
+    }
+    sections.push("");
+  }
+
+  // Human checkpoints
+  const humans = ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+  if (humans.length > 0) {
+    sections.push("## Human Checkpoints");
+    sections.push("");
+    for (const human of humans) {
+      sections.push(`- **${toTitle(human.id)}**: ${human.description ?? "Human approval required"}`);
+    }
+    sections.push("");
+  }
+
+  return {
+    path: "AGENTS.md",
+    content: sections.join("\n") + "\n",
+    category: "agent",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Binding export
 // ---------------------------------------------------------------------------
 
@@ -1309,7 +1554,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
 export const copilotCliBinding: BindingTarget = {
   name: "copilot-cli",
   description:
-    "GitHub Copilot Coding Agent — generates .github/copilot-instructions.md, .github/agents/*.agent.md, and workflow files.",
+    "GitHub Copilot CLI — generates .github/copilot-instructions.md, .github/instructions/*.instructions.md, .github/agents/*.agent.md, settings.json, skills, hooks, and AGENTS.md.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     const files: GeneratedFile[] = [];
@@ -1354,20 +1599,35 @@ export const copilotCliBinding: BindingTarget = {
 
     files.push(instructions);
 
-    // 2. Per-agent .agent.md files
+    // 2. Per-agent .instructions.md files (scoped behavioral rules)
     files.push(...generateAgents(ast));
 
-    // 3. Human node agent.md files
+    // 3. Per-agent .agent.md files (agent definitions with tools)
+    files.push(...generateAgentMdFiles(ast));
+
+    // 4. Human node .instructions.md files (informational only)
     files.push(...generateHumanAgents(ast));
 
-    // 4. Group node agent.md files
+    // 5. Group node .instructions.md files (informational only)
     files.push(...generateGroupAgents(ast));
 
-    // 5. Workflow file (only when flow edges exist)
-    const workflow = generateWorkflow(ast);
-    if (workflow) files.push(workflow);
+    // 6. Settings file (MCP, permissions)
+    files.push(generateSettings(ast));
 
-    // 6. Gate scripts
+    // 7. Skills (.github/skills/{name}/SKILL.md)
+    files.push(...generateSkills(ast));
+
+    // 8. Hook files (.github/hooks/{name}.json)
+    files.push(...generateHookFiles(ast));
+
+    // 9. AGENTS.md at project root
+    files.push(generateAgentsMd(ast));
+
+    // 10. Setup steps workflow (server-side Copilot Coding Agent only)
+    const setupSteps = generateSetupSteps(ast);
+    if (setupSteps) files.push(setupSteps);
+
+    // 11. Gate scripts
     files.push(...generateGateScripts(ast));
 
     return deduplicateFiles(files);

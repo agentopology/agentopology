@@ -1398,7 +1398,13 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       lines.push("");
     }
 
-    lines.push(`echo "TODO: implement ${tool.id}"`);
+    if (tool.lang === "python") {
+      lines.push(`print("TODO: implement ${tool.id}")`);
+    } else if (tool.lang === "node") {
+      lines.push(`console.log("TODO: implement ${tool.id}");`);
+    } else {
+      lines.push(`echo "TODO: implement ${tool.id}"`);
+    }
     lines.push("");
 
     files.push({

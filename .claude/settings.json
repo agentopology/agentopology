@@ -1,33 +1,26 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PostToolUse": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/skills/binding-factory/scripts/guard-destructive.sh",
-            "timeout": 5000
+            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
+            "timeout": 10
           }
         ],
         "matcher": "Bash"
-      },
+      }
+    ],
+    "AgentStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/skills/binding-factory/scripts/gate-type-and-coverage.sh"
+            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
+            "timeout": 5
           }
-        ],
-        "matcher": "Task"
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/skills/binding-factory/scripts/gate-conformance-matrix.sh"
-          }
-        ],
-        "matcher": "Task"
+        ]
       }
     ],
     "AgentStop": [
@@ -35,64 +28,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/skills/binding-factory/scripts/log-stage.sh"
+            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
+            "timeout": 5
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/skills/binding-factory/scripts/cache-fetch.sh"
-          }
-        ],
-        "matcher": "WebFetch"
-      }
     ]
-  },
-  "env": {
-    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
-    "NODE_ENV": "production"
   },
   "allow": [
     "Read",
-    "Write",
-    "Edit",
     "Glob",
     "Grep",
-    "Bash",
-    "WebFetch"
+    "Bash(playwright-cli *)"
   ],
   "deny": [
-    "Bash(rm -rf *)",
-    "Bash(git push *)"
+    "mcp__plugin_playwright_playwright__*"
   ],
   "ask": [
-    "Bash(npm install *)"
-  ],
-  "_defaults": {
-    "maxTokens": 16384,
-    "thinking": "high",
-    "thinkingBudget": 10000
-  },
-  "_observability": {
-    "enabled": true,
-    "level": "info",
-    "exporter": "stdout",
-    "sampleRate": 1,
-    "capture": {
-      "prompts": false,
-      "completions": false,
-      "toolArgs": true,
-      "toolResults": true
-    },
-    "spans": {
-      "agents": true,
-      "tools": true,
-      "gates": true,
-      "memory": true
-    }
-  }
+    "Bash"
+  ]
 }

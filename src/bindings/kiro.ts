@@ -135,6 +135,10 @@ function formatSchemaFields(fields: SchemaFieldDef[]): string {
  *
  * Each agent produces a single JSON file with name, description, prompt,
  * model, tools, hooks, resources, and MCP configuration.
+ *
+ * NOTE: The `.kiro/agents/` JSON format is not publicly documented by Kiro.
+ * This generates a reasonable agent config structure that may need validation
+ * against actual Kiro when the format is finalized.
  */
 function generateAgents(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -196,27 +200,18 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       agentJson.model = agent.model;
     }
 
-    // Timeout (Wave 1)
-    if (agent.timeout) {
-      agentJson.timeout = agent.timeout;
-    }
-
-    // Sampling params (Wave 1) — model config
-    if (agent.temperature != null) {
-      agentJson.temperature = agent.temperature;
-    }
-    if (agent.maxTokens != null) {
-      agentJson.maxTokens = agent.maxTokens;
-    }
-
-    // Thinking/reasoning (Wave 1)
-    if (agent.thinking) {
-      agentJson.reasoning = agent.thinking;
-    }
-
-    // Max turns
-    if (agent.maxTurns != null) {
-      agentJson.maxTurns = agent.maxTurns;
+    // Fields not in Kiro's agent JSON schema — embed in prompt instead
+    // (Kiro only supports: name, description, prompt, model, mcpServers,
+    //  tools, toolAliases, allowedTools, resources, hooks, toolsSettings,
+    //  includeMcpJson, keyboardShortcut, welcomeMessage)
+    const constraints: string[] = [];
+    if (agent.timeout) constraints.push(`Maximum execution time: ${agent.timeout}`);
+    if (agent.temperature != null) constraints.push(`Temperature: ${agent.temperature}`);
+    if (agent.maxTokens != null) constraints.push(`Max tokens: ${agent.maxTokens}`);
+    if (agent.thinking) constraints.push(`Reasoning level: ${agent.thinking}`);
+    if (agent.maxTurns != null) constraints.push(`Max turns: ${agent.maxTurns}`);
+    if (constraints.length > 0) {
+      agentJson.prompt += "\n\n## Constraints\n" + constraints.map((c) => `- ${c}`).join("\n");
     }
 
     // Tools — map topology tool names to Kiro names
@@ -229,37 +224,42 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       agentJson.allowedTools = agent.extensions.kiro.allowedTools;
     }
 
-    // MCP servers as resources
+    // MCP servers — inline the full MCP server config from ast.mcpServers
     if (agent.mcpServers && agent.mcpServers.length > 0) {
-      agentJson.resources = agent.mcpServers.map((s) => `mcp://${s}`);
+      const mcpServers: Record<string, unknown> = {};
+      for (const serverName of agent.mcpServers) {
+        const serverConfig = ast.mcpServers[serverName];
+        if (serverConfig) {
+          const entry: Record<string, unknown> = { ...serverConfig };
+          // Strip type field for stdio servers (Kiro auto-detects)
+          if (entry.command) {
+            delete entry.type;
+          }
+          mcpServers[serverName] = entry;
+        }
+      }
+      if (Object.keys(mcpServers).length > 0) {
+        agentJson.mcpServers = mcpServers;
+      }
     }
 
-    // Reads as file:// resources
-    if (agent.reads && agent.reads.length > 0) {
-      const existing = (agentJson.resources as string[]) ?? [];
-      agentJson.resources = [
-        ...existing,
-        ...agent.reads.map((r) => `file://${r}`),
-      ];
-    }
-
-    // Per-agent hooks
+    // Per-agent hooks — object keyed by event name
     if (agent.hooks && agent.hooks.length > 0) {
-      agentJson.hooks = agent.hooks.map((hook) => {
+      const hooksObj: Record<string, unknown[]> = {};
+      for (const hook of agent.hooks) {
+        const eventName = mapHookEvent(hook.on);
+        if (!hooksObj[eventName]) {
+          hooksObj[eventName] = [];
+        }
         const entry: Record<string, unknown> = {
-          event: mapHookEvent(hook.on),
           command: hook.run,
         };
         if (hook.matcher) {
           entry.matcher = mapMatcherName(hook.matcher);
         }
-        return entry;
-      });
-    }
-
-    // Include MCP config if agent uses MCP servers
-    if (agent.mcpServers && agent.mcpServers.length > 0) {
-      agentJson.includeMcpJson = true;
+        hooksObj[eventName].push(entry);
+      }
+      agentJson.hooks = hooksObj;
     }
 
     // Merge kiro extension fields
@@ -438,14 +438,29 @@ function generateAgentSteering(ast: TopologyAST): GeneratedFile[] {
 
     if (!hasContent) continue;
 
-    const header = [
-      "---",
-      `inclusion: agent:${agent.id}`,
-      "---",
-      "",
-      `# ${toTitle(agent.id)} — Behavioral Config`,
-      "",
+    // Determine inclusion mode: fileMatch if agent has reads/writes paths,
+    // otherwise always.
+    const allPaths = [
+      ...(agent.reads ?? []),
+      ...(agent.writes ?? []),
     ];
+    const headerLines = ["---"];
+    if (allPaths.length > 0) {
+      headerLines.push("inclusion: fileMatch");
+      // Combine all read/write paths into a glob pattern
+      const pattern = allPaths.length === 1
+        ? allPaths[0].replace(/\/$/, "/**")
+        : `{${allPaths.map((p) => p.replace(/\/$/, "/**")).join(",")}}`;
+      headerLines.push(`fileMatchPattern: "${pattern}"`);
+    } else {
+      headerLines.push("inclusion: always");
+    }
+    headerLines.push("---");
+    headerLines.push("");
+    headerLines.push(`# ${toTitle(agent.id)} — Behavioral Config`);
+    headerLines.push("");
+
+    const header = headerLines;
 
     files.push({
       path: `.kiro/steering/agent-${agent.id}.md`,
@@ -942,6 +957,39 @@ function generateStructureSteering(ast: TopologyAST): GeneratedFile {
 function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   if (Object.keys(ast.mcpServers).length === 0) return null;
 
+  // Collect per-server autonomous status from agent declarations
+  // If ANY agent using this server has permissions: autonomous, use ["*"]
+  const serverHasAutonomousAgent = new Map<string, boolean>();
+  const serverDisabledTools = new Map<string, Set<string>>();
+
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (!agent.mcpServers || agent.mcpServers.length === 0) continue;
+
+    for (const serverName of agent.mcpServers) {
+      if (agent.permissions === "autonomous") {
+        serverHasAutonomousAgent.set(serverName, true);
+      }
+
+      // Agent disallowedTools -> disabledTools (only plain names, no patterns)
+      if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+        if (!serverDisabledTools.has(serverName)) {
+          serverDisabledTools.set(serverName, new Set());
+        }
+        for (const tool of agent.disallowedTools) {
+          // Only include plain tool names (no parentheses = no patterns)
+          if (!tool.includes("(")) {
+            serverDisabledTools.get(serverName)!.add(tool);
+          }
+        }
+      }
+    }
+  }
+
+  // Collect topology-level settings deny, filtering out patterns
+  const settingsDeny = ast.settings?.deny as string[] | undefined;
+
   const mcpConfig: Record<string, unknown> = { mcpServers: {} };
   const servers = mcpConfig.mcpServers as Record<string, unknown>;
 
@@ -956,10 +1004,37 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
       }
       if (key === "env") hasEnv = true;
     }
+    // Strip type field for stdio servers (Kiro auto-detects)
+    if (entry.command) {
+      delete entry.type;
+    }
     // Always include env field
     if (!hasEnv) {
       entry.env = {};
     }
+
+    // disabled: false by default
+    entry.disabled = false;
+
+    // autoApprove: ["*"] for autonomous agents, omit for supervised
+    if (serverHasAutonomousAgent.get(name)) {
+      entry.autoApprove = ["*"];
+    }
+
+    // disabledTools: merge agent-level disallowedTools + settings deny (plain names only)
+    const disableSet = new Set<string>(serverDisabledTools.get(name) ?? []);
+    if (settingsDeny) {
+      for (const tool of settingsDeny) {
+        // Only include plain tool names (no parentheses = no patterns)
+        if (!tool.includes("(")) {
+          disableSet.add(tool);
+        }
+      }
+    }
+    if (disableSet.size > 0) {
+      entry.disabledTools = [...disableSet];
+    }
+
     servers[name] = entry;
   }
 
@@ -1289,7 +1364,13 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       lines.push("");
     }
 
-    lines.push(`echo "TODO: implement ${tool.id}"`);
+    if (tool.lang === "python") {
+      lines.push(`print("TODO: implement ${tool.id}")`);
+    } else if (tool.lang === "node") {
+      lines.push(`console.log("TODO: implement ${tool.id}");`);
+    } else {
+      lines.push(`echo "TODO: implement ${tool.id}"`);
+    }
     lines.push("");
 
     files.push({
@@ -1366,14 +1447,24 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate `.kiro/hooks/gate-{id}.md` files for each enforced gate.
+ * Generate `.kiro/hooks/gate-{id}.kiro.hook` JSON files for each enforced gate.
  *
- * Kiro hooks are individual files in `.kiro/hooks/` with trigger metadata.
+ * Kiro hooks are individual JSON files in `.kiro/hooks/` with trigger metadata.
  * Each gate with `run:` and non-advisory behavior gets a hook file that
- * fires after the gate's `after` agent completes.
+ * fires when files in the gate's `after` agent's writes paths are edited.
  */
 function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
+
+  // Build a map of agent writes paths for file pattern matching
+  const agentWrites = new Map<string, string[]>();
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (agent.writes && agent.writes.length > 0) {
+      agentWrites.set(agent.id, agent.writes);
+    }
+  }
 
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
@@ -1382,44 +1473,227 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
     if (gate.behavior === "advisory") continue;
 
     const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-    const onFail = gate.onFail || "halt";
 
-    const triggerObj: Record<string, unknown> = {
-      type: "postToolUse",
-      matcher: gate.after || "*",
+    // Derive file patterns from the `after` agent's writes paths
+    const afterWrites = gate.after ? agentWrites.get(gate.after) : undefined;
+    const filePatterns = afterWrites
+      ? afterWrites.map((p) => p.replace(/\/$/, "/**"))
+      : ["workspace/**"];
+
+    const hookJson: Record<string, unknown> = {
+      enabled: true,
+      name: `${toTitle(gate.id)} Gate`,
+      description: `Quality gate that runs after ${gate.after || "any agent"}${gate.before ? ` and before ${gate.before}` : ""}.${gate.checks && gate.checks.length > 0 ? ` Checks: ${gate.checks.join(", ")}.` : ""}`,
+      version: "1",
+      when: {
+        type: "fileEdited",
+        patterns: filePatterns,
+      },
+      then: {
+        type: "runCommand",
+        command: `.kiro/scripts/${scriptName}`,
+      },
     };
-    if (gate.timeout) {
-      triggerObj.timeout = gate.timeout;
-    }
-
-    const content = [
-      `# Gate: ${gate.id}`,
-      "",
-      "## Trigger",
-      "",
-      "```json",
-      JSON.stringify(triggerObj, null, 2),
-      "```",
-      "",
-      "## Description",
-      "",
-      `Quality gate that runs after **${gate.after || "any agent"}**${gate.before ? ` and before **${gate.before}**` : ""}.`,
-      "",
-      "## Action",
-      "",
-      `Run: \`bash .kiro/scripts/${scriptName}\``,
-      "",
-      `On failure: **${onFail}**`,
-      "",
-      gate.checks && gate.checks.length > 0
-        ? `Checks: ${gate.checks.join(", ")}`
-        : "",
-      "",
-    ].filter(Boolean).join("\n") + "\n";
 
     files.push({
-      path: `.kiro/hooks/gate-${gate.id}.md`,
-      content,
+      path: `.kiro/hooks/gate-${gate.id}.kiro.hook`,
+      content: JSON.stringify(hookJson, null, 2) + "\n",
+      category: "machine",
+    });
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// Specs directory
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate `.kiro/specs/` directory with Kiro-standard spec files.
+ *
+ * Only generates files when the topology has sufficient content to populate
+ * them meaningfully (description, agents, flow, etc.).
+ *
+ * - `requirements.md` — populated from topology description + agent roles
+ * - `design.md` — populated from flow and architecture
+ * - `tasks.md` — populated from agents and their phases
+ */
+function generateSpecs(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+
+  // Only generate specs if there is meaningful content
+  const hasDescription = !!ast.topology.description;
+  const hasAgents = agents.length > 0;
+  const hasEdges = ast.edges.length > 0;
+
+  if (!hasDescription && !hasAgents) return files;
+
+  // --- requirements.md ---
+  if (hasDescription || hasAgents) {
+    const req: string[] = [];
+    req.push(`# Requirements — ${toTitle(ast.topology.name)}`);
+    req.push("");
+    if (ast.topology.description) {
+      req.push("## Overview");
+      req.push("");
+      req.push(ast.topology.description);
+      req.push("");
+    }
+    if (Object.keys(ast.roles).length > 0) {
+      req.push("## Agent Roles");
+      req.push("");
+      for (const [role, desc] of Object.entries(ast.roles)) {
+        req.push(`- **${toTitle(role)}**: ${desc}`);
+      }
+      req.push("");
+    }
+    if (agents.length > 0) {
+      req.push("## Functional Requirements");
+      req.push("");
+      for (const agent of agents) {
+        const desc =
+          agent.description ??
+          ast.roles[agent.role ?? ""] ??
+          ast.roles[agent.id] ??
+          "";
+        if (desc) {
+          req.push(`- **${toTitle(agent.id)}**: ${desc}`);
+        }
+      }
+      req.push("");
+    }
+    // Gates as quality requirements
+    const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
+    if (gates.length > 0) {
+      req.push("## Quality Gates");
+      req.push("");
+      for (const gate of gates) {
+        let line = `- **${toTitle(gate.id)}**`;
+        if (gate.checks && gate.checks.length > 0) {
+          line += `: checks ${gate.checks.join(", ")}`;
+        }
+        if (gate.onFail) line += ` (on fail: ${gate.onFail})`;
+        req.push(line);
+      }
+      req.push("");
+    }
+
+    files.push({
+      path: `.kiro/specs/${ast.topology.name}/requirements.md`,
+      content: req.join("\n") + "\n",
+      category: "machine",
+    });
+  }
+
+  // --- design.md ---
+  if (hasEdges || hasAgents) {
+    const design: string[] = [];
+    design.push(`# Design — ${toTitle(ast.topology.name)}`);
+    design.push("");
+
+    if (ast.topology.patterns.length > 0) {
+      design.push("## Architecture Patterns");
+      design.push("");
+      design.push(ast.topology.patterns.map((p) => `- ${p}`).join("\n"));
+      design.push("");
+    }
+
+    // Orchestrator
+    const orch = ast.nodes.find((n) => n.type === "orchestrator") as OrchestratorNode | undefined;
+    if (orch) {
+      design.push("## Orchestrator");
+      design.push("");
+      design.push(`Model: ${orch.model}`);
+      if (orch.handles?.length > 0) {
+        design.push(`Handles: ${orch.handles.join(", ")}`);
+      }
+      design.push("");
+    }
+
+    if (hasEdges) {
+      design.push("## Flow Graph");
+      design.push("");
+      for (const edge of ast.edges) {
+        const arrow = edge.isError ? `-x->` : "->";
+        let line = `- ${edge.from} ${arrow} ${edge.to}`;
+        if (edge.condition) line += ` [when ${edge.condition}]`;
+        if (edge.maxIterations) line += ` [max ${edge.maxIterations}]`;
+        design.push(line);
+      }
+      design.push("");
+    }
+
+    // MCP servers as integration points
+    if (Object.keys(ast.mcpServers).length > 0) {
+      design.push("## Integration Points (MCP Servers)");
+      design.push("");
+      for (const [name, config] of Object.entries(ast.mcpServers)) {
+        const stype = (config as Record<string, unknown>).type ?? "stdio";
+        design.push(`- **${name}** (${stype})`);
+      }
+      design.push("");
+    }
+
+    files.push({
+      path: `.kiro/specs/${ast.topology.name}/design.md`,
+      content: design.join("\n") + "\n",
+      category: "machine",
+    });
+  }
+
+  // --- tasks.md ---
+  if (hasAgents) {
+    const tasks: string[] = [];
+    tasks.push(`# Tasks — ${toTitle(ast.topology.name)}`);
+    tasks.push("");
+
+    // Group agents by phase
+    const phased = agents
+      .filter((a) => a.phase != null)
+      .sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0));
+    const unphased = agents.filter((a) => a.phase == null);
+
+    if (phased.length > 0) {
+      let currentPhase = -1;
+      for (const agent of phased) {
+        if (agent.phase !== currentPhase) {
+          currentPhase = agent.phase!;
+          tasks.push(`## Phase ${currentPhase}`);
+          tasks.push("");
+        }
+        const desc =
+          agent.description ??
+          ast.roles[agent.role ?? ""] ??
+          "";
+        tasks.push(`- [ ] **${toTitle(agent.id)}**${desc ? `: ${desc}` : ""}`);
+        if (agent.tools && agent.tools.length > 0) {
+          tasks.push(`  - Tools: ${agent.tools.join(", ")}`);
+        }
+        if (agent.mcpServers && agent.mcpServers.length > 0) {
+          tasks.push(`  - MCP: ${agent.mcpServers.join(", ")}`);
+        }
+      }
+      tasks.push("");
+    }
+
+    if (unphased.length > 0) {
+      tasks.push("## Unphased");
+      tasks.push("");
+      for (const agent of unphased) {
+        const desc =
+          agent.description ??
+          ast.roles[agent.role ?? ""] ??
+          "";
+        tasks.push(`- [ ] **${toTitle(agent.id)}**${desc ? `: ${desc}` : ""}`);
+      }
+      tasks.push("");
+    }
+
+    files.push({
+      path: `.kiro/specs/${ast.topology.name}/tasks.md`,
+      content: tasks.join("\n") + "\n",
       category: "machine",
     });
   }
@@ -1485,6 +1759,9 @@ export const kiroBinding: BindingTarget = {
     // 11. Metering
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
+
+    // 12. Specs directory (.kiro/specs/)
+    files.push(...generateSpecs(ast));
 
     return deduplicateFiles(files);
   },

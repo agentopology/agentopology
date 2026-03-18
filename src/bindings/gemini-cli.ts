@@ -6,9 +6,9 @@
  *
  * Gemini CLI structure:
  *   .gemini/CONTEXT.md            — Main instructions (never root GEMINI.md)
- *   .gemini/settings.json         — Tool permissions, model config, sandbox
+ *   .gemini/settings.json         — Model config, permissions, MCP, hooks, sandbox
  *   .gemini/instructions.md       — Detailed project instructions
- *   .gemini/commands/<name>.md    — Custom command files from triggers
+ *   .gemini/commands/<name>.toml  — Custom command files from triggers
  *
  * @module
  */
@@ -16,6 +16,7 @@
 import type {
   TopologyAST,
   AgentNode,
+  ActionNode,
   GateNode,
   GroupNode,
   HumanNode,
@@ -27,6 +28,7 @@ import type {
   RetryConfig,
   CircuitBreakerConfig,
   PromptVariant,
+  SensitiveValue,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
@@ -62,28 +64,25 @@ function gitkeep(dirPath: string): GeneratedFile {
 }
 
 /**
- * Map topology permission strings to Gemini CLI approval settings.
+ * Map topology permission strings to Gemini CLI defaultApprovalMode.
  *
- * Gemini CLI permission model:
- *   supervised  -> default (asks for approval)
- *   autonomous  -> yolo (auto-approve all tools)
- *   interactive -> default (asks for approval)
- *   unrestricted -> sandbox off + yolo
- *
- * Returns a partial settings object to merge.
+ * Gemini CLI approval modes:
+ *   "default"   — asks for approval (supervised)
+ *   "auto_edit" — auto-approve edits (autonomous)
+ *   "plan"      — plan mode (read-only)
  */
-function mapPermissions(perm: string): { sandbox?: boolean; toolApproval?: string } {
+function mapApprovalMode(perm: string): string {
   switch (perm) {
     case "supervised":
-      return { toolApproval: "default" };
-    case "autonomous":
-      return { toolApproval: "yolo" };
     case "interactive":
-      return { toolApproval: "default" };
+      return "default";
+    case "autonomous":
     case "unrestricted":
-      return { sandbox: false, toolApproval: "yolo" };
+      return "auto_edit";
+    case "plan":
+      return "plan";
     default:
-      return {};
+      return "default";
   }
 }
 
@@ -105,6 +104,39 @@ function formatSchemaType(t: SchemaType): string {
 function formatSchemaField(f: SchemaFieldDef): string {
   const opt = f.optional ? "?" : "";
   return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
+}
+
+/**
+ * Map topology hook event names to Gemini CLI hook event names.
+ */
+function mapHookEvent(on: string): string {
+  switch (on) {
+    case "PreToolUse":
+      return "BeforeTool";
+    case "PostToolUse":
+    case "ToolUse":
+      return "AfterTool";
+    case "AgentStart":
+      return "BeforeAgent";
+    case "AgentStop":
+      return "AfterAgent";
+    case "Error":
+      return "Notification";
+    default:
+      return on;
+  }
+}
+
+/**
+ * Determine if a hook run command is an inline command (not a file path).
+ * Inline commands are things like "exit 1", not file paths like "scripts/foo.sh".
+ */
+function isInlineCommand(run: string): boolean {
+  // If it doesn't contain a path separator and doesn't end in a script extension,
+  // treat it as an inline command.
+  if (run.includes("/") || run.includes("\\")) return false;
+  if (/\.\w+$/.test(run)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +267,32 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
       // Log level
       if (agent.logLevel) {
         sections.push(`- Log verbosity: ${agent.logLevel}`);
+      }
+
+      // Model params
+      if (agent.temperature != null) {
+        sections.push(`- Temperature: ${agent.temperature}`);
+      }
+      if (agent.maxTokens != null) {
+        sections.push(`- Max tokens: ${agent.maxTokens}`);
+      }
+      if (agent.topP != null) {
+        sections.push(`- Top-p: ${agent.topP}`);
+      }
+      if (agent.topK != null) {
+        sections.push(`- Top-k: ${agent.topK}`);
+      }
+      if (agent.seed != null) {
+        sections.push(`- Seed: ${agent.seed}`);
+      }
+      if (agent.thinking) {
+        sections.push(`- Thinking: ${agent.thinking}`);
+      }
+      if (agent.thinkingBudget != null) {
+        sections.push(`- Thinking budget: ${agent.thinkingBudget} tokens`);
+      }
+      if (agent.maxTurns != null) {
+        sections.push(`- Max turns: ${agent.maxTurns}`);
       }
 
       // Join semantics
@@ -374,6 +432,29 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
     }
   }
 
+  // Actions section
+  const actions = ast.nodes.filter((n) => n.type === "action") as ActionNode[];
+  if (actions.length > 0) {
+    sections.push("## Actions");
+    sections.push("");
+    for (const action of actions) {
+      sections.push(`### ${toTitle(action.id)}`);
+      if (action.description) sections.push(action.description);
+      if (action.kind) sections.push(`- Kind: ${action.kind}`);
+      if (action.source) sections.push(`- Source: ${action.source}`);
+      if (action.commands && action.commands.length > 0) {
+        sections.push(`- Commands:`);
+        for (const cmd of action.commands) {
+          sections.push(`  - \`${cmd}\``);
+        }
+      }
+      if (action.timeout) sections.push(`- Timeout: ${action.timeout}`);
+      if (action.onFail) sections.push(`- On fail: ${action.onFail}`);
+      if (action.join) sections.push(`- Join: ${action.join}`);
+      sections.push("");
+    }
+  }
+
   // Triggers section
   if (ast.triggers.length > 0) {
     sections.push("## Commands");
@@ -412,20 +493,26 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
 /**
  * Generate .gemini/settings.json.
  *
- * Maps topology permissions, tool allow/deny lists, model config,
- * sandbox mode, and MCP server configuration.
+ * Maps topology to the real Gemini CLI settings structure:
+ *   general.defaultApprovalMode — permission level
+ *   model.name — model name
+ *   modelConfigs.overrides — temperature, maxTokens, topP, topK
+ *   tools.sandbox — sandbox mode
+ *   context.fileName — context file path
+ *   mcpServers — MCP server configuration
+ *   hooks — hook definitions
+ *   hooksConfig.enabled — hooks toggle
+ *   experimental.enableAgents — agent support
  */
 function generateSettings(ast: TopologyAST): GeneratedFile {
   const settings: Record<string, unknown> = {};
 
-  // Determine the most restrictive global permission from agents
-  // Use the topology-level settings permission if available
+  // --- general.defaultApprovalMode ---
   let globalPermission: string | undefined;
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
   for (const agent of agents) {
     if (agent.permissions) {
-      // Use the first agent's permissions as a baseline,
-      // but 'supervised' takes priority (most restrictive)
+      // Use the most restrictive: 'supervised' takes priority
       if (!globalPermission || agent.permissions === "supervised") {
         globalPermission = agent.permissions;
       }
@@ -433,42 +520,144 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
   }
 
   if (globalPermission) {
-    const mapped = mapPermissions(globalPermission);
-    if (mapped.toolApproval) settings.toolApproval = mapped.toolApproval;
-    if (mapped.sandbox !== undefined) settings.sandbox = mapped.sandbox;
+    settings.general = { defaultApprovalMode: mapApprovalMode(globalPermission) };
   }
 
-  // First-class sandbox field from settings takes precedence
+  // --- model ---
+  // Only set model.name if it looks like a Gemini model or if a Google
+  // provider is configured.  Non-Gemini model names (haiku, opus, sonnet,
+  // gpt-4o, etc.) would be invalid and could crash the CLI.
+  const defaults = ast.defaults;
+  const firstAgent = agents[0];
+  const hasGoogleProvider = ast.providers?.some(
+    (p) => p.name === "google" || p.name === "gemini"
+  );
+  const modelName = firstAgent?.model;
+  const isGeminiModel =
+    modelName && /^gemini/i.test(modelName);
+
+  if (isGeminiModel || (modelName && hasGoogleProvider)) {
+    settings.model = { name: modelName };
+  }
+
+  // Note: modelConfigs.overrides requires a model match pattern and is
+  // complex — omitted to avoid crashing Gemini CLI.  Temperature, topP,
+  // topK are documented in CONTEXT.md per-agent instead.
+
+  // --- tools.sandbox ---
+  const toolsConfig: Record<string, unknown> = {};
   const settingsSandbox = ast.settings?.sandbox;
   if (settingsSandbox !== undefined && settingsSandbox !== null) {
     if (typeof settingsSandbox === "boolean") {
-      settings.sandbox = settingsSandbox;
+      toolsConfig.sandbox = settingsSandbox;
     } else if (settingsSandbox === "true" || settingsSandbox === "false") {
-      settings.sandbox = settingsSandbox === "true";
+      toolsConfig.sandbox = settingsSandbox === "true";
     } else {
-      // String values like "docker", "none", "network-only" — pass through
-      settings.sandbox = settingsSandbox;
+      // String values like "docker", "network-only" — map to true
+      toolsConfig.sandbox = true;
     }
+  } else if (globalPermission === "unrestricted") {
+    toolsConfig.sandbox = false;
   }
 
-  // Tool allow/deny lists from settings block
-  const perms = ast.settings;
-  if (perms) {
-    const allow = perms.allow as string[] | undefined;
-    const deny = perms.deny as string[] | undefined;
-
-    if (allow && allow.length > 0) {
-      settings.allowedTools = allow;
-    }
-    if (deny && deny.length > 0) {
-      settings.deniedTools = deny;
-    }
+  if (Object.keys(toolsConfig).length > 0) {
+    settings.tools = toolsConfig;
   }
 
-  // Environment variables
+  // --- context.fileName ---
+  const DEFAULT_CONTEXT = ".gemini/CONTEXT.md";
+  let contextPath = ast.context.file ?? DEFAULT_CONTEXT;
+  if (contextPath === "GEMINI.md" || contextPath === "./GEMINI.md") {
+    contextPath = DEFAULT_CONTEXT;
+  }
+  settings.context = { fileName: contextPath };
+
+  // --- mcpServers ---
+  if (Object.keys(ast.mcpServers).length > 0) {
+    const mcpServers: Record<string, unknown> = {};
+    for (const [name, config] of Object.entries(ast.mcpServers)) {
+      const entry: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(config)) {
+        entry[key] = value;
+      }
+      // Gemini CLI auto-detects stdio when command is present — strip type
+      if (entry.command) {
+        delete entry.type;
+      }
+      // Ensure env exists
+      if (!entry.env) {
+        entry.env = {};
+      }
+      mcpServers[name] = entry;
+    }
+    settings.mcpServers = mcpServers;
+  }
+
+  // --- hooks ---
+  const allHooks = collectAllHooks(ast);
+  if (allHooks.length > 0) {
+    const hooksMap: Record<string, unknown[]> = {};
+
+    for (const hook of allHooks) {
+      const geminiEvent = mapHookEvent(hook.on);
+      if (!hooksMap[geminiEvent]) {
+        hooksMap[geminiEvent] = [];
+      }
+
+      const hookEntry: Record<string, unknown> = {};
+      const hookDef: Record<string, unknown> = {
+        type: "command",
+        name: hook.name,
+      };
+
+      // Inline command vs file path
+      if (isInlineCommand(hook.run)) {
+        hookDef.command = hook.run;
+      } else {
+        // Scripts are generated into .gemini/scripts/, so rewrite the path
+        const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+        hookDef.command = `./.gemini/scripts/${scriptName}`;
+      }
+
+      if (hook.timeout != null) {
+        hookDef.timeout = hook.timeout;
+      }
+
+      if (hook.matcher) {
+        hookEntry.matcher = hook.matcher;
+        hookEntry.hooks = [hookDef];
+      } else {
+        // No matcher — just the hook definition
+        hookEntry.hooks = [hookDef];
+      }
+
+      hooksMap[geminiEvent].push(hookEntry);
+    }
+
+    settings.hooks = hooksMap;
+    settings.hooksConfig = { enabled: true };
+  }
+
+  // --- experimental ---
+  if (agents.length > 1) {
+    settings.experimental = { enableAgents: true };
+  }
+
+  // --- Environment variables ---
   const envVars: Record<string, string> = {};
   for (const [key, val] of Object.entries(ast.env)) {
-    envVars[key] = typeof val === "string" ? val : val.value;
+    if (typeof val === "string") {
+      // Plain string — check for vault:// prefix
+      envVars[key] = val.startsWith("vault://") ? "<set-via-environment>" : val;
+    } else {
+      // SensitiveValue — use placeholder if sensitive or vault URI
+      const sv = val as SensitiveValue;
+      if (sv.sensitive || sv.secretRef || sv.value.startsWith("vault://")) {
+        envVars[key] = "<set-via-environment>";
+      } else {
+        envVars[key] = sv.value;
+      }
+    }
   }
 
   // If a google provider exists, scaffold the GEMINI_API_KEY env var
@@ -486,41 +675,28 @@ function generateSettings(ast: TopologyAST): GeneratedFile {
     settings.env = envVars;
   }
 
-  // Model configuration from defaults or first agent
-  const defaults = ast.defaults;
-  const firstAgent = agents[0];
-
-  const modelConfig: Record<string, unknown> = {};
-  const temp = defaults?.temperature ?? firstAgent?.temperature;
-  if (temp != null) modelConfig.temperature = temp;
-  const maxTok = defaults?.maxTokens ?? firstAgent?.maxTokens;
-  if (maxTok != null) modelConfig.maxOutputTokens = maxTok;
-  const tp = defaults?.topP ?? firstAgent?.topP;
-  if (tp != null) modelConfig.topP = tp;
-  const tk = defaults?.topK ?? firstAgent?.topK;
-  if (tk != null) modelConfig.topK = tk;
-
-  if (Object.keys(modelConfig).length > 0) {
-    settings.modelConfig = modelConfig;
-  }
-
-  // Thinking / reasoning config
-  const thinkingLevel = defaults?.thinking ?? firstAgent?.thinking;
-  if (thinkingLevel && thinkingLevel !== "off") {
-    const thinkingConfig: Record<string, unknown> = { thinkingMode: thinkingLevel };
-    const thinkingBudget = firstAgent?.thinkingBudget;
-    if (thinkingBudget != null) thinkingConfig.thinkingBudget = thinkingBudget;
-    settings.thinkingConfig = thinkingConfig;
-  }
-
-  // Merge gemini-cli extension fields from topology-level settings
-  // (handled at the end to allow overrides)
-
   return {
     path: ".gemini/settings.json",
     content: JSON.stringify(settings, null, 2) + "\n",
     category: "machine",
   };
+}
+
+/**
+ * Collect all hooks from both the global hooks array and per-agent hooks.
+ */
+function collectAllHooks(ast: TopologyAST): HookDef[] {
+  const hooks: HookDef[] = [...ast.hooks];
+
+  // Collect per-agent hooks
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+  for (const agent of agents) {
+    if (agent.hooks && agent.hooks.length > 0) {
+      hooks.push(...agent.hooks);
+    }
+  }
+
+  return hooks;
 }
 
 /**
@@ -836,59 +1012,173 @@ function generateInstructions(ast: TopologyAST): GeneratedFile {
 }
 
 /**
- * Generate .gemini/commands/<name>.md for each trigger.
+ * Generate .gemini/commands/<name>.toml for each trigger.
  *
- * Gemini CLI supports custom commands defined as markdown files
+ * Gemini CLI supports custom commands defined as TOML files
  * in the .gemini/commands/ directory.
  */
 function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
+  // Collect agents sorted by phase for orchestration prompts
+  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
+  const sortedAgents = [...agents].sort(
+    (a, b) => (a.phase ?? 999) - (b.phase ?? 999)
+  );
+
+  // Collect human/group nodes for special handling
+  const humans = ast.nodes.filter((n) => n.type === "human") as HumanNode[];
+  const groups = ast.nodes.filter((n) => n.type === "group") as GroupNode[];
+
+  // Build workspace paths from agent reads/writes
+  const workspacePaths = new Set<string>();
+  for (const agent of agents) {
+    for (const p of agent.writes ?? []) workspacePaths.add(p);
+    for (const p of agent.reads ?? []) workspacePaths.add(p);
+  }
+
   for (const trigger of ast.triggers) {
-    const sections: string[] = [];
+    const promptLines: string[] = [];
 
-    // Header
-    sections.push(`# /${trigger.name}`);
-    sections.push("");
-    sections.push(trigger.pattern);
-    sections.push("");
+    // Opening instruction
+    const argRef = trigger.argument ? ` {{args}}` : "";
+    promptLines.push(
+      `Execute the ${toTitle(ast.topology.name)} topology${argRef}.`
+    );
+    promptLines.push("");
+    promptLines.push(
+      "Follow the phases below in order. Complete each phase fully before moving to the next."
+    );
+    if (workspacePaths.size > 0) {
+      promptLines.push(
+        "Write outputs to the workspace directory at each step."
+      );
+    }
 
-    // Arguments
+    // Generate a phase section for each agent
+    for (const agent of sortedAgents) {
+      promptLines.push("");
+      const phaseLabel =
+        agent.phase != null ? `Phase ${agent.phase}` : "Step";
+      promptLines.push(`## ${phaseLabel}: ${toTitle(agent.id)}`);
+
+      // Role / description
+      if (agent.description) {
+        promptLines.push(`Act as the **${toTitle(agent.id)}** agent. ${agent.description}`);
+      } else if (agent.prompt) {
+        promptLines.push(`Act as the **${toTitle(agent.id)}** agent.`);
+        promptLines.push(agent.prompt);
+      } else {
+        promptLines.push(`Act as the **${toTitle(agent.id)}** agent.`);
+      }
+
+      // Read/write paths
+      if (agent.reads && agent.reads.length > 0) {
+        promptLines.push(`Read from: ${agent.reads.join(", ")}`);
+      }
+      if (agent.writes && agent.writes.length > 0) {
+        promptLines.push(`Write results to: ${agent.writes.join(", ")}`);
+      }
+
+      // Outputs / routing
+      if (agent.outputs) {
+        promptLines.push("");
+        for (const [field, values] of Object.entries(agent.outputs)) {
+          promptLines.push(
+            `Determine ${field}: ${values.join(" | ")}`
+          );
+        }
+      }
+
+      // Conditional edges from this agent
+      const outEdges = ast.edges.filter((e) => e.from === agent.id);
+      const conditionalEdges = outEdges.filter((e) => e.condition);
+      if (conditionalEdges.length > 0) {
+        promptLines.push("");
+        promptLines.push("Routing:");
+        for (const edge of conditionalEdges) {
+          const maxNote = edge.maxIterations
+            ? ` (max ${edge.maxIterations} times)`
+            : "";
+          promptLines.push(
+            `- If ${edge.condition} → proceed to ${toTitle(edge.to)}${maxNote}`
+          );
+        }
+      }
+
+      // Timeout
+      if (agent.timeout) {
+        promptLines.push(`Maximum time: ${agent.timeout}`);
+      }
+    }
+
+    // Human checkpoints
+    for (const human of humans) {
+      // Find which agents flow into the human node
+      const inEdges = ast.edges.filter((e) => e.to === human.id);
+      if (inEdges.length > 0) {
+        promptLines.push("");
+        promptLines.push(`## Checkpoint: ${toTitle(human.id)}`);
+        if (human.description) promptLines.push(human.description);
+        promptLines.push(
+          "**STOP and wait for human approval before proceeding.**"
+        );
+        if (human.timeout) {
+          promptLines.push(`Timeout: ${human.timeout}`);
+        }
+      }
+    }
+
+    // Group discussions
+    for (const group of groups) {
+      promptLines.push("");
+      promptLines.push(`## Discussion: ${toTitle(group.id)}`);
+      if (group.description) promptLines.push(group.description);
+      promptLines.push(
+        `Conduct a multi-perspective discussion considering the viewpoints of: ${group.members.join(", ")}.`
+      );
+      if (group.maxRounds != null) {
+        promptLines.push(`Limit to ${group.maxRounds} rounds of discussion.`);
+      }
+      if (group.termination) {
+        promptLines.push(`End when: ${group.termination}`);
+      }
+    }
+
+    // Final instruction
+    promptLines.push("");
+    promptLines.push(
+      "## Summary"
+    );
+    promptLines.push(
+      "After completing all phases, provide a summary of what happened at each phase and the final outcome."
+    );
+
+    // Build TOML
+    const description = trigger.argument
+      ? `${trigger.name} — ${ast.topology.description || toTitle(ast.topology.name)} (arg: ${trigger.argument})`
+      : `${trigger.name} — ${ast.topology.description || toTitle(ast.topology.name)}`;
+
+    // Replace argument placeholder with {{args}}
+    let promptText = promptLines.join("\n");
     if (trigger.argument) {
-      sections.push("## Arguments");
-      sections.push(`- ${trigger.argument}: extracted from the command pattern`);
-      sections.push("");
+      promptText = promptText.replace(
+        new RegExp(`<${trigger.argument}>`, "g"),
+        "{{args}}"
+      );
     }
 
-    // Pipeline (from edges)
-    if (ast.edges.length > 0) {
-      sections.push("## Pipeline");
-      for (const edge of ast.edges) {
-        let line = `${edge.from} -> ${edge.to}`;
-        if (edge.condition) line += ` [when ${edge.condition}]`;
-        sections.push(`- ${line}`);
-      }
-      sections.push("");
-    }
-
-    // Agents table
-    const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-    if (agents.length > 0) {
-      sections.push("## Agents");
-      sections.push("| Agent | Phase | Model | Role |");
-      sections.push("|-------|-------|-------|------|");
-      for (const agent of agents) {
-        const phase = agent.phase != null ? String(agent.phase) : "-";
-        const model = agent.model ?? "-";
-        const role = agent.role ?? "-";
-        sections.push(`| ${agent.id} | ${phase} | ${model} | ${role} |`);
-      }
-      sections.push("");
-    }
+    const tomlContent = [
+      `description = ${JSON.stringify(description)}`,
+      `prompt = """`,
+      promptText,
+      `"""`,
+      "",
+    ].join("\n");
 
     files.push({
-      path: `.gemini/commands/${trigger.name}.md`,
-      content: sections.join("\n") + "\n",
+      path: `.gemini/commands/${trigger.name}.toml`,
+      content: tomlContent,
       category: "machine",
     });
   }
@@ -899,7 +1189,6 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
 /** Generate gate script stubs. */
 function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
-  const name = ast.topology.name;
 
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
@@ -917,12 +1206,19 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
-/** Generate hook script stubs. */
+/**
+ * Generate hook script stubs for hooks that reference script files.
+ * Inline commands (like "exit 1") do NOT get script stubs.
+ */
 function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
+  const allHooks = collectAllHooks(ast);
 
-  for (const hook of ast.hooks) {
+  for (const hook of allHooks) {
     if (!hook.run) continue;
+    // Skip inline commands — they go directly into settings.json
+    if (isInlineCommand(hook.run)) continue;
+
     const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
     files.push({
       path: `.gemini/scripts/${scriptName}`,
@@ -972,7 +1268,13 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       lines.push("");
     }
 
-    lines.push(`echo "TODO: implement ${tool.id}"`);
+    if (tool.lang === "python") {
+      lines.push(`print("TODO: implement ${tool.id}")`);
+    } else if (tool.lang === "node") {
+      lines.push(`console.log("TODO: implement ${tool.id}");`);
+    } else {
+      lines.push(`echo "TODO: implement ${tool.id}"`);
+    }
     lines.push("");
 
     files.push({
@@ -1010,37 +1312,6 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
-/** Generate MCP server configuration. */
-function generateMcpConfig(ast: TopologyAST): GeneratedFile | null {
-  if (Object.keys(ast.mcpServers).length === 0) return null;
-
-  const mcpConfig: Record<string, unknown> = { mcpServers: {} };
-  const servers = mcpConfig.mcpServers as Record<string, unknown>;
-
-  for (const [name, config] of Object.entries(ast.mcpServers)) {
-    const entry: Record<string, unknown> = {};
-    let hasEnv = false;
-    for (const [key, value] of Object.entries(config)) {
-      if (key === "args" && Array.isArray(value)) {
-        entry.args = value;
-      } else {
-        entry[key] = value;
-      }
-      if (key === "env") hasEnv = true;
-    }
-    if (!hasEnv) {
-      entry.env = {};
-    }
-    servers[name] = entry;
-  }
-
-  return {
-    path: ".gemini/settings/mcp.json",
-    content: JSON.stringify(mcpConfig, null, 2) + "\n",
-    category: "machine",
-  };
-}
-
 /** Generate metering script stub. */
 function generateMetering(ast: TopologyAST): GeneratedFile | null {
   if (!ast.metering) return null;
@@ -1068,6 +1339,58 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
+/**
+ * Generate `.gemini/skills/<skill-id>/SKILL.md` files.
+ *
+ * Gemini CLI discovers skills from this directory structure. Each SKILL.md has
+ * YAML front-matter (name, description) and a body with instructions.
+ */
+function generateSkills(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+
+  for (const skill of ast.skills) {
+    const lines: string[] = [];
+
+    // YAML front-matter
+    lines.push("---");
+    lines.push(`name: ${skill.id}`);
+    lines.push(`description: ${skill.description}`);
+    lines.push("---");
+    lines.push("");
+
+    // Body text
+    if (skill.prompt) {
+      lines.push(skill.prompt);
+    } else {
+      // Generate a body from scripts, domains, references
+      const bodyParts: string[] = [];
+      if (skill.scripts && skill.scripts.length > 0) {
+        bodyParts.push(`Scripts: ${skill.scripts.join(", ")}`);
+      }
+      if (skill.domains && skill.domains.length > 0) {
+        bodyParts.push(`Domains: ${skill.domains.join(", ")}`);
+      }
+      if (skill.references && skill.references.length > 0) {
+        bodyParts.push(`References: ${skill.references.join(", ")}`);
+      }
+      if (bodyParts.length > 0) {
+        lines.push(bodyParts.join("\n"));
+      } else {
+        lines.push(skill.description);
+      }
+    }
+    lines.push("");
+
+    files.push({
+      path: `.gemini/skills/${skill.id}/SKILL.md`,
+      content: lines.join("\n"),
+      category: "agent",
+    });
+  }
+
+  return files;
+}
+
 // ---------------------------------------------------------------------------
 // Binding export
 // ---------------------------------------------------------------------------
@@ -1084,30 +1407,29 @@ export const geminiCliBinding: BindingTarget = {
     // Main instructions file (.gemini/CONTEXT.md — never root GEMINI.md)
     files.push(generateGeminiMd(ast));
 
-    // Settings file (permissions, tools, sandbox, env)
+    // Settings file (permissions, model, sandbox, MCP, hooks, env)
     files.push(generateSettings(ast));
 
     // Detailed project instructions
     files.push(generateInstructions(ast));
 
-    // Command files from triggers
+    // Command files from triggers (.toml format)
     files.push(...generateCommandFiles(ast));
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
 
-    // Hook scripts
+    // Hook scripts (only for file-based hooks, not inline commands)
     files.push(...generateHookScripts(ast));
 
     // Tool scripts
     files.push(...generateToolScripts(ast));
 
+    // Skill files (.gemini/skills/<id>/SKILL.md)
+    files.push(...generateSkills(ast));
+
     // Memory directories
     files.push(...generateMemory(ast));
-
-    // MCP server config
-    const mcpFile = generateMcpConfig(ast);
-    if (mcpFile) files.push(mcpFile);
 
     // Metering
     const meteringFile = generateMetering(ast);

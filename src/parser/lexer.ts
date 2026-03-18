@@ -286,10 +286,24 @@ export function unquote(s: string): string {
  */
 export function parseFields(body: string): Record<string, string> {
   const fields: Record<string, string> = {};
+  let depth = 0;
   for (const line of body.split("\n")) {
-    const kv = parseKV(line);
-    if (kv) {
-      fields[kv[0]] = kv[1];
+    // Track brace depth so we only parse top-level KV pairs.
+    for (const ch of line) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    // Only parse KV pairs at the top level (depth 0 or just entered depth 1
+    // on this line — but we want lines *before* any nested block opens).
+    // After processing braces for this line, if depth > 0 we are inside a
+    // nested block. However, the line that *opens* a block (e.g. "variants {")
+    // will have depth > 0 after processing — that line is a block header, not
+    // a KV pair, so skipping it is correct.
+    if (depth === 0) {
+      const kv = parseKV(line);
+      if (kv) {
+        fields[kv[0]] = kv[1];
+      }
     }
   }
   return fields;
