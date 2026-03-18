@@ -13,7 +13,7 @@
   "files": [
     "dist",
     "spec",
-    ".claude",
+    "examples",
     "README.md",
     "LICENSE"
   ],

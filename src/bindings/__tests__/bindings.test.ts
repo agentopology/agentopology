@@ -176,8 +176,8 @@ function assertStructuralInvariants(files: GeneratedFile[]) {
 // ---------------------------------------------------------------------------
 
 describe("Binding registry", () => {
-  it("contains all 10 bindings", () => {
-    expect(Object.keys(bindings)).toHaveLength(10);
+  it("contains all 7 bindings", () => {
+    expect(Object.keys(bindings)).toHaveLength(7);
   });
 
   it("all bindings have a name and description", () => {
@@ -748,14 +748,60 @@ describe("gemini-cli binding", () => {
     expect(instructions).toBeDefined();
   });
 
-  it("produces command files from triggers", () => {
-    const cmdFile = files.find((f) => f.path === ".gemini/commands/run.md");
+  it("produces command files from triggers as .toml", () => {
+    const cmdFile = files.find((f) => f.path === ".gemini/commands/run.toml");
     expect(cmdFile).toBeDefined();
+    expect(cmdFile!.content).toContain('description =');
+    expect(cmdFile!.content).toContain('prompt = """');
   });
 
-  it("produces MCP config at .gemini/settings/mcp.json", () => {
+  it("settings.json uses real Gemini CLI structure", () => {
+    const settings = files.find((f) => f.path === ".gemini/settings.json");
+    expect(settings).toBeDefined();
+    const parsed = JSON.parse(settings!.content);
+
+    // general.defaultApprovalMode instead of toolApproval
+    expect(parsed.general).toBeDefined();
+    expect(parsed.general.defaultApprovalMode).toBeDefined();
+    expect(["default", "auto_edit", "plan"]).toContain(parsed.general.defaultApprovalMode);
+
+    // model.name only set for Gemini-compatible model names
+    // (non-Gemini models like haiku/opus are omitted to avoid crashing the CLI)
+    if (parsed.model) {
+      expect(parsed.model.name).toBeDefined();
+    }
+
+    // context.fileName points to the context file
+    expect(parsed.context).toBeDefined();
+    expect(parsed.context.fileName).toBe(".gemini/CONTEXT.md");
+
+    // No fictional keys
+    expect(parsed).not.toHaveProperty("toolApproval");
+    expect(parsed).not.toHaveProperty("allowedTools");
+    expect(parsed).not.toHaveProperty("deniedTools");
+    expect(parsed).not.toHaveProperty("thinkingConfig");
+    expect(parsed).not.toHaveProperty("modelConfig");
+    expect(parsed).not.toHaveProperty("sandbox");
+  });
+
+  it("includes MCP servers in settings.json (not separate file)", () => {
+    const settings = files.find((f) => f.path === ".gemini/settings.json");
+    const parsed = JSON.parse(settings!.content);
+    expect(parsed.mcpServers).toBeDefined();
+    expect(parsed.mcpServers.filesystem).toBeDefined();
+
+    // No separate MCP file
     const mcpFile = files.find((f) => f.path === ".gemini/settings/mcp.json");
-    expect(mcpFile).toBeDefined();
+    expect(mcpFile).toBeUndefined();
+  });
+
+  it("includes hooks in settings.json with correct event mapping", () => {
+    const settings = files.find((f) => f.path === ".gemini/settings.json");
+    const parsed = JSON.parse(settings!.content);
+    // The test topology has a PostToolUse hook -> should map to AfterTool
+    expect(parsed.hooks).toBeDefined();
+    expect(parsed.hooks.AfterTool).toBeDefined();
+    expect(parsed.hooksConfig).toEqual({ enabled: true });
   });
 });
 
@@ -774,13 +820,35 @@ describe("copilot-cli binding", () => {
     expect(instructions!.content.length).toBeGreaterThan(0);
   });
 
-  it("produces .github/agents/*.agent.md for each agent", () => {
-    const agentFiles = files.filter((f) => f.path.match(/\.github\/agents\/.*\.agent\.md$/));
+  it("produces .github/instructions/*.instructions.md for each agent", () => {
+    const agentFiles = files.filter((f) => f.path.match(/\.github\/instructions\/.*\.instructions\.md$/));
     expect(agentFiles.length).toBeGreaterThanOrEqual(2);
 
     const paths = agentFiles.map((f) => f.path);
-    expect(paths).toContain(".github/agents/planner.agent.md");
-    expect(paths).toContain(".github/agents/builder.agent.md");
+    expect(paths).toContain(".github/instructions/planner.instructions.md");
+    expect(paths).toContain(".github/instructions/builder.instructions.md");
+  });
+
+  it("uses applyTo frontmatter derived from reads/writes paths", () => {
+    const planner = files.find((f) => f.path === ".github/instructions/planner.instructions.md");
+    expect(planner).toBeDefined();
+    expect(planner!.content).toContain("applyTo:");
+    expect(planner!.content).toContain("workspace/input.md");
+    expect(planner!.content).toContain("workspace/plan.md");
+  });
+
+  it("does NOT include fictional frontmatter keys (tools, model, sandbox)", () => {
+    const builder = files.find((f) => f.path === ".github/instructions/builder.instructions.md");
+    expect(builder).toBeDefined();
+    // Frontmatter should only contain applyTo
+    const fmMatch = builder!.content.match(/---\n([\s\S]*?)\n---/);
+    expect(fmMatch).toBeDefined();
+    const fmContent = fmMatch![1];
+    expect(fmContent).not.toContain("tools:");
+    expect(fmContent).not.toContain("model:");
+    expect(fmContent).not.toContain("sandbox:");
+    expect(fmContent).not.toContain("name:");
+    expect(fmContent).not.toContain("permissions:");
   });
 
   it("generates gate script for enforced gate", () => {
@@ -1320,20 +1388,27 @@ topology deep-kiro-test : [pipeline, fan-out] {
 
   // Additional: per-agent hooks and MCP resources
   describe("per-agent hooks and MCP resources", () => {
-    it("coder agent JSON includes per-agent hooks", () => {
+    it("coder agent JSON includes per-agent hooks as object keyed by event", () => {
       const coderFile = files.find((f) => f.path === ".kiro/agents/coder.json");
       const json = JSON.parse(coderFile!.content);
       expect(json.hooks).toBeDefined();
-      expect(json.hooks.length).toBeGreaterThanOrEqual(1);
-      expect(json.hooks[0].event).toBe("postToolUse");
+      expect(json.hooks.postToolUse).toBeDefined();
+      expect(json.hooks.postToolUse.length).toBeGreaterThanOrEqual(1);
+      expect(json.hooks.postToolUse[0].command).toBe("scripts/format.sh");
+      expect(json.hooks.postToolUse[0].matcher).toBe("fs_write");
     });
 
-    it("coder agent JSON includes MCP resources", () => {
+    it("coder agent JSON includes inline mcpServers config", () => {
       const coderFile = files.find((f) => f.path === ".kiro/agents/coder.json");
       const json = JSON.parse(coderFile!.content);
-      expect(json.resources).toBeDefined();
-      expect(json.resources).toContain("mcp://filesystem");
-      expect(json.resources).toContain("mcp://github");
+      expect(json.mcpServers).toBeDefined();
+      expect(json.mcpServers.filesystem).toBeDefined();
+      expect(json.mcpServers.filesystem.command).toBe("npx");
+      expect(json.mcpServers.github).toBeDefined();
+      expect(json.mcpServers.github.command).toBe("npx");
+      // type field should be stripped for stdio servers
+      expect(json.mcpServers.filesystem.type).toBeUndefined();
+      expect(json.mcpServers.github.type).toBeUndefined();
     });
   });
 });
@@ -1394,1112 +1469,22 @@ describe("kiro binding", () => {
     expect(runsKeep).toBeDefined();
   });
 
-  it("generates .kiro/hooks/ file for enforced gate", () => {
-    const hookFile = files.find((f) => f.path === ".kiro/hooks/gate-quality-check.md");
+  it("generates .kiro/hooks/ JSON file for enforced gate", () => {
+    const hookFile = files.find((f) => f.path === ".kiro/hooks/gate-quality-check.kiro.hook");
     expect(hookFile).toBeDefined();
-    expect(hookFile!.content).toContain("postToolUse");
-    expect(hookFile!.content).toContain("lint.sh");
+    const hookJson = JSON.parse(hookFile!.content);
+    expect(hookJson.enabled).toBe(true);
+    expect(hookJson.when.type).toBe("fileEdited");
+    expect(hookJson.then.type).toBe("runCommand");
+    expect(hookJson.then.command).toContain("lint.sh");
   });
 
   it("does NOT generate hook file for advisory gate", () => {
-    const advisoryHook = files.find((f) => f.path === ".kiro/hooks/gate-soft-review.md");
+    const advisoryHook = files.find((f) => f.path === ".kiro/hooks/gate-soft-review.kiro.hook");
     expect(advisoryHook).toBeUndefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// anthropic-sdk
-// ---------------------------------------------------------------------------
-
-describe("anthropic-sdk binding", () => {
-  const files = scaffoldBinding("anthropic-sdk");
-
-  assertStructuralInvariants(files);
-
-  it("produces package.json with anthropic SDK dependency", () => {
-    const pkg = files.find((f) => f.path === "package.json");
-    expect(pkg).toBeDefined();
-    const parsed = JSON.parse(pkg!.content);
-    expect(parsed.dependencies["@anthropic-ai/sdk"]).toBeDefined();
-    expect(parsed.scripts.start).toContain("tsx");
-  });
-
-  it("produces tsconfig.json", () => {
-    const tsconfig = files.find((f) => f.path === "tsconfig.json");
-    expect(tsconfig).toBeDefined();
-    const parsed = JSON.parse(tsconfig!.content);
-    expect(parsed.compilerOptions.strict).toBe(true);
-  });
-
-  it("produces src/types.ts with agent IDs", () => {
-    const types = files.find((f) => f.path === "src/types.ts");
-    expect(types).toBeDefined();
-    expect(types!.content).toContain("planner");
-    expect(types!.content).toContain("builder");
-    expect(types!.content).toContain("AgentConfig");
-    expect(types!.content).toContain("MemoryStore");
-  });
-
-  it("produces src/executor.ts with agentic loop", () => {
-    const executor = files.find((f) => f.path === "src/executor.ts");
-    expect(executor).toBeDefined();
-    expect(executor!.content).toContain("executeAgent");
-    expect(executor!.content).toContain("tool_use");
-    expect(executor!.content).toContain("end_turn");
-  });
-
-  it("produces src/orchestrator.ts with flow routing", () => {
-    const orch = files.find((f) => f.path === "src/orchestrator.ts");
-    expect(orch).toBeDefined();
-    expect(orch!.content).toContain("runTopology");
-    expect(orch!.content).toContain("getNextAgents");
-    expect(orch!.content).toContain('"planner"');
-    expect(orch!.content).toContain('"builder"');
-  });
-
-  it("produces src/memory.ts with file-based memory", () => {
-    const mem = files.find((f) => f.path === "src/memory.ts");
-    expect(mem).toBeDefined();
-    expect(mem!.content).toContain("FileMemory");
-    expect(mem!.content).toContain("readFile");
-    expect(mem!.content).toContain("writeFile");
-  });
-
-  it("produces src/tools.ts with built-in tools", () => {
-    const tools = files.find((f) => f.path === "src/tools.ts");
-    expect(tools).toBeDefined();
-    expect(tools!.content).toContain("read_file");
-    expect(tools!.content).toContain("write_file");
-    expect(tools!.content).toContain("bash");
-  });
-
-  it("produces src/index.ts entry point", () => {
-    const index = files.find((f) => f.path === "src/index.ts");
-    expect(index).toBeDefined();
-    expect(index!.content).toContain("runTopology");
-  });
-
-  it("produces .env.example with ANTHROPIC_API_KEY", () => {
-    const env = files.find((f) => f.path === ".env.example");
-    expect(env).toBeDefined();
-    expect(env!.content).toContain("ANTHROPIC_API_KEY");
-  });
-
-  it("produces .memory/.gitkeep for memory directory", () => {
-    const memDir = files.find((f) => f.path === ".memory/.gitkeep");
-    expect(memDir).toBeDefined();
-  });
-
-  it("maps agent models correctly in orchestrator", () => {
-    const orch = files.find((f) => f.path === "src/orchestrator.ts");
-    expect(orch).toBeDefined();
-    // The test topology uses "opus" which should map to claude-opus
-    expect(orch!.content).toContain("claude-");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// anthropic-sdk (deep)
-// ---------------------------------------------------------------------------
-
-describe("anthropic-sdk binding (deep)", () => {
-  const files = scaffoldBinding("anthropic-sdk");
-
-  // =========================================================================
-  // Category 1: File Manifest
-  // =========================================================================
-  describe("file manifest", () => {
-    it("generates package.json", () => {
-      expect(files.find((f) => f.path === "package.json")).toBeDefined();
-    });
-
-    it("generates tsconfig.json", () => {
-      expect(files.find((f) => f.path === "tsconfig.json")).toBeDefined();
-    });
-
-    it("generates .env.example", () => {
-      expect(files.find((f) => f.path === ".env.example")).toBeDefined();
-    });
-
-    it("generates .gitignore", () => {
-      expect(files.find((f) => f.path === ".gitignore")).toBeDefined();
-    });
-
-    it("generates .memory/.gitkeep", () => {
-      expect(files.find((f) => f.path === ".memory/.gitkeep")).toBeDefined();
-    });
-
-    it("generates .checkpoint/.gitkeep", () => {
-      expect(files.find((f) => f.path === ".checkpoint/.gitkeep")).toBeDefined();
-    });
-
-    it("generates src/types.ts", () => {
-      expect(files.find((f) => f.path === "src/types.ts")).toBeDefined();
-    });
-
-    it("generates src/executor.ts", () => {
-      expect(files.find((f) => f.path === "src/executor.ts")).toBeDefined();
-    });
-
-    it("generates src/orchestrator.ts", () => {
-      expect(files.find((f) => f.path === "src/orchestrator.ts")).toBeDefined();
-    });
-
-    it("generates src/memory.ts", () => {
-      expect(files.find((f) => f.path === "src/memory.ts")).toBeDefined();
-    });
-
-    it("generates src/tools.ts", () => {
-      expect(files.find((f) => f.path === "src/tools.ts")).toBeDefined();
-    });
-
-    it("generates src/index.ts", () => {
-      expect(files.find((f) => f.path === "src/index.ts")).toBeDefined();
-    });
-
-    it("generates src/group-executor.ts", () => {
-      expect(files.find((f) => f.path === "src/group-executor.ts")).toBeDefined();
-    });
-
-    it("generates src/human-executor.ts", () => {
-      expect(files.find((f) => f.path === "src/human-executor.ts")).toBeDefined();
-    });
-
-    it("generates src/action-executor.ts", () => {
-      expect(files.find((f) => f.path === "src/action-executor.ts")).toBeDefined();
-    });
-
-    it("generates src/observability.ts", () => {
-      expect(files.find((f) => f.path === "src/observability.ts")).toBeDefined();
-    });
-
-    it("generates src/checkpoint.ts", () => {
-      expect(files.find((f) => f.path === "src/checkpoint.ts")).toBeDefined();
-    });
-
-    it("generates src/scheduler.ts", () => {
-      expect(files.find((f) => f.path === "src/scheduler.ts")).toBeDefined();
-    });
-
-    it("generates src/rate-limiter.ts", () => {
-      expect(files.find((f) => f.path === "src/rate-limiter.ts")).toBeDefined();
-    });
-
-    it("generates src/variants.ts", () => {
-      expect(files.find((f) => f.path === "src/variants.ts")).toBeDefined();
-    });
-
-    it("generates gate scripts for each gate in the topology", () => {
-      expect(files.find((f) => f.path === "scripts/gate-quality-check.sh")).toBeDefined();
-      expect(files.find((f) => f.path === "scripts/gate-soft-review.sh")).toBeDefined();
-    });
-  });
-
-  // =========================================================================
-  // Category 2: Types (src/types.ts)
-  // =========================================================================
-  describe("types (src/types.ts)", () => {
-    const types = files.find((f) => f.path === "src/types.ts")!;
-
-    it("contains AgentId type with agent names from topology", () => {
-      expect(types.content).toContain('"planner"');
-      expect(types.content).toContain('"builder"');
-      expect(types.content).toContain("AgentId");
-    });
-
-    it("contains AgentConfig interface", () => {
-      expect(types.content).toContain("export interface AgentConfig");
-    });
-
-    it("contains AgentResult interface", () => {
-      expect(types.content).toContain("export interface AgentResult");
-    });
-
-    it("contains MemoryStore interface", () => {
-      expect(types.content).toContain("export interface MemoryStore");
-    });
-
-    it("contains ToolDefinition interface", () => {
-      expect(types.content).toContain("export interface ToolDefinition");
-    });
-
-    it("contains EdgeRoute interface", () => {
-      expect(types.content).toContain("export interface EdgeRoute");
-    });
-
-    it("contains TopologyConfig interface", () => {
-      expect(types.content).toContain("export interface TopologyConfig");
-    });
-
-    it("contains GroupChatConfig interface", () => {
-      expect(types.content).toContain("export interface GroupChatConfig");
-    });
-
-    it("contains HumanNodeConfig interface", () => {
-      expect(types.content).toContain("export interface HumanNodeConfig");
-    });
-
-    it("contains ActionNodeConfig interface", () => {
-      expect(types.content).toContain("export interface ActionNodeConfig");
-    });
-
-    it("contains GateConfig interface", () => {
-      expect(types.content).toContain("export interface GateConfig");
-    });
-
-    it("contains CircuitBreakerState interface", () => {
-      expect(types.content).toContain("export interface CircuitBreakerState");
-    });
-
-    it("contains CircuitBreakerConfig interface", () => {
-      expect(types.content).toContain("export interface CircuitBreakerConfig");
-    });
-
-    it("contains CheckpointData interface", () => {
-      expect(types.content).toContain("export interface CheckpointData");
-    });
-
-    it("contains ObservabilitySpan interface", () => {
-      expect(types.content).toContain("export interface ObservabilitySpan");
-    });
-
-    it("contains ObservabilityConfig interface", () => {
-      expect(types.content).toContain("export interface ObservabilityConfig");
-    });
-
-    it("contains PromptVariant interface", () => {
-      expect(types.content).toContain("export interface PromptVariant");
-    });
-
-    it("contains VariantSelection interface", () => {
-      expect(types.content).toContain("export interface VariantSelection");
-    });
-
-    it("contains AgentMessage interface", () => {
-      expect(types.content).toContain("export interface AgentMessage");
-    });
-
-    it("imports Anthropic SDK", () => {
-      expect(types.content).toContain('import Anthropic from "@anthropic-ai/sdk"');
-    });
-  });
-
-  // =========================================================================
-  // Category 3: Executor (src/executor.ts)
-  // =========================================================================
-  describe("executor (src/executor.ts)", () => {
-    const executor = files.find((f) => f.path === "src/executor.ts")!;
-
-    it("imports Anthropic SDK", () => {
-      expect(executor.content).toContain('import Anthropic from "@anthropic-ai/sdk"');
-    });
-
-    it("exports executeAgent function", () => {
-      expect(executor.content).toContain("export async function executeAgent");
-    });
-
-    it("handles end_turn stop reason", () => {
-      expect(executor.content).toContain('"end_turn"');
-    });
-
-    it("handles tool_use stop reason", () => {
-      expect(executor.content).toContain('"tool_use"');
-    });
-
-    it("injects memory context via memoryReads", () => {
-      expect(executor.content).toContain("memoryReads");
-      expect(executor.content).toContain("memoryContext");
-    });
-
-    it("adds memory_write tool when memoryWrites configured", () => {
-      expect(executor.content).toContain("memoryWrites");
-      expect(executor.content).toContain("memory_write");
-    });
-
-    it("supports extended thinking with budget_tokens", () => {
-      expect(executor.content).toContain("thinking");
-      expect(executor.content).toContain("budget_tokens");
-    });
-
-    it("supports seed parameter", () => {
-      expect(executor.content).toContain("config.seed");
-    });
-
-    it("handles timeout with Promise.race", () => {
-      expect(executor.content).toContain("Promise.race");
-      expect(executor.content).toContain("config.timeout");
-    });
-
-    it("forwards temperature sampling param", () => {
-      expect(executor.content).toContain("config.temperature");
-      expect(executor.content).toContain("temperature");
-    });
-
-    it("forwards top_p sampling param", () => {
-      expect(executor.content).toContain("config.topP");
-      expect(executor.content).toContain("top_p");
-    });
-
-    it("forwards top_k sampling param", () => {
-      expect(executor.content).toContain("config.topK");
-      expect(executor.content).toContain("top_k");
-    });
-
-    it("handles max_tokens stop reason", () => {
-      expect(executor.content).toContain('"max_tokens"');
-    });
-
-    it("supports structured output via outputSchema", () => {
-      expect(executor.content).toContain("outputSchema");
-      expect(executor.content).toContain("structured_output");
-    });
-
-    it("tracks token usage", () => {
-      expect(executor.content).toContain("totalInputTokens");
-      expect(executor.content).toContain("totalOutputTokens");
-    });
-
-    it("tracks tool call records", () => {
-      expect(executor.content).toContain("toolCalls.push");
-    });
-
-    it("returns AgentResult structure", () => {
-      expect(executor.content).toContain("agentId: config.id");
-      expect(executor.content).toContain("durationMs");
-      expect(executor.content).toContain("tokenUsage");
-    });
-  });
-
-  // =========================================================================
-  // Category 4: Orchestrator (src/orchestrator.ts)
-  // =========================================================================
-  describe("orchestrator (src/orchestrator.ts)", () => {
-    const orch = files.find((f) => f.path === "src/orchestrator.ts")!;
-
-    it("exports runTopology function", () => {
-      expect(orch.content).toContain("export async function runTopology");
-    });
-
-    it("contains getNextAgents function", () => {
-      expect(orch.content).toContain("function getNextAgents");
-    });
-
-    it("references planner agent ID", () => {
-      expect(orch.content).toContain('"planner"');
-    });
-
-    it("references builder agent ID", () => {
-      expect(orch.content).toContain('"builder"');
-    });
-
-    it("maps opus model to claude- prefixed model ID", () => {
-      expect(orch.content).toContain("claude-opus-4-0-20250514");
-    });
-
-    it("maps sonnet model to claude- prefixed model ID", () => {
-      expect(orch.content).toContain("claude-sonnet-4-5-20250514");
-    });
-
-    it("handles error edge routing by checking isError", () => {
-      expect(orch.content).toContain("isError");
-      expect(orch.content).toContain("errorEdges");
-    });
-
-    it("handles race edge routing", () => {
-      expect(orch.content).toContain("raceEdges");
-      expect(orch.content).toContain("e.race");
-    });
-
-    it("handles weighted routing with Math.random", () => {
-      expect(orch.content).toContain("Math.random()");
-      expect(orch.content).toContain("e.weight");
-    });
-
-    it("supports retry loop with backoff", () => {
-      expect(orch.content).toContain("retryMax");
-      expect(orch.content).toContain("backoff");
-      expect(orch.content).toContain("exponential");
-    });
-
-    it("uses Promise.all for parallel execution", () => {
-      expect(orch.content).toContain("Promise.all");
-    });
-
-    it("contains circuit breaker logic", () => {
-      expect(orch.content).toContain("circuitBreaker");
-      expect(orch.content).toContain("checkCircuitBreaker");
-      expect(orch.content).toContain("recordCircuitBreakerResult");
-      expect(orch.content).toContain("CircuitBreakerState");
-    });
-
-    it("handles onFail behaviors including halt, skip, continue, fallback", () => {
-      expect(orch.content).toContain("handleOnFail");
-      expect(orch.content).toContain('"halt"');
-      expect(orch.content).toContain('"skip"');
-      expect(orch.content).toContain('"continue"');
-      expect(orch.content).toContain('fallback ');
-    });
-
-    it("contains gate execution via runGates function", () => {
-      expect(orch.content).toContain("runGates");
-      expect(orch.content).toContain('"before"');
-      expect(orch.content).toContain('"after"');
-    });
-
-    it("dispatches action nodes via config.actions check", () => {
-      expect(orch.content).toContain("config.actions[agentId]");
-      expect(orch.content).toContain("executeAction");
-    });
-
-    it("imports executeAgent from executor", () => {
-      expect(orch.content).toContain('import { executeAgent } from "./executor.js"');
-    });
-
-    it("imports FileMemory from memory", () => {
-      expect(orch.content).toContain('import { FileMemory } from "./memory.js"');
-    });
-
-    it("imports action executor", () => {
-      expect(orch.content).toContain('import { executeAction } from "./action-executor.js"');
-    });
-
-    it("uses edge condition functions for conditional routing", () => {
-      expect(orch.content).toContain("condition");
-    });
-
-    it("supports maxIterations on edges", () => {
-      expect(orch.content).toContain("maxIterations");
-      expect(orch.content).toContain("edgeIterations");
-    });
-
-    it("configures gate entries from the topology", () => {
-      expect(orch.content).toContain('"quality-check"');
-      expect(orch.content).toContain('"soft-review"');
-    });
-
-    it("includes action config for intake action", () => {
-      expect(orch.content).toContain('"intake"');
-    });
-
-    it("sets entry points", () => {
-      expect(orch.content).toContain("entryPoints");
-    });
-
-    it("contains skip condition check", () => {
-      expect(orch.content).toContain("agentConfig.skip");
-      expect(orch.content).toContain("[skipped]");
-    });
-
-    it("contains fallback chain model iteration", () => {
-      expect(orch.content).toContain("modelsToTry");
-      expect(orch.content).toContain("fallbackChain");
-    });
-
-    it("has phase-aware sorting of agents", () => {
-      expect(orch.content).toContain("phaseAgents");
-      expect(orch.content).toContain("a.phase");
-    });
-
-    it("sets memoryReads from topology agent reads", () => {
-      expect(orch.content).toContain("memoryReads");
-      expect(orch.content).toContain("workspace/input.md");
-    });
-
-    it("sets memoryWrites from topology agent writes", () => {
-      expect(orch.content).toContain("memoryWrites");
-      expect(orch.content).toContain("workspace/plan.md");
-    });
-  });
-
-  // =========================================================================
-  // Category 5: Group Executor (src/group-executor.ts)
-  // =========================================================================
-  describe("group executor (src/group-executor.ts)", () => {
-    const group = files.find((f) => f.path === "src/group-executor.ts")!;
-
-    it("exports executeGroup function", () => {
-      expect(group.content).toContain("export async function executeGroup");
-    });
-
-    it("supports round-robin speaker selection", () => {
-      expect(group.content).toContain("round-robin");
-    });
-
-    it("supports random speaker selection", () => {
-      expect(group.content).toContain('"random"');
-      expect(group.content).toContain("Math.random()");
-    });
-
-    it("supports model-selected speaker selection", () => {
-      expect(group.content).toContain("model-selected");
-    });
-
-    it("tracks conversation history", () => {
-      expect(group.content).toContain("conversationHistory");
-    });
-
-    it("has maxRounds loop", () => {
-      expect(group.content).toContain("maxRounds");
-      expect(group.content).toContain("round < maxRounds");
-    });
-
-    it("checks termination condition", () => {
-      expect(group.content).toContain("termination");
-      expect(group.content).toContain("result.output.includes(groupConfig.termination)");
-    });
-
-    it("returns GroupResult structure", () => {
-      expect(group.content).toContain("messages: conversationHistory");
-      expect(group.content).toContain("finalOutput");
-      expect(group.content).toContain("totalTokens");
-      expect(group.content).toContain("rounds");
-    });
-
-    it("imports Anthropic SDK", () => {
-      expect(group.content).toContain('import Anthropic from "@anthropic-ai/sdk"');
-    });
-
-    it("imports executeAgent", () => {
-      expect(group.content).toContain('import { executeAgent } from "./executor.js"');
-    });
-  });
-
-  // =========================================================================
-  // Category 6: Human Executor (src/human-executor.ts)
-  // =========================================================================
-  describe("human executor (src/human-executor.ts)", () => {
-    const human = files.find((f) => f.path === "src/human-executor.ts")!;
-
-    it("exports executeHuman function", () => {
-      expect(human.content).toContain("export async function executeHuman");
-    });
-
-    it("uses readline for user input", () => {
-      expect(human.content).toContain("createInterface");
-      expect(human.content).toContain("readline");
-    });
-
-    it("supports timeout handling", () => {
-      expect(human.content).toContain("config.timeout");
-      expect(human.content).toContain("setTimeout");
-    });
-
-    it("handles onTimeout behaviors", () => {
-      expect(human.content).toContain("config.onTimeout");
-      expect(human.content).toContain('"skip"');
-      expect(human.content).toContain('"halt"');
-      expect(human.content).toContain("fallback ");
-    });
-
-    it("returns HumanResult structure", () => {
-      expect(human.content).toContain("timedOut");
-      expect(human.content).toContain("input: answer");
-    });
-
-    it("imports HumanNodeConfig and HumanResult types", () => {
-      expect(human.content).toContain("HumanNodeConfig");
-      expect(human.content).toContain("HumanResult");
-    });
-  });
-
-  // =========================================================================
-  // Category 7: Action Executor (src/action-executor.ts)
-  // =========================================================================
-  describe("action executor (src/action-executor.ts)", () => {
-    const action = files.find((f) => f.path === "src/action-executor.ts")!;
-
-    it("exports executeAction function", () => {
-      expect(action.content).toContain("export async function executeAction");
-    });
-
-    it("uses child_process exec", () => {
-      expect(action.content).toContain('import { exec } from "node:child_process"');
-    });
-
-    it("supports timeout", () => {
-      expect(action.content).toContain("config.timeout");
-      expect(action.content).toContain("timeout:");
-    });
-
-    it("returns stdout and stderr in ActionResult", () => {
-      expect(action.content).toContain("stdout");
-      expect(action.content).toContain("stderr");
-      expect(action.content).toContain("exitCode");
-    });
-
-    it("imports ActionNodeConfig and ActionResult types", () => {
-      expect(action.content).toContain("ActionNodeConfig");
-      expect(action.content).toContain("ActionResult");
-    });
-
-    it("uses promisify for async exec", () => {
-      expect(action.content).toContain("promisify");
-      expect(action.content).toContain("execAsync");
-    });
-  });
-
-  // =========================================================================
-  // Category 8: Observability (src/observability.ts)
-  // =========================================================================
-  describe("observability (src/observability.ts)", () => {
-    const obs = files.find((f) => f.path === "src/observability.ts")!;
-
-    it("creates spans with traceId and spanId", () => {
-      expect(obs.content).toContain("traceId");
-      expect(obs.content).toContain("spanId");
-    });
-
-    it("supports stdout exporter", () => {
-      expect(obs.content).toContain('"stdout"');
-    });
-
-    it("supports otlp exporter", () => {
-      expect(obs.content).toContain('"otlp"');
-    });
-
-    it("supports none exporter", () => {
-      expect(obs.content).toContain('"none"');
-    });
-
-    it("has sample rate check", () => {
-      expect(obs.content).toContain("sampleRate");
-      expect(obs.content).toContain("shouldSample");
-    });
-
-    it("has startSpan method", () => {
-      expect(obs.content).toContain("startSpan(");
-    });
-
-    it("has endSpan method", () => {
-      expect(obs.content).toContain("endSpan(");
-    });
-
-    it("exports Tracer class", () => {
-      expect(obs.content).toContain("export class Tracer");
-    });
-
-    it("imports ObservabilitySpan and ObservabilityConfig types", () => {
-      expect(obs.content).toContain("ObservabilitySpan");
-      expect(obs.content).toContain("ObservabilityConfig");
-    });
-
-    it("has getSpans method", () => {
-      expect(obs.content).toContain("getSpans()");
-    });
-
-    it("has reset method", () => {
-      expect(obs.content).toContain("reset()");
-    });
-  });
-
-  // =========================================================================
-  // Category 9: Checkpoint (src/checkpoint.ts)
-  // =========================================================================
-  describe("checkpoint (src/checkpoint.ts)", () => {
-    const cp = files.find((f) => f.path === "src/checkpoint.ts")!;
-
-    it("has save method", () => {
-      expect(cp.content).toContain("async save(");
-    });
-
-    it("has load method", () => {
-      expect(cp.content).toContain("async load(");
-    });
-
-    it("uses file-based storage with readFile and writeFile", () => {
-      expect(cp.content).toContain("readFile");
-      expect(cp.content).toContain("writeFile");
-    });
-
-    it("supports per-node strategy", () => {
-      expect(cp.content).toContain('"per-node"');
-      expect(cp.content).toContain("shouldSaveAfterNode");
-    });
-
-    it("supports per-phase strategy", () => {
-      expect(cp.content).toContain('"per-phase"');
-      expect(cp.content).toContain("shouldSaveAfterPhase");
-    });
-
-    it("has cleanup method for TTL expiry", () => {
-      expect(cp.content).toContain("async cleanup()");
-      expect(cp.content).toContain("this.ttl");
-    });
-
-    it("exports CheckpointManager class", () => {
-      expect(cp.content).toContain("export class CheckpointManager");
-    });
-
-    it("creates directory recursively", () => {
-      expect(cp.content).toContain("mkdir");
-      expect(cp.content).toContain("recursive: true");
-    });
-
-    it("has getCompletedNodes method", () => {
-      expect(cp.content).toContain("getCompletedNodes");
-    });
-
-    it("imports CheckpointData and CheckpointState types", () => {
-      expect(cp.content).toContain("CheckpointData");
-      expect(cp.content).toContain("CheckpointState");
-    });
-  });
-
-  // =========================================================================
-  // Category 10: Scheduler (src/scheduler.ts)
-  // =========================================================================
-  describe("scheduler (src/scheduler.ts)", () => {
-    const sched = files.find((f) => f.path === "src/scheduler.ts")!;
-
-    it("parses duration strings like s, m, h", () => {
-      expect(sched.content).toContain("parseEvery");
-      expect(sched.content).toContain("60_000");
-    });
-
-    it("uses setInterval for job scheduling", () => {
-      expect(sched.content).toContain("setInterval");
-    });
-
-    it("exports Scheduler class", () => {
-      expect(sched.content).toContain("export class Scheduler");
-    });
-
-    it("has start method", () => {
-      expect(sched.content).toContain("start()");
-    });
-
-    it("has stop method with clearInterval", () => {
-      expect(sched.content).toContain("stop()");
-      expect(sched.content).toContain("clearInterval");
-    });
-
-    it("has addEveryJob method", () => {
-      expect(sched.content).toContain("addEveryJob");
-    });
-
-    it("has addCronJob method", () => {
-      expect(sched.content).toContain("addCronJob");
-    });
-
-    it("defines ScheduledJob interface", () => {
-      expect(sched.content).toContain("export interface ScheduledJob");
-    });
-  });
-
-  // =========================================================================
-  // Category 11: Rate Limiter (src/rate-limiter.ts)
-  // =========================================================================
-  describe("rate limiter (src/rate-limiter.ts)", () => {
-    const rl = files.find((f) => f.path === "src/rate-limiter.ts")!;
-
-    it("parses rate expressions like 60/min", () => {
-      expect(rl.content).toContain("parseRateLimit");
-      expect(rl.content).toContain("/(sec|min|hour|day)");
-    });
-
-    it("implements token bucket pattern with tokens and refill", () => {
-      expect(rl.content).toContain("this.tokens");
-      expect(rl.content).toContain("maxTokens");
-      expect(rl.content).toContain("refill");
-    });
-
-    it("exports acquire method", () => {
-      expect(rl.content).toContain("async acquire()");
-    });
-
-    it("exports RateLimiter class", () => {
-      expect(rl.content).toContain("export class RateLimiter");
-    });
-
-    it("waits when no tokens available", () => {
-      expect(rl.content).toContain("setTimeout");
-      expect(rl.content).toContain("waitTime");
-    });
-  });
-
-  // =========================================================================
-  // Category 12: Variants (src/variants.ts)
-  // =========================================================================
-  describe("variants (src/variants.ts)", () => {
-    const variants = files.find((f) => f.path === "src/variants.ts")!;
-
-    it("exports selectVariant function", () => {
-      expect(variants.content).toContain("export function selectVariant");
-    });
-
-    it("uses weighted random selection with totalWeight", () => {
-      expect(variants.content).toContain("totalWeight");
-      expect(variants.content).toContain("Math.random()");
-    });
-
-    it("returns VariantSelection with variantId and prompt", () => {
-      expect(variants.content).toContain("variantId");
-      expect(variants.content).toContain("prompt");
-    });
-
-    it("falls back to default prompt when no variants", () => {
-      expect(variants.content).toContain("defaultPrompt");
-      expect(variants.content).toContain('"default"');
-    });
-
-    it("supports temperature and model override per variant", () => {
-      expect(variants.content).toContain("temperature");
-      expect(variants.content).toContain("model");
-    });
-
-    it("imports PromptVariant and VariantSelection types", () => {
-      expect(variants.content).toContain("PromptVariant");
-      expect(variants.content).toContain("VariantSelection");
-    });
-  });
-
-  // =========================================================================
-  // Category 13: Memory (src/memory.ts)
-  // =========================================================================
-  describe("memory (src/memory.ts)", () => {
-    const mem = files.find((f) => f.path === "src/memory.ts")!;
-
-    it("exports FileMemory class", () => {
-      expect(mem.content).toContain("export class FileMemory");
-    });
-
-    it("implements MemoryStore interface", () => {
-      expect(mem.content).toContain("implements MemoryStore");
-    });
-
-    it("has read method", () => {
-      expect(mem.content).toContain("async read(key: string)");
-    });
-
-    it("has write method", () => {
-      expect(mem.content).toContain("async write(key: string, value: string)");
-    });
-
-    it("has list method", () => {
-      expect(mem.content).toContain("async list(prefix?: string)");
-    });
-
-    it("uses dot notation path resolution", () => {
-      expect(mem.content).toContain('key.split(".")');
-    });
-
-    it("uses mkdir recursive for creating directories", () => {
-      expect(mem.content).toContain("mkdir");
-      expect(mem.content).toContain("recursive: true");
-    });
-
-    it("uses .memory as default base path", () => {
-      expect(mem.content).toContain("./.memory");
-    });
-  });
-
-  // =========================================================================
-  // Category 14: Tools (src/tools.ts)
-  // =========================================================================
-  describe("tools (src/tools.ts)", () => {
-    const tools = files.find((f) => f.path === "src/tools.ts")!;
-
-    it("defines read_file built-in tool", () => {
-      expect(tools.content).toContain('name: "read_file"');
-    });
-
-    it("defines write_file built-in tool", () => {
-      expect(tools.content).toContain('name: "write_file"');
-    });
-
-    it("defines bash built-in tool", () => {
-      expect(tools.content).toContain('name: "bash"');
-    });
-
-    it("exports allTools registry", () => {
-      expect(tools.content).toContain("export const allTools");
-      expect(tools.content).toContain("read_file: readFileTool");
-      expect(tools.content).toContain("write_file: writeFileTool");
-      expect(tools.content).toContain("bash: bashTool");
-    });
-
-    it("imports ToolDefinition type", () => {
-      expect(tools.content).toContain("ToolDefinition");
-    });
-
-    it("uses readFile from node:fs/promises", () => {
-      expect(tools.content).toContain('import { readFile, writeFile } from "node:fs/promises"');
-    });
-
-    it("uses exec from node:child_process", () => {
-      expect(tools.content).toContain('import { exec } from "node:child_process"');
-    });
-  });
-
-  // =========================================================================
-  // Category 15: Package & Config
-  // =========================================================================
-  describe("package and config", () => {
-    it("package.json has @anthropic-ai/sdk dependency", () => {
-      const pkg = files.find((f) => f.path === "package.json")!;
-      const parsed = JSON.parse(pkg.content);
-      expect(parsed.dependencies["@anthropic-ai/sdk"]).toBeDefined();
-    });
-
-    it("package.json has tsx in start script", () => {
-      const pkg = files.find((f) => f.path === "package.json")!;
-      const parsed = JSON.parse(pkg.content);
-      expect(parsed.scripts.start).toContain("tsx");
-    });
-
-    it("package.json has build script", () => {
-      const pkg = files.find((f) => f.path === "package.json")!;
-      const parsed = JSON.parse(pkg.content);
-      expect(parsed.scripts.build).toBe("tsc");
-    });
-
-    it("package.json has type module", () => {
-      const pkg = files.find((f) => f.path === "package.json")!;
-      const parsed = JSON.parse(pkg.content);
-      expect(parsed.type).toBe("module");
-    });
-
-    it("package.json has typescript devDependency", () => {
-      const pkg = files.find((f) => f.path === "package.json")!;
-      const parsed = JSON.parse(pkg.content);
-      expect(parsed.devDependencies.typescript).toBeDefined();
-    });
-
-    it("tsconfig.json has strict: true", () => {
-      const tsconfig = files.find((f) => f.path === "tsconfig.json")!;
-      const parsed = JSON.parse(tsconfig.content);
-      expect(parsed.compilerOptions.strict).toBe(true);
-    });
-
-    it("tsconfig.json targets ES2022", () => {
-      const tsconfig = files.find((f) => f.path === "tsconfig.json")!;
-      const parsed = JSON.parse(tsconfig.content);
-      expect(parsed.compilerOptions.target).toBe("ES2022");
-    });
-
-    it("tsconfig.json uses ESNext module", () => {
-      const tsconfig = files.find((f) => f.path === "tsconfig.json")!;
-      const parsed = JSON.parse(tsconfig.content);
-      expect(parsed.compilerOptions.module).toBe("ESNext");
-    });
-
-    it(".env.example has ANTHROPIC_API_KEY", () => {
-      const env = files.find((f) => f.path === ".env.example")!;
-      expect(env.content).toContain("ANTHROPIC_API_KEY");
-    });
-
-    it(".gitignore includes node_modules and dist", () => {
-      const gitignore = files.find((f) => f.path === ".gitignore")!;
-      expect(gitignore.content).toContain("node_modules/");
-      expect(gitignore.content).toContain("dist/");
-    });
-
-    it(".gitignore includes .env", () => {
-      const gitignore = files.find((f) => f.path === ".gitignore")!;
-      expect(gitignore.content).toContain(".env");
-    });
-
-    it(".gitignore includes .memory/ and .checkpoint/", () => {
-      const gitignore = files.find((f) => f.path === ".gitignore")!;
-      expect(gitignore.content).toContain(".memory/");
-      expect(gitignore.content).toContain(".checkpoint/");
-    });
-  });
-
-  // =========================================================================
-  // Category 16: Index Entry Point (src/index.ts)
-  // =========================================================================
-  describe("index entry point (src/index.ts)", () => {
-    const index = files.find((f) => f.path === "src/index.ts")!;
-
-    it("imports runTopology from orchestrator", () => {
-      expect(index.content).toContain('import { runTopology } from "./orchestrator.js"');
-    });
-
-    it("uses process.argv for input", () => {
-      expect(index.content).toContain("process.argv");
-    });
-
-    it("has error handling with .catch", () => {
-      expect(index.content).toContain(".catch(");
-      expect(index.content).toContain("process.exit(1)");
-    });
-
-    it("prints summary of results", () => {
-      expect(index.content).toContain("result.output");
-      expect(index.content).toContain("result.tokenUsage");
-    });
-  });
-
-  // =========================================================================
-  // Category 17: Gate Scripts
-  // =========================================================================
-  describe("gate scripts", () => {
-    it("generates scripts/gate-quality-check.sh for quality-check gate", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-quality-check.sh")!;
-      expect(gate).toBeDefined();
-    });
-
-    it("gate script has bash shebang", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-quality-check.sh")!;
-      expect(gate.content).toContain("#!/usr/bin/env bash");
-    });
-
-    it("gate script has set -euo pipefail", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-quality-check.sh")!;
-      expect(gate.content).toContain("set -euo pipefail");
-    });
-
-    it("gate script contains gate description", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-quality-check.sh")!;
-      expect(gate.content).toContain("quality-check");
-    });
-
-    it("gate script references checks from the topology", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-quality-check.sh")!;
-      expect(gate.content).toContain("Check: lint");
-      expect(gate.content).toContain("Check: types");
-    });
-
-    it("generates scripts/gate-soft-review.sh for advisory gate too", () => {
-      const gate = files.find((f) => f.path === "scripts/gate-soft-review.sh")!;
-      expect(gate).toBeDefined();
-      expect(gate.content).toContain("#!/usr/bin/env bash");
-      expect(gate.content).toContain("set -euo pipefail");
-    });
-  });
-
-  // =========================================================================
-  // Category 18: Cross-Cutting Security
-  // =========================================================================
-  describe("cross-cutting security", () => {
-    it("no generated file contains eval(", () => {
-      for (const f of files) {
-        expect(f.content).not.toContain("eval(");
-      }
-    });
-
-    it("all src/ TypeScript imports use .js extension", () => {
-      const srcFiles = files.filter((f) => f.path.startsWith("src/") && f.path.endsWith(".ts"));
-      for (const f of srcFiles) {
-        // Find all from "./..." import statements and check they end with .js"
-        const importMatches = f.content.match(/from\s+"\.\/[^"]+"/g) || [];
-        for (const imp of importMatches) {
-          expect(imp).toMatch(/\.js"$/);
-        }
-      }
-    });
-
-    it("no hardcoded API keys in any file", () => {
-      for (const f of files) {
-        // Check for patterns that look like actual API keys (sk-ant-...)
-        expect(f.content).not.toMatch(/sk-ant-[a-zA-Z0-9]{20,}/);
-      }
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
 // cursor — Ground-truth validation against real-world Cursor IDE configs
 //
 // Reference configs sourced from GitHub:

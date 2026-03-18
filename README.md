@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agentopology"><img src="https://img.shields.io/npm/v/agentopology" alt="npm" /></a>
-  <a href="https://github.com/nadavnaveh/agentopology/actions"><img src="https://img.shields.io/badge/tests-1%2C313%20passing-brightgreen" alt="tests" /></a>
+  <a href="https://github.com/nadavnaveh/agentopology/actions"><img src="https://img.shields.io/badge/tests-1%2C114%20passing-brightgreen" alt="tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
