@@ -9,6 +9,7 @@
  */
 
 import fs from "node:fs";
+import Module from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type {
@@ -30,10 +31,24 @@ const __filename_viz = fileURLToPath(import.meta.url);
 const __dirname_viz = dirname(__filename_viz);
 
 function loadDagreSrc(): string {
+  // Use createRequire to resolve dagre — works regardless of hoisting/nesting
+  try {
+    const { createRequire } = Module;
+    const req = createRequire(import.meta.url);
+    const dagrePkg = req.resolve("dagre/package.json");
+    const dagrePath = join(dirname(dagrePkg), "dist", "dagre.min.js");
+    return fs.readFileSync(dagrePath, "utf-8");
+  } catch {
+    // createRequire not available or dagre not resolvable — try manual paths
+  }
+
   const candidates = [
     join(__dirname_viz, "..", "..", "node_modules", "dagre", "dist", "dagre.min.js"),
     join(__dirname_viz, "..", "node_modules", "dagre", "dist", "dagre.min.js"),
     join(__dirname_viz, "node_modules", "dagre", "dist", "dagre.min.js"),
+    join(__dirname_viz, "..", "..", "..", "dagre", "dist", "dagre.min.js"),
+    join(__dirname_viz, "..", "..", "..", "..", "dagre", "dist", "dagre.min.js"),
+    join(process.cwd(), "node_modules", "dagre", "dist", "dagre.min.js"),
   ];
   for (const p of candidates) {
     try {
@@ -42,7 +57,7 @@ function loadDagreSrc(): string {
       // try next
     }
   }
-  throw new Error("Could not find dagre.min.js — run: npm install dagre@0.8.5 --save-dev");
+  throw new Error("Could not find dagre.min.js — run: npm install dagre@0.8.5");
 }
 
 const DAGRE_SRC = loadDagreSrc();
