@@ -7,8 +7,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agentopology"><img src="https://img.shields.io/npm/v/agentopology" alt="npm" /></a>
-  <a href="https://github.com/nadavnaveh/agentopology/actions"><img src="https://img.shields.io/badge/tests-1%2C114%20passing-brightgreen" alt="tests" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
 <p align="center">
@@ -57,6 +56,10 @@ agentopology scaffold my-team.at --target cursor         # → .cursor/rules/
 ```
 
 One file. Seven platforms. The topology IS the documentation.
+
+<p align="center">
+  <img src="docs/visualizer-preview.png" alt="AgenTopology Visualizer" width="900" />
+</p>
 
 ---
 
