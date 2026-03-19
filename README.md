@@ -163,6 +163,24 @@ Say **"I want a code review team with an analyzer, security scanner, and reviewe
 
 ---
 
+## Evolving Your Topology
+
+You have a working `.at` file and want to make it better? Just tell the skill what you need:
+
+- **"Add a security scanner agent before the reviewer"** — the skill adds the agent, wires it into the flow, and re-validates
+- **"Add a hook that formats code after every write"** — generates the hook block with the right lifecycle event
+- **"Add an MCP server for GitHub"** — adds the server config with environment variables
+- **"Add a quality gate between the builder and reviewer"** — inserts a gate with halt-on-fail
+- **"Switch the target to OpenClaw"** — re-scaffolds the entire topology for a different platform
+
+The workflow is always the same: **describe the change → the skill updates the `.at` file → validates → re-scaffolds.** You never touch config files manually.
+
+After any change, `agentopology visualize` updates the interactive graph so you can see exactly what changed — every agent, connection, tool, hook, and gate in one view.
+
+Full language reference and guides at **[agentopology.com/docs](https://agentopology.com/docs)**.
+
+---
+
 ## The Language
 
 `.at` files are human-readable and version-controllable. Here's a real topology:
