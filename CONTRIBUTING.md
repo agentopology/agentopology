@@ -5,7 +5,7 @@ Thanks for your interest in contributing. AgenTopology is an open standard — t
 ## Quick Start
 
 ```bash
-git clone https://github.com/nadavnaveh/agentopology.git
+git clone https://github.com/agentopology/agentopology.git
 cd agentopology
 npm install
 npm run test        # Run tests (must pass before submitting a PR)
@@ -81,7 +81,7 @@ Open an issue with:
 
 ## Questions?
 
-Open a [Discussion](https://github.com/nadavnaveh/agentopology/discussions) or reach out in issues. We're friendly.
+Open a [Discussion](https://github.com/agentopology/agentopology/discussions) or reach out in issues. We're friendly.
 
 ## License
 

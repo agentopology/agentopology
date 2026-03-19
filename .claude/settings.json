@@ -1,40 +1,4 @@
 {
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
-            "timeout": 10
-          }
-        ],
-        "matcher": "Bash"
-      }
-    ],
-    "AgentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "AgentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/skills/matchmat-qa/scripts/qa-log-evidence.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  },
   "allow": [
     "Read",
     "Glob",

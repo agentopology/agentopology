@@ -15,6 +15,8 @@ export { codexBinding } from "./bindings/codex.js";
 export { geminiCliBinding } from "./bindings/gemini-cli.js";
 export { copilotCliBinding } from "./bindings/copilot-cli.js";
 export { openClawBinding } from "./bindings/openclaw.js";
+export { kiroBinding } from "./bindings/kiro.js";
+export { cursorBinding } from "./bindings/cursor.js";
 
 export type {
   TopologyAST,

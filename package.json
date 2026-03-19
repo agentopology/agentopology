@@ -56,7 +56,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nadavnaveh/agentopology.git"
+    "url": "git+https://github.com/agentopology/agentopology.git"
+  },
+  "homepage": "https://github.com/agentopology/agentopology",
+  "bugs": {
+    "url": "https://github.com/agentopology/agentopology/issues"
   },
   "engines": {
     "node": ">=18"

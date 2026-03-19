@@ -3,7 +3,7 @@ dist/
 *.tgz
 .DS_Store
 
-# Private — binding factory infrastructure (MOAT)
+# Private — binding factory infrastructure
 .claude/agents/ast-mapper/
 .claude/agents/binding-patcher/
 .claude/agents/binding-review/
@@ -29,8 +29,6 @@ workspace/
 metrics/
 scripts/collect-metrics.sh
 
-# NOTE: SDK bindings (anthropic-sdk.ts, vercel-ai.ts) stay in git during development.
-# Before public release: extract to separate private repo per CLAUDE.md instructions.
 
 # MatchMat QA (wrong repo)
 .claude/agents/db-verifier/
@@ -44,6 +42,7 @@ scripts/collect-metrics.sh
 .claude/projects/
 .claude/CONTEXT.md
 .claude/topologies/*.html
+CLAUDE.md
 
 # Playwright MCP artifacts
 .playwright-mcp/
