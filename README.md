@@ -6,8 +6,9 @@
 </p>
 
 <p align="center">
+  <a href="https://agentopology.com"><img src="https://img.shields.io/badge/website-agentopology.com-purple" alt="website" /></a>
   <a href="https://www.npmjs.com/package/agentopology"><img src="https://img.shields.io/npm/v/agentopology" alt="npm" /></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="license" /></a>
 </p>
 
 <p align="center">
