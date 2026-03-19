@@ -40,8 +40,10 @@ scripts/collect-metrics.sh
 .claude/skills/matchmat-qa/
 .claude/commands/e2e-*.md
 
-# Claude local project memory
+# Claude local / generated
 .claude/projects/
+.claude/CONTEXT.md
+.claude/topologies/*.html
 
 # Playwright MCP artifacts
 .playwright-mcp/
