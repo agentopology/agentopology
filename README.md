@@ -14,6 +14,10 @@
   <strong>Claude Code</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
 </p>
 
+<p align="center">
+  <em>Ships with a Claude Code skill — just type <code>/agentopology</code> and describe your team.</em>
+</p>
+
 <br/>
 
 ## The Problem
@@ -110,6 +114,51 @@ agentopology visualize my-team.at
 ```bash
 agentopology targets
 ```
+
+---
+
+## Claude Code Skill — The Fastest Way to Start
+
+**You don't need to learn `.at` syntax.** AgenTopology ships with an interactive skill that turns Claude Code into a topology designer. Describe the team you want in plain English — the skill generates everything.
+
+### Setup (one time)
+
+```bash
+# Install globally
+npm install -g agentopology
+
+# Link the skill into your project
+ln -s $(npm root -g)/agentopology/skill .claude/skills/agentopology
+```
+
+### Usage
+
+In Claude Code, type `/agentopology` — or just ask naturally:
+
+```
+> /agentopology
+
+┌─────────────────────────────────────┐
+│  AgenTopology                       │
+│  Build agent teams in minutes.      │
+├─────────────────────────────────────┤
+│                                     │
+│  build       Design a new topology  │
+│  templates   Pick a proven team     │
+│  validate    Check an .at file      │
+│  scaffold    Generate platform files│
+│  visualize   Open graph viewer      │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
+
+1. Generates the `.at` file with the right syntax
+2. Validates it against 29 rules
+3. Scaffolds it to Claude Code, OpenClaw, Cursor, or any target
+
+**Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
 
 ---
 
@@ -304,37 +353,6 @@ group design-review {
 In Claude Code, this compiles to a **file-based protocol** — a shared transcript file that agents read and append to sequentially. No HTTP, no message bus. Just the filesystem as shared state.
 
 ---
-
-## Interactive Skill — Build Teams in Minutes
-
-AgenTopology ships with an **interactive skill** that turns Claude Code into a topology designer. You don't need to learn the `.at` syntax — just describe what you want and the skill builds it for you.
-
-```bash
-# Link the skill into your project
-ln -s $(npm root -g)/agentopology/skill .claude/skills/agentopology
-
-# Then in Claude Code:
-/agentopology
-```
-
-```
-┌─────────────────────────────────────┐
-│  AgenTopology                       │
-│  Build agent teams in minutes.      │
-├─────────────────────────────────────┤
-│                                     │
-│  build       Design a new topology  │
-│  templates   Pick a proven team     │
-│  validate    Check an .at file      │
-│  scaffold    Generate platform files│
-│  visualize   Open graph viewer      │
-│                                     │
-└─────────────────────────────────────┘
-```
-
-Say "I want a marketing team with a researcher, copywriter, and editor" — the skill generates the `.at` file, validates it (29 rules), and scaffolds it to Claude Code, OpenClaw, Cursor, or any target. Full topology in under 2 minutes.
-
-The skill abstracts the entire AgenTopology system. You focus on **what your team should do** — the skill handles the syntax, validation, and platform-specific config generation.
 
 ---
 
