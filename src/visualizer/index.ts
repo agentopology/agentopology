@@ -226,17 +226,21 @@ ${CSS}
     </div>
     <div class="topo-name" id="topo-name"></div>
     <div class="topo-ver" id="topo-ver"></div>
-    <div class="topo-desc" id="topo-desc"></div>
-    <div class="pattern-badges" id="pattern-badges"></div>
-    <input type="text" id="search-input" class="search-input" placeholder="Search nodes..." oninput="onSearchInput(this.value)" />
-    <button class="header-btn" id="dataflow-btn" onclick="toggleDataFlow()">Data Flow</button>
-    <button class="header-btn" id="orientation-btn" onclick="toggleOrientation()" title="Switch between vertical and horizontal layout">&#8596; Horizontal</button>
-    <button class="header-btn" onclick="exportSvg()">Export SVG</button>
-    <button class="header-btn" id="issues-btn" onclick="toggleIssuesPanel()" style="display:none">Issues <span id="issues-badge" class="issues-badge">0</span></button>
-    <button class="header-btn" onclick="openLoadModal()">Load JSON</button>
-    <button class="header-btn" id="panel-btn" onclick="togglePanel()">Panel &#9654;</button>
+    <button id="mobile-menu-btn" onclick="toggleMobileMenu()">&#9776;</button>
+    <div id="header-actions">
+      <div class="topo-desc" id="topo-desc"></div>
+      <div class="pattern-badges" id="pattern-badges"></div>
+      <input type="text" id="search-input" class="search-input" placeholder="Search nodes..." oninput="onSearchInput(this.value)" />
+      <button class="header-btn" id="dataflow-btn" onclick="toggleDataFlow()">Data Flow</button>
+      <button class="header-btn" id="orientation-btn" onclick="toggleOrientation()" title="Switch between vertical and horizontal layout">&#8596; Horizontal</button>
+      <button class="header-btn" onclick="exportSvg()">Export SVG</button>
+      <button class="header-btn" id="issues-btn" onclick="toggleIssuesPanel()" style="display:none">Issues <span id="issues-badge" class="issues-badge">0</span></button>
+      <button class="header-btn" onclick="openLoadModal()">Load JSON</button>
+      <button class="header-btn" id="panel-btn" onclick="togglePanel()">Panel &#9654;</button>
+    </div>
   </div>
   <div id="main">
+    <div class="mobile-overlay-backdrop" id="mobile-backdrop" onclick="closeMobileOverlays()"></div>
     <div id="graph-container">
       <svg id="graph-svg"></svg>
       <div id="zoom-controls">
@@ -256,6 +260,7 @@ ${CSS}
       <div id="issues-list" class="issues-list"></div>
     </div>
     <div id="side-panel" class="collapsed">
+      <button id="panel-close-btn" onclick="closePanel()">&times;</button>
       <div id="tab-bar">
         <div class="tab active" data-tab="inspect">Inspect</div>
         <div class="tab" data-tab="memory">Memory</div>
@@ -338,7 +343,7 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 #app{display:flex;flex-direction:column;height:100vh}
 #header{padding:10px 20px;background:var(--s);border-bottom:1px solid var(--b);display:flex;align-items:center;gap:14px;flex-shrink:0;z-index:10}
 #main{display:flex;flex:1;overflow:hidden}
-#graph-container{flex:1;position:relative;overflow:hidden;cursor:grab}
+#graph-container{flex:1;position:relative;overflow:hidden;cursor:grab;touch-action:none}
 #graph-container.dragging{cursor:grabbing}
 #graph-svg{position:absolute;top:0;left:0}
 #side-panel{width:380px;background:var(--s);border-left:1px solid var(--b);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width .2s}
@@ -506,6 +511,44 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .trigger-popover-item:hover{background:rgba(255,255,255,.04)}
 .trigger-popover-cmd{font-family:var(--font-mono);font-size:12px;color:var(--cyan);font-weight:600}
 .trigger-popover-pattern{font-family:var(--font-mono);font-size:10px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#mobile-menu-btn{display:none;background:var(--s2);border:1px solid var(--b);color:var(--t2);font-size:18px;padding:4px 10px;border-radius:6px;cursor:pointer;line-height:1}
+#header-actions{display:contents}
+#panel-close-btn{display:none}
+.mobile-overlay-backdrop{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:20;backdrop-filter:blur(2px)}
+.mobile-overlay-backdrop.visible{display:block}
+
+@media(max-width:768px){
+  #mobile-menu-btn{display:block}
+  #header{padding:8px 12px;gap:8px;flex-wrap:nowrap;position:relative}
+  #header-actions{display:none;position:absolute;top:100%;left:0;right:0;background:var(--s);border-bottom:1px solid var(--b);padding:12px;flex-direction:column;gap:8px;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  #header-actions.open{display:flex}
+  .topo-desc,.pattern-badges,.topo-ver{display:none}
+  .search-input{width:100%!important}
+  .search-input:focus{width:100%!important}
+  #panel-close-btn{display:flex;position:absolute;top:8px;right:8px;z-index:30;width:32px;height:32px;align-items:center;justify-content:center;background:var(--s2);border:1px solid var(--b2);border-radius:8px;color:var(--t2);font-size:18px;cursor:pointer;transition:all .15s}
+  #panel-close-btn:hover{background:rgba(255,255,255,.08);color:var(--t)}
+  #side-panel{position:fixed;top:0;right:0;height:100vh;height:100dvh;z-index:25;border-left:1px solid var(--b);width:min(380px,85vw)!important;flex-shrink:0;transition:transform .25s cubic-bezier(.4,0,.2,1)!important;transform:translateX(0);box-shadow:-4px 0 24px rgba(0,0,0,.3)}
+  #side-panel.collapsed{transform:translateX(100%)!important;box-shadow:none}
+  .issues-panel{position:fixed;top:0;right:0;height:100vh;height:100dvh;z-index:25;border-left:1px solid var(--b);width:min(340px,85vw)}
+  .issues-panel.collapsed{transform:translateX(100%)}
+  #legend{max-width:180px;font-size:9px;padding:8px 12px}
+  .legend-label{font-size:9px}
+  .zoom-btn{width:40px;height:40px;font-size:18px}
+  #load-modal .modal-content{width:100%;max-width:100%;border-radius:0;max-height:100vh;height:100vh}
+  .tab{padding:6px 10px;font-size:9px}
+  #tab-bar{padding-right:40px}
+}
+
+@media(max-width:480px){
+  #side-panel{width:100vw!important}
+  #side-panel.collapsed{width:100vw!important}
+  .issues-panel,.issues-panel.collapsed{width:100vw;max-width:100vw}
+  #legend{display:none}
+  #legend.visible{display:block}
+  .topo-name{font-size:11px}
+  #header{padding:6px 8px;gap:6px}
+}
 `;
 
 // ---------------------------------------------------------------------------
@@ -1365,6 +1408,52 @@ graphContainer.addEventListener('wheel', e => {
   applyTransform();
 }, { passive: false });
 
+// --- Touch Pan & Pinch-to-Zoom ---
+var touchState = { panning: false, pinching: false, startX: 0, startY: 0, initDist: 0, initScale: 1 };
+function getTouchDist(t1, t2) {
+  var dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+graphContainer.addEventListener('touchstart', function(e) {
+  if (e.touches.length === 1) {
+    if (e.target.closest('.node-group') || e.target.closest('.zoom-btn')) return;
+    touchState.panning = true;
+    touchState.startX = e.touches[0].clientX - transform.x;
+    touchState.startY = e.touches[0].clientY - transform.y;
+    graphContainer.classList.add('dragging');
+  } else if (e.touches.length === 2) {
+    touchState.panning = false;
+    touchState.pinching = true;
+    touchState.initDist = getTouchDist(e.touches[0], e.touches[1]);
+    touchState.initScale = transform.scale;
+  }
+}, { passive: true });
+graphContainer.addEventListener('touchmove', function(e) {
+  if (touchState.panning && e.touches.length === 1) {
+    e.preventDefault();
+    transform.x = e.touches[0].clientX - touchState.startX;
+    transform.y = e.touches[0].clientY - touchState.startY;
+    applyTransform();
+  } else if (touchState.pinching && e.touches.length === 2) {
+    e.preventDefault();
+    var dist = getTouchDist(e.touches[0], e.touches[1]);
+    var scale = touchState.initScale * (dist / touchState.initDist);
+    var newScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, scale));
+    var r = graphContainer.getBoundingClientRect();
+    var mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+    var my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+    var ratio = newScale / transform.scale;
+    transform.x = mx - ratio * (mx - transform.x);
+    transform.y = my - ratio * (my - transform.y);
+    transform.scale = newScale;
+    applyTransform();
+  }
+}, { passive: false });
+graphContainer.addEventListener('touchend', function(e) {
+  if (e.touches.length < 2) touchState.pinching = false;
+  if (e.touches.length === 0) { touchState.panning = false; graphContainer.classList.remove('dragging'); }
+}, { passive: true });
+
 function applyTransform() {
   const g = document.getElementById('graph-transform');
   if (g) g.setAttribute('transform', 'translate(' + transform.x + ',' + transform.y + ') scale(' + transform.scale + ')');
@@ -1418,7 +1507,13 @@ document.querySelectorAll('.tab').forEach(tab => {
 function switchTab(tabName) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
   const panel = document.getElementById('side-panel');
-  if (panel.classList.contains('collapsed')) panel.classList.remove('collapsed');
+  var isMobile = window.innerWidth <= 768;
+  if (panel.classList.contains('collapsed') && !(isMobile && !selectedNode)) {
+    panel.classList.remove('collapsed');
+    showMobileBackdrop(true);
+    var pb = document.getElementById('panel-btn');
+    if (pb) pb.innerHTML = '&#9664; Panel';
+  }
   switch (tabName) {
     case 'inspect': showInspectPanel(); break;
     case 'memory': showMemoryPanel(); break;
@@ -1801,11 +1896,24 @@ function showSettingsPanel() {
 }
 
 // --- Toggle Panel & Orientation ---
+function showMobileBackdrop(show) {
+  var backdrop = document.getElementById('mobile-backdrop');
+  if (backdrop && window.innerWidth <= 768) backdrop.classList.toggle('visible', show);
+}
 function togglePanel() {
   const panel = document.getElementById('side-panel');
   panel.classList.toggle('collapsed');
   const btn = document.getElementById('panel-btn');
   btn.innerHTML = panel.classList.contains('collapsed') ? 'Panel &#9654;' : '&#9664; Panel';
+  showMobileBackdrop(!panel.classList.contains('collapsed'));
+  setTimeout(zoomFit, 250);
+}
+function closePanel() {
+  const panel = document.getElementById('side-panel');
+  if (panel) panel.classList.add('collapsed');
+  const btn = document.getElementById('panel-btn');
+  if (btn) btn.innerHTML = 'Panel &#9654;';
+  showMobileBackdrop(false);
   setTimeout(zoomFit, 250);
 }
 function toggleOrientation() {
@@ -1946,6 +2054,7 @@ function toggleIssuesPanel() {
   issuesPanelOpen = !issuesPanelOpen;
   const panel = document.getElementById('issues-panel');
   if (panel) panel.classList.toggle('collapsed', !issuesPanelOpen);
+  showMobileBackdrop(issuesPanelOpen);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1955,6 +2064,45 @@ function toggleIssuesPanel() {
 window.addEventListener('resize', () => { if (data) zoomFit(); });
 loadData(DEFAULT_DATA);
 initIssuesPanel();
+
+// --- Mobile menu ---
+function toggleMobileMenu() {
+  var actions = document.getElementById('header-actions');
+  if (actions) actions.classList.toggle('open');
+}
+function closeMobileOverlays() {
+  var actions = document.getElementById('header-actions');
+  if (actions) actions.classList.remove('open');
+  var backdrop = document.getElementById('mobile-backdrop');
+  if (backdrop) backdrop.classList.remove('visible');
+  var panel = document.getElementById('side-panel');
+  if (panel && !panel.classList.contains('collapsed')) {
+    panel.classList.add('collapsed');
+    var btn = document.getElementById('panel-btn');
+    if (btn) btn.innerHTML = 'Panel &#9654;';
+  }
+  var ip = document.getElementById('issues-panel');
+  if (ip && !ip.classList.contains('collapsed')) {
+    ip.classList.add('collapsed');
+    issuesPanelOpen = false;
+  }
+}
+
+// --- Legend toggle for small screens ---
+if (window.innerWidth <= 480) {
+  var zc = document.getElementById('zoom-controls');
+  if (zc) {
+    var lb = document.createElement('button');
+    lb.className = 'zoom-btn';
+    lb.title = 'Toggle Legend';
+    lb.textContent = 'L';
+    lb.onclick = function() {
+      var leg = document.getElementById('legend');
+      if (leg) leg.classList.toggle('visible');
+    };
+    zc.appendChild(lb);
+  }
+}
 `;
 
 // ---------------------------------------------------------------------------
