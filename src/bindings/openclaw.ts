@@ -73,7 +73,15 @@ function gitkeep(dirPath: string): GeneratedFile {
 
 /**
  * Map topology model strings to OpenClaw model identifiers.
- * OpenClaw uses `provider/model-id` format with hyphens.
+ *
+ * OpenClaw resolves the provider from the FIRST segment of the model ID
+ * (everything before the first "/"). For proxy providers like OpenRouter,
+ * the model ID must include both the proxy provider AND the upstream
+ * model path: `openrouter/google/gemini-2.5-flash`.
+ *
+ * When the .at file specifies a model like `google/gemini-2.5-flash`
+ * under an `openrouter` provider, the binding prepends the provider
+ * name to produce the correct 3-segment ID.
  */
 function mapModel(model: string, defaultProvider?: string): string {
   const provider = defaultProvider ?? "anthropic";
@@ -82,9 +90,16 @@ function mapModel(model: string, defaultProvider?: string): string {
     sonnet: `${provider}/claude-sonnet-4-6`,
     haiku: `${provider}/claude-haiku-4-5`,
   };
-  // If model already has provider prefix, return as-is
-  if (model.includes("/")) return model;
-  return MODEL_MAP[model] ?? `${provider}/${model}`;
+  // Alias lookup (short names like "opus", "sonnet", "haiku")
+  if (MODEL_MAP[model]) return MODEL_MAP[model];
+  // If model already starts with the provider prefix, return as-is
+  if (model.startsWith(`${provider}/`)) return model;
+  // If model has a slash (e.g. "google/gemini-2.5-flash") but doesn't
+  // start with the provider, prepend the provider so OpenClaw routes
+  // through the correct provider (e.g. "openrouter/google/gemini-2.5-flash")
+  if (model.includes("/")) return `${provider}/${model}`;
+  // Bare model name — prepend provider
+  return `${provider}/${model}`;
 }
 
 /**
@@ -270,8 +285,8 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
     if (agent.temperature != null) entry.temperature = agent.temperature;
     if (agent.maxTokens != null) entry.maxTokens = agent.maxTokens;
 
-    // Timeout
-    if (agent.timeout) entry.timeout = agent.timeout;
+    // Note: OpenClaw does NOT support per-agent "timeout" in openclaw.json.
+    // Timeouts are documented in AGENTS.md instead.
 
     // Merge agent-level openclaw extensions
     if (agent.extensions?.openclaw) {
