@@ -1,6 +1,6 @@
 {
   "name": "agentopology",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The declarative language for multi-agent systems. Write once, scaffold for any platform.",
   "author": "Nadav Naveh",
   "license": "Apache-2.0",
