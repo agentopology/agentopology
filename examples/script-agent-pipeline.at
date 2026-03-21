@@ -1,11 +1,11 @@
-# Demo: script-only agents (model: none) + DuckDB store backend
-# Tests two new features added in feat/script-agents-duckdb
+# Demo: DuckDB store backend
+# Tests the duckdb backend addition in feat/script-agents-duckdb
 
 topology script-agent-demo : [pipeline] {
 
   meta {
     version: "1.0.0"
-    description: "Demo: script-only agents with DuckDB storage"
+    description: "Demo: agent pipeline with DuckDB storage"
   }
 
   orchestrator {
@@ -19,9 +19,9 @@ topology script-agent-demo : [pipeline] {
   }
 
   agent data-processor {
-    model: none
+    model: haiku
     tools: [Bash, Read, Write]
-    description: "Extract and transform data — no LLM needed"
+    description: "Extract and transform data"
     reads: ["workspace/raw/"]
     writes: ["workspace/processed/"]
   }

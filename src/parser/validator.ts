@@ -459,13 +459,11 @@ function v6BoundedLoops(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V7: Every agent and orchestrator must have a model.
- *  Note: model "none" is valid — indicates a script-only agent (no LLM invocation). */
+/** V7: Every agent and orchestrator must have a model. */
 function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const node of ast.nodes) {
     if (isAgent(node)) {
-      // model: "none" is valid — indicates a script-only agent (no LLM invocation)
       if (!node.model) {
         results.push({
           rule: "V7",
