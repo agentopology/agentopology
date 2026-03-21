@@ -7541,5 +7541,70 @@ describe("Auth block in providers (F42)", () => {
       expect(v86[0].level).toBe("error");
       expect(v86[0].message).toContain("nonexistent");
     });
+
+    it("V81: duckdb backend produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "duck-store", type: "entity", backend: "duckdb" },
+        ],
+        retrievals: [],
+      });
+      const results = validate(ast);
+      const v81 = results.filter((r) => r.rule === "V81");
+      expect(v81).toHaveLength(0);
+    });
+  });
+
+  // ==========================================================================
+  // model: none — script-only agents
+  // ==========================================================================
+
+  describe("model: none (script-only agent)", () => {
+    it("parses agent with model: none and model === 'none'", () => {
+      const src = `
+topology script-test : [pipeline] {
+  meta { version: "1.0.0" }
+  orchestrator { model: opus  handles: [start] }
+  action start { kind: decision }
+  agent data-processor {
+    model: none
+    tools: [Bash, Read]
+    description: "Script-only agent"
+  }
+  flow { start -> data-processor }
+}`;
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "data-processor");
+      expect(agent).toBeDefined();
+      expect(agent!.type).toBe("agent");
+      expect((agent as AgentNode).model).toBe("none");
+    });
+
+    it("V7: agent with model 'none' produces no error", () => {
+      const ast = minimalASTForWave6({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "scripter", type: "agent", label: "Scripter", model: "none" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v7 = results.filter((r) => r.rule === "V7");
+      expect(v7).toHaveLength(0);
+    });
+
+    it("V7: agent with undefined model still produces error (backward compat)", () => {
+      const ast = minimalASTForWave6({
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "nomodel", type: "agent", label: "No Model" } as any,
+        ],
+      });
+      const results = validate(ast);
+      const v7 = results.filter((r) => r.rule === "V7");
+      expect(v7.length).toBeGreaterThan(0);
+      expect(v7[0].node).toBe("nomodel");
+    });
   });
 });

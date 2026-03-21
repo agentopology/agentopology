@@ -459,11 +459,13 @@ function v6BoundedLoops(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V7: Every agent and orchestrator must have a model. */
+/** V7: Every agent and orchestrator must have a model.
+ *  Note: model "none" is valid — indicates a script-only agent (no LLM invocation). */
 function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const node of ast.nodes) {
     if (isAgent(node)) {
+      // model: "none" is valid — indicates a script-only agent (no LLM invocation)
       if (!node.model) {
         results.push({
           rule: "V7",
@@ -2742,7 +2744,7 @@ function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
 /** Valid store backends. */
 const VALID_STORE_BACKENDS: ReadonlySet<string> = new Set([
   "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb",
-  "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite",
+  "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite", "duckdb",
 ]);
 
 /**

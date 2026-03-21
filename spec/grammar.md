@@ -174,13 +174,13 @@ gate-fields     = ('after' ':' identifier | 'before' ':' identifier | 'run' ':' 
 command-decl    = 'command' identifier '{' command-fields '}'
 level-decl      = 'level' number string '{' 'omit' ':' name-list '}'
 env-decl        = identifier '{' (identifier ':' (identifier | string))* '}'
-model-id        = model-identifier | 'inherit'
+model-id        = model-identifier | 'inherit' | 'none'
 perm-enum       = perm-identifier
 ```
 
-**Model identifiers:** A model identifier is any string matching `[a-z][a-z0-9-/.]*`. This allows short aliases (`opus`, `sonnet`, `haiku`) as well as full model strings (`gpt-4o`, `gemini-pro`, `claude-sonnet-4-20250514`, `llama-3.1-70b`). The special value `inherit` means the agent inherits the model from its orchestrator or parent context.
+**Model identifiers:** A model identifier is any string matching `[a-z][a-z0-9-/.]*`. This allows short aliases (`opus`, `sonnet`, `haiku`) as well as full model strings (`gpt-4o`, `gemini-pro`, `claude-sonnet-4-20250514`, `llama-3.1-70b`). The special value `inherit` means the agent inherits the model from its orchestrator or parent context. When model is `none`, the agent executes tools and scripts only -- no LLM model is invoked. Use for deterministic processing steps (ETL, indexing, format conversion).
 
-> **Examples:** `opus`, `sonnet`, `haiku`, `gpt-4o`, `gemini-2.0-flash`, `claude-sonnet-4-20250514`, `llama-3.1-70b`, `mistral-large`, `inherit`
+> **Examples:** `opus`, `sonnet`, `haiku`, `gpt-4o`, `gemini-2.0-flash`, `claude-sonnet-4-20250514`, `llama-3.1-70b`, `mistral-large`, `inherit`, `none`
 
 **Permission identifiers:** Permissions use an extensible set of universal concepts:
 
@@ -527,6 +527,7 @@ scope-enum      = 'agent' | 'user' | 'session' | 'org' | 'global'
 isolation-enum  = 'strict' | 'soft' | 'none'
 backend-enum    = 'lancedb' | 'sqlite-vec' | 'chroma' | 'kuzu' | 'falkordb'
                 | 'mongodb' | 'pinecone' | 'qdrant' | 'pgvector' | 'neo4j' | 'sqlite'
+                | 'duckdb'
 extraction-enum = 'llm' | 'regex' | 'hybrid'
 secret-string   = 'secret'? string
 ```
