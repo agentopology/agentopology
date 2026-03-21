@@ -1,0 +1,65 @@
+# Demo: DuckDB store backend
+# Tests the duckdb backend addition in feat/script-agents-duckdb
+
+topology script-agent-demo : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "Demo: agent pipeline with DuckDB storage"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
+
+  action start {
+    kind: decision
+    description: "Begin pipeline"
+  }
+
+  agent data-processor {
+    model: haiku
+    tools: [Bash, Read, Write]
+    description: "Extract and transform data"
+    reads: ["workspace/raw/"]
+    writes: ["workspace/processed/"]
+  }
+
+  agent analyzer {
+    model: sonnet
+    tools: [Read, Write, Grep]
+    memory: [data-index]
+    description: "Analyze processed data using AI"
+    reads: ["workspace/processed/"]
+    writes: ["workspace/analysis/"]
+  }
+
+  memory {
+    store data-index {
+      type: entity
+      scope: run
+      backend: duckdb
+      path: "workspace/index.duckdb"
+
+      search {
+        strategy: hybrid
+        top-k: 100
+      }
+    }
+  }
+
+  flow {
+    start -> data-processor
+    data-processor -> analyzer
+  }
+
+  tools {
+    tool process-data {
+      script: "scripts/process.py"
+      args: [input-dir, output-dir]
+      lang: python
+      description: "Transform raw data into structured format"
+    }
+  }
+}

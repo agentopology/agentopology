@@ -527,6 +527,7 @@ scope-enum      = 'agent' | 'user' | 'session' | 'org' | 'global'
 isolation-enum  = 'strict' | 'soft' | 'none'
 backend-enum    = 'lancedb' | 'sqlite-vec' | 'chroma' | 'kuzu' | 'falkordb'
                 | 'mongodb' | 'pinecone' | 'qdrant' | 'pgvector' | 'neo4j' | 'sqlite'
+                | 'duckdb'
 extraction-enum = 'llm' | 'regex' | 'hybrid'
 secret-string   = 'secret'? string
 ```

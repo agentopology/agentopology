@@ -2742,7 +2742,7 @@ function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
 /** Valid store backends. */
 const VALID_STORE_BACKENDS: ReadonlySet<string> = new Set([
   "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb",
-  "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite",
+  "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite", "duckdb",
 ]);
 
 /**

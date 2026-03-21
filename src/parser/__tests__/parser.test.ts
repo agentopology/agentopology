@@ -7541,5 +7541,18 @@ describe("Auth block in providers (F42)", () => {
       expect(v86[0].level).toBe("error");
       expect(v86[0].message).toContain("nonexistent");
     });
+
+    it("V81: duckdb backend produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "duck-store", type: "entity", backend: "duckdb" },
+        ],
+        retrievals: [],
+      });
+      const results = validate(ast);
+      const v81 = results.filter((r) => r.rule === "V81");
+      expect(v81).toHaveLength(0);
+    });
   });
+
 });
