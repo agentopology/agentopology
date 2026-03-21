@@ -775,14 +775,44 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Writes:** ${agent.writes.join(", ")}`);
       }
 
-      // Memory stores
+      // Memory stores — rich details per store
       if (agent.memory && agent.memory.length > 0) {
-        sections.push(`- **Memory stores:** ${agent.memory.join(", ")}`);
+        const storeMap = new Map((ast.stores ?? []).map(s => [s.id, s]));
+        sections.push("- **Memory stores:**");
+        for (const storeId of agent.memory) {
+          const store = storeMap.get(storeId);
+          if (!store) {
+            sections.push(`  - ${storeId}`);
+            continue;
+          }
+          const parts = [`**${storeId}**`, `type: ${store.type}`, `backend: ${store.backend}`];
+          if (store.path) parts.push(`path: \`${store.path}\``);
+          if (store.scope) parts.push(`scope: ${store.scope}`);
+          if (store.embedding?.model) parts.push(`embedding: ${store.embedding.model} (${store.embedding.dimensions}d)`);
+          if (store.search?.strategy) parts.push(`search: ${store.search.strategy}`);
+          sections.push(`  - ${parts.join(" — ")}`);
+        }
       }
 
-      // Retrieval strategy
+      // Retrieval strategy — rich details
       if (agent.retrieval) {
-        sections.push(`- **Retrieval strategy:** ${agent.retrieval}`);
+        const retrieval = (ast.retrievals ?? []).find(r => r.id === agent.retrieval);
+        if (retrieval) {
+          const parts = [`**${retrieval.id}**`];
+          if (retrieval.sources) parts.push(`sources: ${retrieval.sources.join(", ")}`);
+          if (retrieval.budget) parts.push(`budget: ${retrieval.budget} tokens`);
+          if (retrieval.rerank) parts.push(`reranked`);
+          if (retrieval.scoring) {
+            const weights: string[] = [];
+            if (retrieval.scoring.semanticWeight != null) weights.push(`semantic: ${retrieval.scoring.semanticWeight}`);
+            if (retrieval.scoring.recencyWeight != null) weights.push(`recency: ${retrieval.scoring.recencyWeight}`);
+            if (retrieval.scoring.importanceWeight != null) weights.push(`importance: ${retrieval.scoring.importanceWeight}`);
+            if (weights.length) parts.push(`scoring: ${weights.join(", ")}`);
+          }
+          sections.push(`- **Retrieval strategy:** ${parts.join(" — ")}`);
+        } else {
+          sections.push(`- **Retrieval strategy:** ${agent.retrieval}`);
+        }
       }
 
       // Outputs
@@ -1302,22 +1332,102 @@ function generateMemoryMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
-  // Memory Stores
+  // Memory Stores — full details
   const stores = ast.stores ?? [];
   if (stores.length > 0) {
     sections.push("## Memory Stores");
     sections.push("");
     for (const store of stores) {
       sections.push(`### ${store.id}`);
-      sections.push(`- Type: ${store.type}`);
-      sections.push(`- Backend: ${store.backend}`);
-      if (store.path) sections.push(`- Path: ${store.path}`);
-      if (store.connection) sections.push(`- Connection: ${store.connection}`);
-      if (store.scope) sections.push(`- Scope: ${store.scope}`);
-      if (store.search?.strategy) sections.push(`- Search: ${store.search.strategy}`);
-      if (store.embedding?.model) sections.push(`- Embedding: ${store.embedding.model}`);
-      if (store.lifecycle?.retention) sections.push(`- Retention: ${store.lifecycle.retention}`);
-      if (store.lifecycle?.decayHalfLife) sections.push(`- Decay half-life: ${store.lifecycle.decayHalfLife}`);
+      if (store.description) sections.push(store.description);
+      sections.push("");
+      sections.push(`- **Type**: ${store.type}`);
+      sections.push(`- **Backend**: ${store.backend}`);
+      if (store.path) sections.push(`- **Path**: \`${store.path}\``);
+      if (store.connection) sections.push(`- **Connection**: ${store.connection}`);
+      if (store.scope) sections.push(`- **Scope**: ${store.scope}`);
+      if (store.isolation) sections.push(`- **Isolation**: ${store.isolation}`);
+      if (store.extraction) sections.push(`- **Extraction**: ${store.extraction}`);
+
+      // Embedding
+      if (store.embedding) {
+        const emb = store.embedding;
+        sections.push(`- **Embedding**: ${emb.model} (${emb.provider}, ${emb.dimensions}d)`);
+      }
+
+      // Index
+      if (store.index) {
+        const parts: string[] = [];
+        if (store.index.collection) parts.push(`collection: ${store.index.collection}`);
+        if (store.index.metric) parts.push(`metric: ${store.index.metric}`);
+        if (parts.length) sections.push(`- **Index**: ${parts.join(", ")}`);
+      }
+
+      // Search
+      if (store.search) {
+        const parts = [`strategy: ${store.search.strategy}`];
+        if (store.search.topK) parts.push(`top-k: ${store.search.topK}`);
+        if (store.search.rerank) parts.push(`rerank: yes`);
+        sections.push(`- **Search**: ${parts.join(", ")}`);
+      }
+
+      // Ingestion
+      if (store.ingestion) {
+        const parts: string[] = [];
+        if (store.ingestion.sources) parts.push(`sources: ${store.ingestion.sources.join(", ")}`);
+        if (store.ingestion.chunking) parts.push(`chunking: ${store.ingestion.chunking}`);
+        if (store.ingestion.chunkSize) parts.push(`size: ${store.ingestion.chunkSize}`);
+        if (store.ingestion.overlap) parts.push(`overlap: ${store.ingestion.overlap}`);
+        if (parts.length) sections.push(`- **Ingestion**: ${parts.join(", ")}`);
+      }
+
+      // Lifecycle
+      if (store.lifecycle) {
+        const lc = store.lifecycle;
+        if (lc.retention) sections.push(`- **Retention**: ${lc.retention}`);
+        if (lc.decayHalfLife) sections.push(`- **Decay half-life**: ${lc.decayHalfLife}`);
+        if (lc.consolidation != null) sections.push(`- **Consolidation threshold**: ${lc.consolidation}`);
+        if (lc.contradiction) sections.push(`- **Contradiction handling**: ${lc.contradiction}`);
+        if (lc.auditLog != null) sections.push(`- **Audit log**: ${lc.auditLog}`);
+      }
+
+      // Which agents use this store
+      const storeAgents = agents.filter(a => a.memory?.includes(store.id));
+      if (storeAgents.length > 0) {
+        sections.push(`- **Used by**: ${storeAgents.map(a => a.id).join(", ")}`);
+      }
+
+      sections.push("");
+    }
+  }
+
+  // Retrieval Strategies
+  const retrievals = ast.retrievals ?? [];
+  if (retrievals.length > 0) {
+    sections.push("## Retrieval Strategies");
+    sections.push("");
+    for (const ret of retrievals) {
+      sections.push(`### ${ret.id}`);
+      if (ret.sources) sections.push(`- **Sources**: ${ret.sources.join(", ")}`);
+      if (ret.budget) sections.push(`- **Token budget**: ${ret.budget}`);
+      if (ret.paths) sections.push(`- **Search paths**: ${ret.paths.join(", ")}`);
+      if (ret.rerank) sections.push(`- **Reranking**: enabled`);
+      if (ret.diversity) sections.push(`- **Diversity**: enabled`);
+      if (ret.cacheHitThreshold != null) {
+        sections.push(`- **Cache hit**: threshold ${ret.cacheHitThreshold} → ${ret.cacheHitAction ?? "short-circuit"}`);
+      }
+      if (ret.scoring) {
+        const weights: string[] = [];
+        if (ret.scoring.recencyWeight != null) weights.push(`recency: ${ret.scoring.recencyWeight}`);
+        if (ret.scoring.semanticWeight != null) weights.push(`semantic: ${ret.scoring.semanticWeight}`);
+        if (ret.scoring.importanceWeight != null) weights.push(`importance: ${ret.scoring.importanceWeight}`);
+        if (weights.length) sections.push(`- **Scoring**: ${weights.join(", ")}`);
+      }
+      // Which agents use this retrieval
+      const retAgents = agents.filter(a => a.retrieval === ret.id);
+      if (retAgents.length > 0) {
+        sections.push(`- **Used by**: ${retAgents.map(a => a.id).join(", ")}`);
+      }
       sections.push("");
     }
   }
@@ -1716,6 +1826,138 @@ function generateMetering(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
+/**
+ * Generate per-agent identity directories.
+ *
+ * OpenClaw reads agent identity from `config/agents/<id>/agent/`.
+ * Each agent gets its own IDENTITY.md, MEMORY.md (scoped to its stores),
+ * and SOUL.md with role-specific instructions.
+ */
+function generatePerAgentDirs(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const agents = getAgentsSorted(ast);
+  const orchestrator = getOrchestrator(ast);
+  const storeMap = new Map((ast.stores ?? []).map(s => [s.id, s]));
+  const defaultProvider = getDefaultProviderName(ast);
+
+  // Helper: build per-agent MEMORY.md with only stores this agent uses
+  function agentMemoryMd(agentId: string, storeIds: string[], retrievalId?: string): string {
+    const lines: string[] = ["# Memory Stores", ""];
+    lines.push("You have access to the following memory stores. Use them to persist and retrieve knowledge.");
+    lines.push("");
+
+    for (const sid of storeIds) {
+      const store = storeMap.get(sid);
+      if (!store) continue;
+      lines.push(`## ${store.id}`);
+      if (store.description) lines.push(store.description);
+      lines.push("");
+      lines.push(`- **Type**: ${store.type}`);
+      lines.push(`- **Backend**: ${store.backend}`);
+      if (store.path) lines.push(`- **Path**: \`${store.path}\``);
+      if (store.scope) lines.push(`- **Scope**: ${store.scope}`);
+      if (store.embedding) {
+        lines.push(`- **Embedding**: ${store.embedding.model} (${store.embedding.provider}, ${store.embedding.dimensions}d)`);
+      }
+      if (store.search) {
+        const parts = [`strategy: ${store.search.strategy}`];
+        if (store.search.topK) parts.push(`top-k: ${store.search.topK}`);
+        if (store.search.rerank) parts.push(`rerank: yes`);
+        lines.push(`- **Search**: ${parts.join(", ")}`);
+      }
+      if (store.ingestion?.sources) {
+        lines.push(`- **Ingestion sources**: ${store.ingestion.sources.join(", ")}`);
+      }
+      if (store.lifecycle?.retention) lines.push(`- **Retention**: ${store.lifecycle.retention}`);
+      lines.push("");
+    }
+
+    // Retrieval strategy
+    if (retrievalId) {
+      const retrieval = (ast.retrievals ?? []).find(r => r.id === retrievalId);
+      if (retrieval) {
+        lines.push("## Retrieval Strategy");
+        lines.push("");
+        lines.push(`**${retrieval.id}** — When you need to recall information:`);
+        lines.push("");
+        if (retrieval.sources) lines.push(`- **Sources**: ${retrieval.sources.join(", ")}`);
+        if (retrieval.budget) lines.push(`- **Token budget**: ${retrieval.budget}`);
+        if (retrieval.paths) lines.push(`- **Search paths**: ${retrieval.paths.join(", ")}`);
+        if (retrieval.rerank) lines.push(`- **Reranking**: enabled`);
+        if (retrieval.scoring) {
+          const w: string[] = [];
+          if (retrieval.scoring.semanticWeight != null) w.push(`semantic: ${retrieval.scoring.semanticWeight}`);
+          if (retrieval.scoring.recencyWeight != null) w.push(`recency: ${retrieval.scoring.recencyWeight}`);
+          if (retrieval.scoring.importanceWeight != null) w.push(`importance: ${retrieval.scoring.importanceWeight}`);
+          if (w.length) lines.push(`- **Scoring**: ${w.join(", ")}`);
+        }
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  // Generate per-agent dirs
+  const allAgents = orchestrator
+    ? [{ id: "orchestrator", description: `${toTitle(ast.topology.name)} orchestrator`, model: orchestrator.model, memory: undefined as string[] | undefined, retrieval: undefined as string | undefined, prompt: undefined as string | undefined }]
+    : [];
+  for (const a of agents) {
+    allAgents.push({ id: a.id, description: a.description ?? "", model: a.model ?? "sonnet", memory: a.memory, retrieval: a.retrieval, prompt: a.prompt });
+  }
+
+  for (const agent of allAgents) {
+    const base = `config/agents/${agent.id}/agent`;
+
+    // IDENTITY.md
+    files.push({
+      path: `${base}/IDENTITY.md`,
+      content: [
+        `# ${toTitle(agent.id)}`,
+        "",
+        agent.description || `Agent in the ${ast.topology.name} topology.`,
+        "",
+        `Model: ${mapModel(agent.model, defaultProvider)}`,
+        "",
+      ].join("\n"),
+      category: "machine",
+    });
+
+    // MEMORY.md — scoped to this agent's stores
+    if (agent.memory && agent.memory.length > 0) {
+      files.push({
+        path: `${base}/MEMORY.md`,
+        content: agentMemoryMd(agent.id, agent.memory, agent.retrieval) + "\n",
+        category: "machine",
+      });
+    }
+
+    // SOUL.md — agent-specific instructions
+    const soulLines = [
+      `# ${toTitle(agent.id)} — Soul`,
+      "",
+      `You are the **${toTitle(agent.id)}** agent in the **${toTitle(ast.topology.name)}** topology.`,
+      "",
+    ];
+    if (agent.description) {
+      soulLines.push(`## Role`, "", agent.description, "");
+    }
+    if (agent.prompt) {
+      soulLines.push("## Instructions", "", agent.prompt, "");
+    }
+    if (agent.memory && agent.memory.length > 0) {
+      soulLines.push(`## Memory`, "", `You have access to these stores: ${agent.memory.join(", ")}. See MEMORY.md for details.`, "");
+    }
+    files.push({
+      path: `${base}/SOUL.md`,
+      content: soulLines.join("\n"),
+      category: "machine",
+    });
+  }
+
+  return files;
+}
+
 // ---------------------------------------------------------------------------
 // Binding export
 // ---------------------------------------------------------------------------
@@ -1759,7 +2001,10 @@ export const openClawBinding: BindingTarget = {
     files.push(gitkeep("memory"));
     files.push(gitkeep("skills"));
 
-    // 6. Workspace protocol
+    // 6. Per-agent identity directories (config/agents/<id>/agent/)
+    files.push(...generatePerAgentDirs(ast));
+
+    // 7. Workspace protocol
     const protocol = generateWorkspaceProtocol(ast);
     if (protocol) files.push(protocol);
 
