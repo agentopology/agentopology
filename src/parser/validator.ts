@@ -2782,7 +2782,20 @@ function v82StoreEmbeddingRequired(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   if (!ast.stores) return results;
   for (const store of ast.stores) {
-    if (EMBEDDING_REQUIRED_TYPES.has(store.type) && !store.embedding) {
+    // Skip warning for stores that don't need embeddings:
+    // - keyword-only or graph search strategies work without vectors
+    // - graph backends (kuzu, falkordb, neo4j) do structured queries
+    const searchStrategy = store.search?.strategy;
+    const skipEmbedding =
+      searchStrategy === "keyword" ||
+      searchStrategy === "graph" ||
+      store.backend === "kuzu" ||
+      store.backend === "falkordb" ||
+      store.backend === "neo4j" ||
+      // Episodic/user stores on sqlite without explicit search config
+      // are typically keyword/temporal — don't nag about embeddings
+      ((store.type === "episodic" || store.type === "user") && store.backend === "sqlite" && !store.search);
+    if (EMBEDDING_REQUIRED_TYPES.has(store.type) && !store.embedding && !skipEmbedding) {
       results.push({
         rule: "V82",
         level: "warning",

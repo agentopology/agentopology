@@ -35,6 +35,8 @@ import type {
   ArtifactDef,
   ParamDef,
   PromptVariant,
+  StoreNode,
+  RetrievalNode,
 } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
@@ -473,6 +475,112 @@ function serializeMemory(memory: Record<string, unknown>): string | null {
   return lines.join("\n");
 }
 
+function serializeStores(stores: StoreNode[]): string[] {
+  const blocks: string[] = [];
+  for (const store of stores) {
+    const lines: string[] = [];
+    lines.push(`    store ${store.id} {`);
+    lines.push(`      type: ${store.type}`);
+    if (store.description) lines.push(`      description: ${q(store.description)}`);
+    if (store.scope) lines.push(`      scope: ${store.scope}`);
+    if (store.isolation) lines.push(`      isolation: ${store.isolation}`);
+    lines.push(`      backend: ${store.backend}`);
+    if (store.path) lines.push(`      path: ${q(store.path)}`);
+    if (store.connection) lines.push(`      connection: secret ${q(store.connection)}`);
+    if (store.extraction) lines.push(`      extraction: ${store.extraction}`);
+
+    // Embedding sub-block
+    if (store.embedding) {
+      lines.push("      embedding {");
+      if (store.embedding.provider) lines.push(`        provider: ${store.embedding.provider}`);
+      if (store.embedding.model) lines.push(`        model: ${q(store.embedding.model)}`);
+      if (store.embedding.dimensions != null) lines.push(`        dimensions: ${store.embedding.dimensions}`);
+      if (store.embedding.endpoint) lines.push(`        endpoint: ${q(store.embedding.endpoint)}`);
+      lines.push("      }");
+    }
+
+    // Index sub-block
+    if (store.index) {
+      lines.push("      index {");
+      if (store.index.collection) lines.push(`        collection: ${q(store.index.collection)}`);
+      if (store.index.metric) lines.push(`        metric: ${store.index.metric}`);
+      lines.push("      }");
+    }
+
+    // Ingestion sub-block
+    if (store.ingestion) {
+      lines.push("      ingestion {");
+      if (store.ingestion.sources) lines.push(`        sources: ${inlineList(store.ingestion.sources)}`);
+      if (store.ingestion.chunking) lines.push(`        chunking: ${store.ingestion.chunking}`);
+      if (store.ingestion.chunkSize != null) lines.push(`        chunk-size: ${store.ingestion.chunkSize}`);
+      if (store.ingestion.overlap != null) lines.push(`        overlap: ${store.ingestion.overlap}`);
+      lines.push("      }");
+    }
+
+    // Search sub-block
+    if (store.search) {
+      lines.push("      search {");
+      if (store.search.strategy) lines.push(`        strategy: ${store.search.strategy}`);
+      if (store.search.rerank != null) lines.push(`        rerank: ${store.search.rerank}`);
+      if (store.search.topK != null) lines.push(`        top-k: ${store.search.topK}`);
+      lines.push("      }");
+    }
+
+    // Lifecycle sub-block
+    if (store.lifecycle) {
+      const lc = store.lifecycle;
+      lines.push("      lifecycle {");
+      if (lc.retention) lines.push(`        retention: ${lc.retention}`);
+      if (lc.decayHalfLife) lines.push(`        decay-half-life: ${lc.decayHalfLife}`);
+      if (lc.consolidation != null) lines.push(`        consolidation: ${lc.consolidation}`);
+      if (lc.contradiction) lines.push(`        contradiction: ${lc.contradiction}`);
+      if (lc.auditLog != null) lines.push(`        audit-log: ${lc.auditLog}`);
+      lines.push("      }");
+    }
+
+    // Backend-config passthrough
+    if (store.backendConfig && Object.keys(store.backendConfig).length > 0) {
+      lines.push("      backend-config {");
+      for (const [k, v] of Object.entries(store.backendConfig)) {
+        lines.push(`        ${k}: ${q(String(v))}`);
+      }
+      lines.push("      }");
+    }
+
+    lines.push("    }");
+    blocks.push(lines.join("\n"));
+  }
+  return blocks;
+}
+
+function serializeRetrievals(retrievals: RetrievalNode[]): string[] {
+  const blocks: string[] = [];
+  for (const ret of retrievals) {
+    const lines: string[] = [];
+    lines.push(`    retrieval ${ret.id} {`);
+    if (ret.sources) lines.push(`      sources: ${inlineList(ret.sources)}`);
+    if (ret.budget != null) lines.push(`      budget: ${ret.budget}`);
+    if (ret.paths) lines.push(`      paths: ${inlineList(ret.paths)}`);
+    if (ret.rerank != null) lines.push(`      rerank: ${ret.rerank}`);
+    if (ret.diversity != null) lines.push(`      diversity: ${ret.diversity}`);
+    if (ret.cacheHitThreshold != null) lines.push(`      cache-hit-threshold: ${ret.cacheHitThreshold}`);
+    if (ret.cacheHitAction) lines.push(`      cache-hit-action: ${ret.cacheHitAction}`);
+
+    // Scoring sub-block
+    if (ret.scoring) {
+      lines.push("      scoring {");
+      if (ret.scoring.recencyWeight != null) lines.push(`        recency-weight: ${ret.scoring.recencyWeight}`);
+      if (ret.scoring.semanticWeight != null) lines.push(`        semantic-weight: ${ret.scoring.semanticWeight}`);
+      if (ret.scoring.importanceWeight != null) lines.push(`        importance-weight: ${ret.scoring.importanceWeight}`);
+      lines.push("      }");
+    }
+
+    lines.push("    }");
+    blocks.push(lines.join("\n"));
+  }
+  return blocks;
+}
+
 function serializeDepth(depth: { factors: string[]; levels: { level: number; label: string; omit: string[] }[] }): string | null {
   if (!depth.factors?.length && !depth.levels?.length) return null;
   const lines: string[] = ["  depth {"];
@@ -763,11 +871,41 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push(depth);
   }
 
-  // Memory
+  // Memory (with stores and retrievals)
+  const stores = ast.stores ?? [];
+  const retrievals = ast.retrievals ?? [];
   const memory = serializeMemory(ast.memory);
-  if (memory) {
-    sections.push("");
-    sections.push(memory);
+  if (memory || stores.length > 0 || retrievals.length > 0) {
+    if (memory) {
+      // Memory block already has opening/closing braces — inject stores before closing
+      const memLines = memory.split("\n");
+      const closingIdx = memLines.lastIndexOf("  }");
+      if (closingIdx !== -1 && (stores.length > 0 || retrievals.length > 0)) {
+        const storeBlocks = serializeStores(stores);
+        const retrievalBlocks = serializeRetrievals(retrievals);
+        const injected = [
+          ...memLines.slice(0, closingIdx),
+          ...(storeBlocks.length > 0 ? ["", ...storeBlocks] : []),
+          ...(retrievalBlocks.length > 0 ? ["", ...retrievalBlocks] : []),
+          memLines[closingIdx],
+        ];
+        sections.push("");
+        sections.push(injected.join("\n"));
+      } else {
+        sections.push("");
+        sections.push(memory);
+      }
+    } else if (stores.length > 0 || retrievals.length > 0) {
+      // No generic memory fields, but we have stores/retrievals — create memory block
+      const lines: string[] = ["  memory {"];
+      const storeBlocks = serializeStores(stores);
+      const retrievalBlocks = serializeRetrievals(retrievals);
+      for (const b of storeBlocks) { lines.push(""); lines.push(b); }
+      for (const b of retrievalBlocks) { lines.push(""); lines.push(b); }
+      lines.push("  }");
+      sections.push("");
+      sections.push(lines.join("\n"));
+    }
   }
 
   // Batch

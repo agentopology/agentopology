@@ -386,19 +386,95 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
-    // Memory stores
+    // Memory stores — rich instructions with store details and access methods
     if (agent.memory && agent.memory.length > 0) {
+      const storeMap = new Map((ast.stores ?? []).map(s => [s.id, s]));
       sections.push("## Memory Stores");
-      for (const storeId of agent.memory) {
-        sections.push(`- ${storeId}`);
-      }
       sections.push("");
+      sections.push("You have access to the following memory stores. Use them to persist and retrieve knowledge across conversations.");
+      sections.push("");
+
+      for (const storeId of agent.memory) {
+        const store = storeMap.get(storeId);
+        if (!store) {
+          sections.push(`### ${storeId}`);
+          sections.push(`- Store not found in topology`);
+          sections.push("");
+          continue;
+        }
+
+        sections.push(`### ${storeId}`);
+        if (store.description) sections.push(store.description);
+        sections.push("");
+        sections.push(`- **Type**: ${store.type}`);
+        sections.push(`- **Backend**: ${store.backend}`);
+        if (store.path) sections.push(`- **Path**: \`${store.path}\``);
+        if (store.scope) sections.push(`- **Scope**: ${store.scope}`);
+
+        // Access method — MCP or skill-based
+        const hasMcp = STORE_MCP_COMMANDS[store.backend] != null;
+        if (hasMcp) {
+          sections.push(`- **Access**: MCP server \`${storeId}\` (auto-configured in .mcp.json)`);
+        } else if (store.path) {
+          sections.push(`- **Access**: Direct file access at \`${store.path}\``);
+        }
+
+        // Embedding config
+        if (store.embedding) {
+          sections.push(`- **Embedding**: ${store.embedding.model} (${store.embedding.provider}, ${store.embedding.dimensions}d)`);
+        }
+
+        // Search strategy
+        if (store.search) {
+          const parts = [`strategy: ${store.search.strategy}`];
+          if (store.search.topK) parts.push(`top-k: ${store.search.topK}`);
+          if (store.search.rerank) parts.push(`rerank: yes`);
+          sections.push(`- **Search**: ${parts.join(", ")}`);
+        }
+
+        // Ingestion sources
+        if (store.ingestion?.sources) {
+          sections.push(`- **Ingestion sources**: ${store.ingestion.sources.join(", ")}`);
+        }
+
+        // Lifecycle
+        if (store.lifecycle?.retention) {
+          sections.push(`- **Retention**: ${store.lifecycle.retention}`);
+        }
+
+        sections.push("");
+      }
     }
 
-    // Retrieval strategy
+    // Retrieval strategy — rich details
     if (agent.retrieval) {
-      sections.push(`Retrieval strategy: ${agent.retrieval}`);
-      sections.push("");
+      const retrieval = (ast.retrievals ?? []).find(r => r.id === agent.retrieval);
+      if (retrieval) {
+        sections.push("## Retrieval Strategy");
+        sections.push("");
+        sections.push(`**${retrieval.id}** — When you need to recall information, use this strategy:`);
+        sections.push("");
+        if (retrieval.sources) sections.push(`- **Sources**: ${retrieval.sources.join(", ")}`);
+        if (retrieval.budget) sections.push(`- **Token budget**: ${retrieval.budget} tokens max for retrieved context`);
+        if (retrieval.paths) sections.push(`- **Search paths**: ${retrieval.paths.join(", ")}`);
+        if (retrieval.rerank) sections.push(`- **Reranking**: enabled — results are cross-ranked for relevance`);
+        if (retrieval.diversity) sections.push(`- **Diversity**: enabled — results span different sources`);
+        if (retrieval.cacheHitThreshold != null) {
+          sections.push(`- **Cache hit**: threshold ${retrieval.cacheHitThreshold} → ${retrieval.cacheHitAction ?? "short-circuit"}`);
+        }
+        if (retrieval.scoring) {
+          const s = retrieval.scoring;
+          const weights: string[] = [];
+          if (s.recencyWeight != null) weights.push(`recency: ${s.recencyWeight}`);
+          if (s.semanticWeight != null) weights.push(`semantic: ${s.semanticWeight}`);
+          if (s.importanceWeight != null) weights.push(`importance: ${s.importanceWeight}`);
+          if (weights.length) sections.push(`- **Scoring weights**: ${weights.join(", ")}`);
+        }
+        sections.push("");
+      } else {
+        sections.push(`Retrieval strategy: ${agent.retrieval}`);
+        sections.push("");
+      }
     }
 
     // Outputs section
@@ -1316,6 +1392,113 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
+/**
+ * Generate memory command files for each store.
+ *
+ * These are Claude Code slash-commands (`.claude/commands/`) that give agents
+ * a concrete way to interact with memory stores — search, ingest, and inspect.
+ * This works alongside (or instead of) MCP servers.
+ */
+function generateMemoryCommands(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const stores = ast.stores ?? [];
+
+  for (const store of stores) {
+    // Search command — for stores with search config or semantic/episodic type
+    if (store.search || store.type === "semantic" || store.type === "episodic") {
+      const hasMcp = STORE_MCP_COMMANDS[store.backend] != null;
+      const searchLines: string[] = [
+        "---",
+        `description: "Search the ${store.id} memory store"`,
+        "---",
+        "",
+        `# /memory-search-${store.id}`,
+        "",
+        `Search the **${store.id}** store for relevant information.`,
+        "",
+        `## Store Details`,
+        `- **Type**: ${store.type}`,
+        `- **Backend**: ${store.backend}`,
+      ];
+
+      if (store.path) searchLines.push(`- **Path**: \`${store.path}\``);
+
+      if (store.search) {
+        searchLines.push(`- **Strategy**: ${store.search.strategy}`);
+        if (store.search.topK) searchLines.push(`- **Top-K**: ${store.search.topK}`);
+        if (store.search.rerank) searchLines.push(`- **Reranking**: enabled`);
+      }
+
+      if (store.embedding) {
+        searchLines.push(`- **Embedding**: ${store.embedding.model} (${store.embedding.provider}, ${store.embedding.dimensions}d)`);
+      }
+
+      searchLines.push("");
+      searchLines.push("## Instructions");
+      searchLines.push("");
+
+      if (hasMcp) {
+        searchLines.push(`Use the \`${store.id}\` MCP server to search this store.`);
+        searchLines.push(`The MCP server is configured in \`.mcp.json\` and provides tools for querying the ${store.backend} database.`);
+      } else {
+        searchLines.push(`This store uses ${store.backend} at \`${store.path ?? ".claude/stores/" + store.id}\`.`);
+        searchLines.push(`Read the database directly or use an appropriate library to query it.`);
+      }
+
+      searchLines.push("");
+      searchLines.push("Search for: $ARGUMENTS");
+      searchLines.push("");
+
+      files.push({
+        path: `.claude/commands/memory-search-${store.id}.md`,
+        content: searchLines.join("\n"),
+        category: "machine",
+      });
+    }
+
+    // Ingest command — for stores with ingestion config
+    if (store.ingestion) {
+      const ingestLines: string[] = [
+        "---",
+        `description: "Ingest documents into the ${store.id} memory store"`,
+        "---",
+        "",
+        `# /memory-ingest-${store.id}`,
+        "",
+        `Ingest documents into the **${store.id}** store.`,
+        "",
+        "## Ingestion Config",
+        `- **Sources**: ${store.ingestion.sources?.join(", ") ?? "not specified"}`,
+        `- **Chunking**: ${store.ingestion.chunking ?? "recursive"}`,
+      ];
+
+      if (store.ingestion.chunkSize) ingestLines.push(`- **Chunk size**: ${store.ingestion.chunkSize}`);
+      if (store.ingestion.overlap) ingestLines.push(`- **Overlap**: ${store.ingestion.overlap}`);
+
+      if (store.embedding) {
+        ingestLines.push(`- **Embedding**: ${store.embedding.model} (${store.embedding.provider}, ${store.embedding.dimensions}d)`);
+      }
+
+      ingestLines.push("");
+      ingestLines.push("## Instructions");
+      ingestLines.push("");
+      ingestLines.push(`1. Read files from the configured sources: ${store.ingestion.sources?.join(", ") ?? "docs/"}`);
+      ingestLines.push(`2. Split content into chunks (${store.ingestion.chunking ?? "recursive"}, size: ${store.ingestion.chunkSize ?? 512})`);
+      ingestLines.push(`3. Generate embeddings using ${store.embedding?.model ?? "the configured model"}`);
+      ingestLines.push(`4. Insert into ${store.backend} at \`${store.path ?? ".claude/stores/" + store.id}\``);
+      ingestLines.push("");
+
+      files.push({
+        path: `.claude/commands/memory-ingest-${store.id}.md`,
+        content: ingestLines.join("\n"),
+        category: "machine",
+      });
+    }
+  }
+
+  return files;
+}
+
 /** Generate gate script stubs. */
 function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -1620,15 +1803,30 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
-/** Generate .mcp.json from mcp-servers block. Always includes env field. */
-/** Backend-to-MCP-server command mapping for known memory store backends. */
-const STORE_MCP_COMMANDS: Record<string, { command: string; args: string[] }> = {
-  "lancedb": { command: "npx", args: ["-y", "@lancedb/mcp-server"] },
-  "chroma": { command: "npx", args: ["-y", "chromadb-mcp-server"] },
-  "sqlite-vec": { command: "npx", args: ["-y", "sqlite-vec-mcp-server"] },
-  "kuzu": { command: "npx", args: ["-y", "kuzu-mcp-server"] },
-  "qdrant": { command: "npx", args: ["-y", "@qdrant/mcp-server"] },
-  "mongodb": { command: "npx", args: ["-y", "mongodb-mcp-server"] },
+/**
+ * Backend → MCP server mapping.
+ *
+ * Only packages verified to exist on npm or PyPI are included.
+ * npm packages use `npx -y`, Python packages use `uvx`.
+ * `pathFlag` controls how the DB path is passed (positional, --db, --db-path, etc.).
+ *
+ * Verified 2026-03-21:
+ *   npm:  kuzu-mcp-server@0.1.0, mongodb-mcp-server@1.8.1
+ *   pip:  mcp-server-sqlite@2025.4.25, mcp-server-qdrant@0.8.1,
+ *         mcp-server-neo4j@0.1.8, chroma-mcp@0.2.6
+ */
+const STORE_MCP_COMMANDS: Record<string, { command: string; args: string[]; pathFlag?: string }> = {
+  // npm packages
+  "kuzu": { command: "npx", args: ["-y", "kuzu-mcp-server"] },                  // positional
+  "mongodb": { command: "npx", args: ["-y", "mongodb-mcp-server"], pathFlag: "--uri" },
+  // Python MCP servers (via uvx)
+  "sqlite": { command: "uvx", args: ["mcp-server-sqlite"], pathFlag: "--db-path" },
+  "sqlite-vec": { command: "uvx", args: ["mcp-server-sqlite"], pathFlag: "--db-path" },
+  "qdrant": { command: "uvx", args: ["mcp-server-qdrant"], pathFlag: "--qdrant-url" },
+  "neo4j": { command: "uvx", args: ["mcp-server-neo4j"], pathFlag: "--db-uri" },
+  "chroma": { command: "uvx", args: ["chroma-mcp"], pathFlag: "--host" },
+  // No verified MCP servers: lancedb, pinecone, pgvector, falkordb
+  // These backends use skill-based access (slash commands) instead
 };
 
 function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
@@ -1663,13 +1861,20 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   for (const store of stores) {
     const mcpCmd = STORE_MCP_COMMANDS[store.backend];
     if (!mcpCmd) {
-      // Backend not in the known MCP map — skip (no placeholder in JSON)
+      // Backend not in the known MCP map — skip (skill-based access only)
       continue;
     }
 
     const args = [...mcpCmd.args];
     const storePath = store.path ?? `.claude/stores/${store.id}`;
-    args.push("--db", storePath);
+
+    // Each server has its own CLI convention for the DB path
+    if (mcpCmd.pathFlag) {
+      args.push(mcpCmd.pathFlag, storePath);
+    } else {
+      // No pathFlag = positional argument (e.g., kuzu-mcp-server ./path)
+      args.push(storePath);
+    }
 
     const env: Record<string, string> = {};
     if (store.connection) {
@@ -2221,6 +2426,9 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Memory directories
     files.push(...generateMemory(ast));
+
+    // Memory store command files (search/ingest per store)
+    files.push(...generateMemoryCommands(ast));
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
