@@ -3038,10 +3038,10 @@ import reviewer from ./review.at sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e
   // -------------------------------------------------------------------------
   validation: {
     name: "validation",
-    description: "All 29 validation rules with descriptions and fixes",
+    description: "All validation rules with descriptions and fixes",
     content: () => `# validation
 
-AgenTopology enforces 29 validation rules during parsing. Errors prevent compilation; warnings are informational.
+AgenTopology enforces 82 validation rules during parsing. Errors prevent compilation; warnings are informational.
 
 ## Rules
 

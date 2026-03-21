@@ -1,7 +1,7 @@
 /**
  * AgenTopology AST validator.
  *
- * Implements the 29 validation rules from the AgenTopology specification
+ * Implements the validation rules from the AgenTopology specification
  * (section 6). Takes a parsed {@link TopologyAST} and returns an array of
  * {@link ValidationResult} entries describing errors and warnings.
  *

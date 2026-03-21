@@ -352,7 +352,7 @@ mcp-servers {
 </tr>
 </table>
 
-Plus: schemas, artifacts, metering, circuit breakers, scale configs, depth levels, environment overrides, prompt variants, composition via imports, and [more](spec/grammar.md).
+Plus: **memory stores** (semantic, graph, episodic — 11 backends), **retrieval strategies** (scoring weights, cache-hit routing), schemas, artifacts, metering, circuit breakers, scale configs, depth levels, environment overrides, prompt variants, composition via imports, and [more](spec/grammar.md).
 
 ---
 
