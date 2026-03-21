@@ -1,0 +1,201 @@
+topology memory-integration-test : [supervisor] {
+
+  meta {
+    version: "1.0.0"
+    description: "Integration test for Agent Memory system — exercises all store types, backends, and retrieval features"
+  }
+
+  orchestrator {
+    model: opus
+    plan: auto
+    handles: [process]
+  }
+
+  agent indexer {
+    model: sonnet
+    description: "Indexes documents into semantic and graph stores"
+    tools: [Read, Glob]
+    memory: [docs-store, entity-graph]
+    retrieval: main-retrieval
+    permissions: autonomous
+  }
+
+  agent searcher {
+    model: sonnet
+    description: "Searches across all memory stores"
+    tools: [Read]
+    memory: [docs-store, entity-graph, chat-history]
+    retrieval: main-retrieval
+    permissions: autonomous
+  }
+
+  agent responder {
+    model: sonnet
+    description: "Generates responses using retrieved context"
+    tools: [Read, Write]
+    memory: [docs-store, chat-history, user-settings]
+    retrieval: main-retrieval
+    permissions: autonomous
+  }
+
+  action process {
+    kind: inline
+    description: "Process a query through the memory pipeline"
+  }
+
+  flow {
+    process -> indexer
+    indexer -> searcher
+    searcher -> responder
+  }
+
+  triggers {
+    command query {
+      pattern: "/query <question>"
+      description: "Query the knowledge system"
+    }
+  }
+
+  memory {
+    workspace {
+      path: ".workspace/"
+    }
+
+    domains {
+      path: "domains/"
+    }
+
+    store docs-store {
+      type: semantic
+      description: "Document knowledge base with hybrid search"
+      scope: org
+      isolation: soft
+      backend: lancedb
+      path: ".memory/docs/"
+
+      embedding {
+        provider: ollama
+        model: "nomic-embed-text"
+        dimensions: 768
+      }
+
+      index {
+        collection: "documents"
+        metric: cosine
+      }
+
+      ingestion {
+        sources: ["docs/", "wiki/"]
+        chunking: recursive
+        chunk-size: 512
+        overlap: 50
+      }
+
+      search {
+        strategy: hybrid
+        rerank: true
+        top-k: 10
+      }
+
+      lifecycle {
+        retention: 365d
+        consolidation: 0.85
+        contradiction: overwrite
+        audit-log: false
+      }
+    }
+
+    store entity-graph {
+      type: graph
+      description: "Entity relationship tracking"
+      scope: org
+      isolation: soft
+      backend: kuzu
+      path: ".memory/graph/"
+      extraction: hybrid
+
+      lifecycle {
+        retention: 365d
+        contradiction: preserve
+      }
+    }
+
+    store chat-history {
+      type: episodic
+      description: "Conversation history with temporal reasoning"
+      scope: user
+      isolation: strict
+      backend: sqlite
+      path: ".memory/episodes.db"
+
+      embedding {
+        provider: ollama
+        model: "nomic-embed-text"
+        dimensions: 768
+      }
+
+      lifecycle {
+        retention: 90d
+        decay-half-life: 30d
+        consolidation: 0.9
+        contradiction: bi-temporal
+        audit-log: true
+      }
+    }
+
+    store user-settings {
+      type: user
+      description: "Per-user preferences and context"
+      scope: user
+      isolation: strict
+      backend: sqlite
+      path: ".memory/user.db"
+
+      lifecycle {
+        contradiction: overwrite
+      }
+    }
+
+    store procedures {
+      type: procedural
+      description: "Learned workflows and patterns"
+      scope: agent
+      isolation: soft
+      backend: sqlite-vec
+      path: ".memory/procedures/"
+
+      embedding {
+        provider: local
+        model: "gguf-nomic"
+        dimensions: 768
+      }
+
+      search {
+        strategy: vector
+        top-k: 5
+      }
+
+      lifecycle {
+        retention: 180d
+        contradiction: preserve
+      }
+    }
+
+    retrieval main-retrieval {
+      sources: [docs-store, entity-graph, chat-history, procedures]
+      budget: 4096
+
+      scoring {
+        recency-weight: 0.3
+        semantic-weight: 0.5
+        importance-weight: 0.2
+      }
+
+      paths: [semantic, episodic, graph, hybrid]
+      rerank: true
+      diversity: true
+      cache-hit-threshold: 0.92
+      cache-hit-action: short-circuit
+    }
+  }
+}
