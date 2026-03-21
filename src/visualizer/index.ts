@@ -20,6 +20,8 @@ import type {
   ActionNode,
   HumanNode,
   OrchestratorNode,
+  StoreNode,
+  RetrievalNode,
 } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 
@@ -121,6 +123,8 @@ function astToViewData(ast: TopologyAST): Record<string, any> {
         if (a.maxTurns != null) base.maxTurns = a.maxTurns;
         if (a.sandbox != null) base.sandbox = a.sandbox;
         if (a.fallbackChain) base.fallbackChain = a.fallbackChain;
+        if (a.memory && a.memory.length > 0) base.memory = a.memory;
+        if (a.retrieval) base.retrieval = a.retrieval;
         break;
       }
       case "gate": {
@@ -173,6 +177,8 @@ function astToViewData(ast: TopologyAST): Record<string, any> {
     edges,
     depth: ast.depth,
     memory: ast.memory,
+    stores: ast.stores,
+    retrievals: ast.retrievals,
     batch: ast.batch,
     environments: ast.environments,
     triggers: ast.triggers,
@@ -427,6 +433,7 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .edge-path.conditional{stroke:var(--t3);stroke-dasharray:6 4}
 .edge-path.failure{stroke:var(--red);stroke-dasharray:6 4;opacity:.7}
 .edge-path.loop{stroke:var(--orange);stroke-dasharray:4 4}
+.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.6}
 .edge-group.dimmed .edge-path{opacity:.06}
 .edge-group.dimmed .edge-label-group{opacity:.06}
 .edge-group.highlighted .edge-path{stroke-width:2.5;opacity:1}
@@ -640,6 +647,7 @@ function typeColor(type) {
     case 'action': return { main: COLOR_GRAY, bg: 'rgba(148,163,184,.08)', br: 'rgba(148,163,184,.2)' };
     case 'gate': return { main: COLOR_ORANGE, bg: 'rgba(251,146,60,.10)', br: 'rgba(251,146,60,.25)' };
     case 'orchestrator': return { main: COLOR_GOLD, bg: 'rgba(251,191,36,.10)', br: 'rgba(251,191,36,.25)' };
+    case 'store': return { main: '#14b8a6', bg: 'rgba(20,184,166,.10)', br: 'rgba(20,184,166,.25)' };
     default: return { main: COLOR_GRAY, bg: 'rgba(148,163,184,.08)', br: 'rgba(148,163,184,.2)' };
   }
 }
@@ -647,6 +655,7 @@ function typeIcon(type) {
   switch (type) {
     case 'agent': return '\\u2726'; case 'action': return '\\u25C7';
     case 'gate': return '\\u2B21'; case 'orchestrator': return '\\u2B22';
+    case 'store': return '\\u26C1';
     default: return '\\u25CB';
   }
 }
@@ -654,6 +663,7 @@ function nodeSize(node) {
   if (node.type === 'orchestrator') return { w: ORCH_W, h: ORCH_H };
   if (node.type === 'gate') return { w: 120, h: 70 };
   if (node.type === 'action') return { w: ACTION_W, h: ACTION_H };
+  if (node.type === 'store') return { w: 140, h: 60 };
   return { w: NODE_W, h: NODE_H };
 }
 function isManualNode(node) { return node.invocation === 'manual'; }
@@ -822,9 +832,29 @@ function renderGraph() {
   const container = document.getElementById('graph-container');
   const rect = container.getBoundingClientRect();
 
-  nodePositions = layoutNodes(data.nodes, data.edges);
+  // Build combined nodes and edges including memory store pseudo-nodes
+  var allNodes = data.nodes.slice();
+  var allEdges = data.edges.slice();
+  var storeIds = new Set();
+  if (data.stores && data.stores.length > 0) {
+    data.stores.forEach(function(store) {
+      allNodes.push({ id: store.id, type: 'store', label: store.id, storeType: store.type, backend: store.backend });
+      storeIds.add(store.id);
+    });
+    // Add edges from agents to their memory stores
+    data.nodes.forEach(function(n) {
+      if (n.memory && n.memory.length > 0) {
+        n.memory.forEach(function(storeId) {
+          if (storeIds.has(storeId)) {
+            allEdges.push({ from: n.id, to: storeId, condition: null, maxIterations: null, isMemory: true });
+          }
+        });
+      }
+    });
+  }
+  nodePositions = layoutNodes(allNodes, allEdges);
   const nodeMap = {};
-  data.nodes.forEach(n => nodeMap[n.id] = n);
+  allNodes.forEach(n => nodeMap[n.id] = n);
 
   if (isHorizontal) {
     let minNewX = Infinity;
@@ -876,7 +906,7 @@ function renderGraph() {
   // --- Build parallel-edge lookup ---
   const edgePairCount = {};
   const edgePairIndex = {};
-  data.edges.forEach(edge => {
+  allEdges.forEach(edge => {
     const pairKey = [edge.from, edge.to].sort().join('::');
     if (!edgePairCount[pairKey]) edgePairCount[pairKey] = 0;
     edgePairIndex[edge.from + '::' + edge.to + '::' + (edge.condition||'') + '::' + (edge.maxIterations||'')] = edgePairCount[pairKey];
@@ -885,16 +915,18 @@ function renderGraph() {
 
   // --- Edges ---
   const edgeLabelCount = {};
-  data.edges.forEach(edge => {
+  allEdges.forEach(edge => {
     const fromPos = nodePositions[edge.from], toPos = nodePositions[edge.to];
     if (!fromPos || !toPos) return;
 
+    const isMemoryEdge = edge.isMemory === true;
     const isFailure = edge.condition && edge.condition.includes('fail');
     const isLoop = edge.maxIterations != null;
     const isConditional = edge.condition != null;
 
     let edgeClass = 'unconditional', markerEnd = 'url(#arrow)';
-    if (isLoop) { edgeClass = 'loop'; markerEnd = 'url(#arrow-loop)'; }
+    if (isMemoryEdge) { edgeClass = 'memory'; markerEnd = 'url(#arrow)'; }
+    else if (isLoop) { edgeClass = 'loop'; markerEnd = 'url(#arrow-loop)'; }
     else if (isFailure) { edgeClass = 'failure'; markerEnd = 'url(#arrow-fail)'; }
     else if (isConditional) { edgeClass = 'conditional'; markerEnd = 'url(#arrow-cond)'; }
 
@@ -955,8 +987,8 @@ function renderGraph() {
       }
     }
 
-    // Back-edges with maxIterations get dashed stroke
-    const backEdgeDash = isLoop ? ' stroke-dasharray="6 4"' : '';
+    // Back-edges with maxIterations get dashed stroke, memory edges get dotted
+    const backEdgeDash = isMemoryEdge ? ' stroke-dasharray="4 4"' : isLoop ? ' stroke-dasharray="6 4"' : '';
 
     s += '<g class="edge-group" data-from="' + edge.from + '" data-to="' + edge.to + '">';
     s += '<path d="' + pathD + '" class="edge-path ' + edgeClass + '" marker-end="' + markerEnd + '"' + backEdgeDash + '/>';
@@ -1090,8 +1122,8 @@ function renderGraph() {
     }
   }
 
-  // --- Nodes ---
-  data.nodes.forEach(node => {
+  // --- Nodes (includes store pseudo-nodes) ---
+  allNodes.forEach(node => {
     const pos = nodePositions[node.id];
     if (!pos) return;
     const isSelected = selectedNode === node.id;
@@ -1121,6 +1153,11 @@ function renderGraph() {
       const hw = pos.w / 2, hh = pos.h / 2;
       const d = 'M' + cx + ',' + (cy - hh) + ' Q' + (cx + hw * 0.6) + ',' + (cy - hh * 0.4) + ' ' + (cx + hw) + ',' + cy + ' Q' + (cx + hw * 0.6) + ',' + (cy + hh * 0.4) + ' ' + cx + ',' + (cy + hh) + ' Q' + (cx - hw * 0.6) + ',' + (cy + hh * 0.4) + ' ' + (cx - hw) + ',' + cy + ' Q' + (cx - hw * 0.6) + ',' + (cy - hh * 0.4) + ' ' + cx + ',' + (cy - hh) + ' Z';
       s += '<path class="node-shape" d="' + d + '" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '" data-glow="' + glowFilter + '"/>';
+    } else if (node.type === 'store') {
+      // Cylinder shape for memory stores
+      const cw = pos.w, ch = pos.h, ry = 8;
+      s += '<path class="node-shape" d="M' + x + ',' + (y + ry) + ' A' + (cw/2) + ',' + ry + ' 0 0,1 ' + (x + cw) + ',' + (y + ry) + ' V' + (y + ch - ry) + ' A' + (cw/2) + ',' + ry + ' 0 0,1 ' + x + ',' + (y + ch - ry) + ' Z" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '" data-glow="' + glowFilter + '"/>';
+      s += '<ellipse cx="' + (x + cw/2) + '" cy="' + (y + ry) + '" rx="' + (cw/2) + '" ry="' + ry + '" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '"/>';
     } else {
       s += '<rect class="node-shape" x="' + x + '" y="' + y + '" width="' + pos.w + '" height="' + pos.h + '" rx="12" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '" ' + strokeDash + ' ' + dimOpacity + ' data-glow="' + glowFilter + '"/>';
     }
@@ -1137,6 +1174,8 @@ function renderGraph() {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 13) + '">' + esc(node.kind) + '</text>';
     } else if (node.type === 'gate') {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 11) + '">gate</text>';
+    } else if (node.type === 'store') {
+      s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 13) + '">' + esc(node.storeType || 'store') + '</text>';
     }
 
     const badgeY = y - 2;
@@ -1250,6 +1289,9 @@ function renderLegend() {
   h += '<div class="legend-row"><div class="legend-swatch" style="background:rgba(251,146,60,.10);border:1px solid rgba(251,146,60,.25);clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);border-radius:0"></div><span class="legend-label">Gate</span></div>';
   h += '<div class="legend-row"><div class="legend-swatch" style="background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.25);border-radius:3px"></div><span class="legend-label">Orchestrator</span></div>';
   h += '<div class="legend-row"><div class="legend-swatch" style="background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.35);border-radius:8px"></div><span class="legend-label">Trigger</span></div>';
+  if (data.stores && data.stores.length > 0) {
+    h += '<div class="legend-row"><div class="legend-swatch" style="background:rgba(20,184,166,.10);border:1px solid rgba(20,184,166,.25);border-radius:50%"></div><span class="legend-label">Memory Store</span></div>';
+  }
   h += '<div class="legend-section-title" style="margin-top:8px">Badges</div>';
   h += '<div class="legend-row"><div class="legend-badge" style="background:rgba(34,211,238,.15);border:1px solid rgba(34,211,238,.35);color:#22d3ee;font-size:8px">\\u26A1</div><span class="legend-label">Has Hooks</span></div>';
   h += '<div class="legend-row"><div class="legend-badge" style="background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.35);color:#fbbf24;font-size:7px;font-weight:700">A</div><span class="legend-label">Advisory</span></div>';
@@ -1259,6 +1301,9 @@ function renderLegend() {
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#5858a0"></div><span class="legend-label">Conditional</span></div>';
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#f87171"></div><span class="legend-label">Failure</span></div>';
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#fb923c"></div><span class="legend-label">Loop (max N)</span></div>';
+  if (data.stores && data.stores.length > 0) {
+    h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#14b8a6"></div><span class="legend-label">Memory</span></div>';
+  }
   if (dataFlowEnabled) {
     h += '<div class="legend-section-title" style="margin-top:8px">Data Flow</div>';
     h += '<div class="legend-row"><div class="legend-line" style="border-color:#f59e0b"></div><span class="legend-label">Active</span></div>';
@@ -1713,14 +1758,57 @@ function renderMiniGraph(nodeId) {
 
 function showMemoryPanel() {
   const mem = data.memory;
-  if (!mem || Object.keys(mem).length === 0) { setTabContent(emptyMsg('No memory config')); return; }
+  const stores = data.stores;
+  const retrievals = data.retrievals;
+  const hasLegacyMem = mem && Object.keys(mem).length > 0;
+  const hasStores = stores && stores.length > 0;
+  const hasRetrievals = retrievals && retrievals.length > 0;
+  if (!hasLegacyMem && !hasStores && !hasRetrievals) { setTabContent(emptyMsg('No memory config')); return; }
   let h = '';
-  Object.entries(mem).forEach(function(entry) {
-    const key = entry[0], val = entry[1];
-    h += '<div class="panel-section"><div class="panel-title">' + esc(key) + '</div>';
-    h += '<div class="panel-card"><div class="panel-card-desc" style="font-family:var(--font-mono);font-size:10px;word-break:break-all">' + esc(JSON.stringify(val, null, 2)) + '</div></div>';
+  if (hasLegacyMem) {
+    Object.entries(mem).forEach(function(entry) {
+      const key = entry[0], val = entry[1];
+      h += '<div class="panel-section"><div class="panel-title">' + esc(key) + '</div>';
+      h += '<div class="panel-card"><div class="panel-card-desc" style="font-family:var(--font-mono);font-size:10px;word-break:break-all">' + esc(JSON.stringify(val, null, 2)) + '</div></div>';
+      h += '</div>';
+    });
+  }
+  if (hasStores) {
+    h += '<div class="panel-section"><div class="panel-title">Memory Stores</div>';
+    stores.forEach(function(store) {
+      h += '<div class="panel-card">';
+      h += '<div class="panel-card-title" style="color:#14b8a6">' + esc(store.id) + '</div>';
+      h += '<div class="panel-card-desc">';
+      h += '<span class="panel-tag">' + esc(store.type) + '</span>';
+      h += '<span class="panel-tag">' + esc(store.backend) + '</span>';
+      if (store.scope) h += '<span class="panel-tag">scope: ' + esc(store.scope) + '</span>';
+      if (store.isolation) h += '<span class="panel-tag">isolation: ' + esc(store.isolation) + '</span>';
+      h += '</div>';
+      if (store.description) h += '<div class="panel-card-desc" style="margin-top:4px">' + esc(store.description) + '</div>';
+      if (store.embedding) {
+        h += '<div style="margin-top:6px;font-size:10px;color:var(--t2)">Embedding: ';
+        if (store.embedding.provider) h += esc(store.embedding.provider);
+        if (store.embedding.model) h += ' / ' + esc(store.embedding.model);
+        if (store.embedding.dimensions) h += ' (' + store.embedding.dimensions + 'd)';
+        h += '</div>';
+      }
+      h += '</div>';
+    });
     h += '</div>';
-  });
+  }
+  if (hasRetrievals) {
+    h += '<div class="panel-section"><div class="panel-title">Retrieval Strategies</div>';
+    retrievals.forEach(function(ret) {
+      h += '<div class="panel-card">';
+      h += '<div class="panel-card-title" style="color:#14b8a6">' + esc(ret.id) + '</div>';
+      h += '<div class="panel-card-desc">';
+      if (ret.sources) h += 'Sources: ' + ret.sources.map(function(s) { return '<span class="panel-tag">' + esc(s) + '</span>'; }).join(' ');
+      if (ret.budget) h += '<br/>Budget: ' + ret.budget + ' tokens';
+      if (ret.paths) h += '<br/>Paths: ' + ret.paths.map(function(p) { return '<span class="panel-tag">' + esc(p) + '</span>'; }).join(' ');
+      h += '</div></div>';
+    });
+    h += '</div>';
+  }
   setTabContent(h);
 }
 
@@ -1990,7 +2078,7 @@ function exportSvg() {
   const clone = svg.cloneNode(true);
   // Add inline styles for standalone SVG
   const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-  styleEl.textContent = 'text{font-family:-apple-system,BlinkMacSystemFont,\\'Segoe UI\\',sans-serif}.node-label{font-weight:600;font-size:12px}.node-sublabel{font-size:8.5px}.edge-path{fill:none;stroke-width:1.5}.edge-path.unconditional{stroke:rgba(255,255,255,.15)}.edge-path.conditional{stroke:#5858a0;stroke-dasharray:6 4}.edge-path.failure{stroke:#f87171;stroke-dasharray:6 4}.edge-path.loop{stroke:#fb923c;stroke-dasharray:4 4}';
+  styleEl.textContent = 'text{font-family:-apple-system,BlinkMacSystemFont,\\'Segoe UI\\',sans-serif}.node-label{font-weight:600;font-size:12px}.node-sublabel{font-size:8.5px}.edge-path{fill:none;stroke-width:1.5}.edge-path.unconditional{stroke:rgba(255,255,255,.15)}.edge-path.conditional{stroke:#5858a0;stroke-dasharray:6 4}.edge-path.failure{stroke:#f87171;stroke-dasharray:6 4}.edge-path.loop{stroke:#fb923c;stroke-dasharray:4 4}.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.6}';
   clone.insertBefore(styleEl, clone.firstChild);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });

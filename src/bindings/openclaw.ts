@@ -775,6 +775,16 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Writes:** ${agent.writes.join(", ")}`);
       }
 
+      // Memory stores
+      if (agent.memory && agent.memory.length > 0) {
+        sections.push(`- **Memory stores:** ${agent.memory.join(", ")}`);
+      }
+
+      // Retrieval strategy
+      if (agent.retrieval) {
+        sections.push(`- **Retrieval strategy:** ${agent.retrieval}`);
+      }
+
       // Outputs
       if (agent.outputs) {
         sections.push("- **Outputs:**");
@@ -1292,6 +1302,26 @@ function generateMemoryMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // Memory Stores
+  const stores = ast.stores ?? [];
+  if (stores.length > 0) {
+    sections.push("## Memory Stores");
+    sections.push("");
+    for (const store of stores) {
+      sections.push(`### ${store.id}`);
+      sections.push(`- Type: ${store.type}`);
+      sections.push(`- Backend: ${store.backend}`);
+      if (store.path) sections.push(`- Path: ${store.path}`);
+      if (store.connection) sections.push(`- Connection: ${store.connection}`);
+      if (store.scope) sections.push(`- Scope: ${store.scope}`);
+      if (store.search?.strategy) sections.push(`- Search: ${store.search.strategy}`);
+      if (store.embedding?.model) sections.push(`- Embedding: ${store.embedding.model}`);
+      if (store.lifecycle?.retention) sections.push(`- Retention: ${store.lifecycle.retention}`);
+      if (store.lifecycle?.decayHalfLife) sections.push(`- Decay half-life: ${store.lifecycle.decayHalfLife}`);
+      sections.push("");
+    }
+  }
+
   // Agent access rules
   const agentsWithAccess = agents.filter(
     (a) =>
@@ -1637,6 +1667,12 @@ function generateMemoryDirs(ast: TopologyAST): GeneratedFile[] {
 
   // Domains dir
   files.push(gitkeep("domains"));
+
+  // Store directory markers
+  const stores = ast.stores ?? [];
+  for (const store of stores) {
+    files.push(gitkeep(`stores/${store.id}`));
+  }
 
   return files;
 }

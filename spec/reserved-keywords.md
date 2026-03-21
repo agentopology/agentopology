@@ -126,6 +126,30 @@ round-robin, random, reflection, rate-limit
 
 ---
 
+## Wave 8 Keywords (Agent Memory)
+
+```
+store, retrieval, embedding, ingestion, lifecycle, scoring, backend-config,
+type, scope, backend, connection, extraction,
+provider, dimensions, endpoint, collection, metric,
+sources, chunking, chunk-size, overlap,
+strategy, rerank, top-k,
+retention, decay-half-life, consolidation, contradiction, audit-log,
+budget, paths, diversity, cache-hit-threshold, cache-hit-action,
+recency-weight, semantic-weight, importance-weight,
+semantic, episodic, procedural, entity, graph, temporal,
+lancedb, sqlite-vec, chroma, kuzu, falkordb, pinecone, qdrant, pgvector,
+ollama, voyage, gemini,
+cosine, euclidean, dot-product,
+recursive, paragraph,
+vector, keyword, hybrid,
+overwrite, preserve, bi-temporal,
+short-circuit, augment, pass-through,
+strict, soft, org, global
+```
+
+---
+
 ## Not Reserved
 
 These are free-form values and can be used as names:
@@ -143,5 +167,5 @@ Environment block field names, custom role names, and user-defined enum values a
 Reserved for future use, not yet in grammar:
 
 ```
-event
+event, working
 ```

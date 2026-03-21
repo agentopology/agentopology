@@ -25,6 +25,7 @@ import type {
   RetryConfig,
   CircuitBreakerConfig,
   PromptVariant,
+  StoreNode,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
@@ -382,6 +383,21 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const w of agent.writes) {
         sections.push(`- ${w}`);
       }
+      sections.push("");
+    }
+
+    // Memory stores
+    if (agent.memory && agent.memory.length > 0) {
+      sections.push("## Memory Stores");
+      for (const storeId of agent.memory) {
+        sections.push(`- ${storeId}`);
+      }
+      sections.push("");
+    }
+
+    // Retrieval strategy
+    if (agent.retrieval) {
+      sections.push(`Retrieval strategy: ${agent.retrieval}`);
       sections.push("");
     }
 
@@ -1160,6 +1176,25 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
   }
 
+  // Memory Stores
+  const stores = ast.stores ?? [];
+  if (stores.length > 0) {
+    sections.push("## Memory Stores");
+    sections.push("");
+    for (const store of stores) {
+      sections.push(`### ${store.id}`);
+      sections.push(`- Type: ${store.type}`);
+      sections.push(`- Backend: ${store.backend}`);
+      if (store.path) sections.push(`- Path: ${store.path}`);
+      if (store.connection) sections.push(`- Connection: ${store.connection}`);
+      if (store.scope) sections.push(`- Scope: ${store.scope}`);
+      if (store.search?.strategy) sections.push(`- Search: ${store.search.strategy}`);
+      if (store.embedding?.model) sections.push(`- Embedding: ${store.embedding.model}`);
+      if (store.lifecycle?.retention) sections.push(`- Retention: ${store.lifecycle.retention}`);
+      sections.push("");
+    }
+  }
+
   files.push({
     path: `.claude/skills/${name}/SKILL.md`,
     content: sections.join("\n") + "\n",
@@ -1270,6 +1305,12 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
   }
   if (memory.workspace) {
     files.push(gitkeep(`.claude/skills/${name}/runs`));
+  }
+
+  // Store directory markers
+  const stores = ast.stores ?? [];
+  for (const store of stores) {
+    files.push(gitkeep(`.claude/stores/${store.id}`));
   }
 
   return files;
@@ -1580,8 +1621,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
 }
 
 /** Generate .mcp.json from mcp-servers block. Always includes env field. */
+/** Backend-to-MCP-server command mapping for known memory store backends. */
+const STORE_MCP_COMMANDS: Record<string, { command: string; args: string[] }> = {
+  "lancedb": { command: "npx", args: ["-y", "@lancedb/mcp-server"] },
+  "chroma": { command: "npx", args: ["-y", "chromadb-mcp-server"] },
+  "sqlite-vec": { command: "npx", args: ["-y", "sqlite-vec-mcp-server"] },
+  "kuzu": { command: "npx", args: ["-y", "kuzu-mcp-server"] },
+  "qdrant": { command: "npx", args: ["-y", "@qdrant/mcp-server"] },
+  "mongodb": { command: "npx", args: ["-y", "mongodb-mcp-server"] },
+};
+
 function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
-  if (Object.keys(ast.mcpServers).length === 0) return null;
+  const stores = ast.stores ?? [];
+  if (Object.keys(ast.mcpServers).length === 0 && stores.length === 0) return null;
 
   const mcpConfig: Record<string, unknown> = { mcpServers: {} };
   const servers = mcpConfig.mcpServers as Record<string, unknown>;
@@ -1606,6 +1658,33 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
     }
     servers[name] = entry;
   }
+
+  // Merge memory store MCP server entries
+  for (const store of stores) {
+    const mcpCmd = STORE_MCP_COMMANDS[store.backend];
+    if (!mcpCmd) {
+      // Backend not in the known MCP map — skip (no placeholder in JSON)
+      continue;
+    }
+
+    const args = [...mcpCmd.args];
+    const storePath = store.path ?? `.claude/stores/${store.id}`;
+    args.push("--db", storePath);
+
+    const env: Record<string, string> = {};
+    if (store.connection) {
+      env.CONNECTION_STRING = store.connection;
+    }
+
+    servers[store.id] = {
+      command: mcpCmd.command,
+      args,
+      env,
+    };
+  }
+
+  // If no servers were added (all stores had unsupported backends), return null
+  if (Object.keys(servers).length === 0) return null;
 
   return {
     path: ".mcp.json",

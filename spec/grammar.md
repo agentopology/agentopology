@@ -308,11 +308,8 @@ agent-field     = 'role' ':' identifier
                 | 'isolation' ':' 'worktree'
                 | 'invocation' ':' ('manual' | 'auto')
                 | 'behavior' ':' ('advisory' | 'blocking')
-                # NOTE: agent.memory is intentionally deferred. Per-agent memory scope
-                # is covered by reads/writes (data flow) and the top-level memory {}
-                # block (workspace structure). A dedicated agent.memory field would be
-                # redundant. Retained in the grammar for future consideration.
-                | 'memory' ':' ('user' | 'project' | 'local')
+                | 'memory' ':' name-list
+                | 'retrieval' ':' identifier
                 | 'skills' ':' name-list
                 | 'mcp-servers' ':' name-list
                 | 'background' ':' boolean
@@ -352,7 +349,8 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `isolation` | `worktree` | no | -- | Git worktree isolation |
 | `invocation` | `manual` / `auto` | no | `auto` | User-triggered only |
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory never blocks flow |
-| `memory` | `user` / `project` / `local` | no | -- | Persistent memory scope (intentionally deferred — use reads/writes and top-level memory {} instead) |
+| `memory` | name-list | no | `[]` | Store IDs this agent can access (V35) |
+| `retrieval` | identifier | no | -- | Retrieval strategy ID for memory queries (V35) |
 | `skills` | name-list | no | `[]` | Skills to preload |
 | `mcp-servers` | name-list | no | `[]` | MCP servers available |
 | `background` | boolean | no | `false` | Run in background |
@@ -455,8 +453,10 @@ Maps role identifiers to human-readable descriptions. Agents reference roles wit
 ### 4.9 `memory`
 
 ```ebnf
-memory          = 'memory' '{' memory-sub-block* '}'
+memory          = 'memory' '{' (memory-sub-block | store-block | retrieval-block)* '}'
 memory-sub-block = identifier '{' (identifier ':' (string | identifier | name-list))* '}'
+store-block     = 'store' identifier '{' store-field* '}'
+retrieval-block = 'retrieval' identifier '{' retrieval-field* '}'
 ```
 
 ```agenttopology
@@ -499,7 +499,340 @@ memory {
 | `metrics` | `path` (string), `mode` (identifier: `append-only`) | Execution log |
 | `workspace` | `path` (string), `protocol` (string), `structure` (name-list) | Per-run working directory |
 
-Memory sub-blocks are named blocks with known field schemas. Unknown sub-block names are parser errors.
+Memory sub-blocks are named blocks with known field schemas. The `store` and `retrieval` blocks are typed named blocks parsed into `StoreNode[]` and `RetrievalNode[]` on the AST. Other unknown sub-block names produce a warning (V24).
+
+#### 4.9.1 `store`
+
+A named memory store declaration. Stores define the infrastructure for a specific type of agent memory -- backend, embedding model, indexing, ingestion, search, and lifecycle management.
+
+```ebnf
+store-block     = 'store' identifier '{' store-field* '}'
+store-field     = 'type' ':' store-type
+                | 'description' ':' string
+                | 'scope' ':' scope-enum
+                | 'isolation' ':' isolation-enum
+                | 'backend' ':' backend-enum
+                | 'path' ':' string
+                | 'connection' ':' secret-string
+                | 'extraction' ':' extraction-enum
+                | embedding-block
+                | index-block
+                | ingestion-block
+                | search-block
+                | lifecycle-block
+                | backend-config-block
+store-type      = 'semantic' | 'episodic' | 'procedural' | 'entity'
+                | 'graph' | 'user' | 'session' | 'temporal'
+scope-enum      = 'agent' | 'user' | 'session' | 'org' | 'global'
+isolation-enum  = 'strict' | 'soft' | 'none'
+backend-enum    = 'lancedb' | 'sqlite-vec' | 'chroma' | 'kuzu' | 'falkordb'
+                | 'mongodb' | 'pinecone' | 'qdrant' | 'pgvector' | 'neo4j' | 'sqlite'
+extraction-enum = 'llm' | 'regex' | 'hybrid'
+secret-string   = 'secret'? string
+```
+
+```agenttopology
+memory {
+  store codebase-knowledge {
+    type: semantic
+    description: "Indexed codebase documentation and patterns"
+    scope: agent
+    isolation: strict
+    backend: lancedb
+    path: ".memory/semantic/"
+    extraction: llm
+
+    embedding {
+      provider: ollama
+      model: "nomic-embed-text"
+      dimensions: 768
+    }
+
+    index {
+      collection: "chunks"
+      metric: cosine
+    }
+
+    ingestion {
+      sources: ["docs/", "references/"]
+      chunking: recursive
+      chunk-size: 512
+      overlap: 50
+    }
+
+    search {
+      strategy: hybrid
+      rerank: true
+      top-k: 10
+    }
+
+    lifecycle {
+      retention: 90d
+      decay-half-life: 30d
+      consolidation: 0.85
+      contradiction: overwrite
+      audit-log: true
+    }
+  }
+
+  store user-preferences {
+    type: user
+    description: "Per-user preferences and corrections"
+    scope: user
+    isolation: soft
+    backend: sqlite
+    path: ".memory/user.db"
+  }
+
+  store session-context {
+    type: session
+    description: "Short-lived conversation context"
+    scope: session
+    isolation: none
+    backend: sqlite-vec
+    path: ".memory/session/"
+  }
+
+  store knowledge-graph {
+    type: graph
+    description: "Entity relationships across the codebase"
+    scope: global
+    backend: kuzu
+    path: ".memory/graph/"
+
+    search {
+      strategy: graph
+      top-k: 20
+    }
+  }
+
+  store cloud-vectors {
+    type: semantic
+    description: "Cloud-hosted vector store"
+    scope: org
+    backend: pinecone
+    connection: secret "PINECONE_URL"
+
+    embedding {
+      provider: openai
+      model: "text-embedding-3-large"
+      dimensions: 3072
+      endpoint: secret "OPENAI_EMBEDDING_URL"
+    }
+  }
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | store-type | yes | -- | Memory type classification |
+| `description` | string | no | -- | Human-readable purpose |
+| `scope` | scope-enum | no | -- | Access scope (V32 warning if omitted) |
+| `isolation` | isolation-enum | no | -- | Isolation level between scopes |
+| `backend` | backend-enum | yes | -- | Storage backend (V30 enum check) |
+| `path` | string | no | -- | File system path for local backends |
+| `connection` | secret-string | no | -- | Connection URI for remote backends (V34) |
+| `extraction` | extraction-enum | no | -- | Entity/fact extraction method |
+| `embedding` | embedding-block | no | -- | Embedding configuration (V31 warning if omitted for semantic/episodic/procedural) |
+| `index` | index-block | no | -- | Index/collection configuration |
+| `ingestion` | ingestion-block | no | -- | Data ingestion configuration |
+| `search` | search-block | no | -- | Search/query configuration |
+| `lifecycle` | lifecycle-block | no | -- | Memory lifecycle management |
+| `backend-config` | backend-config-block | no | -- | Backend-specific passthrough |
+
+**`connection` and secrets:** The `connection` field supports the `secret` modifier, parsed identically to `checkpoint.connection`. When `secret` is present, the string value is treated as a secret reference (e.g., `secret "PINECONE_URL"` references the `PINECONE_URL` secret).
+
+**`backend-config`:** A passthrough block for backend-specific key-value pairs not covered by the standard fields. Stored as `Record<string, unknown>` on the AST. Same pattern as `ProviderDef.extra`.
+
+**Local vs remote backends:** Backends `lancedb`, `sqlite-vec`, `sqlite`, `kuzu`, and `chroma` are local-first (use `path`). Backends `pinecone`, `qdrant`, `pgvector`, `neo4j`, `mongodb`, and `falkordb` are remote (require `connection`, V34).
+
+##### `embedding` sub-block
+
+```ebnf
+embedding-block = 'embedding' '{' embedding-field* '}'
+embedding-field = 'provider' ':' embedding-provider
+                | 'model' ':' string
+                | 'dimensions' ':' number
+                | 'endpoint' ':' secret-string
+embedding-provider = 'ollama' | 'local' | 'voyage' | 'openai' | 'gemini'
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `provider` | embedding-provider | no | -- | Embedding provider |
+| `model` | string | no | -- | Model identifier |
+| `dimensions` | number | no | -- | Vector dimensions |
+| `endpoint` | secret-string | no | -- | Endpoint URL or secret reference |
+
+##### `index` sub-block
+
+```ebnf
+index-block     = 'index' '{' index-field* '}'
+index-field     = 'collection' ':' string
+                | 'metric' ':' metric-enum
+metric-enum     = 'cosine' | 'euclidean' | 'dot-product'
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `collection` | string | no | -- | Collection or table name |
+| `metric` | metric-enum | no | -- | Distance metric for vector similarity |
+
+##### `ingestion` sub-block
+
+```ebnf
+ingestion-block = 'ingestion' '{' ingestion-field* '}'
+ingestion-field = 'sources' ':' string-list
+                | 'chunking' ':' chunking-enum
+                | 'chunk-size' ':' number
+                | 'overlap' ':' number
+chunking-enum   = 'recursive' | 'sentence' | 'paragraph' | 'fixed'
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `sources` | string-list | no | `[]` | Source paths or globs to ingest |
+| `chunking` | chunking-enum | no | -- | Chunking strategy |
+| `chunk-size` | number | no | -- | Target chunk size in tokens or characters |
+| `overlap` | number | no | -- | Overlap between chunks |
+
+##### `search` sub-block
+
+```ebnf
+search-block    = 'search' '{' search-field* '}'
+search-field    = 'strategy' ':' strategy-enum
+                | 'rerank' ':' boolean
+                | 'top-k' ':' number
+strategy-enum   = 'vector' | 'keyword' | 'hybrid' | 'graph'
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `strategy` | strategy-enum | no | -- | Search strategy |
+| `rerank` | boolean | no | `false` | Whether to apply reranking |
+| `top-k` | number | no | -- | Number of top results to return |
+
+##### `lifecycle` sub-block
+
+```ebnf
+lifecycle-block = 'lifecycle' '{' lifecycle-field* '}'
+lifecycle-field = 'retention' ':' duration
+                | 'decay-half-life' ':' duration
+                | 'consolidation' ':' number
+                | 'contradiction' ':' contradiction-enum
+                | 'audit-log' ':' boolean
+duration        = [0-9]+ ('d' | 'h' | 'm' | 'y')
+contradiction-enum = 'overwrite' | 'preserve' | 'bi-temporal'
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `retention` | duration | no | -- | Retention period (e.g., `90d`, `1y`) |
+| `decay-half-life` | duration | no | -- | Half-life for memory decay scoring |
+| `consolidation` | number (0-1) | no | -- | Consolidation threshold |
+| `contradiction` | contradiction-enum | no | -- | Contradiction resolution strategy |
+| `audit-log` | boolean | no | `false` | Whether to maintain an audit log |
+
+##### `backend-config` sub-block
+
+```ebnf
+backend-config-block = 'backend-config' '{' (identifier ':' value)* '}'
+```
+
+A passthrough block for backend-specific configuration. All key-value pairs are stored as-is in `StoreNode.backendConfig` without schema validation.
+
+#### 4.9.2 `retrieval`
+
+A named retrieval strategy declaration. Retrieval blocks define how an agent queries across one or more stores -- source selection, scoring weights, budget constraints, and cache-hit routing.
+
+```ebnf
+retrieval-block = 'retrieval' identifier '{' retrieval-field* '}'
+retrieval-field = 'sources' ':' name-list
+                | 'budget' ':' number
+                | 'paths' ':' name-list
+                | 'rerank' ':' boolean
+                | 'diversity' ':' boolean
+                | 'cache-hit-threshold' ':' number
+                | 'cache-hit-action' ':' cache-hit-enum
+                | scoring-block
+cache-hit-enum  = 'short-circuit' | 'augment' | 'pass-through'
+scoring-block   = 'scoring' '{' scoring-field* '}'
+scoring-field   = 'recency-weight' ':' number
+                | 'semantic-weight' ':' number
+                | 'importance-weight' ':' number
+```
+
+```agenttopology
+memory {
+  retrieval balanced {
+    sources: [codebase-knowledge, user-preferences, knowledge-graph]
+    budget: 4096
+
+    scoring {
+      recency-weight: 0.3
+      semantic-weight: 0.5
+      importance-weight: 0.2
+    }
+
+    paths: [semantic, episodic, graph]
+    rerank: true
+    diversity: true
+
+    cache-hit-threshold: 0.92
+    cache-hit-action: short-circuit
+  }
+
+  retrieval fast-lookup {
+    sources: [session-context]
+    budget: 1024
+    rerank: false
+
+    cache-hit-threshold: 0.95
+    cache-hit-action: short-circuit
+  }
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `sources` | name-list | no | `[]` | Store IDs to draw from (V33 reference check) |
+| `budget` | number | no | -- | Token budget for retrieved context |
+| `paths` | name-list | no | `[]` | Retrieval paths to activate |
+| `rerank` | boolean | no | `false` | Whether to apply cross-source reranking |
+| `diversity` | boolean | no | `false` | Whether to enforce diversity across results |
+| `cache-hit-threshold` | number (0-1) | no | -- | Similarity threshold for cache-hit detection |
+| `cache-hit-action` | cache-hit-enum | no | -- | Action on cache hit |
+| `scoring` | scoring-block | no | -- | Scoring weight configuration |
+
+**`scoring` sub-block:** Weights should sum to 1.0 but this is not enforced at parse time. Bindings may normalize weights at runtime.
+
+| Scoring Field | Type | Required | Default | Description |
+|---------------|------|----------|---------|-------------|
+| `recency-weight` | number (0-1) | no | -- | Weight for recency in scoring |
+| `semantic-weight` | number (0-1) | no | -- | Weight for semantic similarity |
+| `importance-weight` | number (0-1) | no | -- | Weight for importance/frequency |
+
+**Memory-gated routing:** The `cache-hit-threshold` and `cache-hit-action` fields enable memory-gated routing -- when a query closely matches existing memories, the retrieval strategy can short-circuit (skip the LLM call), augment (add cached answer to context), or pass through (proceed normally). This is a first-class declarative primitive for BudgetMem-style memory optimization.
+
+#### 4.9.3 Agent-Level Memory References
+
+Agents reference stores and retrieval strategies via two new fields on the `agent` block:
+
+```agenttopology
+agent researcher {
+  model: sonnet
+  memory: [codebase-knowledge, session-context]
+  retrieval: balanced
+}
+
+agent assistant {
+  model: haiku
+  memory: [user-preferences, session-context]
+  retrieval: fast-lookup
+}
+```
+
+The `memory` field is a name-list of store IDs. The `retrieval` field is a single identifier referencing a retrieval strategy. Both are validated against declared stores and retrievals (V35).
 
 ---
 
@@ -1323,7 +1656,7 @@ agent expensive-thinker {
 
 ## 5. Validation Rules
 
-See `validation.md` for the complete list of 29 validation rules with examples.
+See `validation.md` for the complete list of 35 validation rules with examples.
 
 ---
 
@@ -1354,7 +1687,8 @@ All optional fields and their defaults when omitted:
 | `agent` | `isolation` | -- (no isolation) |
 | `agent` | `invocation` | `auto` |
 | `agent` | `behavior` | `blocking` |
-| `agent` | `memory` | -- (none) |
+| `agent` | `memory` | `[]` |
+| `agent` | `retrieval` | -- (none) |
 | `agent` | `skills` | `[]` |
 | `agent` | `mcp-servers` | `[]` |
 | `agent` | `background` | `false` |

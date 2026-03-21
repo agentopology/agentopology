@@ -979,6 +979,8 @@ export function importClaudeCode(
     includes: [],
     checkpoint: null,
     artifacts: [],
+    stores: [],
+    retrievals: [],
   };
 
   return ast;

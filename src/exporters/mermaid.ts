@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { TopologyAST, NodeDef, EdgeDef, AgentNode } from "../parser/ast.js";
+import type { TopologyAST, NodeDef, EdgeDef, AgentNode, StoreNode } from "../parser/ast.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
 
@@ -101,6 +101,7 @@ function generateMermaid(ast: TopologyAST): string {
   lines.push("    classDef gate fill:#F59E0B,stroke:#D97706,color:#fff,stroke-width:2px");
   lines.push("    classDef human fill:#10B981,stroke:#059669,color:#fff,stroke-width:2px");
   lines.push("    classDef group fill:#EC4899,stroke:#DB2777,color:#fff,stroke-width:2px");
+  lines.push("    classDef store fill:#14B8A6,stroke:#0D9488,color:#fff,stroke-width:2px");
   lines.push("");
 
   // Group nodes by phase for subgraphs
@@ -146,6 +147,38 @@ function generateMermaid(ast: TopologyAST): string {
       lines.push(`    ${from} ${arrowStyle}|"${annotation}"| ${to}`);
     } else {
       lines.push(`    ${from} ${arrowStyle} ${to}`);
+    }
+  }
+
+  // Render memory stores
+  if (ast.stores.length > 0) {
+    lines.push("");
+    lines.push("    %% Memory Stores");
+    for (const store of ast.stores) {
+      const sid = mermaidId(store.id);
+      const storeLabel = escapeLabel(`${store.id}<br/>type: ${store.type}<br/>backend: ${store.backend}`);
+      lines.push(`    ${sid}[("${storeLabel}")]:::store`);
+    }
+
+    // Edges from agents to their stores
+    for (const node of ast.nodes) {
+      if (node.type === "agent") {
+        const agent = node as AgentNode;
+        if (agent.memory && agent.memory.length > 0) {
+          for (const storeId of agent.memory) {
+            lines.push(`    ${mermaidId(agent.id)} -.->|"memory"| ${mermaidId(storeId)}`);
+          }
+        }
+      }
+    }
+
+    // Edges from retrieval strategies to their source stores
+    for (const ret of ast.retrievals) {
+      if (ret.sources && ret.sources.length > 0) {
+        for (const source of ret.sources) {
+          lines.push(`    ${mermaidId(ret.id + "-retrieval")} -.->|"source"| ${mermaidId(source)}`);
+        }
+      }
     }
   }
 

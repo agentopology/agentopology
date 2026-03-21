@@ -686,10 +686,10 @@ flow {
   // -------------------------------------------------------------------------
   memory: {
     name: "memory",
-    description: "Memory block -- workspace, domains, references, metrics",
+    description: "Memory block -- workspace, domains, stores, retrieval strategies",
     content: () => `# memory
 
-The \`memory\` block declares the shared data layer for the topology. It defines where agents read and write data.
+The \`memory\` block declares the shared data layer for the topology. It defines where agents read and write data, declares memory stores for persistent knowledge, and configures retrieval strategies for multi-source memory queries.
 
 ## Syntax
 
@@ -717,6 +717,42 @@ memory {
     path: "metrics/data.jsonl"
     mode: append-only
   }
+
+  store codebase-knowledge {
+    type: semantic
+    backend: lancedb
+    path: ".memory/semantic/"
+    scope: global
+    isolation: soft
+    embedding {
+      provider: ollama
+      model: "nomic-embed-text"
+      dimensions: 768
+    }
+    search {
+      strategy: hybrid
+      rerank: true
+      top-k: 10
+    }
+    lifecycle {
+      retention: 90d
+      decay-half-life: 30d
+      contradiction: overwrite
+    }
+  }
+
+  retrieval default {
+    sources: [codebase-knowledge]
+    budget: 4096
+    scoring {
+      recency-weight: 0.3
+      semantic-weight: 0.5
+      importance-weight: 0.2
+    }
+    paths: [semantic]
+    cache-hit-threshold: 0.92
+    cache-hit-action: short-circuit
+  }
 }
 \`\`\`
 
@@ -729,6 +765,8 @@ memory {
 | references | Reference documentation |
 | external-docs | External documentation |
 | metrics | Metrics output (supports append-only mode) |
+| store \`<id>\` | Named memory store declaration (vector, graph, episodic backends) |
+| retrieval \`<id>\` | Named retrieval strategy for multi-source memory queries |
 
 ### workspace Fields
 
@@ -757,6 +795,38 @@ memory {
 | path | string | Output file path |
 | mode | string | "append-only" for log-style output |
 
+## Memory Stores
+
+The \`store <id> {}\` sub-block declares a named memory store within the memory block. Each store specifies a memory type, storage backend, embedding configuration, and lifecycle policies. See the **store** topic for full field reference.
+
+Supported memory types: \`semantic\`, \`episodic\`, \`procedural\`, \`entity\`, \`graph\`, \`user\`, \`session\`, \`temporal\`.
+
+Supported backends: \`lancedb\`, \`sqlite-vec\`, \`chroma\`, \`kuzu\`, \`falkordb\`, \`mongodb\`, \`pinecone\`, \`qdrant\`, \`pgvector\`, \`neo4j\`, \`sqlite\`.
+
+Each store can contain sub-blocks: \`embedding {}\`, \`index {}\`, \`ingestion {}\`, \`search {}\`, \`lifecycle {}\`, \`backend-config {}\`.
+
+## Retrieval Strategies
+
+The \`retrieval <id> {}\` sub-block declares a named retrieval strategy that queries one or more stores. It controls token budgets, scoring weights, retrieval paths, and cache-hit behavior. See the **retrieval** topic for full field reference.
+
+Key fields: \`sources\` (store IDs to query), \`budget\` (token limit), \`scoring {}\` (weight configuration), \`paths\` (retrieval types), \`cache-hit-threshold\`, \`cache-hit-action\`.
+
+## Agent Memory References
+
+Agents reference memory stores and retrieval strategies via two fields on the agent node:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| memory | name-list | Store IDs this agent can access |
+| retrieval | identifier | Retrieval strategy ID for memory queries |
+
+\`\`\`at
+agent researcher {
+  memory: [codebase-knowledge, session-history]
+  retrieval: default
+}
+\`\`\`
+
 ## Validation Rules
 
 - **V11**: Agent \`reads\` and \`writes\` must be consistent with flow order
@@ -767,6 +837,666 @@ memory {
 - Memory paths are relative to the topology's root directory.
 - Agents declare which memory keys they access via \`reads\` and \`writes\` fields.
 - The workspace structure is informational -- it documents expected folders but does not create them.
+- Store and retrieval blocks are parsed into typed AST nodes (\`StoreNode[]\` and \`RetrievalNode[]\`) at the top level of the AST.
+- Local-first defaults: \`lancedb\` for semantic, \`kuzu\` for graph, \`sqlite\` for session/episodic.
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 9a. store
+  // -------------------------------------------------------------------------
+  store: {
+    name: "store",
+    description: "Memory store declaration -- vector, graph, and episodic backends",
+    content: () => `# store
+
+The \`store\` block declares a named memory store within the \`memory {}\` block. Each store represents a persistent knowledge backend -- vector databases for semantic search, graph databases for entity relationships, or simple key-value stores for session state.
+
+## Syntax
+
+\`\`\`at
+store <id> {
+  type: <semantic | episodic | procedural | entity | graph | user | session | temporal>
+  description: "Human-readable purpose"
+  scope: <agent | user | session | org | global>
+  isolation: <strict | soft | none>
+
+  backend: <lancedb | sqlite-vec | chroma | kuzu | falkordb | mongodb | pinecone | qdrant | pgvector | neo4j | sqlite>
+  path: ".memory/<type>/"
+  connection: secret "STORE_URL"
+
+  embedding {
+    provider: <ollama | local | voyage | openai | gemini>
+    model: "nomic-embed-text"
+    dimensions: 768
+    endpoint: secret "EMBEDDING_URL"
+  }
+
+  index {
+    collection: "chunks"
+    metric: <cosine | euclidean | dot-product>
+  }
+
+  ingestion {
+    sources: ["docs/", "references/"]
+    chunking: <recursive | sentence | paragraph | fixed>
+    chunk-size: 512
+    overlap: 50
+  }
+
+  search {
+    strategy: <vector | keyword | hybrid | graph>
+    rerank: true
+    top-k: 10
+  }
+
+  lifecycle {
+    retention: 90d
+    decay-half-life: 30d
+    consolidation: 0.85
+    contradiction: <overwrite | preserve | bi-temporal>
+    audit-log: true
+  }
+
+  extraction: <llm | regex | hybrid>
+
+  backend-config {
+    # passthrough key-value pairs for backend-specific settings
+  }
+}
+\`\`\`
+
+## Top-Level Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| type | string | yes | Memory type: semantic, episodic, procedural, entity, graph, user, session, temporal |
+| description | string | no | Human-readable description of this store's purpose |
+| scope | string | yes | Access scope: agent, user, session, org, global |
+| isolation | string | no | Isolation level: strict, soft, none |
+| backend | string | yes | Storage backend identifier |
+| path | string | no | File system path for local backends |
+| connection | string | no | Connection string or \`secret "..."\` reference for remote backends |
+| extraction | string | no | Entity/fact extraction method: llm, regex, hybrid |
+
+## Memory Types
+
+| Type | Description |
+|------|-------------|
+| semantic | Long-term knowledge via vector embeddings (RAG) |
+| episodic | Event and experience memories with temporal context |
+| procedural | Learned procedures, workflows, and how-to knowledge |
+| entity | Named entity facts and attributes |
+| graph | Relationship graphs between entities |
+| user | Per-user preferences and profile data |
+| session | Short-lived conversational context |
+| temporal | Time-series data with temporal ordering |
+
+## Supported Backends
+
+| Backend | Type | Local | Description |
+|---------|------|-------|-------------|
+| lancedb | vector | yes | Embeddable columnar vector DB (Rust, zero-infra) |
+| sqlite-vec | vector | yes | SQLite extension for vector search |
+| chroma | vector | yes/no | Open-source embedding database |
+| kuzu | graph | yes | Embeddable graph DB (columnar, fast multi-hop) |
+| falkordb | graph | no | Redis-compatible graph database |
+| mongodb | document | no | Document store with Atlas Vector Search |
+| pinecone | vector | no | Managed vector database |
+| qdrant | vector | no | Vector similarity search engine |
+| pgvector | vector | no | PostgreSQL vector extension |
+| neo4j | graph | no | Native graph database |
+| sqlite | kv/relational | yes | Lightweight relational/key-value store |
+
+## Sub-Block: embedding {}
+
+Configures the embedding model used to vectorize content for this store. Required when type is semantic, episodic, or procedural.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| provider | string | Embedding provider: ollama, local, voyage, openai, gemini |
+| model | string | Model identifier (e.g. "nomic-embed-text", "text-embedding-3-small") |
+| dimensions | number | Vector dimensions produced by the model |
+| endpoint | string | Endpoint URL or \`secret "..."\` reference |
+
+See the **embedding** topic for full details.
+
+## Sub-Block: index {}
+
+Configures the index or collection within the backend.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| collection | string | Collection or table name within the backend |
+| metric | string | Distance metric: cosine, euclidean, dot-product |
+
+## Sub-Block: ingestion {}
+
+Configures how content is loaded into the store.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sources | string-list | Source paths or globs to ingest from |
+| chunking | string | Chunking strategy: recursive, sentence, paragraph, fixed |
+| chunk-size | number | Target chunk size in tokens or characters |
+| overlap | number | Overlap between chunks |
+
+## Sub-Block: search {}
+
+Configures how the store is queried.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| strategy | string | Search strategy: vector, keyword, hybrid, graph |
+| rerank | boolean | Whether to apply reranking to results |
+| top-k | number | Number of top results to return |
+
+## Sub-Block: lifecycle {}
+
+Configures memory retention, decay, and contradiction resolution. See the **lifecycle** topic for full details.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| retention | string | Retention period (e.g. "90d", "1y") |
+| decay-half-life | string | Half-life for memory decay scoring (e.g. "30d") |
+| consolidation | number | Consolidation threshold (0 to 1) |
+| contradiction | string | Resolution strategy: overwrite, preserve, bi-temporal |
+| audit-log | boolean | Whether to maintain an audit log |
+
+## Sub-Block: backend-config {}
+
+Passthrough key-value pairs for backend-specific settings not covered by the universal schema. Follows the same pattern as \`extensions {}\` -- unknown keys are preserved as-is.
+
+## Connection with Secret Modifier
+
+Remote backends use the \`secret\` modifier for connection strings:
+
+\`\`\`at
+store vectors {
+  backend: pinecone
+  connection: secret "PINECONE_URL"
+  embedding {
+    endpoint: secret "EMBEDDING_API_KEY"
+  }
+}
+\`\`\`
+
+## Scope and Isolation
+
+Every store declares a \`scope\` (who can access it) and optionally an \`isolation\` level (how strictly access is enforced):
+
+- **scope: agent** -- private to a single agent
+- **scope: user** -- per-user data
+- **scope: session** -- per-session, ephemeral
+- **scope: org** -- shared across an organization
+- **scope: global** -- accessible by all agents in the topology
+
+Isolation levels: \`strict\` (hard boundaries), \`soft\` (warnings on cross-scope access), \`none\` (no enforcement).
+
+## Example
+
+\`\`\`at
+memory {
+  store codebase {
+    type: semantic
+    description: "Indexed codebase for semantic search"
+    scope: global
+    isolation: soft
+    backend: lancedb
+    path: ".memory/codebase/"
+    embedding {
+      provider: ollama
+      model: "nomic-embed-text"
+      dimensions: 768
+    }
+    index {
+      collection: "code-chunks"
+      metric: cosine
+    }
+    ingestion {
+      sources: ["src/", "docs/"]
+      chunking: recursive
+      chunk-size: 512
+      overlap: 50
+    }
+    search {
+      strategy: hybrid
+      rerank: true
+      top-k: 10
+    }
+    lifecycle {
+      retention: 90d
+      decay-half-life: 30d
+      consolidation: 0.85
+      contradiction: overwrite
+      audit-log: true
+    }
+  }
+}
+\`\`\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 9b. retrieval
+  // -------------------------------------------------------------------------
+  retrieval: {
+    name: "retrieval",
+    description: "Retrieval strategy -- multi-source memory query planning",
+    content: () => `# retrieval
+
+The \`retrieval\` block declares a named retrieval strategy within the \`memory {}\` block. A retrieval strategy defines how an agent queries one or more memory stores -- controlling token budgets, scoring weights, retrieval paths, and cache-hit behavior.
+
+## Syntax
+
+\`\`\`at
+retrieval <id> {
+  sources: [store-id-1, store-id-2]
+  budget: 4096
+
+  scoring {
+    recency-weight: 0.3
+    semantic-weight: 0.5
+    importance-weight: 0.2
+  }
+
+  paths: [semantic, episodic, procedural, graph, hybrid]
+  rerank: true
+  diversity: true
+
+  cache-hit-threshold: 0.92
+  cache-hit-action: <short-circuit | augment | pass-through>
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| sources | name-list | no | Store IDs this retrieval draws from |
+| budget | number | no | Token budget for retrieved context |
+| scoring | sub-block | no | Scoring weight configuration |
+| paths | name-list | no | Retrieval path types to activate |
+| rerank | boolean | no | Whether to apply cross-source reranking |
+| diversity | boolean | no | Whether to enforce diversity across results |
+| cache-hit-threshold | number | no | Similarity threshold for cache-hit detection (0 to 1) |
+| cache-hit-action | string | no | Action on cache hit: short-circuit, augment, pass-through |
+
+## Sources
+
+The \`sources\` field lists store IDs declared in the same \`memory {}\` block. The retrieval strategy queries all listed stores and merges results according to the scoring weights.
+
+\`\`\`at
+retrieval multi-source {
+  sources: [codebase, session-history, entity-graph]
+}
+\`\`\`
+
+## Budget
+
+The \`budget\` field sets a token limit for the total retrieved context injected into the agent's prompt. This prevents context window overflow when querying multiple large stores.
+
+\`\`\`at
+retrieval compact {
+  budget: 2048
+}
+\`\`\`
+
+## Sub-Block: scoring {}
+
+The \`scoring\` sub-block controls how results from multiple stores are ranked and merged. Weights should sum to 1.0.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| recency-weight | number | Weight for recency in scoring (0 to 1) |
+| semantic-weight | number | Weight for semantic similarity (0 to 1) |
+| importance-weight | number | Weight for importance/frequency (0 to 1) |
+
+\`\`\`at
+scoring {
+  recency-weight: 0.3
+  semantic-weight: 0.5
+  importance-weight: 0.2
+}
+\`\`\`
+
+## Paths
+
+Retrieval paths define which types of memory retrieval are activated. Multiple paths can run in parallel and results are merged.
+
+| Path | Description |
+|------|-------------|
+| semantic | Vector similarity search |
+| episodic | Temporal event retrieval |
+| procedural | Workflow/how-to retrieval |
+| graph | Graph traversal queries |
+| hybrid | Combined vector + keyword search |
+
+## Cache-Hit Threshold and Action
+
+Memory-gated routing allows the retrieval strategy to short-circuit agent execution when a sufficiently similar memory already exists.
+
+- **cache-hit-threshold**: A similarity score (0 to 1). If a retrieved memory exceeds this threshold, it is considered a cache hit.
+- **cache-hit-action**: What to do on a cache hit:
+  - \`short-circuit\` -- return the cached result directly, skip agent execution
+  - \`augment\` -- inject the cached result as additional context alongside the query
+  - \`pass-through\` -- ignore the cache hit, proceed normally
+
+\`\`\`at
+retrieval with-cache {
+  cache-hit-threshold: 0.92
+  cache-hit-action: short-circuit
+}
+\`\`\`
+
+## Agent Reference
+
+Agents reference a retrieval strategy by ID:
+
+\`\`\`at
+agent researcher {
+  retrieval: default
+  memory: [codebase, session-history]
+}
+\`\`\`
+
+## Validation Rules
+
+- Retrieval \`sources\` must reference valid store IDs declared in the same \`memory {}\` block.
+- Agent \`retrieval\` field must reference a valid retrieval ID.
+
+## Example
+
+\`\`\`at
+memory {
+  store codebase {
+    type: semantic
+    backend: lancedb
+    scope: global
+    embedding {
+      provider: ollama
+      model: "nomic-embed-text"
+      dimensions: 768
+    }
+  }
+
+  store conversations {
+    type: episodic
+    backend: sqlite
+    scope: session
+  }
+
+  retrieval balanced {
+    sources: [codebase, conversations]
+    budget: 4096
+    scoring {
+      recency-weight: 0.3
+      semantic-weight: 0.5
+      importance-weight: 0.2
+    }
+    paths: [semantic, episodic]
+    rerank: true
+    diversity: true
+    cache-hit-threshold: 0.92
+    cache-hit-action: augment
+  }
+}
+\`\`\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 9c. lifecycle
+  // -------------------------------------------------------------------------
+  lifecycle: {
+    name: "lifecycle",
+    description: "Memory lifecycle management -- retention, decay, contradiction resolution",
+    content: () => `# lifecycle
+
+The \`lifecycle {}\` sub-block within a \`store\` declaration configures memory retention, decay, consolidation, and contradiction resolution policies.
+
+## Syntax
+
+\`\`\`at
+lifecycle {
+  retention: 90d
+  decay-half-life: 30d
+  consolidation: 0.85
+  contradiction: <overwrite | preserve | bi-temporal>
+  audit-log: true
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| retention | string | no | How long memories are kept (duration string) |
+| decay-half-life | string | no | Half-life for memory decay scoring |
+| consolidation | number | no | Threshold (0 to 1) for merging similar memories |
+| contradiction | string | no | Strategy for handling contradictory information |
+| audit-log | boolean | no | Whether to log all memory mutations |
+
+## Retention
+
+The \`retention\` field accepts duration strings that specify how long memories are kept before expiration:
+
+| Format | Example | Meaning |
+|--------|---------|---------|
+| Days | 90d | 90 days |
+| Weeks | 4w | 4 weeks |
+| Months | 6m | 6 months |
+| Years | 1y | 1 year |
+| Forever | forever | Never expires |
+
+Expired memories are eligible for garbage collection by the binding runtime.
+
+## Decay Half-Life
+
+The \`decay-half-life\` field controls how quickly memory relevance scores decay over time. A shorter half-life means older memories lose relevance faster.
+
+\`\`\`at
+lifecycle {
+  decay-half-life: 30d    # relevance halves every 30 days
+}
+\`\`\`
+
+This is used in scoring calculations -- retrieval strategies weight results by recency using the decay curve.
+
+## Consolidation Threshold
+
+The \`consolidation\` field sets a similarity threshold (0 to 1) for merging similar memories. When two memories exceed this similarity, they are candidates for consolidation into a single, stronger memory.
+
+\`\`\`at
+lifecycle {
+  consolidation: 0.85    # merge memories that are 85%+ similar
+}
+\`\`\`
+
+## Contradiction Strategies
+
+The \`contradiction\` field determines how the system handles new information that conflicts with existing memories:
+
+| Strategy | Behavior |
+|----------|----------|
+| overwrite | Replace the old memory with the new one. Simplest approach -- last write wins. |
+| preserve | Keep both memories. The system maintains conflicting facts and lets the agent or user decide. |
+| bi-temporal | Track both the "valid time" (when the fact was true) and "transaction time" (when it was recorded). Enables point-in-time queries and full audit trails. |
+
+\`\`\`at
+# Mem0-style: always overwrite
+lifecycle {
+  contradiction: overwrite
+}
+
+# Letta-style: preserve conflicting facts
+lifecycle {
+  contradiction: preserve
+}
+
+# Zep/Graphiti-style: full temporal tracking
+lifecycle {
+  contradiction: bi-temporal
+}
+\`\`\`
+
+## Audit Logging
+
+When \`audit-log: true\`, all memory mutations (creates, updates, deletes, consolidations) are logged for debugging and compliance.
+
+\`\`\`at
+lifecycle {
+  audit-log: true
+}
+\`\`\`
+
+## Example
+
+\`\`\`at
+store project-knowledge {
+  type: semantic
+  backend: lancedb
+  scope: global
+  lifecycle {
+    retention: 1y
+    decay-half-life: 60d
+    consolidation: 0.9
+    contradiction: bi-temporal
+    audit-log: true
+  }
+}
+\`\`\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 9d. embedding
+  // -------------------------------------------------------------------------
+  embedding: {
+    name: "embedding",
+    description: "Embedding configuration -- providers, models, dimensions",
+    content: () => `# embedding
+
+The \`embedding {}\` sub-block within a \`store\` declaration configures the embedding model used to vectorize content. It specifies the provider, model, vector dimensions, and optional endpoint.
+
+## Syntax
+
+\`\`\`at
+embedding {
+  provider: <ollama | local | voyage | openai | gemini>
+  model: "nomic-embed-text"
+  dimensions: 768
+  endpoint: secret "EMBEDDING_URL"
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| provider | string | no | Embedding provider |
+| model | string | no | Model identifier for embedding generation |
+| dimensions | number | no | Vector dimensions produced by the model |
+| endpoint | string | no | Endpoint URL or \`secret "..."\` reference |
+
+## Providers
+
+| Provider | Type | Description |
+|----------|------|-------------|
+| ollama | local | Local inference via Ollama. Zero-cost, no data leaves the machine. |
+| local | local | Generic local embedding (e.g. ONNX runtime, sentence-transformers). |
+| voyage | cloud | Voyage AI embedding models. High quality for code and text. |
+| openai | cloud | OpenAI embedding models (text-embedding-3-small, text-embedding-3-large). |
+| gemini | cloud | Google Gemini embedding models. |
+
+## Model Selection
+
+The \`model\` field accepts any model identifier supported by the chosen provider:
+
+\`\`\`at
+# Local with Ollama
+embedding {
+  provider: ollama
+  model: "nomic-embed-text"
+  dimensions: 768
+}
+
+# OpenAI cloud
+embedding {
+  provider: openai
+  model: "text-embedding-3-small"
+  dimensions: 1536
+}
+
+# Voyage (optimized for code)
+embedding {
+  provider: voyage
+  model: "voyage-code-3"
+  dimensions: 1024
+}
+\`\`\`
+
+## Dimensions
+
+The \`dimensions\` field specifies the vector size produced by the embedding model. This must match the model's output dimensions:
+
+| Model | Provider | Dimensions |
+|-------|----------|------------|
+| nomic-embed-text | ollama | 768 |
+| text-embedding-3-small | openai | 1536 |
+| text-embedding-3-large | openai | 3072 |
+| voyage-code-3 | voyage | 1024 |
+
+## Local vs Cloud Embedding
+
+**Local embedding** (ollama, local) runs on the developer's machine:
+- Zero cost, no API keys needed
+- Data never leaves the machine
+- Suitable for development and sensitive codebases
+- Requires model download and local compute
+
+**Cloud embedding** (voyage, openai, gemini) calls external APIs:
+- Higher quality models available
+- Requires API keys (use \`secret "..."\` modifier)
+- Per-token pricing
+- Suitable for production deployments
+
+\`\`\`at
+# Local-first development setup
+embedding {
+  provider: ollama
+  model: "nomic-embed-text"
+  dimensions: 768
+}
+
+# Production cloud setup
+embedding {
+  provider: openai
+  model: "text-embedding-3-small"
+  dimensions: 1536
+  endpoint: secret "OPENAI_API_KEY"
+}
+\`\`\`
+
+## Example
+
+\`\`\`at
+store documentation {
+  type: semantic
+  backend: lancedb
+  scope: global
+  path: ".memory/docs/"
+  embedding {
+    provider: ollama
+    model: "nomic-embed-text"
+    dimensions: 768
+  }
+  search {
+    strategy: vector
+    top-k: 5
+  }
+}
+\`\`\`
 `,
   },
 

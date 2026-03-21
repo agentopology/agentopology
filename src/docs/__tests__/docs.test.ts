@@ -9,7 +9,8 @@ describe("docs topic registry", () => {
   it("has all expected topics", () => {
     const expectedTopics = [
       "topology", "agent", "orchestrator", "action", "gate", "human", "group",
-      "flow", "memory", "hooks", "triggers", "settings", "tools", "skills",
+      "flow", "memory", "store", "retrieval", "lifecycle", "embedding",
+      "hooks", "triggers", "settings", "tools", "skills",
       "mcp-servers", "metering", "providers", "env", "environments", "batch",
       "depth", "scale", "extensions", "schemas", "defaults", "observability",
       "schedule", "interfaces", "checkpoint", "artifacts", "composition",

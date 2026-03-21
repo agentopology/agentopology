@@ -55,6 +55,14 @@ import type {
   ArtifactDef,
   PromptVariant,
   AuthDef,
+  StoreNode,
+  RetrievalNode,
+  EmbeddingConfig,
+  IndexConfig,
+  IngestionConfig,
+  SearchConfig,
+  LifecycleConfig,
+  ScoringConfig,
 } from "./ast.js";
 
 import {
@@ -441,6 +449,16 @@ export function parseAgent(
   if (fields.background) node.background = fields.background === "true";
   const mcpServers = parseMultilineList(body, "mcp-servers");
   if (mcpServers.length) node.mcpServers = mcpServers;
+
+  // Memory store references and retrieval strategy
+  const agentMemory = parseMultilineList(body, "memory");
+  if (agentMemory.length) {
+    node.memory = agentMemory;
+  } else if (fields.memory) {
+    node.memory = parseList(fields.memory);
+  }
+  if (fields.retrieval) node.retrieval = fields.retrieval;
+
   if (outputs) node.outputs = outputs;
 
   // Parse scale sub-block
@@ -851,14 +869,177 @@ export function parseDepth(body: string): DepthDef {
   return { factors, levels };
 }
 
+// ---------------------------------------------------------------------------
+// Memory store & retrieval parsers
+// ---------------------------------------------------------------------------
+
+/** Parse an `embedding { ... }` sub-block into an {@link EmbeddingConfig}. */
+function parseEmbeddingConfig(body: string): EmbeddingConfig {
+  const fields = parseFields(body);
+  const config: EmbeddingConfig = {};
+  if (fields.provider) config.provider = unquote(fields.provider);
+  if (fields.model) config.model = unquote(fields.model);
+  if (fields.dimensions) config.dimensions = parseInt(fields.dimensions, 10);
+  if (fields.endpoint) config.endpoint = unquote(fields.endpoint);
+  return config;
+}
+
+/** Parse an `index { ... }` sub-block into an {@link IndexConfig}. */
+function parseIndexConfig(body: string): IndexConfig {
+  const fields = parseFields(body);
+  const config: IndexConfig = {};
+  if (fields.collection) config.collection = unquote(fields.collection);
+  if (fields.metric) config.metric = fields.metric;
+  return config;
+}
+
+/** Parse an `ingestion { ... }` sub-block into an {@link IngestionConfig}. */
+function parseIngestionConfig(body: string): IngestionConfig {
+  const fields = parseFields(body);
+  const config: IngestionConfig = {};
+  const sources = parseMultilineList(body, "sources");
+  if (sources.length) config.sources = sources;
+  else if (fields.sources) config.sources = parseList(fields.sources);
+  if (fields.chunking) config.chunking = fields.chunking;
+  if (fields["chunk-size"]) config.chunkSize = parseInt(fields["chunk-size"], 10);
+  if (fields.overlap) config.overlap = parseInt(fields.overlap, 10);
+  return config;
+}
+
+/** Parse a `search { ... }` sub-block into a {@link SearchConfig}. */
+function parseSearchConfig(body: string): SearchConfig {
+  const fields = parseFields(body);
+  const config: SearchConfig = {};
+  if (fields.strategy) config.strategy = fields.strategy;
+  if (fields.rerank) config.rerank = fields.rerank === "true";
+  if (fields["top-k"]) config.topK = parseInt(fields["top-k"], 10);
+  return config;
+}
+
+/** Parse a `lifecycle { ... }` sub-block into a {@link LifecycleConfig}. */
+function parseLifecycleConfig(body: string): LifecycleConfig {
+  const fields = parseFields(body);
+  const config: LifecycleConfig = {};
+  if (fields.retention) config.retention = fields.retention;
+  if (fields["decay-half-life"]) config.decayHalfLife = fields["decay-half-life"];
+  if (fields.consolidation) config.consolidation = parseFloat(fields.consolidation);
+  if (fields.contradiction) config.contradiction = fields.contradiction;
+  if (fields["audit-log"]) config.auditLog = fields["audit-log"] === "true";
+  return config;
+}
+
+/** Parse a `scoring { ... }` sub-block into a {@link ScoringConfig}. */
+function parseScoringConfig(body: string): ScoringConfig {
+  const fields = parseFields(body);
+  const config: ScoringConfig = {};
+  if (fields["recency-weight"]) config.recencyWeight = parseFloat(fields["recency-weight"]);
+  if (fields["semantic-weight"]) config.semanticWeight = parseFloat(fields["semantic-weight"]);
+  if (fields["importance-weight"]) config.importanceWeight = parseFloat(fields["importance-weight"]);
+  return config;
+}
+
+/**
+ * Parse a `store <id> { ... }` block into a {@link StoreNode}.
+ */
+export function parseStore(id: string, body: string): StoreNode {
+  const fields = parseFields(body);
+
+  const store: StoreNode = {
+    id,
+    type: fields.type ?? "semantic",
+    backend: fields.backend ?? "lancedb",
+  };
+
+  if (fields.description) store.description = unquote(fields.description);
+  if (fields.scope) store.scope = fields.scope;
+  if (fields.isolation) store.isolation = fields.isolation;
+  if (fields.path) store.path = unquote(fields.path);
+  if (fields.extraction) store.extraction = fields.extraction;
+
+  // Connection: may use `secret "uri"` modifier (same pattern as parseCheckpoint)
+  if (fields.connection) {
+    const rawConn = fields.connection.trim();
+    if (rawConn.startsWith("secret ")) {
+      store.connection = unquote(rawConn.slice("secret ".length).trim());
+    } else {
+      store.connection = unquote(rawConn);
+    }
+  }
+
+  // Sub-blocks
+  const embeddingBlock = extractBlock(body, "embedding");
+  if (embeddingBlock) store.embedding = parseEmbeddingConfig(embeddingBlock.body);
+
+  const indexBlock = extractBlock(body, "index");
+  if (indexBlock) store.index = parseIndexConfig(indexBlock.body);
+
+  const ingestionBlock = extractBlock(body, "ingestion");
+  if (ingestionBlock) store.ingestion = parseIngestionConfig(ingestionBlock.body);
+
+  const searchBlock = extractBlock(body, "search");
+  if (searchBlock) store.search = parseSearchConfig(searchBlock.body);
+
+  const lifecycleBlock = extractBlock(body, "lifecycle");
+  if (lifecycleBlock) store.lifecycle = parseLifecycleConfig(lifecycleBlock.body);
+
+  // Backend-config passthrough bag
+  const backendConfigBlock = extractBlock(body, "backend-config");
+  if (backendConfigBlock) {
+    const bcFields = parseFields(backendConfigBlock.body);
+    const bag: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(bcFields)) {
+      if (v === "true") bag[k] = true;
+      else if (v === "false") bag[k] = false;
+      else if (/^-?\d+(\.\d+)?$/.test(v)) bag[k] = parseFloat(v);
+      else bag[k] = unquote(v);
+    }
+    if (Object.keys(bag).length > 0) store.backendConfig = bag;
+  }
+
+  return store;
+}
+
+/**
+ * Parse a `retrieval <id> { ... }` block into a {@link RetrievalNode}.
+ */
+export function parseRetrieval(id: string, body: string): RetrievalNode {
+  const fields = parseFields(body);
+
+  const retrieval: RetrievalNode = { id };
+
+  // Sources list
+  const sources = parseMultilineList(body, "sources");
+  if (sources.length) retrieval.sources = sources;
+  else if (fields.sources) retrieval.sources = parseList(fields.sources);
+
+  // Paths list
+  const paths = parseMultilineList(body, "paths");
+  if (paths.length) retrieval.paths = paths;
+  else if (fields.paths) retrieval.paths = parseList(fields.paths);
+
+  if (fields.budget) retrieval.budget = parseInt(fields.budget, 10);
+  if (fields.rerank) retrieval.rerank = fields.rerank === "true";
+  if (fields.diversity) retrieval.diversity = fields.diversity === "true";
+  if (fields["cache-hit-threshold"]) retrieval.cacheHitThreshold = parseFloat(fields["cache-hit-threshold"]);
+  if (fields["cache-hit-action"]) retrieval.cacheHitAction = fields["cache-hit-action"];
+
+  // Scoring sub-block
+  const scoringBlock = extractBlock(body, "scoring");
+  if (scoringBlock) retrieval.scoring = parseScoringConfig(scoringBlock.body);
+
+  return retrieval;
+}
+
 /**
  * Parse the `memory { ... }` block.
  *
  * Extracts known sub-blocks (domains, references, external-docs, metrics,
  * workspace) and returns them as a nested record.
  */
-export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>): Record<string, unknown> {
+export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>): { memory: Record<string, unknown>; stores: StoreNode[]; retrievals: RetrievalNode[] } {
   const memory: Record<string, unknown> = {};
+  const stores: StoreNode[] = [];
+  const retrievals: RetrievalNode[] = [];
 
   const knownSubs = [
     "domains",
@@ -867,7 +1048,13 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
     "metrics",
     "workspace",
   ];
-  const knownSubsSet = new Set(knownSubs);
+  const knownSubsSet = new Set([
+    ...knownSubs,
+    "store", "retrieval",
+    // Sub-blocks within store {} and retrieval {} (not top-level memory subs,
+    // but the V24 scanner sees them because it doesn't track depth)
+    "embedding", "index", "ingestion", "search", "lifecycle", "backend-config", "scoring",
+  ]);
 
   for (const name of knownSubs) {
     const block = extractBlock(body, name);
@@ -888,6 +1075,20 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
     memory[name] = entry;
   }
 
+  // Parse store blocks (multiple named blocks)
+  const storeBlocks = extractAllBlocks(body, "store");
+  for (const block of storeBlocks) {
+    if (!block.id) continue;
+    stores.push(parseStore(block.id, block.body));
+  }
+
+  // Parse retrieval blocks (multiple named blocks)
+  const retrievalBlocks = extractAllBlocks(body, "retrieval");
+  for (const block of retrievalBlocks) {
+    if (!block.id) continue;
+    retrievals.push(parseRetrieval(block.id, block.body));
+  }
+
   // Detect unknown sub-blocks
   if (_unknownSubBlockWarnings) {
     const subBlockRe = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
@@ -904,7 +1105,7 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
     }
   }
 
-  return memory;
+  return { memory, stores, retrievals };
 }
 
 /**
@@ -1612,8 +1813,8 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   const lines = rawSource.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Match: agent <id> {, action <id> {, gate <id> {, human <id> {
-    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    // Match: agent <id> {, action <id> {, gate <id> {, human <id> {, store <id> {, retrieval <id> {
+    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group|store|retrieval)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
     if (namedMatch) {
       sourceMap[namedMatch[1]] = i + 1; // 1-based line number
       continue;
@@ -1926,7 +2127,10 @@ export function parse(source: string): TopologyAST {
   // --- Memory ---
   const memoryBlock = extractBlock(topBody, "memory");
   const unknownMemorySubBlockWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
-  const memory = memoryBlock ? parseMemory(memoryBlock.body, unknownMemorySubBlockWarnings) : {};
+  const memoryResult = memoryBlock ? parseMemory(memoryBlock.body, unknownMemorySubBlockWarnings) : { memory: {}, stores: [], retrievals: [] };
+  const memory = memoryResult.memory;
+  const stores = memoryResult.stores;
+  const retrievals = memoryResult.retrievals;
 
   // --- Batch ---
   const batchBlock = extractBlock(topBody, "batch");
@@ -2073,6 +2277,8 @@ export function parse(source: string): TopologyAST {
     edges,
     depth,
     memory,
+    stores,
+    retrievals,
     batch,
     environments,
     triggers,

@@ -1,0 +1,162 @@
+topology knowledge-assistant : [supervisor, human-gate] {
+
+  meta {
+    version: "1.0.0"
+    description: "A knowledge-powered research assistant with semantic search, entity tracking, and episodic memory"
+  }
+
+  orchestrator {
+    model: opus
+    plan: auto
+    handles: [research, answer]
+  }
+
+  agent researcher {
+    model: sonnet
+    description: "Searches knowledge bases and web for information"
+    tools: [Read, WebSearch, WebFetch]
+    memory: [knowledge-base, entities]
+    retrieval: smart-retrieval
+    permissions: autonomous
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Synthesizes research into clear answers"
+    tools: [Read, Write]
+    memory: [knowledge-base, conversation-log]
+    retrieval: smart-retrieval
+    permissions: autonomous
+  }
+
+  action research {
+    kind: inline
+    description: "Research a topic using knowledge stores and web"
+  }
+
+  action answer {
+    kind: inline
+    description: "Write a comprehensive answer from research"
+  }
+
+  flow {
+    research -> researcher
+    researcher -> writer
+    writer -> answer
+  }
+
+  triggers {
+    command research {
+      pattern: "/research <topic>"
+      description: "Research a topic using the knowledge base and web"
+    }
+  }
+
+  memory {
+    workspace: ".workspace/"
+    domains: ["domains/"]
+    references: ["references/"]
+
+    store knowledge-base {
+      type: semantic
+      description: "Project knowledge base with semantic search over documentation"
+      scope: org
+      isolation: soft
+      backend: lancedb
+      path: ".memory/semantic/"
+
+      embedding {
+        provider: ollama
+        model: "nomic-embed-text"
+        dimensions: 768
+      }
+
+      index {
+        collection: "docs"
+        metric: cosine
+      }
+
+      ingestion {
+        sources: ["docs/", "references/", "wiki/"]
+        chunking: recursive
+        chunk-size: 512
+        overlap: 50
+      }
+
+      search {
+        strategy: hybrid
+        rerank: true
+        top-k: 10
+      }
+
+      lifecycle {
+        retention: 365d
+        consolidation: 0.85
+        contradiction: overwrite
+        audit-log: false
+      }
+    }
+
+    store entities {
+      type: graph
+      description: "Entity and relationship tracking across conversations"
+      scope: org
+      isolation: soft
+      backend: kuzu
+      path: ".memory/graph/"
+      extraction: hybrid
+
+      lifecycle {
+        retention: 365d
+        contradiction: preserve
+      }
+    }
+
+    store conversation-log {
+      type: episodic
+      description: "Conversation history with temporal search"
+      scope: user
+      isolation: strict
+      backend: sqlite
+      path: ".memory/episodes.db"
+
+      lifecycle {
+        retention: 90d
+        decay-half-life: 30d
+        consolidation: 0.9
+        contradiction: bi-temporal
+        audit-log: true
+      }
+    }
+
+    store user-prefs {
+      type: user
+      description: "User preferences and settings"
+      scope: user
+      isolation: strict
+      backend: sqlite
+      path: ".memory/user.db"
+
+      lifecycle {
+        contradiction: overwrite
+      }
+    }
+
+    retrieval smart-retrieval {
+      sources: [knowledge-base, conversation-log, entities]
+      budget: 4096
+
+      scoring {
+        recency-weight: 0.3
+        semantic-weight: 0.5
+        importance-weight: 0.2
+      }
+
+      paths: [semantic, episodic, graph, hybrid]
+      rerank: true
+      diversity: true
+      cache-hit-threshold: 0.92
+      cache-hit-action: short-circuit
+    }
+  }
+}

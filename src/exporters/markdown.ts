@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { TopologyAST, NodeDef, EdgeDef, AgentNode, GateNode, ActionNode, OrchestratorNode, HumanNode, GroupNode } from "../parser/ast.js";
+import type { TopologyAST, NodeDef, EdgeDef, AgentNode, GateNode, ActionNode, OrchestratorNode, HumanNode, GroupNode, StoreNode, RetrievalNode } from "../parser/ast.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
 
@@ -204,6 +204,12 @@ function renderAgent(node: AgentNode, roles: Record<string, string>): string {
   }
   if (node.mcpServers && node.mcpServers.length) {
     accessLines.push(`**MCP Servers:** ${node.mcpServers.map((s) => `\`${s}\``).join(", ")}`);
+  }
+  if (node.memory && node.memory.length) {
+    accessLines.push(`**Memory:** ${node.memory.map((m) => `\`${m}\``).join(", ")}`);
+  }
+  if (node.retrieval) {
+    accessLines.push(`**Retrieval:** \`${node.retrieval}\``);
   }
   if (accessLines.length) {
     for (const l of accessLines) lines.push(l + "  ");
@@ -639,6 +645,150 @@ function renderEnvironments(ast: TopologyAST): string {
   return lines.join("\n");
 }
 
+function renderStores(ast: TopologyAST): string {
+  if (ast.stores.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Memory Stores");
+  lines.push("");
+
+  for (const store of ast.stores) {
+    lines.push(`### ${store.id}`);
+    lines.push("");
+
+    // Core properties
+    lines.push(`| Property | Value |`);
+    lines.push(`|----------|-------|`);
+    lines.push(`| Type | \`${store.type}\` |`);
+    lines.push(`| Backend | \`${store.backend}\` |`);
+    if (store.path) lines.push(`| Path | \`${store.path}\` |`);
+    if (store.connection) lines.push(`| Connection | \`${store.connection}\` |`);
+    if (store.scope) lines.push(`| Scope | \`${store.scope}\` |`);
+    if (store.isolation) lines.push(`| Isolation | \`${store.isolation}\` |`);
+    if (store.description) lines.push(`| Description | ${store.description} |`);
+    if (store.extraction) lines.push(`| Extraction | \`${store.extraction}\` |`);
+    lines.push("");
+
+    // Embedding config
+    if (store.embedding) {
+      const e = store.embedding;
+      lines.push("**Embedding:**");
+      lines.push("");
+      if (e.provider) lines.push(`- Provider: \`${e.provider}\``);
+      if (e.model) lines.push(`- Model: \`${e.model}\``);
+      if (e.dimensions != null) lines.push(`- Dimensions: ${e.dimensions}`);
+      if (e.endpoint) lines.push(`- Endpoint: \`${e.endpoint}\``);
+      lines.push("");
+    }
+
+    // Search config
+    if (store.search) {
+      const s = store.search;
+      lines.push("**Search:**");
+      lines.push("");
+      if (s.strategy) lines.push(`- Strategy: \`${s.strategy}\``);
+      if (s.rerank != null) lines.push(`- Rerank: ${s.rerank}`);
+      if (s.topK != null) lines.push(`- Top-K: ${s.topK}`);
+      lines.push("");
+    }
+
+    // Lifecycle config
+    if (store.lifecycle) {
+      const lc = store.lifecycle;
+      lines.push("**Lifecycle:**");
+      lines.push("");
+      if (lc.retention) lines.push(`- Retention: \`${lc.retention}\``);
+      if (lc.contradiction) lines.push(`- Contradiction: \`${lc.contradiction}\``);
+      if (lc.decayHalfLife) lines.push(`- Decay half-life: \`${lc.decayHalfLife}\``);
+      if (lc.consolidation != null) lines.push(`- Consolidation: ${lc.consolidation}`);
+      if (lc.auditLog != null) lines.push(`- Audit log: ${lc.auditLog}`);
+      lines.push("");
+    }
+
+    // Index config
+    if (store.index) {
+      const idx = store.index;
+      lines.push("**Index:**");
+      lines.push("");
+      if (idx.collection) lines.push(`- Collection: \`${idx.collection}\``);
+      if (idx.metric) lines.push(`- Metric: \`${idx.metric}\``);
+      lines.push("");
+    }
+
+    // Ingestion config
+    if (store.ingestion) {
+      const ing = store.ingestion;
+      lines.push("**Ingestion:**");
+      lines.push("");
+      if (ing.sources && ing.sources.length) lines.push(`- Sources: ${ing.sources.map((s) => `\`${s}\``).join(", ")}`);
+      if (ing.chunking) lines.push(`- Chunking: \`${ing.chunking}\``);
+      if (ing.chunkSize != null) lines.push(`- Chunk size: ${ing.chunkSize}`);
+      if (ing.overlap != null) lines.push(`- Overlap: ${ing.overlap}`);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function renderRetrievals(ast: TopologyAST): string {
+  if (ast.retrievals.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Retrieval Strategies");
+  lines.push("");
+
+  for (const ret of ast.retrievals) {
+    lines.push(`### ${ret.id}`);
+    lines.push("");
+
+    if (ret.sources && ret.sources.length) {
+      lines.push(`**Sources:** ${ret.sources.map((s) => `\`${s}\``).join(", ")}`);
+      lines.push("");
+    }
+
+    if (ret.budget != null) {
+      lines.push(`**Budget:** ${ret.budget} tokens`);
+      lines.push("");
+    }
+
+    if (ret.paths && ret.paths.length) {
+      lines.push(`**Paths:** ${ret.paths.map((p) => `\`${p}\``).join(", ")}`);
+      lines.push("");
+    }
+
+    // Scoring weights
+    if (ret.scoring) {
+      const sc = ret.scoring;
+      lines.push("**Scoring:**");
+      lines.push("");
+      if (sc.recencyWeight != null) lines.push(`- Recency weight: ${sc.recencyWeight}`);
+      if (sc.semanticWeight != null) lines.push(`- Semantic weight: ${sc.semanticWeight}`);
+      if (sc.importanceWeight != null) lines.push(`- Importance weight: ${sc.importanceWeight}`);
+      lines.push("");
+    }
+
+    const extra: string[] = [];
+    if (ret.rerank != null) extra.push(`Rerank: ${ret.rerank}`);
+    if (ret.diversity != null) extra.push(`Diversity: ${ret.diversity}`);
+    if (extra.length) {
+      lines.push(extra.join(" &nbsp;&middot;&nbsp; "));
+      lines.push("");
+    }
+
+    // Cache-hit config
+    if (ret.cacheHitThreshold != null || ret.cacheHitAction) {
+      lines.push("**Cache Hit:**");
+      lines.push("");
+      if (ret.cacheHitThreshold != null) lines.push(`- Threshold: ${ret.cacheHitThreshold}`);
+      if (ret.cacheHitAction) lines.push(`- Action: \`${ret.cacheHitAction}\``);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function renderFooter(): string {
   const lines: string[] = [];
   lines.push("---");
@@ -661,6 +811,8 @@ function exportMarkdown(ast: TopologyAST): GeneratedFile[] {
   sections.push(renderNodes(ast));
   sections.push(renderFlow(ast));
   sections.push(renderMemory(ast));
+  sections.push(renderStores(ast));
+  sections.push(renderRetrievals(ast));
   sections.push(renderTriggers(ast));
   sections.push(renderHooks(ast));
   sections.push(renderSchedules(ast));

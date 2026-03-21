@@ -29,6 +29,7 @@ export interface TopologySummary {
     groups: number;
     humans: number;
     orchestrators: number;
+    stores: number;
   };
   edgeCount: number;
   declaredPatterns: string[];
@@ -284,6 +285,17 @@ function detectPatterns(ast: TopologyAST): DetectedPattern[] {
     });
   }
 
+  // Memory infrastructure: detect if stores are present
+  if (ast.stores && ast.stores.length > 0) {
+    const storeIds = ast.stores.map((s) => s.id);
+    patterns.push({
+      name: "memory-infrastructure",
+      confidence: "definite",
+      involvedNodes: storeIds,
+      description: `Memory stores: ${storeIds.join(", ")}`,
+    });
+  }
+
   return patterns;
 }
 
@@ -334,6 +346,38 @@ function generateSuggestions(ast: TopologyAST): Suggestion[] {
     }
   }
 
+  // Memory-related suggestions
+  const hasStores = ast.stores && ast.stores.length > 0;
+  const hasRetrievals = ast.retrievals && ast.retrievals.length > 0;
+
+  if (hasStores) {
+    // Check if agents have memory stores assigned
+    const agentsWithMemory = ast.nodes.filter(
+      (n): n is AgentNode => isAgent(n) && (n.memory != null && n.memory.length > 0),
+    );
+    const agentsWithoutMemory = ast.nodes.filter(
+      (n): n is AgentNode => isAgent(n) && (!n.memory || n.memory.length === 0),
+    );
+
+    if (agentsWithoutMemory.length > 0 && agentsWithMemory.length > 0) {
+      for (const agent of agentsWithoutMemory) {
+        suggestions.push({
+          level: "info",
+          message: "Agent has no memory stores assigned — consider assigning memory stores to this agent",
+          node: agent.id,
+        });
+      }
+    }
+
+    // Check if stores exist but no retrieval strategy
+    if (!hasRetrievals) {
+      suggestions.push({
+        level: "improvement",
+        message: "Memory stores exist but no retrieval strategy is defined — consider adding a retrieval strategy",
+      });
+    }
+  }
+
   // Declared vs detected pattern mismatch
   const detected = detectPatterns(ast);
   const detectedNames = new Set(detected.map((p) => p.name));
@@ -364,6 +408,7 @@ export function analyze(ast: TopologyAST): AnalysisResult {
     groups: 0,
     humans: 0,
     orchestrators: 0,
+    stores: ast.stores ? ast.stores.length : 0,
   };
 
   for (const node of ast.nodes) {

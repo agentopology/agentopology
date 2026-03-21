@@ -2,7 +2,7 @@
 
 Created by Nadav Naveh
 
-These 29 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
+These 35 rules are enforced by the `.at` compiler at parse time. A topology that violates any rule is rejected before scaffold generation.
 
 ---
 
@@ -408,7 +408,7 @@ memory {
 
 ## Rule 24: Unknown Memory Sub-Blocks (Warning)
 
-Only known sub-blocks are expected inside the `memory` section: `domains`, `references`, `external-docs`, `metrics`, and `workspace`. Any other named sub-block is parsed but flagged as a **warning**.
+Only known sub-blocks are expected inside the `memory` section: `domains`, `references`, `external-docs`, `metrics`, `workspace`, `store`, and `retrieval`. Any other named sub-block is parsed but flagged as a **warning**.
 
 ```agenttopology
 # WARNING -- "custom-store" is not a recognized memory sub-block
@@ -500,6 +500,169 @@ metering {
 
 ---
 
+## Rule 30: Store Backend Enum
+
+Every `store.backend` must be one of the allowed values: `lancedb`, `sqlite-vec`, `chroma`, `kuzu`, `falkordb`, `mongodb`, `pinecone`, `qdrant`, `pgvector`, `neo4j`, or `sqlite`. Any other value is an error.
+
+```agenttopology
+# INVALID -- "redis" is not a recognized store backend
+memory {
+  store cache {
+    type: session
+    backend: redis
+    path: ".memory/cache/"
+  }
+}
+```
+
+---
+
+## Rule 31: Embedding Recommended (Warning)
+
+When a store's `type` is `semantic`, `episodic`, or `procedural`, the `embedding {}` sub-block should be present. Omitting it produces a **warning** -- the topology is valid but the store may not function correctly without embedding configuration.
+
+```agenttopology
+# WARNING -- semantic store without embedding configuration
+memory {
+  store docs {
+    type: semantic
+    backend: lancedb
+    path: ".memory/docs/"
+  }
+}
+
+# VALID -- embedding provided
+memory {
+  store docs {
+    type: semantic
+    backend: lancedb
+    path: ".memory/docs/"
+
+    embedding {
+      provider: ollama
+      model: "nomic-embed-text"
+      dimensions: 768
+    }
+  }
+}
+```
+
+---
+
+## Rule 32: Store Scope Recommended (Warning)
+
+Every `store` should have a `scope` field. Omitting it produces a **warning** -- the topology is valid but the store's access boundaries are undefined, which may cause issues in multi-agent or multi-user deployments.
+
+```agenttopology
+# WARNING -- store without scope
+memory {
+  store knowledge {
+    type: semantic
+    backend: lancedb
+    path: ".memory/knowledge/"
+  }
+}
+
+# VALID -- scope specified
+memory {
+  store knowledge {
+    type: semantic
+    scope: agent
+    backend: lancedb
+    path: ".memory/knowledge/"
+  }
+}
+```
+
+---
+
+## Rule 33: Retrieval Sources Resolve
+
+Every store ID in a `retrieval.sources` list must reference a declared `store` block within the `memory` section. Referencing an undefined store is an error.
+
+```agenttopology
+# INVALID -- "nonexistent-store" is not a declared store
+memory {
+  store docs {
+    type: semantic
+    backend: lancedb
+    path: ".memory/docs/"
+  }
+
+  retrieval main {
+    sources: [docs, nonexistent-store]
+    budget: 4096
+  }
+}
+```
+
+---
+
+## Rule 34: Connection Required for Remote Backends
+
+When a store uses a remote backend (`pinecone`, `qdrant`, `pgvector`, `neo4j`, `mongodb`, or `falkordb`), the `connection` field is required. Omitting it is an error.
+
+```agenttopology
+# INVALID -- pinecone requires a connection string
+memory {
+  store vectors {
+    type: semantic
+    backend: pinecone
+
+    embedding {
+      provider: openai
+      model: "text-embedding-3-large"
+      dimensions: 3072
+    }
+  }
+}
+
+# VALID -- connection provided
+memory {
+  store vectors {
+    type: semantic
+    backend: pinecone
+    connection: secret "PINECONE_URL"
+
+    embedding {
+      provider: openai
+      model: "text-embedding-3-large"
+      dimensions: 3072
+    }
+  }
+}
+```
+
+---
+
+## Rule 35: Agent Memory/Retrieval References
+
+Agent `memory` list entries must reference declared store IDs. Agent `retrieval` must reference a declared retrieval strategy ID. Referencing undefined stores or retrievals is an error.
+
+```agenttopology
+# INVALID -- "ghost-store" is not a declared store, "ghost-retrieval" is not declared
+memory {
+  store docs {
+    type: semantic
+    backend: lancedb
+    path: ".memory/docs/"
+  }
+
+  retrieval main {
+    sources: [docs]
+    budget: 4096
+  }
+}
+
+agent researcher {
+  model: sonnet
+  memory: [docs, ghost-store]
+  retrieval: ghost-retrieval
+}
+```
+
+---
+
 ## Summary Table
 
 | Rule | Severity | Description |
@@ -533,3 +696,9 @@ metering {
 | V27 | warning | Agent permissions enum — should be a recognized permission mode |
 | V28 | error | Metering format enum — must be json, jsonl, or csv |
 | V29 | warning | Metering pricing enum — should be a recognized pricing model |
+| V30 | error | Store backend enum — must be lancedb, sqlite-vec, chroma, kuzu, falkordb, mongodb, pinecone, qdrant, pgvector, neo4j, or sqlite |
+| V31 | warning | Embedding recommended — embedding should be present for semantic, episodic, and procedural stores |
+| V32 | warning | Store scope recommended — every store should have a scope field |
+| V33 | error | Retrieval sources resolve — retrieval sources must reference declared store IDs |
+| V34 | error | Connection required for remote backends — pinecone, qdrant, pgvector, neo4j, mongodb, falkordb require connection |
+| V35 | error | Agent memory/retrieval references — agent memory and retrieval fields must reference valid IDs |

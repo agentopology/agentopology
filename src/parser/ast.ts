@@ -216,6 +216,132 @@ export interface CheckpointDef {
 }
 
 // ---------------------------------------------------------------------------
+// Agent memory stores & retrieval
+// ---------------------------------------------------------------------------
+
+/** Embedding configuration for a memory store. */
+export interface EmbeddingConfig {
+  /** Embedding provider (e.g. "ollama", "local", "voyage", "openai", "gemini"). */
+  provider?: string;
+  /** Model identifier for embedding generation. */
+  model?: string;
+  /** Vector dimensions produced by the embedding model. */
+  dimensions?: number;
+  /** Endpoint URL or secret reference for the embedding service. */
+  endpoint?: string;
+}
+
+/** Index configuration for a memory store's vector/search index. */
+export interface IndexConfig {
+  /** Collection or table name within the backend. */
+  collection?: string;
+  /** Distance metric for vector similarity: "cosine" | "euclidean" | "dot-product". */
+  metric?: string;
+}
+
+/** Ingestion configuration for populating a memory store. */
+export interface IngestionConfig {
+  /** Source paths or globs to ingest from. */
+  sources?: string[];
+  /** Chunking strategy: "recursive" | "sentence" | "paragraph" | "fixed". */
+  chunking?: string;
+  /** Target chunk size in tokens or characters. */
+  chunkSize?: number;
+  /** Overlap between chunks in tokens or characters. */
+  overlap?: number;
+}
+
+/** Search configuration for querying a memory store. */
+export interface SearchConfig {
+  /** Search strategy: "vector" | "keyword" | "hybrid" | "graph". */
+  strategy?: string;
+  /** Whether to apply reranking to search results. */
+  rerank?: boolean;
+  /** Number of top results to return. */
+  topK?: number;
+}
+
+/** Lifecycle management configuration for a memory store. */
+export interface LifecycleConfig {
+  /** Retention period (duration string, e.g. "90d", "1y"). */
+  retention?: string;
+  /** Half-life for memory decay scoring (duration string, e.g. "30d"). */
+  decayHalfLife?: string;
+  /** Consolidation threshold (0 to 1). */
+  consolidation?: number;
+  /** Contradiction resolution strategy: "overwrite" | "preserve" | "bi-temporal". */
+  contradiction?: string;
+  /** Whether to maintain an audit log of memory mutations. */
+  auditLog?: boolean;
+}
+
+/** A memory store declaration within the memory block. */
+export interface StoreNode {
+  /** Store identifier (from `store <id> {}`). */
+  id: string;
+  /** Memory type: "semantic" | "episodic" | "procedural" | "entity" | "graph" | "user" | "session" | "temporal". */
+  type: string;
+  /** Human-readable description of this store's purpose. */
+  description?: string;
+  /** Access scope: "agent" | "user" | "session" | "org" | "global". */
+  scope?: string;
+  /** Isolation level: "strict" | "soft" | "none". */
+  isolation?: string;
+  /** Storage backend: "lancedb" | "sqlite-vec" | "chroma" | "kuzu" | "falkordb" | "mongodb" | "pinecone" | "qdrant" | "pgvector" | "neo4j" | "sqlite". */
+  backend: string;
+  /** File system path for local backends. */
+  path?: string;
+  /** Connection string or secret reference for remote backends. */
+  connection?: string;
+  /** Embedding model and provider configuration. */
+  embedding?: EmbeddingConfig;
+  /** Index/collection configuration. */
+  index?: IndexConfig;
+  /** Data ingestion configuration. */
+  ingestion?: IngestionConfig;
+  /** Search/query configuration. */
+  search?: SearchConfig;
+  /** Memory lifecycle management configuration. */
+  lifecycle?: LifecycleConfig;
+  /** Entity/fact extraction method: "llm" | "regex" | "hybrid". */
+  extraction?: string;
+  /** Backend-specific passthrough configuration. */
+  backendConfig?: Record<string, unknown>;
+}
+
+/** Scoring weight configuration for retrieval ranking. */
+export interface ScoringConfig {
+  /** Weight for recency in scoring (0 to 1). */
+  recencyWeight?: number;
+  /** Weight for semantic similarity in scoring (0 to 1). */
+  semanticWeight?: number;
+  /** Weight for importance/frequency in scoring (0 to 1). */
+  importanceWeight?: number;
+}
+
+/** A retrieval strategy declaration within the memory block. */
+export interface RetrievalNode {
+  /** Retrieval strategy identifier (from `retrieval <id> {}`). */
+  id: string;
+  /** Store IDs this retrieval draws from. */
+  sources?: string[];
+  /** Token budget for retrieved context. */
+  budget?: number;
+  /** Scoring weight configuration. */
+  scoring?: ScoringConfig;
+  /** Retrieval paths to activate: e.g. ["semantic", "episodic", "graph"]. */
+  paths?: string[];
+  /** Whether to apply cross-source reranking. */
+  rerank?: boolean;
+  /** Whether to enforce diversity across results. */
+  diversity?: boolean;
+  /** Similarity threshold for cache-hit detection (0 to 1). */
+  cacheHitThreshold?: number;
+  /** Action on cache hit: "short-circuit" | "augment" | "pass-through". */
+  cacheHitAction?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Artifact / asset lineage
 // ---------------------------------------------------------------------------
 
@@ -364,6 +490,10 @@ export interface AgentNode extends BaseNode {
   background?: boolean;
   /** MCP server names this agent uses. */
   mcpServers?: string[];
+  /** Memory store IDs this agent has access to. */
+  memory?: string[];
+  /** Retrieval strategy ID this agent uses for memory queries. */
+  retrieval?: string;
   /** Output enum definitions. */
   outputs?: OutputsMap;
   /** Scale / parallelism configuration. */
@@ -690,6 +820,10 @@ export interface TopologyAST {
   depth: DepthDef;
   /** Memory configuration (sub-blocks like domains, references, etc.). */
   memory: Record<string, unknown>;
+  /** Memory store declarations (parsed from store blocks within memory). */
+  stores: StoreNode[];
+  /** Retrieval strategy declarations (parsed from retrieval blocks within memory). */
+  retrievals: RetrievalNode[];
   /** Batch execution configuration. */
   batch: Record<string, unknown>;
   /** Environment-specific overrides. */

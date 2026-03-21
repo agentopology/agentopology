@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { parse, parseSchemaType, parseSchemaFields, parseParams, parseInterfaceEndpoints, parseImports, parseIncludes } from "../index.js";
 import { validate } from "../validator.js";
-import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, HumanNode, GroupNode, RetryConfig, CircuitBreakerConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef, PromptVariant, AuthDef } from "../ast.js";
+import type { TopologyAST, AgentNode, GateNode, OrchestratorNode, HumanNode, GroupNode, RetryConfig, CircuitBreakerConfig, SchemaFieldDef, SchemaDef, SensitiveValue, ParamDef, InterfaceEndpoints, ImportDef, IncludeDef, PromptVariant, AuthDef, StoreNode, RetrievalNode } from "../ast.js";
 import {
   stripComments,
   extractBlock,
@@ -846,6 +846,8 @@ describe("Validator", () => {
       includes: [],
       checkpoint: null,
       artifacts: [],
+      stores: [],
+      retrievals: [],
       ...overrides,
     };
   }
@@ -2616,6 +2618,8 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         includes: [],
         checkpoint: null,
         artifacts: [],
+        stores: [],
+        retrievals: [],
         ...overrides,
       };
     }
@@ -3437,6 +3441,8 @@ describe("Wave 2: Validator rules V39-V45", () => {
       includes: [],
       checkpoint: null,
       artifacts: [],
+      stores: [],
+      retrievals: [],
       ...overrides,
     };
   }
@@ -3995,6 +4001,8 @@ topology test : [pipeline] {
         includes: [],
         checkpoint: null,
         artifacts: [],
+        stores: [],
+        retrievals: [],
         ...overrides,
       };
     }
@@ -4074,6 +4082,8 @@ topology test : [pipeline] {
         includes: [],
         checkpoint: null,
         artifacts: [],
+        stores: [],
+        retrievals: [],
         ...overrides,
       };
     }
@@ -4525,6 +4535,8 @@ describe("Wave 3: Validator rules V48-V50 (observability)", () => {
       includes: [],
       checkpoint: null,
       artifacts: [],
+      stores: [],
+      retrievals: [],
       ...overrides,
     };
   }
@@ -5025,6 +5037,8 @@ topology simple : [pipeline] {
         includes: [],
         checkpoint: null,
         artifacts: [],
+        stores: [],
+        retrievals: [],
         ...overrides,
       };
     }
@@ -5357,6 +5371,8 @@ describe("Circuit Breaker (F26)", () => {
         includes: [],
         checkpoint: null,
         artifacts: [],
+        stores: [],
+        retrievals: [],
         ...overrides,
       };
     }
@@ -5796,6 +5812,8 @@ function minimalASTForWave6(overrides: Partial<TopologyAST> = {}): TopologyAST {
     includes: [],
     checkpoint: null,
     artifacts: [],
+    stores: [],
+    retrievals: [],
     ...overrides,
   };
 }
@@ -7065,5 +7083,463 @@ describe("Auth block in providers (F42)", () => {
     const results = validate(ast);
     const v80 = results.filter((r) => r.rule === "V80");
     expect(v80.length).toBe(0);
+  });
+
+  // =========================================================================
+  // Store and retrieval blocks (parser tests)
+  // =========================================================================
+
+  describe("store and retrieval blocks", () => {
+    it("parses a basic store with type, backend, and path", () => {
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store my-store {\n      type: semantic\n      backend: lancedb\n      path: ".memory/"\n    }\n  }\n}`;
+      const ast = parse(src);
+      expect(ast.stores).toHaveLength(1);
+      expect(ast.stores[0].id).toBe("my-store");
+      expect(ast.stores[0].type).toBe("semantic");
+      expect(ast.stores[0].backend).toBe("lancedb");
+      expect(ast.stores[0].path).toBe(".memory/");
+    });
+
+    it("parses multiple stores in one memory block", () => {
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store kb {\n      type: semantic\n      backend: lancedb\n    }\n    store relations {\n      type: graph\n      backend: kuzu\n    }\n    store history {\n      type: episodic\n      backend: sqlite-vec\n    }\n  }\n}`;
+      const ast = parse(src);
+      expect(ast.stores).toHaveLength(3);
+      expect(ast.stores[0].id).toBe("kb");
+      expect(ast.stores[0].type).toBe("semantic");
+      expect(ast.stores[0].backend).toBe("lancedb");
+      expect(ast.stores[1].id).toBe("relations");
+      expect(ast.stores[1].type).toBe("graph");
+      expect(ast.stores[1].backend).toBe("kuzu");
+      expect(ast.stores[2].id).toBe("history");
+      expect(ast.stores[2].type).toBe("episodic");
+      expect(ast.stores[2].backend).toBe("sqlite-vec");
+    });
+
+    it("parses store with all sub-blocks", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [a] }",
+        "  action a { kind: inline }",
+        "  flow { a -> a }",
+        "  memory {",
+        "    store full-store {",
+        "      type: semantic",
+        "      backend: lancedb",
+        "      path: \".memory/full\"",
+        "      scope: agent",
+        "      embedding {",
+        "        provider: ollama",
+        "        model: nomic-embed-text",
+        "        dimensions: 1024",
+        "      }",
+        "      index {",
+        "        collection: \"full_collection\"",
+        "        metric: cosine",
+        "      }",
+        "      ingestion {",
+        "        chunking: recursive",
+        "        chunk-size: 512",
+        "        overlap: 50",
+        "      }",
+        "      search {",
+        "        strategy: hybrid",
+        "        rerank: true",
+        "        top-k: 10",
+        "      }",
+        "      lifecycle {",
+        "        retention: 90d",
+        "        decay-half-life: 30d",
+        "        consolidation: 0.8",
+        "        contradiction: overwrite",
+        "        audit-log: true",
+        "      }",
+        "      backend-config {",
+        "        region: \"us-east-1\"",
+        "        replicas: 3",
+        "      }",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      expect(ast.stores).toHaveLength(1);
+      const store = ast.stores[0];
+      expect(store.id).toBe("full-store");
+      expect(store.type).toBe("semantic");
+      expect(store.backend).toBe("lancedb");
+      expect(store.path).toBe(".memory/full");
+      expect(store.scope).toBe("agent");
+      // embedding
+      expect(store.embedding).toBeDefined();
+      expect(store.embedding!.provider).toBe("ollama");
+      expect(store.embedding!.model).toBe("nomic-embed-text");
+      expect(store.embedding!.dimensions).toBe(1024);
+      // index
+      expect(store.index).toBeDefined();
+      expect(store.index!.collection).toBe("full_collection");
+      expect(store.index!.metric).toBe("cosine");
+      // ingestion
+      expect(store.ingestion).toBeDefined();
+      expect(store.ingestion!.chunking).toBe("recursive");
+      expect(store.ingestion!.chunkSize).toBe(512);
+      expect(store.ingestion!.overlap).toBe(50);
+      // search
+      expect(store.search).toBeDefined();
+      expect(store.search!.strategy).toBe("hybrid");
+      expect(store.search!.rerank).toBe(true);
+      expect(store.search!.topK).toBe(10);
+      // lifecycle
+      expect(store.lifecycle).toBeDefined();
+      expect(store.lifecycle!.retention).toBe("90d");
+      expect(store.lifecycle!.decayHalfLife).toBe("30d");
+      expect(store.lifecycle!.consolidation).toBe(0.8);
+      expect(store.lifecycle!.contradiction).toBe("overwrite");
+      expect(store.lifecycle!.auditLog).toBe(true);
+      // backend-config
+      expect(store.backendConfig).toBeDefined();
+      expect(store.backendConfig!["region"]).toBe("us-east-1");
+      expect(store.backendConfig!["replicas"]).toBe(3);
+    });
+
+    it("parses store with connection secret", () => {
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store remote-db {\n      type: semantic\n      backend: pinecone\n      connection: secret "DB_URL"\n    }\n  }\n}`;
+      const ast = parse(src);
+      expect(ast.stores).toHaveLength(1);
+      expect(ast.stores[0].connection).toBe("DB_URL");
+    });
+
+    it("parses retrieval block with all fields", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [a] }",
+        "  action a { kind: inline }",
+        "  flow { a -> a }",
+        "  memory {",
+        "    store kb { type: semantic backend: lancedb }",
+        "    store history { type: episodic backend: sqlite-vec }",
+        "    retrieval planner {",
+        "      sources: [kb, history]",
+        "      budget: 4096",
+        "      paths: [semantic, graph]",
+        "      rerank: true",
+        "      diversity: true",
+        "      cache-hit-threshold: 0.92",
+        "      cache-hit-action: short-circuit",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      expect(ast.retrievals).toHaveLength(1);
+      const r = ast.retrievals[0];
+      expect(r.id).toBe("planner");
+      expect(r.sources).toEqual(["kb", "history"]);
+      expect(r.budget).toBe(4096);
+      expect(r.paths).toEqual(["semantic", "graph"]);
+      expect(r.rerank).toBe(true);
+      expect(r.diversity).toBe(true);
+      expect(r.cacheHitThreshold).toBe(0.92);
+      expect(r.cacheHitAction).toBe("short-circuit");
+    });
+
+    it("parses retrieval with scoring sub-block", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [a] }",
+        "  action a { kind: inline }",
+        "  flow { a -> a }",
+        "  memory {",
+        "    retrieval scored {",
+        "      sources: [kb]",
+        "      scoring {",
+        "        recency-weight: 0.3",
+        "        semantic-weight: 0.5",
+        "        importance-weight: 0.2",
+        "      }",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      expect(ast.retrievals).toHaveLength(1);
+      const r = ast.retrievals[0];
+      expect(r.scoring).toBeDefined();
+      expect(r.scoring!.recencyWeight).toBe(0.3);
+      expect(r.scoring!.semanticWeight).toBe(0.5);
+      expect(r.scoring!.importanceWeight).toBe(0.2);
+    });
+
+    it("parses agent with memory and retrieval fields", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [intake] }",
+        "  action intake { kind: inline }",
+        "  agent worker {",
+        "    model: sonnet",
+        "    memory: [kb, history]",
+        "    retrieval: planner",
+        "  }",
+        "  flow { intake -> worker }",
+        "  memory {",
+        "    store kb { type: semantic backend: lancedb }",
+        "    store history { type: episodic backend: sqlite-vec }",
+        "    retrieval planner { sources: [kb, history] }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      const agent = ast.nodes.find((n) => n.id === "worker") as AgentNode;
+      expect(agent.memory).toEqual(["kb", "history"]);
+      expect(agent.retrieval).toBe("planner");
+    });
+
+    it("parses empty memory block with no stores", () => {
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {}\n}`;
+      const ast = parse(src);
+      expect(ast.stores).toEqual([]);
+      expect(ast.retrievals).toEqual([]);
+    });
+
+    it("parses store alongside existing memory sub-blocks (workspace, domains)", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [a] }",
+        "  action a { kind: inline }",
+        "  flow { a -> a }",
+        "  memory {",
+        "    workspace {",
+        "      path: \".state\"",
+        "    }",
+        "    domains {",
+        "      primary: \"engineering\"",
+        "    }",
+        "    store kb {",
+        "      type: semantic",
+        "      backend: lancedb",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      // Old-style memory sub-blocks still populated
+      const ws = ast.memory["workspace"] as Record<string, unknown>;
+      expect(ws).toBeDefined();
+      expect(ws["path"]).toBe(".state");
+      const domains = ast.memory["domains"] as Record<string, unknown>;
+      expect(domains).toBeDefined();
+      expect(domains["primary"]).toBe("engineering");
+      // New store also populated
+      expect(ast.stores).toHaveLength(1);
+      expect(ast.stores[0].id).toBe("kb");
+    });
+
+    it("does not produce V24 warning for store/retrieval inside memory", () => {
+      const src = [
+        "topology t : [pipeline] {",
+        "  meta { version: \"1.0.0\" }",
+        "  orchestrator { model: opus handles: [a] }",
+        "  action a { kind: inline }",
+        "  flow { a -> a }",
+        "  memory {",
+        "    store kb {",
+        "      type: semantic",
+        "      backend: lancedb",
+        "    }",
+        "    retrieval planner {",
+        "      sources: [kb]",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n");
+      const ast = parse(src);
+      const results = validate(ast);
+      const v24 = results.filter((r) => r.rule === "V24");
+      expect(v24).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
+  // V81-V86 memory store validation
+  // =========================================================================
+
+  describe("V81-V86 memory store validation", () => {
+    it("V81: invalid store backend produces error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "bad-store", type: "semantic", backend: "invalid-db" },
+        ],
+      });
+      const results = validate(ast);
+      const v81 = results.filter((r) => r.rule === "V81");
+      expect(v81.length).toBeGreaterThan(0);
+      expect(v81[0].level).toBe("error");
+      expect(v81[0].message).toContain("invalid-db");
+    });
+
+    it("V81: valid store backend produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "good-store", type: "semantic", backend: "lancedb" },
+        ],
+      });
+      const results = validate(ast);
+      const v81 = results.filter((r) => r.rule === "V81");
+      expect(v81).toHaveLength(0);
+    });
+
+    it("V82: semantic store without embedding produces warning", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+      });
+      const results = validate(ast);
+      const v82 = results.filter((r) => r.rule === "V82");
+      expect(v82.length).toBeGreaterThan(0);
+      expect(v82[0].level).toBe("warning");
+      expect(v82[0].message).toContain("embedding");
+    });
+
+    it("V82: semantic store with embedding produces no warning", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb", embedding: { provider: "ollama", model: "nomic", dimensions: 768 } },
+        ],
+      });
+      const results = validate(ast);
+      const v82 = results.filter((r) => r.rule === "V82");
+      expect(v82).toHaveLength(0);
+    });
+
+    it("V83: store without scope produces warning", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+      });
+      const results = validate(ast);
+      const v83 = results.filter((r) => r.rule === "V83");
+      expect(v83.length).toBeGreaterThan(0);
+      expect(v83[0].level).toBe("warning");
+      expect(v83[0].message).toContain("scope");
+    });
+
+    it("V84: retrieval with nonexistent source produces error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+        retrievals: [
+          { id: "planner", sources: ["kb", "nonexistent"] },
+        ],
+      });
+      const results = validate(ast);
+      const v84 = results.filter((r) => r.rule === "V84");
+      expect(v84.length).toBeGreaterThan(0);
+      expect(v84[0].level).toBe("error");
+      expect(v84[0].message).toContain("nonexistent");
+    });
+
+    it("V84: retrieval with valid sources produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+          { id: "history", type: "episodic", backend: "sqlite-vec" },
+        ],
+        retrievals: [
+          { id: "planner", sources: ["kb", "history"] },
+        ],
+      });
+      const results = validate(ast);
+      const v84 = results.filter((r) => r.rule === "V84");
+      expect(v84).toHaveLength(0);
+    });
+
+    it("V85: remote backend without connection produces error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "cloud-store", type: "semantic", backend: "pinecone" },
+        ],
+      });
+      const results = validate(ast);
+      const v85 = results.filter((r) => r.rule === "V85");
+      expect(v85.length).toBeGreaterThan(0);
+      expect(v85[0].level).toBe("error");
+      expect(v85[0].message).toContain("pinecone");
+      expect(v85[0].message).toContain("connection");
+    });
+
+    it("V85: local backend without connection produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "local-store", type: "semantic", backend: "lancedb" },
+        ],
+      });
+      const results = validate(ast);
+      const v85 = results.filter((r) => r.rule === "V85");
+      expect(v85).toHaveLength(0);
+    });
+
+    it("V86: agent memory referencing nonexistent store produces error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+        retrievals: [],
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", memory: ["nonexistent"] } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v86 = results.filter((r) => r.rule === "V86");
+      expect(v86.length).toBeGreaterThan(0);
+      expect(v86[0].level).toBe("error");
+      expect(v86[0].message).toContain("nonexistent");
+    });
+
+    it("V86: agent memory referencing existing store produces no error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+        retrievals: [],
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", memory: ["kb"] } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v86 = results.filter((r) => r.rule === "V86");
+      expect(v86).toHaveLength(0);
+    });
+
+    it("V86: agent retrieval referencing nonexistent strategy produces error", () => {
+      const ast = minimalASTForWave6({
+        stores: [
+          { id: "kb", type: "semantic", backend: "lancedb" },
+        ],
+        retrievals: [
+          { id: "planner", sources: ["kb"] },
+        ],
+        nodes: [
+          { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] } as OrchestratorNode,
+          { id: "intake", type: "action", label: "Intake" },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", retrieval: "nonexistent" } as AgentNode,
+        ],
+      });
+      const results = validate(ast);
+      const v86 = results.filter((r) => r.rule === "V86");
+      expect(v86.length).toBeGreaterThan(0);
+      expect(v86[0].level).toBe("error");
+      expect(v86[0].message).toContain("nonexistent");
+    });
   });
 });

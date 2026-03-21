@@ -41,6 +41,8 @@ import type {
   ArtifactDef,
   PromptVariant,
   AuthDef,
+  StoreNode,
+  RetrievalNode,
 } from "./ast.js";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +166,24 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   // Wave 7: Group chat, reflection, and rate limiting keywords
   "group", "members", "speaker-selection", "max-rounds", "termination",
   "round-robin", "random", "reflection", "rate-limit",
+  // Wave 8: Agent memory stores & retrieval keywords
+  "store", "retrieval", "embedding", "index", "ingestion", "search",
+  "lifecycle", "scoring", "backend-config",
+  "scope", "collection", "chunking", "chunk-size", "overlap",
+  "rerank", "top-k", "decay-half-life", "consolidation", "contradiction",
+  "audit-log", "extraction", "budget", "diversity",
+  "recency-weight", "semantic-weight", "importance-weight",
+  "cache-hit-threshold", "cache-hit-action",
+  "semantic", "episodic", "procedural", "entity", "graph",
+  "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb", "pinecone",
+  "qdrant", "pgvector", "neo4j",
+  "vector", "keyword", "hybrid",
+  "cosine", "euclidean", "dot-product",
+  "recursive", "sentence", "paragraph",
+  "overwrite", "preserve", "bi-temporal",
+  "short-circuit", "augment", "pass-through",
+  "strict", "soft", "org", "global", "session",
+  "llm", "regex",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -2716,6 +2736,194 @@ function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V81 – Store backend validation
+// ---------------------------------------------------------------------------
+
+/** Valid store backends. */
+const VALID_STORE_BACKENDS: ReadonlySet<string> = new Set([
+  "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb",
+  "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite",
+]);
+
+/**
+ * V81: StoreNode.backend must be one of the known values.
+ */
+function v81StoreBackendValid(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores) return results;
+  for (const store of ast.stores) {
+    if (!VALID_STORE_BACKENDS.has(store.backend)) {
+      results.push({
+        rule: "V81",
+        level: "error",
+        message: `store "${store.id}": backend "${store.backend}" is invalid — must be one of: ${[...VALID_STORE_BACKENDS].join(", ")}`,
+        node: store.id,
+        line: lookupLine(ast, store.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V82 – Store embedding required for semantic types
+// ---------------------------------------------------------------------------
+
+/** Store types that typically require embedding configuration. */
+const EMBEDDING_REQUIRED_TYPES: ReadonlySet<string> = new Set([
+  "semantic", "episodic", "procedural",
+]);
+
+/**
+ * V82: When StoreNode.type is "semantic", "episodic", or "procedural",
+ * embedding config should be present. Warning level — binding may provide defaults.
+ */
+function v82StoreEmbeddingRequired(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores) return results;
+  for (const store of ast.stores) {
+    if (EMBEDDING_REQUIRED_TYPES.has(store.type) && !store.embedding) {
+      results.push({
+        rule: "V82",
+        level: "warning",
+        message: `store "${store.id}": type "${store.type}" typically requires an embedding configuration — the binding may provide defaults`,
+        node: store.id,
+        line: lookupLine(ast, store.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V83 – Store scope recommended
+// ---------------------------------------------------------------------------
+
+/**
+ * V83: Every store should have a scope defined. Warning level.
+ */
+function v83StoreScopeRecommended(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores) return results;
+  for (const store of ast.stores) {
+    if (!store.scope) {
+      results.push({
+        rule: "V83",
+        level: "warning",
+        message: `store "${store.id}": no scope defined — consider specifying one of: agent, user, session, org, global`,
+        node: store.id,
+        line: lookupLine(ast, store.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V84 – Retrieval sources must reference valid store IDs
+// ---------------------------------------------------------------------------
+
+/**
+ * V84: Every source in RetrievalNode.sources must match a store ID in ast.stores.
+ */
+function v84RetrievalSourcesValid(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores || !ast.retrievals) return results;
+  const storeIds = new Set(ast.stores.map((s) => s.id));
+
+  for (const retrieval of ast.retrievals ?? []) {
+    if (!retrieval.sources) continue;
+    for (const source of retrieval.sources) {
+      if (!storeIds.has(source)) {
+        results.push({
+          rule: "V84",
+          level: "error",
+          message: `retrieval "${retrieval.id}": source "${source}" does not reference a declared store`,
+          node: retrieval.id,
+          line: lookupLine(ast, retrieval.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V85 – Store connection required for remote backends
+// ---------------------------------------------------------------------------
+
+/** Remote backends that require a connection string. */
+const REMOTE_BACKENDS: ReadonlySet<string> = new Set([
+  "pinecone", "neo4j", "qdrant", "pgvector",
+]);
+
+/**
+ * V85: Remote backends (pinecone, neo4j, qdrant, pgvector) require a connection field.
+ */
+function v85StoreConnectionRequired(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores) return results;
+  for (const store of ast.stores) {
+    if (REMOTE_BACKENDS.has(store.backend) && !store.connection) {
+      results.push({
+        rule: "V85",
+        level: "error",
+        message: `store "${store.id}": remote backend "${store.backend}" requires a connection field`,
+        node: store.id,
+        line: lookupLine(ast, store.id),
+      });
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// V86 – Agent memory/retrieval references must be valid
+// ---------------------------------------------------------------------------
+
+/**
+ * V86: Every ID in AgentNode.memory must match a store ID in ast.stores.
+ * AgentNode.retrieval must match a retrieval ID in ast.retrievals.
+ */
+function v86AgentMemoryRefsValid(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores || !ast.retrievals) return results;
+  const storeIds = new Set(ast.stores.map((s) => s.id));
+  const retrievalIds = new Set(ast.retrievals.map((r) => r.id));
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+
+    if (node.memory) {
+      for (const storeRef of node.memory) {
+        if (!storeIds.has(storeRef)) {
+          results.push({
+            rule: "V86",
+            level: "error",
+            message: `agent "${node.id}": memory reference "${storeRef}" does not match a declared store`,
+            node: node.id,
+            line: lookupLine(ast, node.id),
+          });
+        }
+      }
+    }
+
+    if (node.retrieval) {
+      if (!retrievalIds.has(node.retrieval)) {
+        results.push({
+          rule: "V86",
+          level: "error",
+          message: `agent "${node.id}": retrieval reference "${node.retrieval}" does not match a declared retrieval strategy`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -2807,5 +3015,11 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v64SpeakerSelection(ast),
     ...v65MaxRounds(ast),
     ...v66RateLimitFormat(ast),
+    ...v81StoreBackendValid(ast),
+    ...v82StoreEmbeddingRequired(ast),
+    ...v83StoreScopeRecommended(ast),
+    ...v84RetrievalSourcesValid(ast),
+    ...v85StoreConnectionRequired(ast),
+    ...v86AgentMemoryRefsValid(ast),
   ];
 }
