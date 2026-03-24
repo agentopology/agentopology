@@ -253,7 +253,7 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
       name: toTitle(ast.topology.name) + " Coordinator",
       model: orchModel,
       workspace: `~/.openclaw/workspace-${ast.topology.name}`,
-      agentDir: `./config/agents/orchestrator/agent`,
+      agentDir: `~/.openclaw/config/agents/orchestrator/agent`,
       subagents: {
         allowAgents: agentIds,
       },
@@ -276,7 +276,7 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
       name: toTitle(agent.id),
       model: agentModel,
       workspace: `~/.openclaw/workspace-${agent.id}`,
-      agentDir: `./config/agents/${agent.id}/agent`,
+      agentDir: `~/.openclaw/config/agents/${agent.id}/agent`,
     };
 
     // No per-agent tools in openclaw.json — tool restrictions go in AGENTS.md
@@ -287,6 +287,32 @@ function generateOpenClawJson(ast: TopologyAST): GeneratedFile {
 
     // Note: OpenClaw does NOT support per-agent "timeout" in openclaw.json.
     // Timeouts are documented in AGENTS.md instead.
+
+    // subagents.allowAgents — OpenClaw requires explicit delegation lists
+    // for agents to use sessions_spawn. We detect supervisors using:
+    // 1. The topology's interface entry point (if defined)
+    // 2. The first agent by phase order
+    // 3. Any agent that is the target of error edges (error handlers coordinate)
+    // Supervisors get allowAgents for ALL other agents in the topology,
+    // because OpenClaw delegation is about permission, not flow direction.
+    const isSupervisor =
+      // Interface entry point
+      (ast.interfaceEndpoints?.entry === agent.id) ||
+      // First agent by phase (lowest phase = coordinator)
+      (agents.length > 0 && agents[0].id === agent.id) ||
+      // Error handler target (receives error edges from other agents)
+      ast.edges.some((e) => e.isError && e.to === agent.id) ||
+      // Topology declares "supervisor" pattern and this is the first agent
+      (ast.topology.patterns.includes("supervisor") && agents[0]?.id === agent.id);
+
+    if (isSupervisor) {
+      const otherAgentIds = agents
+        .filter((a) => a.id !== agent.id)
+        .map((a) => a.id);
+      if (otherAgentIds.length > 0) {
+        entry.subagents = { allowAgents: otherAgentIds };
+      }
+    }
 
     // Merge agent-level openclaw extensions
     if (agent.extensions?.openclaw) {
@@ -1609,9 +1635,11 @@ function generateSkillFiles(ast: TopologyAST): GeneratedFile[] {
   for (const skill of ast.skills) {
     const sections: string[] = [];
 
-    // OpenClaw requires YAML frontmatter with name and description
+    // OpenClaw requires YAML frontmatter with name, version, AND description.
+    // Missing any of the three = skill silently not registered.
     sections.push("---");
     sections.push(`name: ${skill.id}`);
+    sections.push(`version: "${ast.topology.version}"`);
     if (skill.description) {
       sections.push(`description: ${JSON.stringify(skill.description)}`);
     }
@@ -1664,10 +1692,11 @@ function generateToolSkills(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   for (const tool of ast.toolDefs) {
-    // SKILL.md wrapper — OpenClaw requires YAML frontmatter
+    // SKILL.md wrapper — OpenClaw requires name, version, AND description.
     const sections: string[] = [];
     sections.push("---");
     sections.push(`name: ${tool.id}`);
+    sections.push(`version: "${ast.topology.version}"`);
     sections.push(`description: ${JSON.stringify(tool.description)}`);
     sections.push("---");
     sections.push("");
@@ -1953,6 +1982,28 @@ function generatePerAgentDirs(ast: TopologyAST): GeneratedFile[] {
       content: soulLines.join("\n"),
       category: "machine",
     });
+  }
+
+  // OpenClaw injects ALL files from agentDir into the agent's system prompt.
+  // The team-level AGENTS.md, TOOLS.md, USER.md, and BOOTSTRAP.md must be
+  // copied into each agent's dir so the gateway can find them.
+  // We re-generate the content here (same functions used for root-level files)
+  // to avoid cross-function dependencies.
+  const sharedContent: Record<string, string> = {
+    "AGENTS.md": generateAgentsMd(ast).content,
+    "TOOLS.md": generateToolsMd(ast).content,
+    "USER.md": generateUserMd().content,
+    "BOOTSTRAP.md": generateBootstrapMd(ast).content,
+  };
+  for (const agent of allAgents) {
+    const base = `config/agents/${agent.id}/agent`;
+    for (const [filename, content] of Object.entries(sharedContent)) {
+      files.push({
+        path: `${base}/${filename}`,
+        content,
+        category: "machine",
+      });
+    }
   }
 
   return files;
