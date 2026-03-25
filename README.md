@@ -156,7 +156,7 @@ In Claude Code, type `/agentopology` — or just ask naturally:
 Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
 
 1. Generates the `.at` file with the right syntax
-2. Validates it against 29 rules
+2. Validates it against 82 rules
 3. Scaffolds it to Claude Code, OpenClaw, Cursor, or any target
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
@@ -452,13 +452,15 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 ## CLI Reference
 
 ```
-agentopology validate <file>              Validate an .at file
+agentopology validate <file>              Validate an .at file (82 rules)
 agentopology scaffold <file> --target <t> Generate platform configs
+agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at
+agentopology import --target <t> --dir <d>       Reverse-engineer platform files to .at
 agentopology visualize <file>             Interactive topology graph
+agentopology export <file> --format <fmt> Export as markdown, mermaid, or json
+agentopology info <file>                  Topology analysis and suggestions
 agentopology targets                      List supported platforms
-agentopology docs [topic]                 Language reference
-agentopology info <file>                  Topology summary
-agentopology export <file> --format json  Export AST as JSON
+agentopology docs [topic]                 Language reference (42 topics)
 ```
 
 ---

@@ -94,7 +94,7 @@ Check your topology for errors:
 agentopology validate my-pipeline.at
 ```
 
-The validator checks all 19 rules: unique names, flow resolution, exhaustive conditions, bounded loops, provider security, and more. If something is wrong, you get a clear error message pointing to the issue.
+The validator checks all 82 rules: unique names, flow resolution, exhaustive conditions, bounded loops, provider security, and more. If something is wrong, you get a clear error message pointing to the issue.
 
 ## Scaffold
 
@@ -112,6 +112,7 @@ Available targets:
 - `gemini-cli` -- Google Gemini CLI settings
 - `copilot-cli` -- GitHub Copilot CLI instructions
 - `openclaw` -- OpenClaw platform JSON
+- `kiro` -- Anthropic Kiro configuration
 
 ## Visualize
 

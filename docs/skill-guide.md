@@ -18,10 +18,10 @@ Symlink the skill into your project:
 
 ```bash
 mkdir -p .claude/skills
-ln -s $(npm root -g)/agentopology/.claude/skills/agentopology .claude/skills/agentopology
+ln -s $(npm root -g)/agentopology-skill/.claude/skills/agentopology-skill-skill .claude/skills/agentopology-skill-skill
 ```
 
-Then invoke with `/agentopology` or describe what you want to build.
+Then invoke with `/agentopology-skill` or describe what you want to build.
 
 ### Other CLIs
 
@@ -50,12 +50,12 @@ Skill: ## Pipeline
 
        Generating content-pipeline.at...
 
-       content-pipeline.at created and validated (19/19 rules passed).
+       content-pipeline.at created and validated (82/82 rules passed).
 
          scaffold    Generate agent configs for your platform
          visualize   See the topology graph
 
-       Which platform? (claude-code, codex, gemini-cli, copilot-cli)
+       Which platform? (claude-code, codex, gemini-cli, copilot-cli, openclaw, kiro)
 
 You: claude-code
 
@@ -70,8 +70,8 @@ That's it. Idea → working agent configs.
 Check any `.at` file for errors:
 
 ```
-You: /agentopology --validate my-team.at
-Skill: All 19 validation rules passed.
+You: /agentopology-skill --validate my-team.at
+Skill: All 82 validation rules passed.
 ```
 
 ### Scaffold
@@ -79,8 +79,8 @@ Skill: All 19 validation rules passed.
 Generate platform-specific files from an existing `.at` file:
 
 ```
-You: /agentopology --scaffold my-team.at
-Skill: Which target? claude-code, codex, gemini-cli, copilot-cli, openclaw
+You: /agentopology-skill --scaffold my-team.at
+Skill: Which target? claude-code, codex, gemini-cli, copilot-cli, openclaw, kiro
 ```
 
 ### Visualize
@@ -88,7 +88,7 @@ Skill: Which target? claude-code, codex, gemini-cli, copilot-cli, openclaw
 Generate an interactive HTML graph:
 
 ```
-You: /agentopology --visualize my-team.at
+You: /agentopology-skill --visualize my-team.at
 Skill: Generated my-team-topology.html — opening in browser.
 ```
 
@@ -113,6 +113,7 @@ The skill recommends from 5 proven patterns:
 | `gemini-cli` | Google Gemini CLI |
 | `copilot-cli` | GitHub Copilot CLI |
 | `openclaw` | OpenClaw platform |
+| `kiro` | Anthropic Kiro |
 
 ## Next Steps
 

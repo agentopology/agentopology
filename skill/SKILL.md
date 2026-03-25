@@ -1,5 +1,5 @@
 ---
-name: agentopology
+name: agentopology-skill
 description: "Design, validate, scaffold, and visualize multi-agent topologies using the .at language"
 ---
 
@@ -24,7 +24,7 @@ Every .at generation follows this loop — no exceptions:
 
 1. **QUERY:**    `agentopology docs <relevant-topics>`   # Learn correct syntax
 2. **COMPOSE:**  Write .at file — CLI-provided structure + your prose
-3. **VALIDATE:** `agentopology validate <file>`           # Must pass all 29 rules
+3. **VALIDATE:** `agentopology validate <file>`           # Must pass all 82 rules
 4. **FIX:**      If errors → query `agentopology docs validation` → fix → re-validate
 5. **ANALYZE:**  `agentopology info <file>`               # Verify structure
 6. **SCAFFOLD:** `agentopology scaffold <file> --target <binding>`
@@ -79,7 +79,7 @@ Every .at generation follows this loop — no exceptions:
 | Agent descriptions | Field names and types |
 | Prompt {} block content | Block nesting rules |
 | Topology/agent names | Legal enum values |
-| Pattern selection | Validation rules (29 rules) |
+| Pattern selection | Validation rules (82 rules) |
 | Role descriptions | Default values |
 | Flow topology decisions | Required vs optional fields |
 | Tool choices | Syntax grammar |
@@ -232,7 +232,7 @@ npx agentopology validate <file.at>
 After generating and validating, offer the next actions:
 
 ```
-<name>.at created and validated (29/29 rules passed).
+<name>.at created and validated (82/82 rules passed).
 
   scaffold    Generate agent configs for your platform
   visualize   See the topology graph
@@ -267,7 +267,7 @@ Report what was generated. Done.
 agentopology validate <file.at>
 ```
 
-There are 29 validation rules. If all pass, tell the user. If errors, explain each one clearly and offer to fix. Query `agentopology docs validation` for rule explanations if needed.
+There are 82 validation rules. If all pass, tell the user. If errors, explain each one clearly and offer to fix. Query `agentopology docs validation` for rule explanations if needed.
 
 If no file specified, look for `.at` files in the current directory and `.claude/topologies/`.
 
@@ -366,14 +366,14 @@ When generating `.at` files:
 All commands available to this skill:
 
 ```bash
-# Language reference (36 topics, parser-verified)
+# Language reference (42 topics, parser-verified)
 agentopology docs                        # List all topics
 agentopology docs <topic>                # Show specific topic
 agentopology docs --all                  # Dump everything (~3000 lines)
 agentopology docs --search <term>        # Search across all topics
 
 # Core workflow
-agentopology validate <file.at>          # Parse + run 29 validation rules
+agentopology validate <file.at>          # Parse + run 82 validation rules
 agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune]
 agentopology sync <file.at> --target <binding> --dir <path>
 agentopology visualize <file.at>
