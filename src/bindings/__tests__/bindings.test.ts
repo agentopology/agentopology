@@ -255,13 +255,13 @@ describe("claude-code binding", () => {
     expect(builderFile!.content).toContain("Edit");
   });
 
-  it("compiles enforced gate to settings.json PreToolUse hook", () => {
+  it("compiles enforced gate to settings.json SubagentStop hook with after: agent as matcher", () => {
     const settingsFile = files.find((f) => f.path === ".claude/settings.json");
     expect(settingsFile).toBeDefined();
     const settings = JSON.parse(settingsFile!.content);
-    expect(settings.hooks.PreToolUse).toBeDefined();
-    const gateHook = settings.hooks.PreToolUse.find(
-      (h: Record<string, unknown>) => h.matcher === "Task" && JSON.stringify(h).includes("gate-quality-check")
+    expect(settings.hooks.SubagentStop).toBeDefined();
+    const gateHook = settings.hooks.SubagentStop.find(
+      (h: Record<string, unknown>) => h.matcher === "builder" && JSON.stringify(h).includes("gate-quality-check")
     );
     expect(gateHook).toBeDefined();
   });
@@ -652,9 +652,9 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(hook.hooks[0].timeout).toBe(5000);
     });
 
-    it("gate compiles to PreToolUse hook", () => {
-      expect(settings.hooks.PreToolUse).toBeDefined();
-      const gateHook = settings.hooks.PreToolUse.find(
+    it("gate compiles to SubagentStop hook with after: agent as matcher", () => {
+      expect(settings.hooks.SubagentStop).toBeDefined();
+      const gateHook = settings.hooks.SubagentStop.find(
         (h: Record<string, unknown>) => JSON.stringify(h).includes("fact-check"),
       );
       expect(gateHook).toBeDefined();

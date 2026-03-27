@@ -505,9 +505,9 @@ describe("parseSettingsJson", () => {
   it("skips gate hooks", () => {
     const { hooks } = parseSettingsJson(JSON.stringify({
       hooks: {
-        PreToolUse: [{
+        SubagentStop: [{
           hooks: [{ command: "bash scripts/gate-quality.sh", type: "command" }],
-          matcher: "Task",
+          matcher: "builder",
         }],
       },
     }));
