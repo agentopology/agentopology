@@ -74,6 +74,9 @@ function toTitle(id: string): string {
  *     - item1
  *     - item2
  */
+/** Characters that require quoting in YAML scalar values. */
+const YAML_SPECIAL = /[:#\[\]{}&*!|>'"%@`]/;
+
 function frontmatter(fields: Record<string, string | boolean | string[]>): string {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
@@ -87,7 +90,10 @@ function frontmatter(fields: Record<string, string | boolean | string[]>): strin
     } else if (typeof value === "boolean") {
       lines.push(`${key}: ${value}`);
     } else {
-      lines.push(`${key}: ${value}`);
+      // Auto-quote strings containing YAML-special characters
+      const str = String(value);
+      const needsQuotes = YAML_SPECIAL.test(str) || str.trim() !== str;
+      lines.push(`${key}: ${needsQuotes ? `"${str.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : str}`);
     }
   }
   lines.push("---");
@@ -118,10 +124,10 @@ function gitkeep(dirPath: string): GeneratedFile {
  */
 function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
-  const nativeValues = ["plan", "auto", "confirm", "bypassPermissions"];
+  const nativeValues = ["plan", "default", "acceptEdits", "dontAsk", "bypassPermissions"];
   if (nativeValues.includes(perm)) {
-    // "auto" is the default, omit it
-    if (perm === "auto") return undefined;
+    // "default" is the default, omit it
+    if (perm === "default") return undefined;
     return perm;
   }
 
@@ -131,8 +137,10 @@ function mapPermissionMode(perm: string): string | undefined {
       return "plan";
     case "autonomous":
       return undefined; // default, omit
+    case "auto":
+      return undefined; // default, omit
     case "interactive":
-      return "default";
+      return "acceptEdits";
     case "unrestricted":
       return "bypassPermissions";
     default:
@@ -265,14 +273,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (agent.invocation !== "manual") {
       const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
       if (desc) {
-        fm.description = `"${desc}"`;
+        fm.description = desc;
       }
     }
 
     if (agent.model) fm.model = agent.model;
     if (agent.maxTurns != null) fm.maxTurns = String(agent.maxTurns);
-    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName);
-    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName);
+    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName).join(", ");
+    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName).join(", ");
     if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
     if (agent.background === true) fm.background = true;
 
@@ -898,7 +906,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     // --- 5. Skill (primary — runs in main session, has Agent tool access) ---
     const skillFm: Record<string, string | boolean | string[]> = {};
     skillFm.name = group.id;
-    if (group.description) skillFm.description = `"${group.description}"`;
+    if (group.description) skillFm.description = group.description;
     skillFm["user-invocable"] = true;
 
     const skillSections: string[] = [];
@@ -917,7 +925,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     // --- 6. Agent (fallback — for when spawned as subagent, may not have Agent tool) ---
     const agentFm: Record<string, string | boolean | string[]> = {};
     agentFm.name = group.id;
-    if (group.description) agentFm.description = `"${group.description}"`;
+    if (group.description) agentFm.description = group.description;
 
     const agentSections: string[] = [];
     agentSections.push(frontmatter(agentFm));
@@ -948,9 +956,9 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   const fm: Record<string, string | boolean | string[]> = {};
   fm.name = name;
   if (ast.topology.description) {
-    fm.description = `"${ast.topology.description}"`;
+    fm.description = ast.topology.description;
   }
-  fm.version = `"${ast.topology.version}"`;
+  fm.version = ast.topology.version;
   fm.topology = name;
   if (ast.topology.patterns.length > 0) {
     fm.patterns = ast.topology.patterns;
@@ -973,7 +981,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     if (mainSkill.context) fm.context = mainSkill.context;
     if (mainSkill.agent) fm.agent = mainSkill.agent;
     if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
-      fm["allowed-tools"] = mainSkill.allowedTools.map(convertMcpToolName);
+      fm["allowed-tools"] = mainSkill.allowedTools.map(convertMcpToolName).join(", ");
     }
   }
 
@@ -1290,7 +1298,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     // Build skill frontmatter
     const sfm: Record<string, string | boolean | string[]> = {};
     sfm.name = skill.id;
-    if (skill.description) sfm.description = `"${skill.description}"`;
+    if (skill.description) sfm.description = skill.description;
     if (skill.disableModelInvocation != null) {
       sfm["disable-model-invocation"] = skill.disableModelInvocation;
     }
@@ -1300,7 +1308,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     if (skill.context) sfm.context = skill.context;
     if (skill.agent) sfm.agent = skill.agent;
     if (skill.allowedTools && skill.allowedTools.length > 0) {
-      sfm["allowed-tools"] = skill.allowedTools.map(convertMcpToolName);
+      sfm["allowed-tools"] = skill.allowedTools.map(convertMcpToolName).join(", ");
     }
     // Only emit frontmatter if there are fields beyond just the name
     if (Object.keys(sfm).length > 1) {
@@ -1533,7 +1541,9 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     if (gate.behavior === "advisory") continue;
 
     const gateScriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-    const onFailExit = gate.onFail === "halt" ? 'exit 1' : 'echo "Gate failed — bounce-back requested (advisory)"';
+    const onFailExit = gate.onFail === "halt"
+      ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
+      : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
 
     const contentLines = [
       "#!/usr/bin/env bash",
@@ -1747,53 +1757,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     settings.env = envSettings;
   }
 
-  // Permissions section from settings block
+  // Permissions section from settings block — nested under "permissions" key
   const perms = ast.settings;
   if (perms) {
     const allow = perms.allow as string[] | undefined;
     const deny = perms.deny as string[] | undefined;
-    const ask = perms.ask as string[] | undefined;
-
-    if (allow && allow.length > 0) settings.allow = allow;
-    if (deny && deny.length > 0) settings.deny = deny;
-    if (ask && ask.length > 0) settings.ask = ask;
+    const permObj: Record<string, string[]> = {};
+    if (allow && allow.length > 0) permObj.allow = allow;
+    if (deny && deny.length > 0) permObj.deny = deny;
+    if (Object.keys(permObj).length > 0) settings.permissions = permObj;
   }
 
-  // Defaults documentation
-  if (ast.defaults) {
-    const d = ast.defaults;
-    const defaultsDoc: Record<string, unknown> = {};
-    if (d.temperature != null) defaultsDoc.temperature = d.temperature;
-    if (d.maxTokens != null) defaultsDoc.maxTokens = d.maxTokens;
-    if (d.topP != null) defaultsDoc.topP = d.topP;
-    if (d.topK != null) defaultsDoc.topK = d.topK;
-    if (d.stop) defaultsDoc.stop = d.stop;
-    if (d.seed != null) defaultsDoc.seed = d.seed;
-    if (d.thinking) defaultsDoc.thinking = d.thinking;
-    if (d.thinkingBudget != null) defaultsDoc.thinkingBudget = d.thinkingBudget;
-    if (d.outputFormat) defaultsDoc.outputFormat = d.outputFormat;
-    if (d.timeout) defaultsDoc.timeout = d.timeout;
-    if (d.logLevel) defaultsDoc.logLevel = d.logLevel;
-    if (Object.keys(defaultsDoc).length > 0) {
-      settings._defaults = defaultsDoc;
-    }
-  }
-
-  // Observability documentation
-  if (ast.observability) {
-    const o = ast.observability;
-    const obsDoc: Record<string, unknown> = {
-      enabled: o.enabled,
-      level: o.level,
-      exporter: o.exporter,
-      sampleRate: o.sampleRate,
-    };
-    if (o.endpoint) obsDoc.endpoint = o.endpoint;
-    if (o.service) obsDoc.service = o.service;
-    obsDoc.capture = o.capture;
-    obsDoc.spans = o.spans;
-    settings._observability = obsDoc;
-  }
+  // Defaults and observability are documented in the CLAUDE.md context file,
+  // not in settings.json (Claude Code doesn't recognize these keys).
 
   // Top-level extensions for claude-code
   if (ast.extensions?.["claude-code"]) {
@@ -2085,23 +2061,23 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
     // Frontmatter
     const fm: Record<string, string | boolean | string[]> = {};
     if (ast.topology.description) {
-      fm.description = `"${ast.topology.description}"`;
+      fm.description = ast.topology.description;
+    }
+    if (trigger.argument) {
+      fm["argument-hint"] = `[${trigger.argument}]`;
     }
     sections.push(frontmatter(fm));
     sections.push("");
 
-    // Header
+    // Header — use $ARGUMENTS for Claude Code command argument substitution
     sections.push(`# /${trigger.name}`);
     sections.push("");
-    sections.push(trigger.pattern);
-    sections.push("");
-
-    // Arguments
     if (trigger.argument) {
-      sections.push("## Arguments");
-      sections.push(`- ${trigger.argument}: extracted from the command pattern`);
-      sections.push("");
+      sections.push(`/${trigger.name} $ARGUMENTS`);
+    } else {
+      sections.push(trigger.pattern);
     }
+    sections.push("");
 
     // Pipeline (from edges, enhanced)
     if (ast.edges.length > 0) {
@@ -2211,7 +2187,7 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
  * destroy their content.
  */
 function generateContextFile(ast: TopologyAST): GeneratedFile {
-  const DEFAULT_PATH = ".claude/CONTEXT.md";
+  const DEFAULT_PATH = ".claude/CLAUDE.md";
   let fileName = ast.context.file ?? DEFAULT_PATH;
 
   // Safety: never overwrite the user's root-level CLAUDE.md

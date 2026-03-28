@@ -240,8 +240,8 @@ describe("claude-code binding", () => {
     expect(mcp.mcpServers.filesystem).toBeDefined();
   });
 
-  it("produces a context file (.claude/CONTEXT.md, never root CLAUDE.md)", () => {
-    const contextFile = files.find((f) => f.path === ".claude/CONTEXT.md");
+  it("produces a context file (.claude/CLAUDE.md, never root CLAUDE.md)", () => {
+    const contextFile = files.find((f) => f.path === ".claude/CLAUDE.md");
     expect(contextFile).toBeDefined();
     // Must never generate root-level CLAUDE.md
     const rootClaudeMd = files.find((f) => f.path === "CLAUDE.md");
@@ -277,7 +277,7 @@ describe("claude-code binding", () => {
     const wrapperScript = files.find((f) => f.path.includes("gate-quality-check.sh"));
     expect(wrapperScript).toBeDefined();
     expect(wrapperScript!.content).toContain("lint.sh");
-    expect(wrapperScript!.content).toContain("exit 1");
+    expect(wrapperScript!.content).toContain("exit 2");
   });
 
   it("does NOT generate gate wrapper script for advisory gate", () => {
@@ -628,8 +628,8 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(schema!.content).toContain("winner");
     });
 
-    it("artifacts documented in CONTEXT.md", () => {
-      const ctx = exoticFiles.find((f) => f.path === ".claude/CONTEXT.md")!;
+    it("artifacts documented in CLAUDE.md", () => {
+      const ctx = exoticFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
       expect(ctx.content).toContain("transcript");
     });
 
