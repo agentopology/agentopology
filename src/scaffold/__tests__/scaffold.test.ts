@@ -351,4 +351,26 @@ describe("executeActions", () => {
     const result = executeActions(tmpDir, actions, { prune: false, force: false });
     expect(result.unchanged).toBe(1);
   });
+
+  it("sets executable bit (chmod 0755) when action.executable is true", () => {
+    const actions = [
+      { type: "create" as const, path: "hook.sh", content: "#!/bin/bash\necho hi\n", executable: true },
+    ];
+    executeActions(tmpDir, actions, { prune: false, force: false });
+    const fullPath = path.join(tmpDir, "hook.sh");
+    const mode = fs.statSync(fullPath).mode;
+    // 0o755 = owner rwx, group rx, other rx
+    expect(mode & 0o111).toBeTruthy(); // at least one execute bit set
+  });
+
+  it("does NOT set executable bit when action.executable is absent", () => {
+    const actions = [
+      { type: "create" as const, path: "plain.txt", content: "hello" },
+    ];
+    executeActions(tmpDir, actions, { prune: false, force: false });
+    const fullPath = path.join(tmpDir, "plain.txt");
+    const mode = fs.statSync(fullPath).mode;
+    // Default umask should not set execute bit on a plain file
+    expect(mode & 0o100).toBe(0); // owner execute bit NOT set
+  });
 });

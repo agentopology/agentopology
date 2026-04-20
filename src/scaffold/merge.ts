@@ -141,6 +141,90 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
   return JSON.stringify(merged, null, 2) + "\n";
 }
 
+/**
+ * Merge settings.json files with domain-aware logic for Claude Code settings.
+ *
+ * Rules:
+ *   - permissions.allow: union-merge (deduplicated)
+ *   - permissions.deny: union-merge (deduplicated)
+ *   - env: shallow-merge (generated wins on key conflict)
+ *   - hooks: rewritten entirely from generated (topology owns hooks)
+ *   - All other top-level keys: existing wins (user-only keys preserved)
+ *
+ * @param existingRaw - Current settings.json content on disk (JSON string, or empty string)
+ * @param generatedRaw - Freshly generated settings.json content (JSON string)
+ * @returns Merged JSON string
+ * @throws {Error} if existingRaw is non-empty and is invalid JSON
+ */
+export function deepMergeSettingsJson(existingRaw: string, generatedRaw: string): string {
+  // Empty existing means first scaffold — return generated unchanged
+  if (existingRaw.trim() === "") {
+    return generatedRaw;
+  }
+
+  let existing: Record<string, unknown>;
+  let generated: Record<string, unknown>;
+
+  try {
+    existing = JSON.parse(existingRaw);
+  } catch (err) {
+    throw new Error(`invalid JSON in existing settings.json: ${(err as Error).message}`);
+  }
+
+  try {
+    generated = JSON.parse(generatedRaw);
+  } catch (err) {
+    throw new Error(`invalid JSON in generated settings.json: ${(err as Error).message}`);
+  }
+
+  // Start with existing (preserves all user-only top-level keys)
+  const merged: Record<string, unknown> = { ...existing };
+
+  // --- permissions: union-merge allow and deny arrays ---
+  const existingPerms = (existing.permissions ?? {}) as Record<string, string[]>;
+  const generatedPerms = (generated.permissions ?? {}) as Record<string, string[]>;
+
+  if (generated.permissions !== undefined || existing.permissions !== undefined) {
+    const mergedPerms: Record<string, string[]> = {};
+    for (const key of ["allow", "deny"] as const) {
+      const ex = Array.isArray(existingPerms[key]) ? existingPerms[key] : [];
+      const gen = Array.isArray(generatedPerms[key]) ? generatedPerms[key] : [];
+      const union = Array.from(new Set([...ex, ...gen]));
+      if (union.length > 0) {
+        mergedPerms[key] = union;
+      }
+    }
+    if (Object.keys(mergedPerms).length > 0) {
+      merged.permissions = mergedPerms;
+    }
+  }
+
+  // --- env: shallow-merge, generated wins on conflict ---
+  if (generated.env !== undefined) {
+    const existingEnv = (existing.env ?? {}) as Record<string, string>;
+    const generatedEnv = generated.env as Record<string, string>;
+    merged.env = { ...existingEnv, ...generatedEnv };
+  }
+
+  // --- hooks: rewritten entirely from generated (topology owns hooks) ---
+  if (generated.hooks !== undefined) {
+    merged.hooks = generated.hooks;
+  } else {
+    // No hooks in generated — remove the hooks key (topology no longer declares any)
+    delete merged.hooks;
+  }
+
+  // --- all other generated keys: add if missing, do NOT overwrite existing ---
+  for (const [key, value] of Object.entries(generated)) {
+    if (key === "permissions" || key === "env" || key === "hooks") continue;
+    if (merged[key] === undefined) {
+      merged[key] = value;
+    }
+  }
+
+  return JSON.stringify(merged, null, 2) + "\n";
+}
+
 function mergeObjects(
   existing: Record<string, unknown>,
   generated: Record<string, unknown>,

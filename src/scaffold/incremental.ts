@@ -8,7 +8,7 @@
  * @module
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { GeneratedFile } from "../bindings/types.js";
@@ -48,7 +48,12 @@ export function computeIncrementalPlan(
     const onDisk = existsSync(absPath);
 
     if (!onDisk) {
-      actions.push({ type: "create", path: file.path, content: file.content });
+      actions.push({
+        type: "create",
+        path: file.path,
+        content: file.content,
+        ...(file.executable ? { executable: true } : {}),
+      });
       continue;
     }
 
@@ -172,6 +177,7 @@ export function executeActions(
           mkdirSync(dir, { recursive: true });
         }
         writeFileSync(absPath, action.content, "utf-8");
+        if (action.executable) chmodSync(absPath, 0o755);
         counts.created++;
         break;
       }
@@ -182,6 +188,7 @@ export function executeActions(
           mkdirSync(dir, { recursive: true });
         }
         writeFileSync(absPath, action.content, "utf-8");
+        if (action.executable) chmodSync(absPath, 0o755);
         counts.updated++;
         break;
       }

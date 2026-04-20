@@ -31,8 +31,8 @@ export interface ScaffoldManifest {
 
 /** An action to perform on a single file during incremental scaffold. */
 export type FileAction =
-  | { type: "create"; path: string; content: string }
-  | { type: "update"; path: string; content: string; detail: string }
+  | { type: "create"; path: string; content: string; executable?: boolean }
+  | { type: "update"; path: string; content: string; detail: string; executable?: boolean }
   | { type: "delete"; path: string }
   | { type: "unchanged"; path: string }
   | { type: "conflict"; path: string; content: string; detail: string };

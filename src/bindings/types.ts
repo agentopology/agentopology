@@ -17,6 +17,11 @@ export interface GeneratedFile {
   content: string;
   /** Merge category for incremental scaffold. Defaults to "machine". */
   category?: "machine" | "agent" | "script" | "shared-config";
+  /**
+   * When true, the file should be written with executable permission (chmod +x).
+   * Used for generated shell script stubs.
+   */
+  executable?: boolean;
 }
 
 /**

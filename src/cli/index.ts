@@ -106,11 +106,12 @@ function readFile(filePath: string): string {
 }
 
 /** Recursively create directories and write a file. */
-function writeFile(basePath: string, relativePath: string, content: string): void {
+function writeFile(basePath: string, relativePath: string, content: string, executable?: boolean): void {
   const fullPath = path.join(basePath, relativePath);
   const dir = path.dirname(fullPath);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(fullPath, content, "utf-8");
+  if (executable) fs.chmodSync(fullPath, 0o755);
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +353,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     } else {
       // FIRST RUN or --force — write everything
       for (const file of files) {
-        writeFile(basePath, file.path, file.content);
+        writeFile(basePath, file.path, file.content, file.executable);
         console.log(`  ${c.green("+")} ${file.path}`);
       }
       console.log("");
@@ -560,9 +561,19 @@ function cmdInfo(filePath: string): void {
   if (suggestions.length > 0) {
     console.log(c.bold("Suggestions:"));
     for (const s of suggestions) {
-      const prefix = s.level === "improvement" ? c.yellow("[improvement]") : c.dim("[info]");
+      const prefix =
+        s.level === "warning"
+          ? c.yellow("[warning]")
+          : s.level === "improvement"
+            ? c.yellow("[improvement]")
+            : c.dim("[info]");
       const nodePart = s.node ? ` ${c.cyan(s.node)}:` : "";
-      console.log(`  ${prefix}${nodePart} ${s.message}`);
+      // Multi-line messages: indent continuation lines
+      const lines = s.message.split("\n");
+      console.log(`  ${prefix}${nodePart} ${lines[0]}`);
+      for (const line of lines.slice(1)) {
+        console.log(`    ${line}`);
+      }
     }
     console.log("");
   }

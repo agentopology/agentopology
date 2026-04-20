@@ -446,6 +446,50 @@ Platforms may define additional events. See the binding documentation for platfo
 
 Hooks can also be defined inside an `agent` block. Per-agent hooks only fire while that agent is active.
 
+#### Observability hooks — capturing per-agent finish events (v0.2.2+)
+
+Claude Code v2+ fires `SubagentStop` each time a subagent completes. You can capture
+every agent finish without a gate by declaring an observability hook directly in the
+top-level `hooks {}` block:
+
+```agenttopology
+hooks {
+  hook log-subagent-finish {
+    on: SubagentStop
+    matcher: "amitai-cos|nadav-cos|ops-agent"
+    run: ".claude/scripts/log-subagent.sh"
+    type: command
+    timeout: 5000
+  }
+}
+```
+
+When `run:` starts with `.` or `/`, scaffold preserves the path verbatim (it is NOT
+rewritten into `.claude/skills/<name>/scripts/`). Scaffold also emits a ready-to-use
+stub at that path with:
+
+- `AGENT_TYPE` extracted from the Claude Code stdin JSON payload (`agent_type` field)
+- `SESSION_ID` from the `session_id` field
+- A structured JSON append to `.claude/memory/metrics.jsonl`
+
+The generated `settings.json` entry looks like:
+
+```json
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "amitai-cos|nadav-cos|ops-agent",
+        "hooks": [{ "type": "command", "command": "bash .claude/scripts/log-subagent.sh", "timeout": 5000 }]
+      }
+    ]
+  }
+}
+```
+
+If `agentopology info` detects agents but no `SubagentStop`/`Stop` hook, it emits a
+`[warning]` with a ready-to-paste snippet.
+
 ---
 
 ### `settings` -- Permissions

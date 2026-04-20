@@ -48,7 +48,7 @@ export interface LayerInfo {
 }
 
 export interface Suggestion {
-  level: "info" | "improvement";
+  level: "info" | "improvement" | "warning";
   message: string;
   node?: string;
 }
@@ -389,6 +389,39 @@ function generateSuggestions(ast: TopologyAST): Suggestion[] {
       suggestions.push({
         level: "info",
         message: `Declared pattern "${p}" was not detected in the flow graph`,
+      });
+    }
+  }
+
+  // Observability gap check (Change 2):
+  // If a topology has agents but no SubagentStop or Stop hook (global hooks or
+  // enforced gates — which compile to SubagentStop), per-agent finish events
+  // will never be captured.
+  const agentCount = ast.nodes.filter(isAgent).length;
+  if (agentCount > 0) {
+    const hasObsHook =
+      (ast.hooks ?? []).some((h) => h.on === "SubagentStop" || h.on === "Stop") ||
+      ast.nodes.some(
+        (n): n is GateNode =>
+          isGate(n) && !!n.run && n.behavior !== "advisory",
+      );
+
+    if (!hasObsHook) {
+      const agentIds = ast.nodes.filter(isAgent).map((a) => a.id);
+      const exampleMatcher = agentIds.slice(0, 3).join("|") + (agentIds.length > 3 ? "|..." : "");
+      suggestions.push({
+        level: "warning",
+        message:
+          `Observability gap: topology has ${agentCount} agent${agentCount !== 1 ? "s" : ""} but no SubagentStop/Stop hook. ` +
+          `You won't capture per-agent finish events. Consider adding:\n` +
+          `  hooks {\n` +
+          `    hook log-subagent-finish {\n` +
+          `      on: SubagentStop\n` +
+          `      matcher: "${exampleMatcher}"\n` +
+          `      run: ".claude/scripts/log-subagent.sh"\n` +
+          `      type: command\n` +
+          `    }\n` +
+          `  }`,
       });
     }
   }
