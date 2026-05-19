@@ -4,6 +4,57 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [refactor] Lift `shellStub` to shared `src/bindings/lib/stub.ts` (#4)
+
+The `shellStub()` function was duplicated across five binding files
+(claude-code, codex, gemini-cli, kiro, openclaw) and declared but unused in
+cursor.ts. Each copy now lives in one place: `src/bindings/lib/stub.ts`.
+Cursor's dead copy was removed.
+
+### [feat] Machine-readable `AGENTOPOLOGY_STUB` marker in stubs (#4)
+
+Every script produced by `shellStub()` now contains the literal line
+`# AGENTOPOLOGY_STUB — fill this in before relying on this script`. The
+marker is:
+
+- A comment, so it never affects script behavior at runtime.
+- Removed by the user once they implement the script — that single action
+  flips the file out of "stub" state for all downstream tooling.
+- Pinned by a unit test so downstream gate-runners or CI scripts can match
+  on it reliably across minor versions.
+
+Use `isStubContent(content)` from `agentopology/bindings` (exported via
+`src/bindings/lib/stub.ts`) to detect stubs programmatically.
+
+### [feat] `agentopology scaffold` reports stub count and paths to stderr (#4)
+
+After a successful scaffold run, the CLI now emits a yellow warning to
+stderr listing every generated file that contains the `AGENTOPOLOGY_STUB`
+marker. Output looks like:
+
+```
+  3 stub(s) need implementation before this topology can run:
+    · .claude/skills/yt/scripts/validate-brief.sh
+    · .claude/skills/yt/scripts/qa-render.sh
+    · .claude/skills/yt/scripts/check-platform-auth.sh
+  Search for "# AGENTOPOLOGY_STUB — fill this in before relying on this script" — remove that line when each script is implemented.
+```
+
+stdout is unchanged so existing automation that captures the file list keeps
+working.
+
+### [feat] New `agentopology stubs <project-dir>` command (#4)
+
+Scan an already-scaffolded project for unimplemented stubs. Walks the
+directory (skipping `node_modules`, `.git`, `dist`), greps each file for the
+marker, and prints a sorted list. Exits 1 if any stubs remain, 0 if clean —
+designed for CI:
+
+```sh
+# In your CI pipeline:
+npx agentopology stubs ./
+```
+
 ### [fix] claude-code: gate SubagentStop hooks only emitted for agent/group targets (#3)
 
 The `SubagentStop` hook's `matcher` field is matched against the registered
