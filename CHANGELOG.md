@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.2.3] — 2026-05-19
 
 ### [refactor] Lift `shellStub` to shared `src/bindings/lib/stub.ts` (#4)
 
