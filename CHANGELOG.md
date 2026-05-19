@@ -2,6 +2,38 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [fix] claude-code: gate SubagentStop hooks only emitted for agent/group targets (#3)
+
+The `SubagentStop` hook's `matcher` field is matched against the registered
+`agent_type` (the name of a `.claude/agents/<name>/AGENT.md` subagent). Only
+`agent` and `group` nodes scaffold a frontmatter-bearing AGENT.md and register
+as subagent_types — `human`, `action`, and `orchestrator` nodes do not.
+
+Before this fix, the scaffolder emitted `SubagentStop` entries for any gate
+with an `after:` target, including human checkpoints. Those hooks silently
+never fired because no subagent ever ran by that name.
+
+Now the scaffolder:
+
+- Emits a `SubagentStop` hook only when `gate.after` resolves to an agent or
+  group node.
+- Warns to stderr when a blocking gate targets a non-agent node, explaining
+  that the gate wrapper script must be invoked from an orchestrator playbook
+  or slash command.
+- Still generates the wrapper script for non-agent-targeted gates (with a
+  header comment documenting the limitation), so the orchestrator can call it
+  directly.
+- The gate wrapper script's header now accurately describes whether the gate
+  is enforced by a hook (agent target) or must be invoked by the orchestrator
+  (non-agent target).
+
+`V25` is rewritten: the rule now fires only for `on-fail: bounce-back` gates
+with non-agent (or missing) `after` targets. Gates with agent/group targets
+are not flagged because they ARE enforced by the SubagentStop hook on
+claude-code (exit 2 prevents the subagent from stopping).
+
 ## [0.2.2] — 2026-04-21
 
 ### [feat] Observability hook shortcut — SubagentStop in global `hooks {}` block

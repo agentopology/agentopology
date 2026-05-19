@@ -1057,20 +1057,41 @@ function v29MeteringPricingEnum(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V25: `on-fail: bounce-back` is advisory on all CLI bindings. */
+/**
+ * V25: `on-fail: bounce-back` enforcement depends on the gate's `after` target.
+ *
+ * On claude-code: when `after` is an agent node, the gate compiles to a
+ * SubagentStop hook whose exit 2 prevents the subagent from stopping — so
+ * bounce-back IS enforceable. When `after` is a human, action, or unset, no
+ * subagent ever runs by that name and the hook would never fire; the
+ * scaffolder skips emitting the dead hook and the gate must be invoked by
+ * the orchestrator/playbook instead.
+ *
+ * Other CLI bindings vary; the canonical guidance is still that the
+ * orchestrator should cooperate. The warning fires only for the cases where
+ * enforcement is NOT automatic — gates with non-agent `after` targets, or
+ * gates with no `after` at all.
+ */
 function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
+  const registeredIds = new Set(
+    ast.nodes.filter((n) => n.type === "agent" || n.type === "group").map((n) => n.id),
+  );
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    if (gate.onFail === "bounce-back") {
-      results.push({
-        rule: "V25",
-        level: "warning",
-        message: `Gate "${gate.id}" uses on-fail: bounce-back which is advisory on all CLI bindings — requires orchestrator cooperation or a framework binding for enforcement`,
-        node: gate.id,
-      });
+    if (gate.onFail !== "bounce-back") continue;
+    if (gate.after && registeredIds.has(gate.after)) {
+      // Agent/group target — enforceable on claude-code via SubagentStop. No warning.
+      continue;
     }
+    const target = gate.after ? `non-agent target "${gate.after}"` : "no after: target";
+    results.push({
+      rule: "V25",
+      level: "warning",
+      message: `Gate "${gate.id}" uses on-fail: bounce-back but has ${target} — cannot be wired as a SubagentStop hook on claude-code (matcher must be an agent or group id). Invoke the gate script from your orchestrator playbook at the right step.`,
+      node: gate.id,
+    });
   }
   return results;
 }

@@ -287,6 +287,267 @@ describe("claude-code binding", () => {
 });
 
 // ---------------------------------------------------------------------------
+// claude-code — Issue #3: SubagentStop matcher targeting
+//
+// Per https://code.claude.com/docs/en/hooks.md, the SubagentStop hook's
+// `matcher` field is matched against agent_type (the registered subagent
+// name). Only agent and group nodes scaffold a `.claude/agents/<name>/AGENT.md`
+// file and therefore register as subagent_types. Human, action, and
+// orchestrator targets cannot be matched and would produce dead config that
+// never fires. The scaffolder must skip those hooks (and warn) but still
+// generate the wrapper script so the orchestrator can invoke it directly.
+// ---------------------------------------------------------------------------
+
+describe("claude-code binding — gate SubagentStop targeting (#3)", () => {
+  // Build a topology where one gate targets an agent and another targets a
+  // human node — proves both branches of isRegisteredSubagentType.
+  const GATE_TARGETING_SOURCE = `
+topology gate-target-test : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Gate targeting test"
+  }
+
+  orchestrator { model: opus handles: [intake] }
+  action intake { kind: external source: "user" }
+
+  agent writer {
+    model: sonnet
+    phase: 1
+    tools: [Read, Write]
+    reads: ["workspace/input.md"]
+    writes: ["workspace/draft.md"]
+    permissions: autonomous
+  }
+
+  human approver {
+    description: "Approve the draft before publishing"
+    timeout: 1h
+    on-timeout: skip
+  }
+
+  agent publisher {
+    model: sonnet
+    phase: 3
+    tools: [Read, Bash]
+    reads: ["workspace/draft.md"]
+    writes: ["workspace/published.md"]
+    permissions: autonomous
+  }
+
+  flow {
+    intake -> writer
+    writer -> approver
+    approver -> publisher
+  }
+
+  gates {
+    gate gate-on-agent {
+      after: writer
+      before: approver
+      run: "scripts/check-draft.sh"
+      on-fail: bounce-back
+      behavior: blocking
+    }
+    gate gate-on-human {
+      after: approver
+      before: publisher
+      run: "scripts/check-approval.sh"
+      on-fail: halt
+      behavior: blocking
+    }
+  }
+}
+`;
+
+  const ast = parse(GATE_TARGETING_SOURCE);
+
+  // Capture warnings emitted during scaffold so tests can assert on them.
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  let files;
+  try {
+    files = claudeCodeBinding.scaffold(ast);
+  } finally {
+    console.warn = originalWarn;
+  }
+  const settingsFile = files.find((f) => f.path === ".claude/settings.json")!;
+  const settings = JSON.parse(settingsFile.content);
+
+  it("emits SubagentStop hook when gate.after is an agent", () => {
+    expect(settings.hooks.SubagentStop).toBeDefined();
+    const agentHook = settings.hooks.SubagentStop.find(
+      (h: Record<string, unknown>) => h.matcher === "writer",
+    );
+    expect(agentHook).toBeDefined();
+    expect(JSON.stringify(agentHook)).toContain("gate-gate-on-agent");
+  });
+
+  it("does NOT emit SubagentStop hook when gate.after is a human node", () => {
+    const humanHook = (settings.hooks?.SubagentStop ?? []).find(
+      (h: Record<string, unknown>) => h.matcher === "approver",
+    );
+    expect(humanHook).toBeUndefined();
+  });
+
+  it("warns at scaffold time when a blocking gate targets a non-agent node", () => {
+    const humanWarning = warnings.find((w) =>
+      w.includes("gate-on-human") && w.includes("approver"),
+    );
+    expect(humanWarning).toBeDefined();
+    expect(humanWarning).toContain("non-agent");
+  });
+
+  it("still generates the gate wrapper script for non-agent-targeted gate", () => {
+    // The wrapper must exist so the orchestrator/playbook can invoke it
+    // manually at the right step, even when no hook fires.
+    const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-gate-on-human.sh"));
+    expect(wrapper).toBeDefined();
+  });
+
+  it("wrapper script for non-agent-targeted gate documents the limitation", () => {
+    const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-gate-on-human.sh"))!;
+    expect(wrapper.content).toContain("NOT wired as a SubagentStop hook");
+    expect(wrapper.content).toContain("orchestrator playbook");
+  });
+
+  it("wrapper script for agent-targeted gate documents SubagentStop enforcement", () => {
+    const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-gate-on-agent.sh"))!;
+    expect(wrapper.content).toContain("SubagentStop hook on agent \"writer\"");
+    expect(wrapper.content).toContain("Exit 2 blocks");
+  });
+
+  it("scaffolded hook entry uses agent name (not 'Agent' or arbitrary) as matcher", () => {
+    // Sanity check: matchers must be exactly the agent id, since Claude Code
+    // matches them against agent_type, not against the tool name.
+    const hooks = settings.hooks.SubagentStop ?? [];
+    for (const h of hooks) {
+      // Each matcher must correspond to an agent or group node in the AST.
+      const matcher = h.matcher as string | undefined;
+      expect(matcher).toBeTruthy();
+      const matchingNode = ast.nodes.find(
+        (n) => (n.type === "agent" || n.type === "group") && n.id === matcher,
+      );
+      expect(matchingNode, `matcher "${matcher}" must resolve to an agent or group node`).toBeDefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// claude-code — Integration test: youtube-flywheel.at fixture (#3)
+//
+// The real-world failure from agentopology-content: gates with after: human
+// produced dead SubagentStop entries. This integration test pins the fix
+// against the actual fixture and asserts the right hooks fire and the wrong
+// ones don't.
+// ---------------------------------------------------------------------------
+
+describe("claude-code binding — youtube-flywheel integration (#3)", () => {
+  const YOUTUBE_FLYWHEEL_SOURCE = `
+topology youtube-flywheel : [pipeline, fan-out, human-gate] {
+  meta { version: "1.0.0" }
+
+  orchestrator { model: opus handles: [start] }
+  action start { kind: inline }
+
+  agent briefer {
+    model: opus
+    phase: 4
+    tools: [Read, Write]
+    reads: ["workspace/idea.json"]
+    writes: ["workspace/brief.json"]
+    permissions: supervised
+  }
+
+  human approve-brief {
+    description: "Review the brief before render"
+    timeout: 8h
+    on-timeout: skip
+  }
+
+  agent renderer {
+    model: sonnet
+    phase: 6
+    tools: [Read, Write, Bash]
+    reads: ["workspace/brief.json"]
+    writes: ["workspace/render/"]
+    permissions: autonomous
+  }
+
+  flow {
+    start -> briefer
+    briefer -> approve-brief
+    approve-brief -> renderer
+  }
+
+  gates {
+    gate brief-schema-valid {
+      after: briefer
+      before: approve-brief
+      run: "scripts/validate-brief.sh"
+      on-fail: bounce-back
+      behavior: blocking
+    }
+    gate render-quality {
+      after: renderer
+      before: start
+      run: "scripts/qa-render.sh"
+      on-fail: bounce-back
+      behavior: blocking
+    }
+    gate platform-credentials {
+      after: approve-brief
+      before: renderer
+      run: "scripts/check-platform-auth.sh"
+      on-fail: halt
+      behavior: blocking
+    }
+  }
+}
+`;
+
+  const ast = parse(YOUTUBE_FLYWHEEL_SOURCE);
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  let files;
+  try {
+    files = claudeCodeBinding.scaffold(ast);
+  } finally {
+    console.warn = originalWarn;
+  }
+  const settingsFile = files.find((f) => f.path === ".claude/settings.json")!;
+  const settings = JSON.parse(settingsFile.content);
+
+  it("emits SubagentStop hooks for the two agent-targeted gates", () => {
+    const matchers = (settings.hooks?.SubagentStop ?? []).map(
+      (h: Record<string, unknown>) => h.matcher as string,
+    );
+    expect(matchers).toContain("briefer");
+    expect(matchers).toContain("renderer");
+  });
+
+  it("does NOT emit a SubagentStop hook for the gate targeting the human 'approve-brief'", () => {
+    const matchers = (settings.hooks?.SubagentStop ?? []).map(
+      (h: Record<string, unknown>) => h.matcher as string,
+    );
+    expect(matchers).not.toContain("approve-brief");
+  });
+
+  it("warns at scaffold time about the platform-credentials gate", () => {
+    const w = warnings.find((m) =>
+      m.includes("platform-credentials") && m.includes("approve-brief"),
+    );
+    expect(w).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // claude-code — Exotic features: groups, humans, circuit breakers, scale,
 // isolation, variants, schemas, artifacts, conditional edges
 // ---------------------------------------------------------------------------
