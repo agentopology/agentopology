@@ -78,7 +78,8 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "model", "disallowed-tools", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
   "permissions", "prompt", "generates", "handles", "argument", "factors",
-  "behavior", "invocation", "omit", "when", "max", "parallel", "per",
+  "behavior", "invocation", "delegation", "subagent",
+  "omit", "when", "max", "parallel", "per",
   "manual", "advisory", "blocking", "min", "batch-size", "batch-count",
   "doc-count", "token-volume", "source-count", "fixed", "config",
   "track", "tokens-in", "tokens-out", "cost", "wall-time", "agent-count",
@@ -2958,6 +2959,41 @@ function v86AgentMemoryRefsValid(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V87 – Orchestrator delegation mode must be a recognized value
+// ---------------------------------------------------------------------------
+
+/**
+ * V87: `orchestrator.delegation` must be "subagent" or "inline".
+ *
+ * The two modes change how agent steps run:
+ *   - "subagent" (default): orchestrator spawns each agent via the platform's
+ *     subagent/Task-tool mechanism. claude-code emits SubagentStop hooks for
+ *     gates.
+ *   - "inline": orchestrator drives every agent in its own session. No
+ *     subagent ever runs, so SubagentStop hooks would be dead config — the
+ *     claude-code binding suppresses them and emits playbook snippets instead.
+ *
+ * Any other value is a topology error: bindings cannot guess the
+ * orchestration shape, so the field can't be silently ignored.
+ */
+function v87OrchestratorDelegation(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const orch = ast.nodes.find((n) => n.type === "orchestrator");
+  if (!orch) return results;
+  const delegation = (orch as { delegation?: string }).delegation;
+  if (delegation && delegation !== "subagent" && delegation !== "inline") {
+    results.push({
+      rule: "V87",
+      level: "error",
+      message: `orchestrator.delegation: "${delegation}" is not recognized — must be "subagent" (default) or "inline"`,
+      node: "orchestrator",
+      line: lookupLine(ast, "orchestrator"),
+    });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -3055,5 +3091,6 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v84RetrievalSourcesValid(ast),
     ...v85StoreConnectionRequired(ast),
     ...v86AgentMemoryRefsValid(ast),
+    ...v87OrchestratorDelegation(ast),
   ];
 }

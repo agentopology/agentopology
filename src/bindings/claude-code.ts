@@ -114,6 +114,21 @@ function isRegisteredSubagentType(ast: TopologyAST, name: string | undefined): b
   return ast.nodes.some((n) => (n.type === "agent" || n.type === "group") && n.id === name);
 }
 
+/**
+ * Resolve the topology's orchestration delegation mode.
+ *
+ * Returns `"inline"` if the orchestrator block declares `delegation: inline`.
+ * Otherwise returns `"subagent"` (the default). Inline-orchestrator topologies
+ * drive every agent in the main session's context; no Task-tool subagent is
+ * ever spawned, so any `SubagentStop` hook would silently never fire.
+ */
+function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
+  const orch = ast.nodes.find((n) => n.type === "orchestrator") as
+    | OrchestratorNode
+    | undefined;
+  return orch?.delegation === "inline" ? "inline" : "subagent";
+}
+
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
   return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
@@ -1546,13 +1561,20 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
 
-    const wiredAsHook = isRegisteredSubagentType(ast, gate.after);
-    const enforcementNote = wiredAsHook
-      ? `# Enforcement: SubagentStop hook on agent "${gate.after}". Exit 2 blocks the subagent`
-      : `# Enforcement: NOT wired as a SubagentStop hook (after: ${gate.after || "<unset>"} is not an agent).`;
-    const enforcementNote2 = wiredAsHook
-      ? `#              from stopping (Claude Code prevents stop and surfaces stderr to Claude).`
-      : `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
+    const inlineMode = getDelegationMode(ast) === "inline";
+    const wiredAsHook = !inlineMode && isRegisteredSubagentType(ast, gate.after);
+    let enforcementNote: string;
+    let enforcementNote2: string;
+    if (inlineMode) {
+      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (orchestrator.delegation is "inline").`;
+      enforcementNote2 = `#              Invoke this script from your /${ast.topology.name} playbook at the right step.`;
+    } else if (wiredAsHook) {
+      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gate.after}". Exit 2 blocks the subagent`;
+      enforcementNote2 = `#              from stopping (Claude Code prevents stop and surfaces stderr to Claude).`;
+    } else {
+      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gate.after || "<unset>"} is not an agent).`;
+      enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
+    }
 
     const contentLines = [
       "#!/usr/bin/env bash",
@@ -1730,12 +1752,25 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
 function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const settings: Record<string, unknown> = {};
   const topologyName = ast.topology.name;
+  const isInline = getDelegationMode(ast) === "inline";
 
   // Hooks section — grouped by event name
   const hooksByEvent: Record<string, unknown[]> = {};
 
   for (const hook of ast.hooks) {
     const eventName = hook.on;
+    // Inline orchestrator mode never spawns subagents, so SubagentStop /
+    // SubagentStart hooks would never fire. Warn the user and skip emission
+    // — keeping them in settings.json would be a maintenance trap.
+    if (isInline && (eventName === "SubagentStop" || eventName === "SubagentStart")) {
+      console.warn(
+        `[claude-code] Hook "${hook.name}" targets ${eventName} but ` +
+          `orchestrator.delegation is "inline" — no subagent ever runs, so the hook would ` +
+          `never fire. Skipped. Move the work into your orchestrator playbook or change ` +
+          `delegation to "subagent".`,
+      );
+      continue;
+    }
     if (!hooksByEvent[eventName]) {
       hooksByEvent[eventName] = [];
     }
@@ -1792,10 +1827,28 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // action, or "any"), no SubagentStop hook fires reliably. We skip emitting
   // dead config and warn the user — the topology's orchestrator (or a slash
   // command playbook) must invoke the gate script at the right step.
+  //
+  // INLINE-ORCHESTRATOR MODE: when the topology declares
+  // `orchestrator { delegation: inline }`, no subagent is ever spawned even
+  // when the matcher names a real agent — the orchestrator drives every step
+  // in its own session context. SubagentStop hooks would be dead config in
+  // this mode, so we skip emitting them entirely (still generate the wrapper
+  // script). The gate must be invoked from the playbook at the right step.
+  const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
     if (!gate.run) continue;
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
+
+    if (delegationMode === "inline") {
+      console.warn(
+        `[claude-code] Gate "${gate.id}" — orchestrator.delegation is "inline", ` +
+          `so no subagent ever runs. SubagentStop hook not emitted; invoke ` +
+          `.claude/skills/${topologyName}/scripts/gate-${gate.id}.sh from your ` +
+          `orchestrator playbook at the right step.`,
+      );
+      continue;
+    }
 
     // SubagentStop matcher must be a registered subagent_type. If the gate
     // doesn't target an agent node, we cannot wire it as a hook — warn and
@@ -2199,6 +2252,37 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
         sections.push(`| ${agent.id} | ${phase} | ${model} | ${role} |`);
       }
       sections.push("");
+    }
+
+    // Inline-orchestrator topologies cannot wire gates via SubagentStop hooks
+    // (no subagent is ever spawned). The orchestrator playbook must invoke
+    // each non-advisory gate at the right step. We emit a copy-pasteable
+    // cheat sheet so the user knows exactly which command to drop in and
+    // where in the flow it belongs.
+    if (getDelegationMode(ast) === "inline") {
+      const blockingGates = (ast.nodes.filter((n) => n.type === "gate") as GateNode[])
+        .filter((g) => g.run && g.behavior !== "advisory");
+      if (blockingGates.length > 0) {
+        sections.push("## Gates to invoke (inline-orchestrator)");
+        sections.push("");
+        sections.push(
+          "Because `orchestrator.delegation: inline` is declared, no `SubagentStop` " +
+            "hooks fire. Invoke each gate from this playbook at the step indicated " +
+            "by its `after:` field. Exit code 0 = pass, non-zero = fail.",
+        );
+        sections.push("");
+        for (const gate of blockingGates) {
+          const after = gate.after ?? "(any)";
+          const before = gate.before ?? "(any)";
+          const onFail = gate.onFail ?? "halt";
+          sections.push(`### gate \`${gate.id}\` — after \`${after}\`, before \`${before}\`, on-fail \`${onFail}\``);
+          sections.push("");
+          sections.push("```bash");
+          sections.push(`bash .claude/skills/${ast.topology.name}/scripts/gate-${gate.id}.sh`);
+          sections.push("```");
+          sections.push("");
+        }
+      }
     }
 
     files.push({

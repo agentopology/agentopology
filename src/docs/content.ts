@@ -3223,6 +3223,15 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 **Violation:** \`pricing: azure-current\`.
 **Fix:** Use a recognized pricing model.
 
+### V87: Orchestrator Delegation Enum (error)
+\`orchestrator.delegation\` must be one of:
+
+- \`subagent\` (default) — orchestrator spawns each agent via the platform's subagent / Task-tool mechanism.
+- \`inline\` — orchestrator drives every agent step in its own session context; no subagent is ever spawned. The claude-code binding suppresses \`SubagentStop\` hooks in this mode and emits a "Gates to invoke" cheat sheet in the trigger playbook.
+
+**Violation:** \`delegation: hybrid\`.
+**Fix:** Use \`subagent\` or \`inline\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3256,6 +3265,7 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 | V27 | warning | Agent Permissions Enum |
 | V28 | error | Metering Format Enum |
 | V29 | warning | Metering Pricing Enum |
+| V87 | error | Orchestrator Delegation Enum |
 `,
   },
 
