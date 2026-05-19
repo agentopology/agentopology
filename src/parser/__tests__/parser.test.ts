@@ -2194,7 +2194,38 @@ describe("Line number tracking", () => {
     expect(v7[0].node).toBe("no-model");
   });
 
-  it("V25: on-fail bounce-back produces warning", () => {
+  it("V25: on-fail bounce-back with non-agent after produces warning", () => {
+    // Gate after: a human node — cannot be wired as a SubagentStop hook
+    // because human nodes do not register as subagent_types.
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator { model: opus handles: [a] }
+    action a { kind: inline }
+    agent b { model: opus }
+    human review-step {
+      description: "Review before c"
+    }
+    agent c { model: opus }
+    gates {
+      gate bb {
+        after: review-step
+        before: c
+        run: "check.sh"
+        on-fail: bounce-back
+      }
+    }
+    flow { a -> b -> review-step -> c }
+  }`);
+    const issues = validate(ast);
+    const v25 = issues.filter(i => i.rule === "V25");
+    expect(v25).toHaveLength(1);
+    expect(v25[0].level).toBe("warning");
+    expect(v25[0].message).toContain("bounce-back");
+    expect(v25[0].message).toContain("non-agent");
+  });
+
+  it("V25: on-fail bounce-back with agent after produces no warning (enforceable)", () => {
+    // Gate after: an agent node — compiles to a SubagentStop hook that
+    // blocks (exit 2 prevents subagent from stopping). No warning needed.
     const ast = parse(`topology t : [pipeline] {
     orchestrator { model: opus handles: [a] }
     action a { kind: inline }
@@ -2212,9 +2243,7 @@ describe("Line number tracking", () => {
   }`);
     const issues = validate(ast);
     const v25 = issues.filter(i => i.rule === "V25");
-    expect(v25).toHaveLength(1);
-    expect(v25[0].level).toBe("warning");
-    expect(v25[0].message).toContain("bounce-back");
+    expect(v25).toHaveLength(0);
   });
 });
 

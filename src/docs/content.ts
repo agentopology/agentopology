@@ -449,7 +449,7 @@ gates {
 ## Validation Rules
 
 - **V13**: \`after\` and \`before\` must reference declared nodes
-- **V25**: \`on-fail: bounce-back\` is advisory on CLI platforms (warning)
+- **V25**: \`on-fail: bounce-back\` warning when \`after\` is not an agent/group (cannot be wired as a SubagentStop hook on claude-code)
 
 ## Example
 
@@ -3189,11 +3189,15 @@ Memory sub-blocks should be known names (workspace, domains, references, externa
 **Violation:** \`memory { custom-block { ... } }\`.
 **Fix:** Use a recognized sub-block name or move to extensions.
 
-### V25: Bounce-Back Advisory (warning)
-\`on-fail: bounce-back\` is advisory on CLI platforms -- enforcement varies by binding.
+### V25: Bounce-Back Enforcement (warning, conditional)
+\`on-fail: bounce-back\` enforcement depends on the gate's \`after\` target:
 
-**Violation:** None (this is informational).
-**Fix:** Be aware that bounce-back may not be enforced on all platforms.
+- **claude-code, \`after\` is an agent or group node**: compiles to a SubagentStop hook whose exit 2 prevents the subagent from stopping. Enforceable. No warning.
+- **claude-code, \`after\` is a human/action/orchestrator or missing**: cannot be wired as a SubagentStop hook (matcher must be an agent id). Warning fires; invoke the gate script from your orchestrator playbook instead.
+- **Other CLI bindings**: enforcement varies; orchestrator cooperation may be required.
+
+**Violation:** \`on-fail: bounce-back\` with a non-agent \`after\` target.
+**Fix:** Either move the gate to run after an agent, or invoke its script from a slash-command playbook so the orchestrator (not a hook) drives enforcement.
 
 ### V26: Action Kind Enum (error)
 Action \`kind\` must be: external, git, decision, inline, or report.
