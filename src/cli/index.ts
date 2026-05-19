@@ -22,6 +22,7 @@ import { execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
+import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
@@ -65,6 +66,7 @@ ${c.bold("Usage:")}
   agentopology export <file.at> --format <markdown|mermaid|json> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
+  agentopology stubs [<project-dir>]
   agentopology targets
   agentopology docs [topic]
   agentopology docs --all
@@ -78,6 +80,7 @@ ${c.bold("Commands:")}
   export     Export topology as Markdown documentation or Mermaid diagram.
   info       Analyze topology: detect patterns, compute layers, suggest improvements.
   import     Reverse-engineer platform files into an .at topology file.
+  stubs      List unimplemented scaffold stubs in a scaffolded project (exits 1 if any).
   targets    List available binding targets.
   docs       Language reference — show documentation for .at syntax and features.
 
@@ -376,6 +379,26 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     }
     writeManifest(basePath, targetName, newManifest);
   }
+
+  // Stub summary: count and list any generated files that are unimplemented
+  // stubs. We detect them by the AGENTOPOLOGY_STUB marker (see
+  // src/bindings/lib/stub.ts). The summary goes to stderr so CI scripts can
+  // capture it without polluting stdout.
+  const stubFiles = files.filter((f) => isStubContent(f.content));
+  if (stubFiles.length > 0) {
+    console.error("");
+    console.error(
+      c.yellow(
+        `  ${c.bold(`${stubFiles.length}`)} stub(s) need implementation before this topology can run:`,
+      ),
+    );
+    for (const f of stubFiles) {
+      console.error(`    ${c.yellow("·")} ${f.path}`);
+    }
+    console.error(
+      c.dim(`  Search for "${STUB_MARKER}" — remove that line when each script is implemented.`),
+    );
+  }
   console.log("");
 }
 
@@ -634,6 +657,65 @@ function cmdTargets(): void {
   console.log("");
 }
 
+/**
+ * Scan a scaffolded project directory for unimplemented stub scripts.
+ *
+ * A "stub" is a file that contains the AGENTOPOLOGY_STUB marker (emitted by
+ * shellStub in src/bindings/lib/stub.ts). The marker is a comment line, so
+ * removing it (after implementing the script) flips the file out of stub
+ * state. Designed for CI: exits 1 if stubs remain, 0 if clean.
+ */
+function cmdStubs(dirPath: string): void {
+  const resolved = path.resolve(dirPath);
+  if (!fs.existsSync(resolved)) {
+    console.error(c.red(`Error: directory not found: ${resolved}`));
+    process.exit(1);
+  }
+
+  const stubs: string[] = [];
+
+  function walk(dir: string): void {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      // Skip common non-source directories so a big repo scan stays fast.
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
+        walk(path.join(dir, entry.name));
+        continue;
+      }
+      const full = path.join(dir, entry.name);
+      // Marker only appears in text files; skip anything that isn't readable as UTF-8.
+      let content: string;
+      try {
+        content = fs.readFileSync(full, "utf-8");
+      } catch {
+        continue;
+      }
+      if (isStubContent(content)) {
+        stubs.push(path.relative(resolved, full));
+      }
+    }
+  }
+  walk(resolved);
+
+  if (stubs.length === 0) {
+    console.log(c.green(`  No unimplemented stubs found in ${resolved}`));
+    return;
+  }
+  console.log(
+    c.yellow(
+      `  ${c.bold(`${stubs.length}`)} stub(s) need implementation in ${resolved}:`,
+    ),
+  );
+  for (const rel of stubs.sort()) {
+    console.log(`    ${c.yellow("·")} ${rel}`);
+  }
+  console.log("");
+  console.log(
+    c.dim(`  Search for "${STUB_MARKER}" — remove that line when each script is implemented.`),
+  );
+  process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -738,6 +820,14 @@ function main(): void {
     case "targets":
       cmdTargets();
       break;
+
+    case "stubs": {
+      // `agentopology stubs [<dir>]` — scan for unimplemented scaffold stubs.
+      // Default to the current working directory if no path given.
+      const dir = args.file ?? args.dir ?? ".";
+      cmdStubs(dir);
+      break;
+    }
 
     case "docs":
       if (args.all) {
