@@ -2,6 +2,66 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.2.4] — 2026-05-19
+
+### [feat] `orchestrator { delegation: inline | subagent }` field (#7)
+
+Topologies can now declare how the orchestrator runs the agent nodes. The
+new `delegation` field on the orchestrator block has two values:
+
+- `subagent` (default): the orchestrator spawns each agent via the platform's
+  subagent / Task-tool mechanism. Each agent runs in its own context window.
+  On claude-code, `SubagentStop` hooks fire and gates compile to those hooks
+  (the behavior every version up to 0.2.3 shipped).
+- `inline`: the orchestrator drives every agent step in its own session
+  context. Agent `AGENT.md` files are read as prompt fragments by the main
+  session; no subagent is ever spawned via Task.
+
+### [fix] claude-code: suppress dead `SubagentStop` hooks in inline mode (#7)
+
+When `orchestrator.delegation: inline` is declared, the claude-code binding:
+
+- Skips emitting `SubagentStop` hooks for every gate, regardless of whether
+  the gate's `after:` target is a registered subagent_type — no subagent
+  ever runs, so the hook would never fire.
+- Skips emitting any global `hook { on: SubagentStop }` / `SubagentStart`
+  declaration with a one-line warning explaining why.
+- Updates the gate-wrapper script header to say "Enforcement: NOT wired as
+  a SubagentStop hook (orchestrator.delegation is 'inline'). Invoke this
+  script from your /<topology> playbook at the right step."
+- Adds a **"Gates to invoke (inline-orchestrator)"** section to each
+  generated `.claude/commands/<trigger>.md` listing every blocking gate
+  with a copy-pasteable `bash` invocation, the `after:` step name, and the
+  `on-fail` semantic. This is the cheat sheet pattern the youtube-flywheel
+  topology in `agentopology-content` arrived at by hand.
+
+Default behavior is unchanged: topologies without `delegation:` continue
+to compile gates to `SubagentStop` hooks exactly as in 0.2.3.
+
+### [feat] New validator rule V87 — orchestrator delegation enum
+
+`orchestrator.delegation` must be one of `subagent` or `inline`. Any other
+value (including typos like `inlined`, `delegate`, etc.) is a hard error.
+
+### Migration
+
+If your topology drives every agent step from a slash-command playbook and
+the scaffolded `SubagentStop` hooks have always been dead config for you,
+add one line to your `orchestrator` block:
+
+```at
+orchestrator {
+  model: opus
+  delegation: inline   // <-- add this
+  handles: [start, finish]
+}
+```
+
+After re-scaffolding, your `settings.json` will have no `SubagentStop`
+entries and the trigger playbook (e.g. `.claude/commands/<topology>.md`)
+will contain a ready-to-paste cheat sheet for invoking each gate at the
+right step.
+
 ## [0.2.3] — 2026-05-19
 
 ### [refactor] Lift `shellStub` to shared `src/bindings/lib/stub.ts` (#4)

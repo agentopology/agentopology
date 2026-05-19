@@ -271,6 +271,7 @@ orchestrator {
   model: opus
   generates: "commands/ship.md"
   handles: [intake, classify, context]
+  delegation: subagent
   outputs: {
     depth: 1 | 2 | 3
   }
@@ -282,9 +283,17 @@ orchestrator {
 | `model` | model-id | yes | -- |
 | `generates` | string | no | -- |
 | `handles` | name-list | yes | -- |
+| `delegation` | `subagent` \| `inline` | no | `subagent` |
 | `outputs` | typed-map | no | `{}` |
 
 **Orchestrator outputs** are referenced in flow as `orchestrator.<output>`.
+
+**Delegation modes:**
+
+- `subagent` (default): the orchestrator spawns each agent step via the platform's subagent / Task-tool mechanism. Each agent runs in its own context window. On claude-code, `SubagentStop` hooks fire when each subagent completes — gates with `after:` an agent compile to those hooks.
+- `inline`: the orchestrator drives every agent step in its own session context. Agent `AGENT.md` files are read as prompt fragments by the main session; no subagent is ever spawned. On claude-code, `SubagentStop` hooks would never fire, so the binding suppresses them entirely and emits a "Gates to invoke" cheat sheet in the trigger playbook instead. Use this mode for orchestrator-driven pipelines that don't actually delegate.
+
+Setting an unrecognized value is a topology error (V87).
 
 ---
 

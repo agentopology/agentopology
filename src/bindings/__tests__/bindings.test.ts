@@ -2675,6 +2675,167 @@ topology debate-test : [fan-out, debate, pipeline] {
 });
 
 // ---------------------------------------------------------------------------
+// claude-code — Inline orchestrator delegation mode (#7)
+//
+// When orchestrator { delegation: inline } is declared, no subagent is ever
+// spawned — the orchestrator drives every agent step in its own session. So
+// SubagentStop hooks would be dead config even when the matcher names a real
+// agent. The binding must suppress those hooks and emit a playbook cheat
+// sheet instead.
+// ---------------------------------------------------------------------------
+
+describe("claude-code binding — inline orchestrator delegation (#7)", () => {
+  const INLINE_SOURCE = `
+topology inline-test : [pipeline] {
+  meta { version: "1.0.0" description: "Inline-orchestrator topology" }
+  orchestrator {
+    model: opus
+    delegation: inline
+    handles: [start]
+  }
+  action start { kind: inline }
+  agent writer {
+    model: sonnet
+    phase: 1
+    tools: [Read, Write]
+    reads: ["workspace/input.md"]
+    writes: ["workspace/draft.md"]
+    permissions: autonomous
+  }
+  agent publisher {
+    model: sonnet
+    phase: 2
+    tools: [Read, Bash]
+    reads: ["workspace/draft.md"]
+    writes: ["workspace/published.md"]
+    permissions: autonomous
+  }
+  flow {
+    start -> writer
+    writer -> publisher
+  }
+  gates {
+    gate quality-check {
+      after: writer
+      before: publisher
+      run: "scripts/check.sh"
+      on-fail: bounce-back
+      behavior: blocking
+    }
+  }
+  triggers {
+    command run { pattern: "/run" }
+  }
+  hooks {
+    hook log-finish {
+      on: SubagentStop
+      matcher: writer
+      run: "scripts/log.sh"
+      type: command
+    }
+  }
+}
+`;
+  const ast = parse(INLINE_SOURCE);
+
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  let files: GeneratedFile[];
+  try {
+    files = claudeCodeBinding.scaffold(ast);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  it("does NOT emit any SubagentStop entries in settings.json (gates + global hooks suppressed)", () => {
+    const settingsFile = files.find((f) => f.path === ".claude/settings.json");
+    if (!settingsFile) return; // no hooks/permissions → no settings file
+    const settings = JSON.parse(settingsFile.content);
+    const stop = settings.hooks?.SubagentStop ?? [];
+    expect(stop).toEqual([]);
+  });
+
+  it("warns once per blocking gate that the hook is suppressed", () => {
+    const gateWarn = warnings.find((w) =>
+      w.includes("quality-check") && w.includes('"inline"'),
+    );
+    expect(gateWarn).toBeDefined();
+  });
+
+  it("warns when an explicit global SubagentStop hook is declared in inline mode", () => {
+    const hookWarn = warnings.find((w) =>
+      w.includes("log-finish") && w.includes('"inline"'),
+    );
+    expect(hookWarn).toBeDefined();
+  });
+
+  it("still generates the gate wrapper script (for orchestrator to invoke)", () => {
+    const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-quality-check.sh"));
+    expect(wrapper).toBeDefined();
+    expect(wrapper!.content).toContain('orchestrator.delegation is "inline"');
+    expect(wrapper!.content).toContain("playbook");
+  });
+
+  it("emits a 'Gates to invoke' cheat sheet in the trigger playbook", () => {
+    const playbook = files.find((f) => f.path === ".claude/commands/run.md");
+    expect(playbook).toBeDefined();
+    expect(playbook!.content).toContain("Gates to invoke (inline-orchestrator)");
+    expect(playbook!.content).toContain("bash .claude/skills/inline-test/scripts/gate-quality-check.sh");
+    expect(playbook!.content).toContain("after `writer`");
+  });
+});
+
+describe("claude-code binding — default delegation: subagent (backward compat)", () => {
+  // No `delegation:` field declared → treat as "subagent" → hooks fire as before.
+  const SUBAGENT_SOURCE = `
+topology subagent-test : [pipeline] {
+  meta { version: "1.0.0" }
+  orchestrator { model: opus handles: [start] }
+  action start { kind: inline }
+  agent writer {
+    model: sonnet
+    phase: 1
+    tools: [Read, Write]
+    reads: ["workspace/input.md"]
+    writes: ["workspace/draft.md"]
+    permissions: autonomous
+  }
+  flow {
+    start -> writer
+  }
+  gates {
+    gate quality-check {
+      after: writer
+      run: "scripts/check.sh"
+      on-fail: bounce-back
+      behavior: blocking
+    }
+  }
+}
+`;
+  const ast = parse(SUBAGENT_SOURCE);
+  const files = claudeCodeBinding.scaffold(ast);
+  const settings = JSON.parse(
+    files.find((f) => f.path === ".claude/settings.json")!.content,
+  );
+
+  it("emits SubagentStop hook (default behavior preserved)", () => {
+    const hooks = settings.hooks?.SubagentStop ?? [];
+    expect(hooks.length).toBe(1);
+    expect(hooks[0].matcher).toBe("writer");
+  });
+
+  it("wrapper script header documents the SubagentStop enforcement", () => {
+    const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-quality-check.sh"))!;
+    expect(wrapper.content).toContain('SubagentStop hook on agent "writer"');
+    expect(wrapper.content).toContain("Exit 2 blocks");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-binding: AGENTOPOLOGY_STUB marker uniformity (#4)
 //
 // All bindings that scaffold gate scripts must emit them via the shared

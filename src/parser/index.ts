@@ -301,6 +301,17 @@ export function parseOrchestrator(body: string): OrchestratorNode {
   };
   if (fields.generates) node.generates = unquote(fields.generates);
   if (outputs) node.outputs = outputs;
+  if (fields.delegation) {
+    const delegation = unquote(fields.delegation);
+    if (delegation === "subagent" || delegation === "inline") {
+      node.delegation = delegation;
+    } else {
+      // Preserve the raw value so the validator can flag it (V88).
+      // TypeScript cast is intentional — the field type is narrow but the
+      // validator runs on the AST after parse and reports unknown values.
+      node.delegation = delegation as "subagent" | "inline";
+    }
+  }
   return node;
 }
 

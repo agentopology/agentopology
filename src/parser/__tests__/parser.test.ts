@@ -2245,6 +2245,67 @@ describe("Line number tracking", () => {
     const v25 = issues.filter(i => i.rule === "V25");
     expect(v25).toHaveLength(0);
   });
+
+  it("V87: orchestrator.delegation must be 'subagent' or 'inline' — unknown value is an error", () => {
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator {
+      model: opus
+      delegation: hybrid
+      handles: [a]
+    }
+    action a { kind: inline }
+    flow { a -> a }
+  }`);
+    const issues = validate(ast);
+    const v87 = issues.filter(i => i.rule === "V87");
+    expect(v87).toHaveLength(1);
+    expect(v87[0].level).toBe("error");
+    expect(v87[0].message).toContain("hybrid");
+  });
+
+  it("V87: orchestrator.delegation: inline is accepted (no error)", () => {
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator {
+      model: opus
+      delegation: inline
+      handles: [a]
+    }
+    action a { kind: inline }
+    flow { a -> a }
+  }`);
+    const issues = validate(ast);
+    const v87 = issues.filter(i => i.rule === "V87");
+    expect(v87).toHaveLength(0);
+    // Also verify the AST captured the field
+    const orch = ast.nodes.find((n) => n.type === "orchestrator");
+    expect((orch as { delegation?: string }).delegation).toBe("inline");
+  });
+
+  it("V87: orchestrator.delegation: subagent is accepted (no error)", () => {
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator {
+      model: opus
+      delegation: subagent
+      handles: [a]
+    }
+    action a { kind: inline }
+    flow { a -> a }
+  }`);
+    const issues = validate(ast);
+    const v87 = issues.filter(i => i.rule === "V87");
+    expect(v87).toHaveLength(0);
+  });
+
+  it("V87: orchestrator with no delegation field is accepted (defaults to subagent)", () => {
+    const ast = parse(`topology t : [pipeline] {
+    orchestrator { model: opus handles: [a] }
+    action a { kind: inline }
+    flow { a -> a }
+  }`);
+    const issues = validate(ast);
+    const v87 = issues.filter(i => i.rule === "V87");
+    expect(v87).toHaveLength(0);
+  });
 });
 
 // =========================================================================

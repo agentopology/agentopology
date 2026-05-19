@@ -434,6 +434,21 @@ export interface OrchestratorNode extends BaseNode {
   handles: string[];
   /** Output enum definitions. */
   outputs?: OutputsMap;
+  /**
+   * Delegation mode — how the orchestrator runs the agent nodes.
+   *
+   * - "subagent" (default): orchestrator spawns each agent via the platform's
+   *   subagent / Task-tool mechanism. Agent runs in its own context window.
+   *   On claude-code: SubagentStop hooks fire and gates compile to those hooks.
+   *
+   * - "inline": orchestrator drives every agent in its own session context.
+   *   Agent AGENT.md files are read as prompt fragments, no subagent is ever
+   *   spawned. On claude-code: SubagentStop hooks NEVER fire — gates must be
+   *   invoked from a command playbook at the right step.
+   *
+   * If unset, bindings treat it as "subagent" for backward compatibility.
+   */
+  delegation?: "subagent" | "inline";
 }
 
 /** An action node (external command, script, or git operation). */
