@@ -244,10 +244,50 @@ An Agent SDK binding would generate `agents/writer.json`:
 
 | Binding | Status | Target | Description |
 |---------|--------|--------|-------------|
-| `claude-code` | **Stable** | Claude Code | Generates `.claude/agents/`, `.claude/settings.json`, `.mcp.json` |
+| `claude-code` | **Stable** | Claude Code | Generates `.claude/agents/`, `.claude/settings.json`, `.mcp.json` — the event-driven HOST layer |
+| `claude-workflow` | **Stable** | Claude Workflow | Compiles the deterministic fan-out phases into `<topology>.workflow.js`, plus SEAM/README/LOSSY-REPORT companion files |
+| `codex` | **Stable** | Codex | Codex agent definitions and config |
+| `gemini-cli` | **Stable** | Gemini CLI | Gemini CLI agent definitions and config |
+| `copilot-cli` | **Stable** | GitHub Copilot CLI | Copilot CLI agent definitions and config |
+| `openclaw` | **Stable** | OpenClaw | soul.md, skill files, channel/gateway/workspace config |
+| `kiro` | **Stable** | Kiro | Kiro agent definitions and config |
+| `cursor` | **Stable** | Cursor | Cursor rules and agent config |
 | `agent-sdk` | Planned | Anthropic Agent SDK | Tool definitions and agent configs for the Agent SDK |
 | `e2b` | Planned | E2B | Sandbox configuration and tool registration |
 | `openai-swarm` | Planned | OpenAI Swarm | Swarm agent definitions and handoff logic |
+
+---
+
+## The `claude-workflow` Binding
+
+`claude-workflow` is the second half of a **hybrid** that pairs with `claude-code`. One `.at` topology can compile to both targets.
+
+```bash
+agentopology scaffold my-team.at --target claude-workflow
+```
+
+**What it emits:**
+
+- `<topology>.workflow.js` — a Claude Workflow tool script (`export const meta`, `parallel()` / `agent()` calls, `schema`, `isolation: 'worktree'`) for the deterministic fan-out phases.
+- `<topology>-SEAM.md` — the Blackboard hand-off contract between the host and the rung.
+- `<topology>-README.md` — the human-node split (what the host owns vs. what the rung runs).
+- `<topology>-LOSSY-REPORT.md` — a loud, explicit list of anything that couldn't be translated to the Workflow model. Nothing is silently dropped.
+
+**The seam marker.** A phase joins the deterministic rung only when its agents carry:
+
+```agenttopology
+extensions {
+  claude-workflow {
+    execution: workflow
+  }
+}
+```
+
+**The hybrid model.** `claude-code` is the HOST — the event-driven layer that owns agents, hooks, the Blackboard, concurrent observability, and the human/gate/branching nodes. `claude-workflow` is the embedded DETERMINISTIC rung — the parallel fan-out. They couple through the Blackboard files (`memory.workspace`): the host launches the rung and observes its Blackboard writes via a `PostToolUse` hook, giving concurrent observability the Workflow runtime can't do internally.
+
+**Backward compatible.** Topologies with no `execution: workflow` marker compile to pure `claude-code`, exactly as before — the hybrid is opt-in.
+
+See [`docs/bindings/claude-workflow-mapping.md`](bindings/claude-workflow-mapping.md) for the full primitive mapping and [`docs/AT_VS_WORKFLOW_STRATEGY.md`](AT_VS_WORKFLOW_STRATEGY.md) for the rationale. The dogfood example is [`examples/matchmat-ship.at`](../examples/matchmat-ship.at).
 
 ---
 

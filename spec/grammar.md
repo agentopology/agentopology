@@ -1482,6 +1482,8 @@ agent explorer {
 
 **Why extensions:** The core `.at` language defines universal constructs that work across all platforms. Extensions allow bindings to expose platform-specific features (e.g., Claude Code's `memory: project`, Codex's `sandbox: true`) without adding fields to the core spec that only one platform uses. This keeps the language clean while remaining fully extensible.
 
+**Seam marker for the hybrid:** `extensions { claude-workflow { execution: workflow } }` on an agent marks its phase for the embedded-workflow rung — the deterministic fan-out compiled by the `claude-workflow` binding while the rest of the topology compiles to the `claude-code` host. Unmarked topologies compile to pure `claude-code`, unchanged (the hybrid is opt-in). See `docs/AT_VS_WORKFLOW_STRATEGY.md`.
+
 **LL(2) note:** `extensions` is a block keyword. The parser sees `extensions` `{` and enters the extensions production. Inside, each `<identifier>` `{` starts a binding namespace block. No ambiguity -- `extensions` only appears inside other blocks, never at the top level.
 
 ---
@@ -1790,10 +1792,19 @@ Bindings map universal permissions to platform-specific modes:
 
 | Binding | Status | Target |
 |---------|--------|--------|
-| `claude-code` | Stable | Claude Code agent files, settings, MCP config |
+| `claude-code` | Stable | Claude Code agent files, settings, MCP config (the event-driven HOST layer) |
+| `claude-workflow` | Stable | Claude Workflow tool script (`<topology>.workflow.js`) for the deterministic fan-out rung, plus SEAM/README/LOSSY-REPORT companion files |
+| `codex` | Stable | Codex agent definitions and config |
+| `gemini-cli` | Stable | Gemini CLI agent definitions and config |
+| `copilot-cli` | Stable | GitHub Copilot CLI agent definitions and config |
+| `openclaw` | Stable | OpenClaw soul.md, skill files, channel/gateway/workspace config |
+| `kiro` | Stable | Kiro agent definitions and config |
+| `cursor` | Stable | Cursor rules and agent config |
 | `agent-sdk` | Planned | Anthropic Agent SDK tool definitions |
 | `e2b` | Planned | E2B sandbox configuration |
 | `openai-swarm` | Planned | OpenAI Swarm agent definitions |
+
+**The `claude-code` + `claude-workflow` hybrid.** A single `.at` topology can compile to BOTH targets. `claude-code` is the HOST — the event-driven layer that owns agents, hooks, the Blackboard, concurrent observability, and the human/gate/branching nodes. `claude-workflow` is the embedded DETERMINISTIC rung — the parallel fan-out phases. They couple through the Blackboard files (`memory.workspace`): the host launches the rung and observes its Blackboard writes via a `PostToolUse` hook, giving concurrent observability the Workflow runtime can't do internally. The seam is opt-in: a phase joins the rung only when its agents carry `extensions { claude-workflow { execution: workflow } }`. Topologies with no such marker compile to pure `claude-code` exactly as before (backward compatible). See `docs/AT_VS_WORKFLOW_STRATEGY.md` for the rationale and `docs/bindings/claude-workflow-mapping.md` for the full primitive mapping.
 
 See `docs/bindings.md` for details on creating new bindings.
 

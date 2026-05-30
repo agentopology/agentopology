@@ -2,6 +2,59 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.2.5] — 2026-05-30
+
+### [feat] `claude-workflow` binding — compile topologies to the Claude Workflow runtime
+
+The first binding whose output **executes** (a Claude Workflow script) rather than
+only configuring a project. `agentopology scaffold <file>.at --target claude-workflow`
+compiles the **deterministic fan-out phases** of a topology — the phases whose
+agents are marked `extensions { claude-workflow { execution: workflow } }` — into a
+`<topology>.workflow.js` (a Claude Workflow tool script using `export const meta`,
+`parallel()`, `agent()`, the `schema` option, and `isolation: 'worktree'`). It also
+emits a `<topology>-SEAM.md` (the Blackboard hand-off contract), a
+`<topology>-README.md` (human-node split), and a `<topology>-LOSSY-REPORT.md` that
+loudly lists every primitive that could not be translated — nothing is dropped
+silently. `human` nodes force a workflow split; session-fixed concerns
+(permissions, providers) are reported, not faked.
+
+### [feat] Hybrid model — `claude-code` host + `claude-workflow` rung from one topology
+
+One `.at` topology can compile to **two coupled targets at once**. `claude-code` is
+the **host** (the event-driven layer: agents, hooks, the Blackboard, concurrent
+observability, the human/gate/branching nodes). `claude-workflow` is the embedded
+**deterministic rung** (the parallel fan-out phases). They couple through the
+Blackboard files (`memory.workspace`): the host launches the rung and observes its
+writes live via a `PostToolUse` hook — giving concurrent observability the Workflow
+runtime cannot express on its own. The `claude-code` binding is now hybrid-aware:
+agents marked `execution: workflow` are NOT emitted as host subagents (the rung owns
+them); instead the host emits the launch glue + the observe hook + a "Hybrid run
+order" block in `CLAUDE.md`.
+
+The hybrid is **opt-in and backward-compatible**: a topology with no
+`execution: workflow` marker compiles to pure `claude-code`, unchanged.
+
+### [internal] `src/bindings/lib/seam.ts` — single source of truth for the seam
+
+The `claude-code` and `claude-workflow` bindings share one module for the seam
+namespace, the `execution: workflow` predicate, the generated-artifact filenames,
+and the Blackboard root — so the two halves cannot drift.
+
+### [test] hybrid end-to-end test
+
+`hybrid-e2e.test.ts` compiles both bindings from one `.at` file and proves they
+compose: agents partition cleanly, both agree on the seam, the generated
+`workflow.js` is valid ES module syntax (`node --check`), the host wires the
+observer, and the LOSSY report names the human split. (1310 tests total.)
+
+### [docs] strategy + mapping
+
+- `docs/AT_VS_WORKFLOW_STRATEGY.md` — why `.at` is the runtime-agnostic standard
+  (Terraform-for-agents) and Claude Workflow is its first compile target.
+- `docs/bindings/claude-workflow-mapping.md` — the complete bidirectional mapping:
+  every `.at` primitive + design pattern classified CLEAN / LOSSY / UNREPRESENTABLE.
+- `examples/matchmat-ship.at` — the dogfood hybrid topology.
+
 ## [0.2.4] — 2026-05-19
 
 ### [feat] `orchestrator { delegation: inline | subagent }` field (#7)
