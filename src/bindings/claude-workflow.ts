@@ -34,6 +34,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
+import { SEAM_NS, isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 
 // ---------------------------------------------------------------------------
 // Lossy / unrepresentable bookkeeping
@@ -169,13 +170,9 @@ function buildAgentOpts(
 // Phase extraction
 // ---------------------------------------------------------------------------
 
-const SEAM_NS = "claude-workflow";
-
-/** Is this agent explicitly marked `execution: workflow`? */
-function isWorkflowSeam(agent: AgentNode): boolean {
-  const ext = agent.extensions?.[SEAM_NS];
-  return !!ext && (ext as Record<string, unknown>).execution === "workflow";
-}
+// Seam constants/helpers are the single source of truth shared with the
+// claude-code (host) binding — see ./lib/seam.ts. Local alias kept for brevity.
+const isWorkflowSeam = isWorkflowSeamAgent;
 
 /** Resolve an agent's phase (defaults to a large value so unphased trails). */
 function phaseOf(agent: AgentNode): number {
@@ -442,7 +439,7 @@ function generateWorkflowScript(
   out.push(`// STRICT SEAM: this script contains ONLY the phases marked execution:workflow`);
   out.push(`// (${orderedPhases.map((p) => `phase ${p}`).join(", ")}). The host (claude-code binding) runs every other`);
   out.push(`// phase, seeds the Blackboard inputs, launches this workflow, then consumes its outputs.`);
-  out.push(`// Host glue (Blackboard seam): see ${name}-SEAM.md. Translation losses: ${name}-LOSSY-REPORT.md.`);
+  out.push(`// Host glue (Blackboard seam): see ${seamFiles.seamDoc(name)}. Translation losses: ${seamFiles.lossyDoc(name)}.`);
   if (humanNode) {
     out.push(`// HUMAN SPLIT: the human node '${humanNode.id}' is HOST-side, downstream of this rung. See ${name}-README.md.`);
   }
@@ -479,7 +476,7 @@ function generateWorkflowScript(
 
   return {
     file: {
-      path: `${name}.workflow.js`,
+      path: seamFiles.workflowScript(name),
       content: out.join("\n"),
       category: "script",
     },
@@ -633,7 +630,7 @@ function generateHumanSplitReadme(ast: TopologyAST, human: HumanNode): Generated
   lines.push("");
   lines.push(`See \`${name}-SEAM.md\` for the exact Blackboard file paths both the host and the embedded workflow agree on.`);
   lines.push("");
-  return { path: `${name}-README.md`, content: lines.join("\n"), category: "machine" };
+  return { path: seamFiles.readmeDoc(name), content: lines.join("\n"), category: "machine" };
 }
 
 /** Emit the Blackboard seam contract doc (host glue agreement). */
@@ -705,7 +702,7 @@ function generateSeamDoc(ast: TopologyAST, phasesEmitted: number[]): GeneratedFi
   lines.push("");
   lines.push(`> The host (claude-code binding) is responsible for materializing \`.claude/\`, running the non-workflow phases, and the hook scripts that observe these paths. This binding does NOT emit the host files — it only emits the workflow rung + this contract so the two agree.`);
   lines.push("");
-  return { path: `${name}-SEAM.md`, content: lines.join("\n"), category: "machine" };
+  return { path: seamFiles.seamDoc(name), content: lines.join("\n"), category: "machine" };
 }
 
 /** Emit the LOSSY report listing every translation note. */
@@ -752,7 +749,7 @@ function generateLossyReport(ast: TopologyAST, ledger: LossLedger): GeneratedFil
   lines.push("");
   lines.push(`For phases marked \`execution: workflow\`, the host hands work off via the Blackboard (file-based). The host writes the task manifest to the \`workspace/\` paths; the workflow agents write results back; host hooks observe them live. The host \`.claude/\` files are emitted by the **claude-code** binding, NOT this one. The path contract both bindings honor is in \`${name}-SEAM.md\`.`);
   lines.push("");
-  return { path: `${name}-LOSSY-REPORT.md`, content: lines.join("\n"), category: "machine" };
+  return { path: seamFiles.lossyDoc(name), content: lines.join("\n"), category: "machine" };
 }
 
 // ---------------------------------------------------------------------------

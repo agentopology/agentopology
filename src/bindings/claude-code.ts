@@ -29,7 +29,8 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub } from "./lib/stub.js";
+import { shellStub, STUB_MARKER } from "./lib/stub.js";
+import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -132,6 +133,100 @@ function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
 /** Generate an empty directory marker (a .gitkeep file). */
 function gitkeep(dirPath: string): GeneratedFile {
   return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
+}
+
+// ---------------------------------------------------------------------------
+// HYBRID AWARENESS (host + embedded claude-workflow rung)
+//
+// A topology can mark an agent/phase `extensions { claude-workflow { execution:
+// workflow } }`. The claude-workflow binding compiles those phases into a
+// `<topology>.workflow.js` rung. THIS (claude-code) binding is the HOST: it must
+// NOT emit a subagent AGENT.md for a workflow-marked agent — in the hybrid, the
+// host does not run that agent as a subagent; it LAUNCHES the workflow rung that
+// contains it and OBSERVES the Blackboard writes.
+//
+// The seam vocabulary here MUST stay in sync with src/bindings/claude-workflow.ts:
+//   - workflow.js filename:  `<topology>.workflow.js`
+//   - seam contract doc:     `<topology>-SEAM.md`
+//   - human-split README:    `<topology>-README.md`
+//   - Blackboard root:       `memory.workspace.path` (e.g. "workspace/")
+//   - run order: host runs host phases in-session, LAUNCHES the workflow.js for
+//     the workflow-marked phase(s), host hooks observe the writes LIVE.
+// ---------------------------------------------------------------------------
+
+// Seam constants/helpers (SEAM_NS, isWorkflowSeamAgent, seamFiles, workspaceRoot)
+// are the single source of truth shared with the claude-workflow binding —
+// imported from ./lib/seam.js. Do NOT re-hardcode the namespace or filenames here.
+
+/** Resolve an agent's phase (defaults to a large value so unphased trails). */
+function agentPhase(agent: AgentNode): number {
+  return agent.phase ?? Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * The set of phases that compile into the embedded workflow rung — every phase
+ * that contains ≥1 agent marked `execution: workflow`. (Matches the
+ * claude-workflow binding's `workflowPhases`: an agent sharing a workflow phase
+ * is folded into the rung too.)
+ */
+function workflowPhaseSet(ast: TopologyAST): Set<number> {
+  const phases = new Set<number>();
+  for (const n of ast.nodes) {
+    if (n.type === "agent" && isWorkflowSeamAgent(n as AgentNode)) {
+      phases.add(agentPhase(n as AgentNode));
+    }
+  }
+  return phases;
+}
+
+/** Does this topology have ≥1 workflow-marked phase (i.e. is it a hybrid)? */
+function isHybridTopology(ast: TopologyAST): boolean {
+  return workflowPhaseSet(ast).size > 0;
+}
+
+/**
+ * The Blackboard root path from `memory.workspace.path`, or null. Both bindings
+ * key the seam off this path.
+ */
+function workspaceRoot(ast: TopologyAST): string | null {
+  const ws = (ast.memory as Record<string, unknown> | undefined)?.workspace as
+    | { path?: string }
+    | undefined;
+  return ws?.path ?? null;
+}
+
+/**
+ * Group the workflow-marked phases into contiguous runs (by sorted phase
+ * number). Each contiguous run is ONE launch directive (the host launches the
+ * workflow.js once for that span). Returns a list of phase-number arrays.
+ */
+function contiguousWorkflowPhaseRuns(ast: TopologyAST): number[][] {
+  const sorted = [...workflowPhaseSet(ast)].sort((a, b) => a - b);
+  const runs: number[][] = [];
+  let current: number[] = [];
+  for (const p of sorted) {
+    if (current.length === 0 || p === current[current.length - 1] + 1) {
+      current.push(p);
+    } else {
+      runs.push(current);
+      current = [p];
+    }
+  }
+  if (current.length > 0) runs.push(current);
+  return runs;
+}
+
+/** A short, stable label for a phase run (used in stub filenames). */
+function workflowRunLabel(ast: TopologyAST, run: number[]): string {
+  // Prefer the first workflow-marked agent id in the run's lowest phase — that
+  // reads naturally (e.g. "build" from `builder`). Fall back to phase numbers.
+  const lowest = run[0];
+  const agentInPhase = ast.nodes.find(
+    (n): n is AgentNode =>
+      n.type === "agent" && agentPhase(n as AgentNode) === lowest && isWorkflowSeamAgent(n as AgentNode),
+  );
+  if (agentInPhase) return agentInPhase.id;
+  return run.length === 1 ? `phase-${run[0]}` : `phases-${run[0]}-${run[run.length - 1]}`;
 }
 
 /**
@@ -279,6 +374,13 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
   for (const node of ast.nodes) {
     if (node.type !== "agent") continue;
     const agent = node as AgentNode;
+
+    // HYBRID SEAM: an agent marked `execution: workflow` is owned by the
+    // embedded workflow rung (claude-workflow binding → <topology>.workflow.js),
+    // NOT by the host. The host does not run it as a subagent — it launches the
+    // workflow rung and observes its Blackboard writes. So do NOT emit a
+    // .claude/agents/<name>/AGENT.md for it. See generateWorkflowLaunchArtifacts.
+    if (isWorkflowSeamAgent(agent)) continue;
 
     // Build frontmatter fields
     const fm: Record<string, string | boolean | string[]> = {};
@@ -1295,6 +1397,13 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
   }
 
+  // HYBRID run order — mirrors the claude-workflow SEAM.md so the host playbook
+  // knows where it launches the embedded workflow rung and observes its writes.
+  const hybridRunOrder = buildHybridRunOrderSection(ast);
+  if (hybridRunOrder) {
+    sections.push(hybridRunOrder);
+  }
+
   files.push({
     path: `.claude/skills/${name}/SKILL.md`,
     content: sections.join("\n") + "\n",
@@ -1882,6 +1991,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[eventName].push(hookEntry);
   }
 
+  // HYBRID: host-layer concurrent Blackboard observer.
+  //
+  // The topology's bare-event `hooks { PostToolUse { matcher: "Write" ... } }`
+  // block is not surfaced into ast.hooks (only the named `hook <name> {}` form is
+  // parsed). We don't change the parser (out of scope); instead, when this is a
+  // hybrid topology WITH a Blackboard, we synthesize the observe-hook: a
+  // Blackboard implies a host-side observer that watches the workflow rung's
+  // Write tool-calls LIVE. This is the host's piece of the hybrid's concurrent
+  // observability (the deterministic workflow rung cannot express it).
+  const observeHook = buildHybridObserveHook(ast, topologyName);
+  if (observeHook) {
+    if (!hooksByEvent[observeHook.event]) hooksByEvent[observeHook.event] = [];
+    hooksByEvent[observeHook.event].push(observeHook.entry);
+  }
+
   // Write hooksByEvent to settings if any hooks or gates were registered
   if (Object.keys(hooksByEvent).length > 0) {
     settings.hooks = hooksByEvent;
@@ -2456,10 +2580,226 @@ function generateContextFile(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
 
+  // HYBRID run order — when this topology composes with an embedded
+  // claude-workflow rung, document who runs/launches/observes what.
+  const hybridRunOrder = buildHybridRunOrderSection(ast);
+  if (hybridRunOrder) {
+    sections.push(hybridRunOrder);
+  }
+
   return {
     path: fileName,
     content: sections.join("\n") + "\n",
     category: "machine",
+  };
+}
+
+/**
+ * HYBRID: emit a host-side "launch the workflow rung" skill stub for each
+ * contiguous workflow-marked phase run.
+ *
+ * In the hybrid model the host does NOT run the workflow-marked agents as
+ * subagents. At the corresponding point in the flow, the host LAUNCHES the
+ * embedded deterministic workflow rung (`<topology>.workflow.js`, emitted by the
+ * sibling claude-workflow binding). These stubs are the documented launch
+ * directives, scoped into the topology's skill scripts directory next to the
+ * gate/hook stubs (same AGENTOPOLOGY_STUB mechanism so CI can detect them).
+ */
+function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  if (!isHybridTopology(ast)) return files;
+
+  const name = ast.topology.name;
+  const workflowFile = seamFiles.workflowScript(name);
+  const seamDoc = seamFiles.seamDoc(name);
+  const root = workspaceRoot(ast);
+  const runs = contiguousWorkflowPhaseRuns(ast);
+
+  for (const run of runs) {
+    const label = workflowRunLabel(ast, run);
+    // Agents that this rung owns (for documentation in the stub body).
+    const ownedAgents = ast.nodes
+      .filter(
+        (n): n is AgentNode =>
+          n.type === "agent" && run.includes(agentPhase(n as AgentNode)) && isWorkflowSeamAgent(n as AgentNode),
+      )
+      .map((a) => a.id);
+
+    const phaseLabel =
+      run.length === 1 ? `phase ${run[0]}` : `phases ${run[0]}–${run[run.length - 1]}`;
+
+    const body = [
+      "#!/usr/bin/env bash",
+      `# Launch the embedded workflow rung for ${phaseLabel} (${ownedAgents.join(", ")}).`,
+      "# Auto-generated by agentopology scaffold — edit as needed.",
+      STUB_MARKER,
+      "set -euo pipefail",
+      "",
+      `# HYBRID SEAM (host -> embedded workflow). This step does NOT run`,
+      `# ${ownedAgents.join(", ")} as host subagent(s). Instead the host LAUNCHES the`,
+      `# deterministic workflow rung that owns ${phaseLabel}, emitted by the`,
+      `# claude-workflow binding as: ${workflowFile}`,
+      "#",
+      "# The rung reads its inputs from the Blackboard (seeded by the host's prior",
+      `# phase) and writes its results back so host hooks observe them LIVE.`,
+      root ? `# Blackboard root (shared by host + rung): ${root}` : "# Blackboard root: (memory.workspace.path not declared)",
+      `# Seam contract both bindings honor: ${seamDoc}`,
+      "#",
+      "# Claude Workflows are launched IN-SESSION via the /workflow keyword, not as a",
+      "# detached process. The orchestrator invokes the workflow at this step:",
+      "#",
+      `#     /workflow ${workflowFile}`,
+      "#",
+      "# If your harness launches workflows out-of-process instead, replace the line",
+      `# below with the real launcher (e.g. \`claude workflow ${workflowFile}\`).`,
+      "",
+      `echo "TODO: launch the workflow rung — invoke '/workflow ${workflowFile}' in-session (${phaseLabel}: ${ownedAgents.join(", ")})."`,
+      "",
+    ].join("\n");
+
+    files.push({
+      path: `.claude/skills/${name}/scripts/launch-${label}-workflow.sh`,
+      content: body,
+      category: "script",
+      executable: true,
+    });
+  }
+
+  return files;
+}
+
+/**
+ * HYBRID: build the "Hybrid run order" markdown block appended to the generated
+ * context file (.claude/CLAUDE.md) and the topology SKILL.md. It states the
+ * host's interleaving with the embedded workflow rung, in the SAME run-order
+ * vocabulary the claude-workflow binding's SEAM.md uses, so the two bindings
+ * stay in sync. Returns null when the topology is not a hybrid.
+ */
+function buildHybridRunOrderSection(ast: TopologyAST): string | null {
+  if (!isHybridTopology(ast)) return null;
+
+  const name = ast.topology.name;
+  const workflowFile = seamFiles.workflowScript(name);
+  const seamDoc = seamFiles.seamDoc(name);
+  const root = workspaceRoot(ast);
+  const wfPhases = workflowPhaseSet(ast);
+
+  const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
+  const human = ast.nodes.find((n): n is HumanNode => n.type === "human") ?? null;
+
+  const allPhases = [...new Set(agents.map(agentPhase))].sort((a, b) => a - b);
+  const idsInPhase = (p: number): string =>
+    agents.filter((a) => agentPhase(a) === p).map((a) => a.id).join(", ");
+
+  const lines: string[] = [];
+  lines.push("## Hybrid run order");
+  lines.push("");
+  lines.push(
+    `This topology is a **hybrid**: it composes the host (this \`.claude/\` tree) with an embedded deterministic workflow rung emitted by the \`claude-workflow\` binding as \`${workflowFile}\`. The host runs the host phases in-session; for the workflow-marked phase(s) it **launches the rung** and **observes** its Blackboard writes. Both sides honor the seam contract in \`${seamDoc}\`.`,
+  );
+  lines.push("");
+  if (root) {
+    lines.push(`**Blackboard root** (shared by host + rung): \`${root}\``);
+    lines.push("");
+  }
+  lines.push("Run order:");
+  lines.push("");
+  let step = 1;
+  for (const p of allPhases) {
+    if (wfPhases.has(p)) {
+      lines.push(
+        `${step}. **Host launches \`${workflowFile}\`** for phase ${p} (${idsInPhase(p)}) — the deterministic rung. It reads the Blackboard inputs the host seeded, does the work, and writes its results back. Host hooks observe those writes LIVE (the concurrent observability the workflow rung itself cannot express). Launch via \`.claude/skills/${name}/scripts/launch-${workflowRunLabel(ast, [p])}-workflow.sh\` (i.e. \`/workflow ${workflowFile}\`).`,
+      );
+    } else {
+      lines.push(
+        `${step}. **Host (in-session)** runs phase ${p} (${idsInPhase(p)}) — writes its outputs to the Blackboard so the next rung can read them.`,
+      );
+    }
+    step++;
+  }
+  if (human) {
+    lines.push(
+      `${step}. **Host** presents the Blackboard artifacts to the human \`${human.id}\`, who acts (e.g. promotes). Promotion triggers the SEPARATE downstream workflow.`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    `> This run order MUST match \`${seamDoc}\`'s "Run order" section (emitted by the claude-workflow binding). If you change one, change the other.`,
+  );
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
+ * HYBRID: emit the host-layer concurrent Blackboard observer hook into
+ * settings.json.
+ *
+ * Rationale: the topology's `hooks { PostToolUse { matcher: "Write" ... } }`
+ * block is the bare-event form, which the parser does NOT currently surface into
+ * `ast.hooks` (only the named `hook <name> {}` form is parsed; changing the
+ * parser is out of scope). So we synthesize the observer hook from the presence
+ * of a Blackboard (`memory.workspace`): a Blackboard in a hybrid topology IMPLIES
+ * a host-side observer that watches the workflow rung's Write tool-calls live.
+ *
+ * Returns the hook entry to merge into settings.hooks.PostToolUse, or null.
+ */
+function buildHybridObserveHook(
+  ast: TopologyAST,
+  topologyName: string,
+): { event: string; entry: Record<string, unknown>; scriptPath: string } | null {
+  if (!isHybridTopology(ast)) return null;
+  if (!workspaceRoot(ast)) return null; // no Blackboard → no observer
+
+  // If a real ast.hook already targets PostToolUse/Write, the generic hook path
+  // emits it — don't double up.
+  const alreadyEmitted = ast.hooks.some(
+    (h) => h.on === "PostToolUse" && (h.matcher === "Write" || !h.matcher),
+  );
+  if (alreadyEmitted) return null;
+
+  const scriptPath = `.claude/skills/${topologyName}/scripts/observe-blackboard.sh`;
+  return {
+    event: "PostToolUse",
+    scriptPath,
+    entry: {
+      matcher: "Write",
+      hooks: [
+        {
+          type: "command",
+          command: `bash ${scriptPath}`,
+        },
+      ],
+    },
+  };
+}
+
+/** HYBRID: the observe-blackboard.sh stub the observe-hook points at. */
+function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null {
+  const hook = buildHybridObserveHook(ast, ast.topology.name);
+  if (!hook) return null;
+  const root = workspaceRoot(ast) ?? "workspace/";
+  const body = [
+    "#!/usr/bin/env bash",
+    "# Host-layer concurrent Blackboard observer.",
+    "# Auto-generated by agentopology scaffold — edit as needed.",
+    STUB_MARKER,
+    "set -euo pipefail",
+    "",
+    "# HYBRID SEAM (host observability for the embedded workflow rung).",
+    "# Wired as a PostToolUse(Write) hook in .claude/settings.json. It fires on every",
+    `# Write tool-call so the host can watch the Blackboard (${root}) the workflow`,
+    "# rung's agents write — that IS the concurrent observability the deterministic",
+    "# workflow rung itself cannot express. Stdin JSON payload is on FD 0.",
+    "",
+    "PAYLOAD=$(cat)",
+    `echo "TODO: observe Blackboard write under ${root} — inspect the payload and log/notify."`,
+    "",
+  ].join("\n");
+  return {
+    path: hook.scriptPath,
+    content: body,
+    category: "script",
+    executable: true,
   };
 }
 
@@ -2590,6 +2930,14 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Hook scripts (per-agent)
     files.push(...generateAgentHookScripts(ast));
+
+    // HYBRID: host-side launch directives for the embedded workflow rung(s).
+    files.push(...generateWorkflowLaunchArtifacts(ast));
+
+    // HYBRID: host-layer concurrent Blackboard observer script (paired with the
+    // synthesized PostToolUse(Write) hook in settings.json).
+    const observeScript = generateObserveBlackboardScript(ast);
+    if (observeScript) files.push(observeScript);
 
     // Tool scripts
     files.push(...generateToolScripts(ast));
