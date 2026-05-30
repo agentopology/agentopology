@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Claude Code</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
+  <strong>Claude Code</strong> · <strong>Claude Workflow</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
 </p>
 
 <p align="center">
@@ -54,17 +54,31 @@ topology code-review : [pipeline] {
 ```
 
 ```bash
-agentopology scaffold my-team.at --target claude-code   # → .claude/agents/
-agentopology scaffold my-team.at --target openclaw       # → .openclaw/soul.md
-agentopology scaffold my-team.at --target codex          # → .codex/
-agentopology scaffold my-team.at --target cursor         # → .cursor/rules/
+agentopology scaffold my-team.at --target claude-code      # → .claude/agents/
+agentopology scaffold my-team.at --target claude-workflow  # → my-team.workflow.js (+ SEAM/README/LOSSY-REPORT)
+agentopology scaffold my-team.at --target openclaw         # → .openclaw/soul.md
+agentopology scaffold my-team.at --target codex            # → .codex/
+agentopology scaffold my-team.at --target cursor           # → .cursor/rules/
 ```
 
-One file. Seven platforms. The topology IS the documentation.
+One file. Every platform. The topology IS the documentation.
 
 <p align="center">
   <img src="docs/visualizer-preview.png" alt="AgenTopology Visualizer" width="900" />
 </p>
+
+### Hybrid: host + embedded workflow
+
+One `.at` topology can compile to **two coupled targets at once**. `claude-code` is the **host** — the event-driven layer that owns agents, hooks, the Blackboard, concurrent observability, and the human/gate/branching nodes. `claude-workflow` is the embedded **deterministic rung** — the parallel fan-out phases, compiled into a Claude Workflow tool script. The host launches the rung and observes its Blackboard writes live (via a `PostToolUse` hook), so you get concurrent observability the Workflow runtime can't do on its own.
+
+Mark a phase for the rung with `extensions { claude-workflow { execution: workflow } }`, then scaffold both:
+
+```bash
+agentopology scaffold my-team.at --target claude-code      # the host
+agentopology scaffold my-team.at --target claude-workflow  # the embedded rung
+```
+
+The hybrid is opt-in — a topology with no `execution: workflow` marker compiles to pure `claude-code`, unchanged. See [docs/AT_VS_WORKFLOW_STRATEGY.md](docs/AT_VS_WORKFLOW_STRATEGY.md) for why.
 
 ---
 
@@ -78,6 +92,7 @@ AgenTopology is a **declarative language** (`.at` files) and a **CLI compiler** 
 │  (you write) │      │  Validator │      │  (auto-generated)   │
 └──────────────┘      └────────────┘      └─────────────────────┘
                                             ├── .claude/agents/
+                                            ├── <topology>.workflow.js
                                             ├── .openclaw/
                                             ├── .codex/
                                             ├── .cursor/rules/
@@ -244,7 +259,8 @@ This defines three agents, their tools and memory, a quality gate, and a flow wi
 
 | Target | Command | What It Generates |
 |--------|---------|-------------------|
-| **Claude Code** | `--target claude-code` | `.claude/agents/`, `.claude/skills/`, `.mcp.json`, `.claude/settings.json` |
+| **Claude Code** | `--target claude-code` | `.claude/agents/`, `.claude/skills/`, `.mcp.json`, `.claude/settings.json` (the event-driven host) |
+| **Claude Workflow** | `--target claude-workflow` | `<topology>.workflow.js` (deterministic fan-out rung) + `-SEAM.md`, `-README.md`, `-LOSSY-REPORT.md` |
 | **OpenClaw** | `--target openclaw` | `.openclaw/soul.md`, `.openclaw/skills/`, `.openclaw/config.json` |
 | **Codex** | `--target codex` | `.codex/config.toml`, `AGENTS.md` |
 | **Cursor** | `--target cursor` | `.cursor/rules/*.mdc`, `.cursor/mcp.json`, `.cursor/hooks.json` |
