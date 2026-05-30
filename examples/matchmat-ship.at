@@ -1,0 +1,249 @@
+# matchmat-ship.at — MatchMat autonomous ship-harness (HYBRID host + embedded workflow)
+#
+# The declarative source of truth for MatchMat's fast ship pipeline. Compiles via
+# a DUAL emitter: claude-code (the HOST — roles, flow, hooks, Blackboard) + the
+# claude-workflow binding (the BUILD phase → an embedded workflow.js for
+# deterministic parallel fan-out). They couple through the Blackboard (workspace
+# files; see memory.workspace + each agent's reads/writes).
+#
+# Methodology: contract-driven development + closed-loop regression. NO TDD.
+# Autonomous up to the HUMAN promote boundary; regression is a downstream workflow.
+#
+# Seam marking: agents that should compile to the embedded deterministic Workflow
+# carry `extensions { claude-workflow { execution: workflow } }`. Everything else
+# stays on the host session (hooks/gates/branching/observability).
+
+topology matchmat-ship : [pipeline, fan-out, blackboard, human-gate] {
+
+  meta {
+    version: "1.1.0"
+    description: "Hybrid ship pipeline: contract-research fan-out (host) -> parallel build in worktrees (embedded workflow) -> adversarial verify (host) -> human promote. Blackboard couples the layers. Regression is downstream."
+    domain: devops
+  }
+
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet]
+      default: true
+    }
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake, ship-report]
+  }
+
+  roles {
+    contract-scout: "Find existing contracts/boundaries the ticket touches"
+    blast-radius-mapper: "Map the files and components the change affects"
+    boundary-drafter: "Draft the new boundaries/contracts the change requires"
+    builder: "Implement against the contract delta in an isolated worktree (no TDD); also write the paired regression spec"
+    security-verifier: "Adversarially scan the diff for security red flags"
+    contract-verifier: "Verify the code honors the contract invariants it claims (no drift)"
+    closed-loop-verifier: "Verify a paired regression spec exists and asserts in contract vocabulary"
+  }
+
+  # --- Actions ---
+
+  action intake {
+    kind: external
+    source: "trello"
+    description: "Fetch the Trello ticket and seed the Blackboard (workspace/ticket.md)"
+  }
+
+  action ship-report {
+    kind: report
+    description: "Compile contract delta, build summary, and verify verdicts for the human"
+  }
+
+  # --- Phase 1: CONTRACT RESEARCH (host fan-out) ---
+  # Stays on the host: reads/writes the Blackboard; observability hooks watch it.
+
+  agent contract-scout {
+    role: contract-scout
+    model: sonnet
+    permissions: supervised
+    phase: 1
+    prompt {
+      Find every existing contract (contracts/C-*.yaml) and boundary
+      (contracts/B-*.yaml) the ticket touches. List each with the invariant
+      at stake. Write findings to the Blackboard.
+    }
+    tools: [Read, Grep, Glob, Write]
+    reads: ["workspace/ticket.md"]
+    writes: ["workspace/contracts-touched.md"]
+  }
+
+  agent blast-radius-mapper {
+    role: blast-radius-mapper
+    model: sonnet
+    permissions: supervised
+    phase: 1
+    prompt {
+      Map the blast radius: which src/ files, edge functions, migrations, and
+      components the change affects. Produce an ordered file list with rationale.
+    }
+    tools: [Read, Grep, Glob, Write]
+    reads: ["workspace/ticket.md"]
+    writes: ["workspace/blast-radius.md"]
+  }
+
+  agent boundary-drafter {
+    role: boundary-drafter
+    model: opus
+    permissions: supervised
+    phase: 1
+    prompt {
+      Draft the NEW boundaries/contracts the change requires (or version bumps
+      to existing ones). Output the exact contract delta the build phase will
+      implement against.
+    }
+    tools: [Read, Grep, Glob, Write]
+    reads: ["workspace/ticket.md"]
+    writes: ["workspace/contract-delta.md"]
+  }
+
+  # --- Phase 2: BUILD (embedded WORKFLOW — deterministic parallel fan-out) ---
+  # execution: workflow → this phase compiles to an embedded workflow.js. Agents
+  # run in parallel worktrees, read the Blackboard (contract delta + blast radius),
+  # write build results back to the Blackboard so host hooks observe progress.
+
+  agent builder {
+    role: builder
+    model: opus
+    permissions: autonomous
+    phase: 2
+    isolation: worktree
+    prompt {
+      Implement your assigned slice of the contract delta in an isolated git
+      worktree. Code against the contract as the spec (NO TDD). In the SAME
+      change, write or extend the paired regression spec under e2e/walkthroughs/
+      in contract vocabulary. Touch the contract YAML if it evolves. Write a
+      build report to the Blackboard.
+    }
+    tools: [Read, Grep, Glob, Write, Edit, Bash]
+    reads: ["workspace/contract-delta.md", "workspace/blast-radius.md", "workspace/contracts-touched.md"]
+    writes: ["workspace/build-report.md"]
+    scale {
+      mode: auto
+      by: source-count
+      min: 1
+      max: 6
+    }
+    extensions {
+      claude-workflow {
+        execution: workflow
+      }
+    }
+  }
+
+  # --- Phase 3: ADVERSARIAL VERIFY (host fan-out) ---
+
+  agent security-verifier {
+    role: security-verifier
+    model: opus
+    permissions: supervised
+    phase: 3
+    prompt {
+      Adversarially scan the diff for red flags: hardcoded secrets, RLS holes,
+      SQL string concat, missing role checks, service-role key in client code.
+      Default to fail if uncertain.
+    }
+    tools: [Read, Grep, Glob, Bash]
+    reads: ["workspace/build-report.md"]
+    writes: ["workspace/verify-security.md"]
+    outputs: {
+      verdict: pass | fail
+    }
+  }
+
+  agent contract-verifier {
+    role: contract-verifier
+    model: sonnet
+    permissions: supervised
+    phase: 3
+    prompt {
+      Verify the code honors the contract invariants it claims. Check for drift
+      between implemented behavior and the contract/boundary YAML. Default to
+      fail if the code diverges from a declared invariant.
+    }
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/build-report.md", "workspace/contract-delta.md"]
+    writes: ["workspace/verify-contract.md"]
+    outputs: {
+      verdict: pass | fail
+    }
+  }
+
+  agent closed-loop-verifier {
+    role: closed-loop-verifier
+    model: sonnet
+    permissions: supervised
+    phase: 3
+    prompt {
+      Verify a paired regression spec exists under e2e/walkthroughs/ for the
+      change and that its assertions use contract vocabulary (the same invariant
+      IDs). Default to fail if no spec pairs the change.
+    }
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/build-report.md"]
+    writes: ["workspace/verify-closed-loop.md"]
+    outputs: {
+      verdict: pass | fail
+    }
+  }
+
+  # --- Human promote boundary (the deliberate workflow-split point) ---
+
+  human promote {
+    description: "Human reviews the contract delta + verify verdicts in the ship-report, then promotes to staging (which triggers the SEPARATE downstream regression workflow). Not in the autonomous loop until here."
+  }
+
+  # --- Flow (the execution DAG) ---
+
+  flow {
+    intake -> [contract-scout, blast-radius-mapper, boundary-drafter]
+    contract-scout -> builder
+    blast-radius-mapper -> builder
+    boundary-drafter -> builder
+    builder -> [security-verifier, contract-verifier, closed-loop-verifier]
+    security-verifier -> ship-report
+    contract-verifier -> ship-report
+    closed-loop-verifier -> ship-report
+    ship-report -> promote
+  }
+
+  # --- Gates (auto-injected; halt the autonomous run on verify failure) ---
+
+  gates {
+    gate verify-gate {
+      after: closed-loop-verifier
+      before: ship-report
+      run: "scripts/verify-gate.sh"
+      checks: [security, contract-conformance, closed-loop]
+      retry: 2
+      on-fail: bounce-back
+      behavior: blocking
+    }
+  }
+
+  # --- Blackboard (the substrate coupling host + embedded workflow) ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [ticket, contracts-touched, blast-radius, contract-delta, build-report, verify-security, verify-contract, verify-closed-loop]
+    }
+  }
+
+  # --- Hooks (host-layer concurrent observability — watch the Blackboard live) ---
+
+  hooks {
+    PostToolUse {
+      matcher: "Write"
+      type: command
+      command: "scripts/observe-blackboard.sh"
+    }
+  }
+}

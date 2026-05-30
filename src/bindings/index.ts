@@ -8,6 +8,7 @@
 
 import type { BindingTarget } from "./types.js";
 import { claudeCodeBinding } from "./claude-code.js";
+import { claudeWorkflowBinding } from "./claude-workflow.js";
 import { codexBinding } from "./codex.js";
 import { geminiCliBinding } from "./gemini-cli.js";
 import { copilotCliBinding } from "./copilot-cli.js";
@@ -18,6 +19,7 @@ import { cursorBinding } from "./cursor.js";
 export type { GeneratedFile, BindingTarget } from "./types.js";
 export { deduplicateFiles } from "./types.js";
 export { claudeCodeBinding } from "./claude-code.js";
+export { claudeWorkflowBinding } from "./claude-workflow.js";
 export { codexBinding } from "./codex.js";
 export { geminiCliBinding } from "./gemini-cli.js";
 export { copilotCliBinding } from "./copilot-cli.js";
@@ -28,6 +30,7 @@ export { cursorBinding } from "./cursor.js";
 /** All available binding targets, keyed by name. */
 export const bindings: Record<string, BindingTarget> = {
   "claude-code": claudeCodeBinding,
+  "claude-workflow": claudeWorkflowBinding,
   "codex": codexBinding,
   "gemini-cli": geminiCliBinding,
   "copilot-cli": copilotCliBinding,
