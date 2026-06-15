@@ -85,4 +85,25 @@ describe("Brain visualizer — vault parser", () => {
     expect(html).not.toContain("<script src"); // no external scripts — fully self-contained
     expect(html).toContain('"acme-corp"'); // node data inlined
   });
+
+  it("declares interaction state (drag) before the animation loop that reads it", () => {
+    // Regression: `let drag` is in a temporal dead zone until its line runs.
+    // step() reads `drag` every frame, so if the loop starts before `let drag`,
+    // the first frame throws "Cannot access 'drag' before initialization" and
+    // the canvas never renders. Guard the declaration order.
+    const html = renderBrainHtml(parseBrainVault(vault));
+    const dragDecl = html.indexOf("let drag");
+    const loopStart = html.indexOf("function loop()");
+    expect(dragDecl).toBeGreaterThan(-1);
+    expect(loopStart).toBeGreaterThan(-1);
+    expect(dragDecl).toBeLessThan(loopStart);
+  });
+
+  it("initializes center force at the integrator's scale (not the raw slider value)", () => {
+    // Regression: the slider stores value/1000; the initial value must match or
+    // the first frames fling every node off-screen before it settles.
+    const html = renderBrainHtml(parseBrainVault(vault));
+    expect(html).toContain("center:0.008");
+    expect(html).not.toMatch(/center:8\b/);
+  });
 });

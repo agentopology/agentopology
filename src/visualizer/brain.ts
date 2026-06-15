@@ -289,10 +289,16 @@ const E = DATA.edges.filter(e => N.has(e.from) && N.has(e.to));
 
 // Camera (pan + zoom).
 let cam = { x:0, y:0, z:1 };
-let forces = { repel:2200, dist:120, center:8 };
+// center is stored already-scaled (slider value / 1000) to match the integrator.
+let forces = { repel:2200, dist:120, center:0.008 };
 document.getElementById('repel').oninput  = e => forces.repel  = +e.target.value;
 document.getElementById('dist').oninput   = e => forces.dist   = +e.target.value;
 document.getElementById('center').oninput = e => forces.center = +e.target.value / 1000;
+
+// Interaction state — declared BEFORE the animation loop because step() reads
+// \`drag\` every frame (let-bindings are not hoisted; referencing them before this
+// point throws "Cannot access 'drag' before initialization").
+let drag=null, hover=null, panning=false, last={x:0,y:0}, query='';
 
 function radius(n){ return (n.kind==='index'?7:5) + Math.min(n.inbound*1.4, 10); }
 
@@ -329,7 +335,6 @@ function step(){
 function toScreen(n){ return { x:(n.x-W/2)*cam.z + W/2 + cam.x, y:(n.y-H/2)*cam.z + H/2 + cam.y }; }
 function fromScreen(px,py){ return { x:(px-W/2-cam.x)/cam.z + W/2, y:(py-H/2-cam.y)/cam.z + H/2 }; }
 
-let hover=null, query='';
 function draw(){
   x.clearRect(0,0,W,H);
   // Edges.
@@ -360,8 +365,8 @@ function draw(){
 }
 (function loop(){ step(); draw(); requestAnimationFrame(loop); })();
 
-// Interaction: pan, zoom, drag nodes, hover tooltip.
-let drag=null, panning=false, last={x:0,y:0};
+// Interaction: pan, zoom, drag nodes, hover tooltip. (drag/hover/panning/last/
+// query are declared above, before the loop.)
 const tip=document.getElementById('tip');
 function pick(px,py){
   const w=fromScreen(px,py); let best=null,bd=1e9;
