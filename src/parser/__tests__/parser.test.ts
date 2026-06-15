@@ -7646,3 +7646,137 @@ describe("Auth block in providers (F42)", () => {
   });
 
 });
+
+describe("Company brain — pattern, brain store type, custody primitive", () => {
+  const brainSrc = `topology cb : [brain] {
+    meta { version: "1.0.0" description: "x" }
+    memory {
+      store brain {
+        type: brain
+        description: "the company brain"
+        path: "brain/"
+        format: obsidian
+      }
+    }
+    agent librarian {
+      model: sonnet
+      description: "keeps the brain"
+      tools: [Read, Write, Grep]
+      custodian-of: [brain] {
+        does: [link, tag, index, dedupe]
+      }
+    }
+    agent researcher {
+      model: sonnet
+      description: "reads the brain"
+      tools: [Read, Grep]
+      memory: [brain]
+    }
+    action intake {
+      kind: inline
+      description: "in"
+    }
+    flow {
+      intake -> librarian
+      librarian -> researcher
+    }
+  }`;
+
+  it("parses a brain-type store with files backend default and format", () => {
+    const ast = parse(brainSrc);
+    const store = (ast.stores ?? []).find((s) => s.id === "brain");
+    expect(store).toBeDefined();
+    expect(store!.type).toBe("brain");
+    expect(store!.backend).toBe("files"); // file-native default, not lancedb
+    expect(store!.format).toBe("obsidian");
+    expect(store!.path).toBe("brain/");
+  });
+
+  it("parses custodian-of and the optional does verbs on an agent", () => {
+    const ast = parse(brainSrc);
+    const librarian = ast.nodes.find((n) => n.id === "librarian") as AgentNode;
+    expect(librarian.custodianOf).toEqual(["brain"]);
+    expect(librarian.custodianDoes).toEqual(["link", "tag", "index", "dedupe"]);
+  });
+
+  it("custody is optional — bare custodian-of with no verbs parses", () => {
+    const src = brainSrc.replace(
+      "custodian-of: [brain] {\n        does: [link, tag, index, dedupe]\n      }",
+      "custodian-of: [brain]"
+    );
+    const ast = parse(src);
+    const librarian = ast.nodes.find((n) => n.id === "librarian") as AgentNode;
+    expect(librarian.custodianOf).toEqual(["brain"]);
+    expect(librarian.custodianDoes).toBeUndefined();
+  });
+
+  it("the brain pattern tag is recognized (no V2 reserved-keyword error)", () => {
+    const ast = parse(brainSrc);
+    expect(ast.topology.patterns).toContain("brain");
+    const results = validate(ast);
+    expect(results.filter((r) => r.level === "error")).toHaveLength(0);
+  });
+
+  it("V81: a brain store needs no DB backend (exempt from backend enum)", () => {
+    const ast = parse(brainSrc);
+    const results = validate(ast);
+    expect(results.filter((r) => r.rule === "V81")).toHaveLength(0);
+  });
+
+  it("V88: custodian-of referencing an undeclared store is an error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "Intake" },
+        { id: "keeper", type: "agent", label: "Keeper", model: "sonnet", custodianOf: ["ghost-store"] },
+      ],
+      edges: [{ from: "intake", to: "keeper", condition: null, maxIterations: null }],
+      stores: [{ id: "brain", type: "brain", backend: "files" }],
+      retrievals: [],
+    });
+    const v88 = validate(ast).filter((r) => r.rule === "V88" && r.level === "error");
+    expect(v88).toHaveLength(1);
+    expect(v88[0].message).toContain("ghost-store");
+  });
+
+  it("V88: custody over a declared brain store is clean", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "Intake" },
+        { id: "keeper", type: "agent", label: "Keeper", model: "sonnet", custodianOf: ["brain"] },
+      ],
+      edges: [{ from: "intake", to: "keeper", condition: null, maxIterations: null }],
+      stores: [{ id: "brain", type: "brain", backend: "files" }],
+      retrievals: [],
+    });
+    const v88 = validate(ast).filter((r) => r.rule === "V88");
+    expect(v88).toHaveLength(0);
+  });
+
+  it("V88: custody over a non-brain store is a warning, not an error", () => {
+    const ast = minimalASTForWave6({
+      nodes: [
+        { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
+        { id: "intake", type: "action", label: "Intake" },
+        { id: "keeper", type: "agent", label: "Keeper", model: "sonnet", custodianOf: ["kg"] },
+      ],
+      edges: [{ from: "intake", to: "keeper", condition: null, maxIterations: null }],
+      stores: [{ id: "kg", type: "graph", backend: "kuzu" }],
+      retrievals: [],
+    });
+    const v88 = validate(ast).filter((r) => r.rule === "V88");
+    expect(v88).toHaveLength(1);
+    expect(v88[0].level).toBe("warning");
+  });
+
+  it("round-trips the company-brain.at example with no validation errors", () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain.at"),
+      "utf8"
+    );
+    const ast = parse(src);
+    const errors = validate(ast).filter((r) => r.level === "error");
+    expect(errors).toHaveLength(0);
+  });
+});

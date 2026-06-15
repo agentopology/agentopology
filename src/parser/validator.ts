@@ -107,7 +107,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "external", "git", "decision", "inline", "report", "not", "ticket",
   "true", "false", "pipeline", "supervisor", "blackboard",
   "orchestrator-worker", "debate", "market-routing", "consensus",
-  "fan-out", "event-driven", "human-gate",
+  "fan-out", "event-driven", "human-gate", "brain",
   // Extension system keywords
   "context", "extensions", "max-turns",
   "disable-model-invocation", "user-invocable", "allowed-tools",
@@ -175,7 +175,9 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "audit-log", "extraction", "budget", "diversity",
   "recency-weight", "semantic-weight", "importance-weight",
   "cache-hit-threshold", "cache-hit-action",
-  "semantic", "episodic", "procedural", "entity", "graph",
+  "semantic", "episodic", "procedural", "entity", "graph", "brain",
+  // Company-brain pattern: file-native store type + custody primitive
+  "custodian-of", "does", "format", "obsidian",
   "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb", "pinecone",
   "qdrant", "pgvector", "neo4j",
   "vector", "keyword", "hybrid",
@@ -2761,19 +2763,25 @@ function v66RateLimitFormat(ast: TopologyAST): ValidationResult[] {
 // V81 – Store backend validation
 // ---------------------------------------------------------------------------
 
-/** Valid store backends. */
+/** Valid store backends. `files` is the file-native backend for `brain` stores. */
 const VALID_STORE_BACKENDS: ReadonlySet<string> = new Set([
   "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb",
   "mongodb", "pinecone", "qdrant", "pgvector", "neo4j", "sqlite", "duckdb",
+  "files",
 ]);
 
 /**
  * V81: StoreNode.backend must be one of the known values.
+ *
+ * `brain` stores are file-native (Obsidian-format markdown). They have no
+ * database backend — their backend is always `files` — so they are exempt
+ * from the backend-enum requirement. See `docs/company-brain-design.md`.
  */
 function v81StoreBackendValid(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   if (!ast.stores) return results;
   for (const store of ast.stores) {
+    if (store.type === "brain") continue;
     if (!VALID_STORE_BACKENDS.has(store.backend)) {
       results.push({
         rule: "V81",
@@ -2994,6 +3002,57 @@ function v87OrchestratorDelegation(ast: TopologyAST): ValidationResult[] {
 }
 
 // ---------------------------------------------------------------------------
+// V88 – Custody references must resolve to declared stores
+// ---------------------------------------------------------------------------
+
+/**
+ * V88: Every store in an agent's `custodian-of` must reference a declared store.
+ *
+ * Custody is the primitive behind the `brain` pattern: an agent that owns the
+ * upkeep of a memory store (wiring dropped files into the graph — links, tags,
+ * index hubs, dedupe), not merely reads it. A custodian pointing at a store
+ * that doesn't exist is a wiring error the binding cannot honor.
+ *
+ * Custody is typically over a `brain`-type store, but the language does not
+ * require it — an agent may be declared custodian of any store. We emit a
+ * warning (not an error) when custody targets a non-brain store, since that is
+ * unusual but legal (e.g. an agent that curates a graph DB).
+ */
+function v88CustodyRefsValid(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (!ast.stores) return results;
+  const storeById = new Map((ast.stores ?? []).map((s) => [s.id, s]));
+
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    const custody = (node as { custodianOf?: string[] }).custodianOf;
+    if (!custody) continue;
+
+    for (const storeRef of custody) {
+      const store = storeById.get(storeRef);
+      if (!store) {
+        results.push({
+          rule: "V88",
+          level: "error",
+          message: `agent "${node.id}": custodian-of "${storeRef}" does not match a declared store`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      } else if (store.type !== "brain") {
+        results.push({
+          rule: "V88",
+          level: "warning",
+          message: `agent "${node.id}": custodian-of "${storeRef}" targets a non-brain store (type "${store.type}") — custody is usually over a brain store`,
+          node: node.id,
+          line: lookupLine(ast, node.id),
+        });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -3092,5 +3151,6 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v85StoreConnectionRequired(ast),
     ...v86AgentMemoryRefsValid(ast),
     ...v87OrchestratorDelegation(ast),
+    ...v88CustodyRefsValid(ast),
   ];
 }

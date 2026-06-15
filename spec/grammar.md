@@ -207,6 +207,7 @@ perm-enum       = perm-identifier
 | `fan-out` | Parallel slices |
 | `event-driven` | Pub-sub |
 | `human-gate` | Human approval points |
+| `brain` | Agent-maintained, Obsidian-portable markdown knowledge graph |
 
 ---
 
@@ -360,6 +361,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory never blocks flow |
 | `memory` | name-list | no | `[]` | Store IDs this agent can access (V35) |
 | `retrieval` | identifier | no | -- | Retrieval strategy ID for memory queries (V35) |
+| `custodian-of` | name-list `{ does: name-list }?` | no | -- | Store IDs this agent **maintains** (not just reads). The primitive behind the `brain` pattern. Optional `does:` declares maintenance verbs (e.g. `link, tag, index, dedupe`). Refs validated by V88. |
 | `skills` | name-list | no | `[]` | Skills to preload |
 | `mcp-servers` | name-list | no | `[]` | MCP servers available |
 | `background` | boolean | no | `false` | Run in background |
@@ -531,7 +533,7 @@ store-field     = 'type' ':' store-type
                 | lifecycle-block
                 | backend-config-block
 store-type      = 'semantic' | 'episodic' | 'procedural' | 'entity'
-                | 'graph' | 'user' | 'session' | 'temporal'
+                | 'graph' | 'user' | 'session' | 'temporal' | 'brain'
 scope-enum      = 'agent' | 'user' | 'session' | 'org' | 'global'
 isolation-enum  = 'strict' | 'soft' | 'none'
 backend-enum    = 'lancedb' | 'sqlite-vec' | 'chroma' | 'kuzu' | 'falkordb'
@@ -639,10 +641,11 @@ memory {
 | `description` | string | no | -- | Human-readable purpose |
 | `scope` | scope-enum | no | -- | Access scope (V32 warning if omitted) |
 | `isolation` | isolation-enum | no | -- | Isolation level between scopes |
-| `backend` | backend-enum | yes | -- | Storage backend (V30 enum check) |
+| `backend` | backend-enum | yes | -- | Storage backend (V30 enum check). For `type: brain`, defaults to `files` and is exempt from the enum check (V81). |
 | `path` | string | no | -- | File system path for local backends |
 | `connection` | secret-string | no | -- | Connection URI for remote backends (V34) |
 | `extraction` | extraction-enum | no | -- | Entity/fact extraction method |
+| `format` | string | no | -- | File format/convention for file-native stores. For `brain`, typically `obsidian` ([[wikilinks]], #tags, YAML frontmatter) — a promise the store round-trips as a real Obsidian vault. |
 | `embedding` | embedding-block | no | -- | Embedding configuration (V31 warning if omitted for semantic/episodic/procedural) |
 | `index` | index-block | no | -- | Index/collection configuration |
 | `ingestion` | ingestion-block | no | -- | Data ingestion configuration |
@@ -653,6 +656,10 @@ memory {
 **`connection` and secrets:** The `connection` field supports the `secret` modifier, parsed identically to `checkpoint.connection`. When `secret` is present, the string value is treated as a secret reference (e.g., `secret "PINECONE_URL"` references the `PINECONE_URL` secret).
 
 **`backend-config`:** A passthrough block for backend-specific key-value pairs not covered by the standard fields. Stored as `Record<string, unknown>` on the AST. Same pattern as `ProviderDef.extra`.
+
+**The `brain` store type (file-native).** A `brain` store is the file-native memory primitive behind the `brain` pattern: a folder of Obsidian-format markdown where the graph is a *projection* of the files, not a separate database. It is deliberately backend-less — its `backend` defaults to `files` and is exempt from the backend-enum check (V81), it needs no embedding (V82), and it compiles to direct file access (no MCP server). Edges come from inline `[[wikilinks]]` and `#tags`; backlinks are computed. Because the format is Obsidian, a `brain` store round-trips as a real Obsidian vault — agents build it, a human opens it in Obsidian for the graph view, and an existing vault becomes an agent-readable brain with zero migration. Heavyweight stores (`semantic`, `graph`, `entity`) remain available as an opt-in power-up alongside a brain. See `docs/company-brain-design.md`.
+
+**Custody (`custodian-of`).** Custody is the one new primitive the brain pattern needs. `memory:` grants an agent *read* access to a store; `custodian-of:` makes the agent *responsible for the store's upkeep* — wiring dropped files into the graph (resolving mentions into `[[wikilinks]]`, assigning `#tags`, updating index/hub notes, flagging ghost nodes and duplicates). The optional `does:` sub-list declares the maintenance verbs as visible architecture (like an optional type annotation); omitting it lets the agent infer its duties from its prompt. The verb *names* are language vocabulary; *how* each verb is performed well is an implementation/skill concern, not part of the spec. V88 validates that every `custodian-of` reference resolves to a declared store and warns when custody targets a non-brain store.
 
 **Local vs remote backends:** Backends `lancedb`, `sqlite-vec`, `sqlite`, `kuzu`, and `chroma` are local-first (use `path`). Backends `pinecone`, `qdrant`, `pgvector`, `neo4j`, `mongodb`, and `falkordb` are remote (require `connection`, V34).
 

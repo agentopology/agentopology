@@ -305,6 +305,13 @@ export interface StoreNode {
   lifecycle?: LifecycleConfig;
   /** Entity/fact extraction method: "llm" | "regex" | "hybrid". */
   extraction?: string;
+  /**
+   * File format/convention for file-native stores. For `brain` stores this is
+   * typically `obsidian` — a promise that the store holds only Obsidian-format
+   * markdown ([[wikilinks]], #tags, YAML frontmatter), so it round-trips as a
+   * real Obsidian vault. See `docs/company-brain-design.md`.
+   */
+  format?: string;
   /** Backend-specific passthrough configuration. */
   backendConfig?: Record<string, unknown>;
 }
@@ -509,6 +516,20 @@ export interface AgentNode extends BaseNode {
   memory?: string[];
   /** Retrieval strategy ID this agent uses for memory queries. */
   retrieval?: string;
+  /**
+   * Memory store IDs this agent is the CUSTODIAN of — i.e. it owns the upkeep
+   * of the store, not merely read access. The primitive behind the `brain`
+   * pattern: a custodian wires dropped files into the graph (links, tags,
+   * index hubs, dedupe). See `docs/company-brain-design.md`.
+   */
+  custodianOf?: string[];
+  /**
+   * Optional, declared vocabulary of maintenance verbs this custodian performs
+   * (e.g. ["link", "tag", "index", "dedupe"]). Omit to let the agent infer its
+   * duties from its prompt. The verb NAMES are language vocabulary; HOW each is
+   * done well stays in the skill repo (MOAT).
+   */
+  custodianDoes?: string[];
   /** Output enum definitions. */
   outputs?: OutputsMap;
   /** Scale / parallelism configuration. */

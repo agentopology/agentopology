@@ -470,6 +470,22 @@ export function parseAgent(
   }
   if (fields.retrieval) node.retrieval = fields.retrieval;
 
+  // Custody: `custodian-of: [store, ...]` with optional `{ does: [verb, ...] }`.
+  // The store-list appears before an optional brace block. Match the list first,
+  // then look inside the block (if any) for `does`.
+  const custodyMatch = /custodian-of\s*:\s*\[([^\]]*)\]/.exec(body);
+  if (custodyMatch) {
+    const stores = parseList(custodyMatch[1]);
+    if (stores.length) node.custodianOf = stores;
+    const custodyBlock = extractBlock(body, "custodian-of");
+    if (custodyBlock) {
+      const does = parseMultilineList(custodyBlock.body, "does");
+      const doesInline = parseFields(custodyBlock.body).does;
+      if (does.length) node.custodianDoes = does;
+      else if (doesInline) node.custodianDoes = parseList(doesInline);
+    }
+  }
+
   if (outputs) node.outputs = outputs;
 
   // Parse scale sub-block
@@ -955,10 +971,13 @@ function parseScoringConfig(body: string): ScoringConfig {
 export function parseStore(id: string, body: string): StoreNode {
   const fields = parseFields(body);
 
+  // `brain` stores are file-native (Obsidian-format markdown) — their backend
+  // is always `files`, never a database. Every other type defaults to lancedb.
+  const type = fields.type ?? "semantic";
   const store: StoreNode = {
     id,
-    type: fields.type ?? "semantic",
-    backend: fields.backend ?? "lancedb",
+    type,
+    backend: fields.backend ?? (type === "brain" ? "files" : "lancedb"),
   };
 
   if (fields.description) store.description = unquote(fields.description);
@@ -966,6 +985,7 @@ export function parseStore(id: string, body: string): StoreNode {
   if (fields.isolation) store.isolation = fields.isolation;
   if (fields.path) store.path = unquote(fields.path);
   if (fields.extraction) store.extraction = fields.extraction;
+  if (fields.format) store.format = fields.format;
 
   // Connection: may use `secret "uri"` modifier (same pattern as parseCheckpoint)
   if (fields.connection) {
