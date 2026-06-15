@@ -7779,4 +7779,30 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     const errors = validate(ast).filter((r) => r.level === "error");
     expect(errors).toHaveLength(0);
   });
+
+  it("round-trips the team-of-N company-brain-team.at example cleanly", () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain-team.at"),
+      "utf8"
+    );
+    const ast = parse(src);
+    const errors = validate(ast).filter((r) => r.level === "error");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("team example: two distinct custodians of the same brain, with different verbs", () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain-team.at"),
+      "utf8"
+    );
+    const ast = parse(src);
+    const librarian = ast.nodes.find((n) => n.id === "librarian") as AgentNode;
+    const auditor = ast.nodes.find((n) => n.id === "auditor") as AgentNode;
+    // Both own the same brain store — custody is not exclusive.
+    expect(librarian.custodianOf).toEqual(["brain"]);
+    expect(auditor.custodianOf).toEqual(["brain"]);
+    // But they perform different maintenance verbs (different roles, same layer).
+    expect(librarian.custodianDoes).toEqual(["link", "tag", "index", "dedupe"]);
+    expect(auditor.custodianDoes).toEqual(["heal", "dedupe", "index"]);
+  });
 });

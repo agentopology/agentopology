@@ -1,0 +1,224 @@
+# company-brain-team.at — A team of agents that build & maintain a company brain
+#
+# The flagship "company brain" topology. A folder of Obsidian-format markdown,
+# fed and maintained by a TEAM — not one librarian:
+#
+#   📧 gmail-ingester    ─┐
+#   💬 slack-ingester    ─┼─► drop raw notes into brain/    ─► 👤 librarian wires them
+#   📅 calendar-ingester ─┘    (each owns ONE source)          (links, tags, hubs)
+#                                                              ─► 🔍 auditor heals the graph
+#
+# - Ingesters are scheduled — they pull from their source and write raw markdown.
+# - The librarian is custodian-of the brain: it wires dropped notes into the graph.
+# - The auditor is custodian-of the brain too: it heals broken links, surfaces
+#   ghost nodes, and flags duplicates.
+# - A researcher reads the brain to answer questions.
+#
+# This is the whitespace: declarative + multi-agent team + Obsidian-portable +
+# agents own memory layers. Demonstrates `brain` + `custodian-of` + ingestion.
+
+topology company-brain-team : [brain, event-driven, human-gate] {
+
+  meta {
+    version: "0.1.0"
+    description: "A team of agents that ingest, wire, and maintain a company brain"
+  }
+
+  # --- The brain: one Obsidian-format markdown vault, no database ---
+
+  memory {
+    store brain {
+      type: brain
+      description: "The company brain — fed by ingesters, wired by the librarian"
+      path: "brain/"
+      format: obsidian
+      scope: org
+    }
+  }
+
+  # --- Ingesters: each owns ONE external source, writes raw notes ---
+
+  agent gmail-ingester {
+    model: sonnet
+    description: "Pulls notable emails and writes them as raw notes into the brain"
+    tools: [Read, Write, Grep, Glob]
+    mcp-servers: [gmail]
+    writes: ["brain/"]
+
+    prompt {
+        You ingest email into the brain. On each run:
+        - Pull recent notable threads (decisions, deals, intros, commitments).
+        - For each, write ONE raw markdown note into `brain/` with a clear title
+          and YAML frontmatter (date, source: gmail, participants).
+        - Do NOT wire links or tags — that is the librarian's job. Just capture
+          the content faithfully. Skip noise (newsletters, automated mail).
+    }
+  }
+
+  agent slack-ingester {
+    model: sonnet
+    description: "Captures key Slack decisions and threads as raw notes"
+    tools: [Read, Write, Grep, Glob]
+    mcp-servers: [slack]
+    writes: ["brain/"]
+
+    prompt {
+        You ingest Slack into the brain. On each run, capture threads where a
+        decision was made, a commitment given, or knowledge shared. Write each
+        as ONE raw markdown note in `brain/` with frontmatter (date, source:
+        slack, channel). Leave linking and tagging to the librarian.
+    }
+  }
+
+  agent calendar-ingester {
+    model: sonnet
+    description: "Turns meetings into raw notes (attendees, outcomes)"
+    tools: [Read, Write, Grep, Glob]
+    mcp-servers: [calendar]
+    writes: ["brain/"]
+
+    prompt {
+        You ingest calendar events into the brain. For meetings that mattered,
+        write ONE raw markdown note in `brain/` with frontmatter (date, source:
+        calendar, attendees) and any outcomes/notes you can infer. No linking —
+        that is the librarian's job.
+    }
+  }
+
+  # --- Librarian: custodian that WIRES dropped notes into the graph ---
+
+  agent librarian {
+    model: sonnet
+    description: "Wires raw notes into the brain graph — links, tags, hubs"
+    tools: [Read, Write, Edit, Grep, Glob]
+
+    custodian-of: [brain] {
+      does: [link, tag, index, dedupe]
+    }
+
+    prompt {
+        You are the brain's librarian. Raw notes arrive from the ingesters and
+        from humans. You never invent content — you wire what is dropped in.
+        Resolve mentions into [[wikilinks]], assign #nested/tags, keep the hub
+        notes current, and flag duplicates. Leave ghost links to mark gaps.
+    }
+  }
+
+  # --- Auditor: custodian that keeps the whole graph HEALTHY ---
+
+  agent auditor {
+    model: opus
+    description: "Heals the brain — broken links, ghost nodes, orphans, dupes"
+    tools: [Read, Edit, Grep, Glob]
+
+    custodian-of: [brain] {
+      does: [heal, dedupe, index]
+    }
+
+    prompt {
+        You audit the brain's health. Find and repair broken [[links]] after
+        renames, surface ghost nodes (links to notes that don't exist), flag
+        orphan notes (nothing links to them), and propose merges for duplicates.
+        Conservative: repair links and report issues — never delete a human's note.
+    }
+  }
+
+  # --- Researcher: READS the brain to answer questions ---
+
+  agent researcher {
+    model: sonnet
+    description: "Answers questions by traversing the brain"
+    tools: [Read, Grep, Glob]
+    memory: [brain]
+
+    prompt {
+        Answer questions using only the brain in `brain/`. Grep for relevant
+        notes, follow their [[wikilinks]] and #tags, and cite notes by filename.
+    }
+  }
+
+  # --- Actions (flow entry/exit points) ---
+
+  action wire-in {
+    kind: inline
+    description: "Fold a dropped or freshly-ingested note into the brain"
+  }
+
+  action audit {
+    kind: report
+    description: "Report the brain's health: ghosts, orphans, broken links, dupes"
+  }
+
+  action query {
+    kind: inline
+    description: "Ask the brain a question"
+  }
+
+  # --- Flow: ingesters feed the librarian; auditor runs after; researcher reads ---
+
+  flow {
+    gmail-ingester    -> wire-in
+    slack-ingester    -> wire-in
+    calendar-ingester -> wire-in
+    wire-in           -> librarian
+    librarian         -> auditor
+    auditor           -> audit
+    query             -> researcher
+  }
+
+  # --- Schedule: ingesters and the auditor run on their own cadence ---
+
+  schedule {
+    job pull-email {
+      cron: "0 */2 * * *"
+      agent: gmail-ingester
+    }
+    job pull-slack {
+      cron: "0 */2 * * *"
+      agent: slack-ingester
+    }
+    job pull-calendar {
+      cron: "0 8 * * *"
+      agent: calendar-ingester
+    }
+    job nightly-audit {
+      cron: "0 3 * * *"
+      agent: auditor
+    }
+  }
+
+  # --- Triggers: humans can wire a file or ask the brain anytime ---
+
+  triggers {
+    command wire-in {
+      pattern: "/wire-in <FILE>"
+      argument: FILE
+      description: "Fold a dropped markdown file into the brain"
+    }
+    command query {
+      pattern: "/ask <QUESTION>"
+      argument: QUESTION
+      description: "Ask the brain a question"
+    }
+  }
+
+  # --- External sources the ingesters connect to ---
+
+  mcp-servers {
+    gmail {
+      type: stdio
+      command: "npx"
+      args: ["-y", "gmail-mcp-server"]
+    }
+    slack {
+      type: stdio
+      command: "npx"
+      args: ["-y", "slack-mcp-server"]
+    }
+    calendar {
+      type: stdio
+      command: "npx"
+      args: ["-y", "calendar-mcp-server"]
+    }
+  }
+}
