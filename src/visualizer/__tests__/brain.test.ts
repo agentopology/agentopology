@@ -106,4 +106,39 @@ describe("Brain visualizer — vault parser", () => {
     expect(html).toContain("center:0.008");
     expect(html).not.toMatch(/center:8\b/);
   });
+
+  it("infers ghost CATEGORY from namespaced tags (a person stays a person)", () => {
+    // A note tagged person/x, org/y, topic/z tells us the category of the
+    // ghost slugs x, y, z even though their notes don't exist. This is what
+    // makes Amitai a 'person' node, not a generic 'ghost'.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "brain-cat-"));
+    fs.writeFileSync(
+      path.join(dir, "meeting.md"),
+      `---\ntags:\n  - person/amitai\n  - org/acme\n  - topic/litigation-ai\n---\n# Meeting\n[[amitai]] from [[acme]] re [[litigation-ai]].\n`
+    );
+    const g = parseBrainVault(dir);
+    const byId = Object.fromEntries(g.nodes.map((n) => [n.id, n]));
+    expect(byId["amitai"].kind).toBe("ghost");
+    expect(byId["amitai"].category).toBe("person"); // not a generic ghost — a person
+    expect(byId["acme"].category).toBe("org");
+    expect(byId["litigation-ai"].category).toBe("topic");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("inlines note content for offline click-to-open (no server needed)", () => {
+    const g = parseBrainVault(vault);
+    const acme = g.nodes.find((n) => n.id === "acme-corp");
+    expect(acme?.content).toContain("Acme Corp"); // body inlined into the node
+    const html = renderBrainHtml(g);
+    expect(html).toContain("openNode"); // the click-to-open handler is present
+  });
+
+  it("emits a topology back-link when given a topologyHref", () => {
+    const html = renderBrainHtml(parseBrainVault(vault), {
+      topologyHref: "company-brain-team-topology.html",
+      topologyName: "company-brain-team",
+    });
+    expect(html).toContain('class="back-link"');
+    expect(html).toContain("company-brain-team-topology.html");
+  });
 });

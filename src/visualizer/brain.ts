@@ -23,12 +23,36 @@ export interface BrainNode {
   id: string;
   /** Display title (from first `# heading`, else the slug). */
   title: string;
-  /** "note" (real file), "ghost" (linked but not yet written), or "index" (a hub). */
-  kind: "note" | "ghost" | "index";
+  /**
+   * Existence status — orthogonal to category. "written" = a real .md file,
+   * "ghost" = linked but not yet written, "index" = a hub note.
+   */
+  kind: "written" | "ghost" | "index";
+  /**
+   * What KIND of thing this is, inferred from tag namespaces (person/org/topic)
+   * — NOT the same as existence. A person who has no note yet is category
+   * "person", kind "ghost". This is what makes the graph a knowledge graph
+   * rather than a bag of links: a person is colored like a person whether or
+   * not their note exists.
+   */
+  category: "person" | "org" | "topic" | "note";
   /** Frontmatter + inline tags on this note. */
   tags: string[];
   /** Number of inbound links (for sizing). */
   inbound: number;
+  /** Raw markdown body (written notes only) — inlined so click-to-open works offline. */
+  content?: string;
+}
+
+/** Map a tag namespace prefix to a node category. */
+function categoryFromTags(tags: string[]): BrainNode["category"] {
+  for (const t of tags) {
+    const ns = t.split("/")[0];
+    if (ns === "person" || ns === "people") return "person";
+    if (ns === "org" || ns === "client" || ns === "company") return "org";
+    if (ns === "topic" || ns === "tag") return "topic";
+  }
+  return "note";
 }
 
 /** A directed edge from one note to another (a `[[wikilink]]`). */
@@ -122,6 +146,8 @@ export function parseBrainVault(vaultPath: string): BrainGraph {
   const nodes = new Map<string, BrainNode>();
   const edges: BrainEdge[] = [];
   const tagCounts = new Map<string, number>();
+  // slug -> inferred category, learned from `person/x` / `org/x` / `topic/x` tags.
+  const ghostCategory = new Map<string, BrainNode["category"]>();
 
   for (const file of files) {
     const id = path.basename(file, ".md");
@@ -141,10 +167,25 @@ export function parseBrainVault(vaultPath: string): BrainGraph {
     nodes.set(id, {
       id,
       title: firstHeading(content) ?? id,
-      kind: isIndex ? "index" : "note",
+      kind: isIndex ? "index" : "written",
+      category: categoryFromTags(tags),
       tags,
       inbound: 0,
+      content,
     });
+
+    // A tag like `person/amitai-eliram` tells us the SLUG `amitai-eliram` is a
+    // person — even if its note doesn't exist yet. Record that so ghosts get the
+    // right category (a person stays a person whether or not their note exists).
+    for (const t of tags) {
+      const [ns, slug] = t.split("/");
+      if (!slug) continue;
+      const cat =
+        ns === "person" || ns === "people" ? "person" :
+        ns === "org" || ns === "client" || ns === "company" ? "org" :
+        ns === "topic" ? "topic" : null;
+      if (cat && !ghostCategory.has(slug)) ghostCategory.set(slug, cat);
+    }
 
     // Extract wikilink edges — dedupe within a note (Obsidian's graph draws one
     // edge per (source, target) pair, however many times the link is repeated).
@@ -157,8 +198,19 @@ export function parseBrainVault(vaultPath: string): BrainGraph {
       edges.push({ from: id, to: target });
       // Ghost node: linked but no file exists.
       if (!realIds.has(target) && !nodes.has(target)) {
-        nodes.set(target, { id: target, title: target, kind: "ghost", tags: [], inbound: 0 });
+        nodes.set(target, {
+          id: target, title: target, kind: "ghost",
+          category: "note", tags: [], inbound: 0,
+        });
       }
+    }
+  }
+
+  // Apply inferred categories to ghost nodes (and any node still "note" that we
+  // learned about from another note's namespaced tags).
+  for (const n of nodes.values()) {
+    if (n.category === "note" && ghostCategory.has(n.id)) {
+      n.category = ghostCategory.get(n.id)!;
     }
   }
 
@@ -175,11 +227,23 @@ export function parseBrainVault(vaultPath: string): BrainGraph {
   return { nodes: Array.from(nodes.values()), edges, tags, vaultPath };
 }
 
+/** Options for rendering the brain HTML. */
+export interface RenderBrainOptions {
+  /**
+   * Relative href to the topology visualization for this brain, if known.
+   * When set, the brain view shows a "← Topology" link back to it.
+   */
+  topologyHref?: string;
+  /** Display name of the owning topology (shown on the back-link). */
+  topologyName?: string;
+}
+
 /**
  * Render a brain graph as a self-contained, dependency-free HTML page with an
- * Obsidian-style force-directed graph view.
+ * Obsidian-style force-directed graph view, styled to match the AgentTopology
+ * visualizer.
  */
-export function renderBrainHtml(graph: BrainGraph): string {
+export function renderBrainHtml(graph: BrainGraph, opts: RenderBrainOptions = {}): string {
   const vaultName = path.basename(graph.vaultPath.replace(/\/+$/, "")) || "brain";
   const realCount = graph.nodes.filter((n) => n.kind !== "ghost").length;
   const ghostCount = graph.nodes.filter((n) => n.kind === "ghost").length;
@@ -190,12 +254,17 @@ export function renderBrainHtml(graph: BrainGraph): string {
     tags: graph.tags.slice(0, 24),
   });
 
+  const backLink = opts.topologyHref
+    ? `<a class="back-link" href="${escapeHtml(opts.topologyHref)}">← ${escapeHtml(opts.topologyName ?? "Topology")}</a>`
+    : "";
+
   return BRAIN_HTML
     .replace(/__VAULT__/g, escapeHtml(vaultName))
     .replace("__NOTES__", String(realCount))
     .replace("__LINKS__", String(graph.edges.length))
     .replace("__GHOSTS__", String(ghostCount))
     .replace("__TAGS__", String(graph.tags.length))
+    .replace("__BACKLINK__", backLink)
     .replace("__DATA__", data);
 }
 
@@ -208,186 +277,231 @@ function escapeHtml(s: string): string {
 /**
  * The HTML shell. Self-contained: inline CSS + a tiny force-directed canvas
  * renderer using the same four forces Obsidian exposes (center, repel, link
- * spring, link distance). No external scripts, no build step.
+ * spring, link distance). Styled to match the AgentTopology visualizer.
+ * Nodes are colored by CATEGORY (person/org/topic/note); ghosts are drawn
+ * hollow (same color, dashed, unfilled) — "not written yet" is a status, not
+ * a category. Click a node to open its note in the side panel.
  */
-const BRAIN_HTML = `<!doctype html>
+const BRAIN_HTML = String.raw`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__VAULT__ — Brain Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root{--bg:#1a1b26;--panel:#16161e;--line:#2f3142;--text:#c0caf5;--dim:#565f89;
-        --note:#7aa2f7;--ghost:#f7768e;--index:#9ece6a;--tag:#e0af68;--accent:#bb9af7}
+  :root{
+    --bg:#0A0A0A;--s:#111111;--s2:#161616;--b:#1e1e1e;--b2:#2a2a2a;
+    --t:#e4e4ef;--t2:#878593;--t3:#56545e;
+    --person:#60a5fa;--org:#4ade80;--topic:#fbbf24;--note:#a78bfa;--index:#22d3ee;
+    --accent:#a78bfa;
+    --font-mono:'JetBrains Mono',monospace;--font-body:'Noto Sans',sans-serif;
+  }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
-    font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
-  #hud{position:fixed;top:14px;left:14px;z-index:10;background:#16161ecc;backdrop-filter:blur(10px);
-    padding:14px 16px;border-radius:12px;border:1px solid var(--line);max-width:260px}
-  #hud h1{margin:0 0 2px;font-size:15px;color:var(--accent)}
-  #hud .sub{color:var(--dim);font-size:11px;margin-bottom:10px}
-  #hud .stat{display:flex;justify-content:space-between;font-size:12px;padding:2px 0}
-  #hud .stat b{color:var(--text)}
-  .legend{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
-  .legend div{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);padding:2px 0}
-  .dot{width:9px;height:9px;border-radius:50%;flex:none}
-  #search{position:fixed;top:14px;right:14px;z-index:10}
-  #search input{background:#16161ecc;backdrop-filter:blur(10px);border:1px solid var(--line);
-    color:var(--text);border-radius:9px;padding:8px 12px;width:200px;font-size:12px;outline:none}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--t);
+    font-family:var(--font-body);font-size:13px;line-height:1.5;overflow:hidden}
+  #app{display:flex;height:100vh}
+  #stage{flex:1;position:relative;overflow:hidden}
+  #header{position:fixed;top:0;left:0;right:0;height:46px;z-index:15;display:flex;align-items:center;gap:14px;
+    padding:0 18px;background:var(--s);border-bottom:1px solid var(--b)}
+  #header .brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}
+  #header .vault{font-family:var(--font-mono);font-size:12px;color:var(--t2);background:var(--s2);
+    padding:3px 10px;border-radius:6px;border:1px solid var(--b)}
+  #header .spacer{flex:1}
+  #header .stats{display:flex;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--t3)}
+  #header .stats b{color:var(--t2);font-weight:500}
+  .back-link{font-family:var(--font-mono);font-size:11px;color:var(--accent);text-decoration:none;
+    border:1px solid var(--b2);border-radius:6px;padding:4px 10px;transition:.15s}
+  .back-link:hover{background:rgba(167,139,250,.1);border-color:var(--accent)}
+  #search input{background:var(--s2);border:1px solid var(--b);color:var(--t);border-radius:7px;
+    padding:6px 11px;width:180px;font-size:12px;font-family:var(--font-body);outline:none}
   #search input:focus{border-color:var(--accent)}
-  #tip{position:fixed;z-index:20;background:#16161e;border:1px solid var(--line);border-radius:8px;
+  #legend{position:fixed;left:14px;bottom:14px;z-index:12;background:var(--s);border:1px solid var(--b);
+    border-radius:10px;padding:10px 14px}
+  #legend .row{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--t2);padding:2px 0}
+  #legend .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  #legend .hr{height:1px;background:var(--b);margin:7px 0}
+  #legend .hollow{font-size:10px;color:var(--t3)}
+  #controls{position:fixed;right:14px;bottom:14px;z-index:12;background:var(--s);border:1px solid var(--b);
+    border-radius:10px;padding:10px 14px;display:flex;gap:16px;font-size:10px;font-family:var(--font-mono)}
+  #controls label{display:flex;flex-direction:column;gap:4px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px}
+  #controls input[type=range]{width:78px;accent-color:var(--accent)}
+  #tip{position:fixed;z-index:20;background:var(--s);border:1px solid var(--b2);border-radius:8px;
     padding:7px 11px;font-size:11px;pointer-events:none;opacity:0;transition:opacity .12s;max-width:260px}
   #tip.show{opacity:1}
-  #tip .t{color:var(--accent);font-weight:600}
-  #tip .tags{color:var(--tag);font-size:10px;margin-top:3px}
+  #tip .t{color:var(--t);font-weight:600}
+  #tip .cat{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:1px}
+  #tip .tags{color:var(--topic);font-size:10px;margin-top:3px;font-family:var(--font-mono)}
   canvas{display:block;cursor:grab}
-  canvas:active{cursor:grabbing}
-  #controls{position:fixed;bottom:14px;left:14px;z-index:10;background:#16161ecc;backdrop-filter:blur(10px);
-    border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;gap:16px;font-size:11px}
-  #controls label{display:flex;flex-direction:column;gap:3px;color:var(--dim)}
-  #controls input[type=range]{width:80px;accent-color:var(--accent)}
+  #panel{width:0;background:var(--s);border-left:1px solid var(--b);overflow:hidden;transition:width .2s;flex:none}
+  #panel.open{width:400px}
+  #panel-in{width:400px;height:100vh;padding:54px 22px 22px;overflow-y:auto;position:relative}
+  .p-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .p-dot{width:13px;height:13px;border-radius:50%;flex:none}
+  .p-title{font-size:17px;font-weight:600}
+  .p-cat{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:1px;padding:2px 7px;border-radius:4px}
+  .p-ghost{font-family:var(--font-mono);font-size:11px;color:var(--topic);margin:8px 0 12px}
+  .p-tags{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 16px}
+  .p-tag{font-family:var(--font-mono);font-size:10px;color:var(--t2);background:var(--s2);border:1px solid var(--b);border-radius:4px;padding:2px 7px}
+  .p-md{font-size:13px;line-height:1.7;color:var(--t)}
+  .p-md h1,.p-md h2,.p-md h3{font-size:15px;margin:16px 0 6px}
+  .p-md a{color:var(--accent);text-decoration:none;cursor:pointer}
+  .p-md a:hover{text-decoration:underline}
+  .p-md code{font-family:var(--font-mono);font-size:11px;background:var(--s2);padding:1px 5px;border-radius:3px}
+  .p-md blockquote{border-left:2px solid var(--b2);margin:8px 0;padding:2px 0 2px 12px;color:var(--t2)}
+  .p-md hr{border:none;border-top:1px solid var(--b);margin:14px 0}
+  .p-close{position:absolute;top:54px;right:18px;cursor:pointer;color:var(--t3);font-size:18px}
+  .p-close:hover{color:var(--t)}
+  .p-links{margin-top:18px;border-top:1px solid var(--b);padding-top:12px}
+  .p-links h4{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--t3);margin:0 0 8px}
+  .p-links a{display:block;color:var(--accent);text-decoration:none;font-size:12px;padding:2px 0;cursor:pointer}
+  .p-links a:hover{text-decoration:underline}
 </style></head>
 <body>
-<div id="hud">
-  <h1>🧠 __VAULT__</h1>
-  <div class="sub">A brain graph — no Obsidian required</div>
-  <div class="stat"><span>Notes</span><b>__NOTES__</b></div>
-  <div class="stat"><span>Links</span><b>__LINKS__</b></div>
-  <div class="stat"><span>Ghost nodes</span><b>__GHOSTS__</b></div>
-  <div class="stat"><span>Tags</span><b>__TAGS__</b></div>
-  <div class="legend">
-    <div><span class="dot" style="background:var(--note)"></span>note</div>
-    <div><span class="dot" style="background:var(--index)"></span>index / hub</div>
-    <div><span class="dot" style="background:var(--ghost)"></span>ghost (not yet written)</div>
+<div id="header">
+  <div class="brand">🧠 <span>Brain</span></div>
+  <div class="vault">__VAULT__</div>
+  __BACKLINK__
+  <div class="spacer"></div>
+  <div class="stats">
+    <span><b>__NOTES__</b> notes</span><span><b>__LINKS__</b> links</span>
+    <span><b>__GHOSTS__</b> ghosts</span><span><b>__TAGS__</b> tags</span>
   </div>
+  <div id="search"><input id="q" placeholder="Search…" autocomplete="off"></div>
 </div>
-<div id="search"><input id="q" placeholder="Search notes…" autocomplete="off"></div>
-<div id="tip"></div>
-<div id="controls">
-  <label>Repel<input type="range" id="repel" min="200" max="6000" value="2200"></label>
-  <label>Link dist<input type="range" id="dist" min="40" max="300" value="120"></label>
-  <label>Center<input type="range" id="center" min="0" max="30" value="8"></label>
+<div id="app">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="legend">
+      <div class="row"><span class="dot" style="background:var(--person)"></span>person</div>
+      <div class="row"><span class="dot" style="background:var(--org)"></span>org</div>
+      <div class="row"><span class="dot" style="background:var(--topic)"></span>topic</div>
+      <div class="row"><span class="dot" style="background:var(--note)"></span>note</div>
+      <div class="row"><span class="dot" style="background:var(--index)"></span>index / hub</div>
+      <div class="hr"></div>
+      <div class="row hollow"><span class="dot" style="background:transparent;border:1.5px dashed var(--t3)"></span>hollow = not written yet</div>
+    </div>
+    <div id="controls">
+      <label>Repel<input type="range" id="repel" min="200" max="6000" value="2200"></label>
+      <label>Dist<input type="range" id="dist" min="40" max="300" value="120"></label>
+      <label>Center<input type="range" id="center" min="0" max="30" value="8"></label>
+    </div>
+    <div id="tip"></div>
+  </div>
+  <div id="panel"><div id="panel-in"></div></div>
 </div>
-<canvas id="c"></canvas>
 <script>
 const DATA = __DATA__;
 const c = document.getElementById('c'), x = c.getContext('2d');
 let W, H, DPR = Math.min(devicePixelRatio||1, 2);
-function size(){ W=innerWidth; H=innerHeight; c.width=W*DPR; c.height=H*DPR; c.style.width=W+'px'; c.style.height=H+'px'; x.setTransform(DPR,0,0,DPR,0,0); }
+function size(){ const st=document.getElementById('stage').getBoundingClientRect();
+  W=st.width; H=st.height; c.width=W*DPR; c.height=H*DPR; c.style.width=W+'px'; c.style.height=H+'px'; x.setTransform(DPR,0,0,DPR,0,0); }
 size(); addEventListener('resize', size);
 
-const COL = { note:'#7aa2f7', ghost:'#f7768e', index:'#9ece6a' };
-// Build node objects with positions.
+const CAT = { person:'#60a5fa', org:'#4ade80', topic:'#fbbf24', note:'#a78bfa' };
+function nodeColor(n){ return n.kind==='index' ? '#22d3ee' : (CAT[n.category]||CAT.note); }
+
 const N = new Map();
 for (const n of DATA.nodes){
-  N.set(n.id, Object.assign({}, n, {
-    x: W/2 + (Math.random()-.5)*Math.min(W,600),
-    y: H/2 + (Math.random()-.5)*Math.min(H,600),
-    vx:0, vy:0
-  }));
+  N.set(n.id, Object.assign({}, n, { x: W/2+(Math.random()-.5)*Math.min(W,600), y: H/2+(Math.random()-.5)*Math.min(H,600), vx:0, vy:0 }));
 }
-// Only keep edges whose endpoints exist.
 const E = DATA.edges.filter(e => N.has(e.from) && N.has(e.to));
 
-// Camera (pan + zoom).
 let cam = { x:0, y:0, z:1 };
-// center is stored already-scaled (slider value / 1000) to match the integrator.
 let forces = { repel:2200, dist:120, center:0.008 };
 document.getElementById('repel').oninput  = e => forces.repel  = +e.target.value;
 document.getElementById('dist').oninput   = e => forces.dist   = +e.target.value;
 document.getElementById('center').oninput = e => forces.center = +e.target.value / 1000;
 
-// Interaction state — declared BEFORE the animation loop because step() reads
-// \`drag\` every frame (let-bindings are not hoisted; referencing them before this
-// point throws "Cannot access 'drag' before initialization").
-let drag=null, hover=null, panning=false, last={x:0,y:0}, query='';
-
+let drag=null, hover=null, panning=false, last={x:0,y:0}, query='', selected=null;
 function radius(n){ return (n.kind==='index'?7:5) + Math.min(n.inbound*1.4, 10); }
 
 function step(){
   const nodes = [...N.values()];
-  // Repel — every pair pushes apart (Obsidian repelStrength).
-  for (let i=0;i<nodes.length;i++){
-    const a = nodes[i];
-    for (let j=i+1;j<nodes.length;j++){
-      const b = nodes[j];
+  for (let i=0;i<nodes.length;i++){ const a=nodes[i];
+    for (let j=i+1;j<nodes.length;j++){ const b=nodes[j];
       let dx=a.x-b.x, dy=a.y-b.y, d2=dx*dx+dy*dy||1, d=Math.sqrt(d2);
-      const f = forces.repel / d2;
-      const fx=dx/d*f, fy=dy/d*f;
-      a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
-    }
-  }
-  // Link spring — pull connected nodes toward linkDistance (Obsidian linkStrength+linkDistance).
-  for (const e of E){
-    const a=N.get(e.from), b=N.get(e.to);
+      const f=forces.repel/d2, fx=dx/d*f, fy=dy/d*f; a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy; } }
+  for (const e of E){ const a=N.get(e.from), b=N.get(e.to);
     let dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy)||1;
-    const f=(d-forces.dist)*0.015;
-    const fx=dx/d*f, fy=dy/d*f;
-    a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy;
-  }
-  // Center pull (Obsidian centerStrength) + integrate.
-  for (const n of nodes){
-    if (n===drag) continue;
-    n.vx += (W/2 - n.x)*forces.center;
-    n.vy += (H/2 - n.y)*forces.center;
-    n.x += (n.vx*=0.82); n.y += (n.vy*=0.82);
-  }
+    const f=(d-forces.dist)*0.015, fx=dx/d*f, fy=dy/d*f; a.vx+=fx; a.vy+=fy; b.vx-=fx; b.vy-=fy; }
+  for (const n of nodes){ if(n===drag)continue;
+    n.vx+=(W/2-n.x)*forces.center; n.vy+=(H/2-n.y)*forces.center; n.x+=(n.vx*=0.82); n.y+=(n.vy*=0.82); }
 }
-
-function toScreen(n){ return { x:(n.x-W/2)*cam.z + W/2 + cam.x, y:(n.y-H/2)*cam.z + H/2 + cam.y }; }
-function fromScreen(px,py){ return { x:(px-W/2-cam.x)/cam.z + W/2, y:(py-H/2-cam.y)/cam.z + H/2 }; }
+function toScreen(n){ return { x:(n.x-W/2)*cam.z+W/2+cam.x, y:(n.y-H/2)*cam.z+H/2+cam.y }; }
+function fromScreen(px,py){ return { x:(px-W/2-cam.x)/cam.z+W/2, y:(py-H/2-cam.y)/cam.z+H/2 }; }
 
 function draw(){
-  x.clearRect(0,0,W,H);
-  // Edges.
-  x.lineWidth = 1;
-  for (const e of E){
-    const a=toScreen(N.get(e.from)), b=toScreen(N.get(e.to));
-    const ghost = N.get(e.from).kind==='ghost' || N.get(e.to).kind==='ghost';
-    x.strokeStyle = ghost ? 'rgba(247,118,142,.22)' : 'rgba(86,95,137,.35)';
-    x.beginPath(); x.moveTo(a.x,a.y); x.lineTo(b.x,b.y); x.stroke();
-  }
-  // Nodes.
+  x.clearRect(0,0,W,H); x.lineWidth=1;
+  for (const e of E){ const na=N.get(e.from), nb=N.get(e.to), a=toScreen(na), b=toScreen(nb);
+    const hot=selected&&(e.from===selected.id||e.to===selected.id);
+    const g=na.kind==='ghost'||nb.kind==='ghost';
+    x.strokeStyle = hot?'rgba(167,139,250,.55)':(g?'rgba(135,133,147,.16)':'rgba(135,133,147,.30)');
+    x.beginPath(); x.moveTo(a.x,a.y); x.lineTo(b.x,b.y); x.stroke(); }
   for (const n of N.values()){
-    const p=toScreen(n), r=radius(n)*cam.z;
-    const match = query && n.title.toLowerCase().includes(query);
-    x.globalAlpha = n.kind==='ghost' ? .5 : 1;
-    x.beginPath(); x.arc(p.x,p.y,r,0,7); x.fillStyle=COL[n.kind]; x.fill();
-    if (n.kind==='ghost'){ x.setLineDash([3,3]); x.strokeStyle=COL.ghost; x.lineWidth=1; x.stroke(); x.setLineDash([]); }
-    if (match || n===hover){ x.lineWidth=2; x.strokeStyle='#fff'; x.stroke(); }
-    x.globalAlpha=1;
-    // Labels — only when zoomed in enough or hovered/matched.
-    if (cam.z>0.65 || n===hover || match){
-      x.fillStyle = (n===hover||match)?'#fff':'#a9b1d6';
-      x.font = (n.kind==='index'?'600 ':'') + (11*Math.min(cam.z,1.3))+'px sans-serif';
-      x.textAlign='center';
-      x.fillText(n.title, p.x, p.y + r + 11);
-    }
+    const p=toScreen(n), r=radius(n)*cam.z, col=nodeColor(n);
+    const match=query&&(n.title.toLowerCase().includes(query)||n.id.toLowerCase().includes(query));
+    const active=n===hover||n===selected||match;
+    if (n.kind==='ghost'){
+      x.beginPath(); x.arc(p.x,p.y,r,0,7); x.fillStyle='rgba(10,10,10,.6)'; x.fill();
+      x.lineWidth=1.5; x.setLineDash([3,3]); x.strokeStyle=col; x.globalAlpha=.85; x.stroke(); x.setLineDash([]); x.globalAlpha=1;
+    } else { x.beginPath(); x.arc(p.x,p.y,r,0,7); x.fillStyle=col; x.fill(); }
+    if (active){ x.lineWidth=2; x.strokeStyle='#fff'; x.beginPath(); x.arc(p.x,p.y,r+1.5,0,7); x.stroke(); }
+    if (cam.z>0.6 || active){
+      x.fillStyle = active?'#fff':'#878593';
+      x.font = (n.kind==='index'?'600 ':'')+(11*Math.min(cam.z,1.3))+'px "Noto Sans",sans-serif';
+      x.textAlign='center'; x.fillText(n.title, p.x, p.y+r+12); }
   }
 }
 (function loop(){ step(); draw(); requestAnimationFrame(loop); })();
 
-// Interaction: pan, zoom, drag nodes, hover tooltip. (drag/hover/panning/last/
-// query are declared above, before the loop.)
-const tip=document.getElementById('tip');
-function pick(px,py){
-  const w=fromScreen(px,py); let best=null,bd=1e9;
-  for (const n of N.values()){ const d=Math.hypot(n.x-w.x,n.y-w.y); if(d<bd&&d<radius(n)+6){bd=d;best=n;} }
-  return best;
+const panel=document.getElementById('panel'), panelIn=document.getElementById('panel-in');
+function mdToHtml(md){
+  md = md.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  return md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>')
+    .replace(/^&gt; (.*)$/gm,'<blockquote>$1</blockquote>').replace(/^---$/gm,'<hr>')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/` + "`([^`]+)`" + String.raw`/g,'<code>$1</code>')
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,(m,t,a)=>'<a data-link="'+t.trim()+'">'+(a||t).trim()+'</a>')
+    .replace(/\n\n/g,'<br><br>').replace(/\n/g,'<br>');
 }
-c.addEventListener('mousedown', e=>{
-  const n=pick(e.clientX,e.clientY);
-  if(n){ drag=n; } else { panning=true; last={x:e.clientX,y:e.clientY}; }
-});
+function openNode(n){
+  selected=n; const col=nodeColor(n);
+  const catLabel = n.kind==='index'?'INDEX':(n.category||'note').toUpperCase();
+  let h='<div class="p-close" onclick="closePanel()">×</div>';
+  h+='<div class="p-head"><span class="p-dot" style="'+(n.kind==='ghost'?'background:transparent;border:1.5px dashed '+col:'background:'+col)+'"></span><span class="p-title">'+n.title+'</span></div>';
+  h+='<span class="p-cat" style="color:'+col+';background:'+col+'22">'+catLabel+'</span>';
+  if(n.kind==='ghost') h+='<div class="p-ghost">⊘ Not written yet — a [[link]] points here, but no note exists. A gap to fill.</div>';
+  if(n.tags&&n.tags.length) h+='<div class="p-tags">'+n.tags.map(t=>'<span class="p-tag">#'+t+'</span>').join('')+'</div>';
+  if(n.content) h+='<div class="p-md">'+mdToHtml(n.content)+'</div>';
+  const out=E.filter(e=>e.from===n.id).map(e=>e.to), inc=E.filter(e=>e.to===n.id).map(e=>e.from);
+  if(out.length||inc.length){ h+='<div class="p-links">';
+    if(out.length) h+='<h4>Links to</h4>'+out.map(id=>'<a data-link="'+id+'">'+(N.get(id)?N.get(id).title:id)+'</a>').join('');
+    if(inc.length) h+='<h4 style="margin-top:12px">Linked from</h4>'+inc.map(id=>'<a data-link="'+id+'">'+(N.get(id)?N.get(id).title:id)+'</a>').join('');
+    h+='</div>'; }
+  panelIn.innerHTML=h; panel.classList.add('open'); setTimeout(size,210);
+  panelIn.querySelectorAll('a[data-link]').forEach(a=>{ a.onclick=()=>{ const t=N.get(a.getAttribute('data-link')); if(t)openNode(t); }; });
+}
+function closePanel(){ selected=null; panel.classList.remove('open'); setTimeout(size,210); }
+window.closePanel=closePanel;
+
+const tip=document.getElementById('tip');
+let downAt=null, moved=false;
+function pick(px,py){ const w=fromScreen(px,py); let best=null,bd=1e9;
+  for (const n of N.values()){ const d=Math.hypot(n.x-w.x,n.y-w.y); if(d<bd&&d<radius(n)/cam.z+8){bd=d;best=n;} } return best; }
+c.addEventListener('mousedown', e=>{ const n=pick(e.clientX,e.clientY); moved=false; downAt={x:e.clientX,y:e.clientY};
+  if(n){drag=n;}else{panning=true; last={x:e.clientX,y:e.clientY};} });
 addEventListener('mousemove', e=>{
+  if(downAt && Math.hypot(e.clientX-downAt.x,e.clientY-downAt.y)>4) moved=true;
   if(drag){ const w=fromScreen(e.clientX,e.clientY); drag.x=w.x; drag.y=w.y; drag.vx=drag.vy=0; }
   else if(panning){ cam.x+=e.clientX-last.x; cam.y+=e.clientY-last.y; last={x:e.clientX,y:e.clientY}; }
-  else {
-    hover=pick(e.clientX,e.clientY);
-    if(hover){ tip.classList.add('show'); tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px';
-      tip.innerHTML='<div class="t">'+hover.title+'</div>'+(hover.kind==='ghost'?'<div style="color:var(--ghost);font-size:10px">ghost — not yet written</div>':'')+(hover.tags&&hover.tags.length?'<div class="tags">#'+hover.tags.join('  #')+'</div>':''); }
-    else tip.classList.remove('show');
-  }
+  else { hover=pick(e.clientX,e.clientY);
+    if(hover){ const col=nodeColor(hover); tip.classList.add('show'); tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px';
+      tip.innerHTML='<div class="t">'+hover.title+'</div><div class="cat" style="color:'+col+'">'+(hover.kind==='index'?'index':(hover.category||'note'))+(hover.kind==='ghost'?' · not written':'')+'</div>'+(hover.tags&&hover.tags.length?'<div class="tags">#'+hover.tags.slice(0,6).join(' #')+'</div>':'');
+      c.style.cursor='pointer';
+    } else { tip.classList.remove('show'); c.style.cursor='grab'; } }
 });
-addEventListener('mouseup', ()=>{ drag=null; panning=false; });
+addEventListener('mouseup', e=>{ if(drag&&!moved) openNode(drag); drag=null; panning=false; downAt=null; });
 c.addEventListener('wheel', e=>{ e.preventDefault(); const f=e.deltaY<0?1.1:0.9; cam.z=Math.max(0.2,Math.min(4,cam.z*f)); }, {passive:false});
 document.getElementById('q').addEventListener('input', e=>{ query=e.target.value.toLowerCase().trim(); });
 </script>
