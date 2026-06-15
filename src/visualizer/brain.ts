@@ -42,6 +42,12 @@ export interface BrainNode {
   inbound: number;
   /** Raw markdown body (written notes only) — inlined so click-to-open works offline. */
   content?: string;
+  /**
+   * Provenance — the `source:` frontmatter value (e.g. "gmail", "slack"),
+   * stamped by the ingester that wrote the note. Drives source-coloring in the
+   * graph when the topology declares a `sources { ... }` style map.
+   */
+  source?: string;
 }
 
 /** Map a tag namespace prefix to a node category. */
@@ -117,6 +123,16 @@ function frontmatterTags(content: string): string[] {
 }
 
 /** First `# Heading` in the body, else null. */
+/** Read a single scalar field (e.g. `source:`) from YAML frontmatter. */
+function frontmatterField(content: string, key: string): string | undefined {
+  const fm = /^---\n([\s\S]*?)\n---/.exec(content);
+  if (!fm) return undefined;
+  const m = new RegExp(`^${key}:\\s*(.+)$`, "m").exec(fm[1]);
+  if (!m) return undefined;
+  const v = m[1].trim().replace(/^["']|["']$/g, "");
+  return v || undefined;
+}
+
 function firstHeading(content: string): string | null {
   const m = /^#\s+(.+)$/m.exec(content.replace(/^---\n[\s\S]*?\n---\n?/, ""));
   return m ? m[1].trim() : null;
@@ -172,6 +188,7 @@ export function parseBrainVault(vaultPath: string): BrainGraph {
       tags,
       inbound: 0,
       content,
+      source: frontmatterField(content, "source"),
     });
 
     // A tag like `person/amitai-eliram` tells us the SLUG `amitai-eliram` is a
@@ -236,6 +253,14 @@ export interface RenderBrainOptions {
   topologyHref?: string;
   /** Display name of the owning topology (shown on the back-link). */
   topologyName?: string;
+  /**
+   * Provenance styling map: source key (e.g. "gmail") → { color, icon }, where
+   * `icon` is ALREADY a data: URI (the CLI inlines the file before calling this,
+   * so the renderer stays pure and the output stays self-contained). When a
+   * node's `source` matches a key, it is colored/iconed accordingly; otherwise
+   * it falls back to category coloring. Presentation only.
+   */
+  sources?: Record<string, { color?: string; icon?: string }>;
 }
 
 /**
@@ -252,6 +277,7 @@ export function renderBrainHtml(graph: BrainGraph, opts: RenderBrainOptions = {}
     nodes: graph.nodes,
     edges: graph.edges,
     tags: graph.tags.slice(0, 24),
+    sources: opts.sources ?? {},
   });
 
   const backLink = opts.topologyHref
@@ -399,7 +425,18 @@ function size(){ const st=document.getElementById('stage').getBoundingClientRect
 size(); addEventListener('resize', size);
 
 const CAT = { person:'#60a5fa', org:'#4ade80', topic:'#fbbf24', note:'#a78bfa' };
-function nodeColor(n){ return n.kind==='index' ? '#22d3ee' : (CAT[n.category]||CAT.note); }
+const SRC = DATA.sources || {};
+// Color priority: declared source color (provenance) > category > default.
+// Index/hub nodes always use the index color.
+function nodeColor(n){
+  if (n.kind==='index') return '#22d3ee';
+  if (n.source && SRC[n.source] && SRC[n.source].color) return SRC[n.source].color;
+  return CAT[n.category]||CAT.note;
+}
+function nodeIcon(n){ return n.source && SRC[n.source] && SRC[n.source].icon ? SRC[n.source].icon : null; }
+// Lazy image cache for source icons (data: URIs). Decoded once, reused.
+const ICONS = {};
+function getIcon(src){ if(!ICONS[src]){ const im=new Image(); im.src=src; ICONS[src]=im; } return ICONS[src]; }
 
 const N = new Map();
 for (const n of DATA.nodes){
@@ -447,6 +484,12 @@ function draw(){
       x.lineWidth=1.5; x.setLineDash([3,3]); x.strokeStyle=col; x.globalAlpha=.85; x.stroke(); x.setLineDash([]); x.globalAlpha=1;
     } else { x.beginPath(); x.arc(p.x,p.y,r,0,7); x.fillStyle=col; x.fill(); }
     if (active){ x.lineWidth=2; x.strokeStyle='#fff'; x.beginPath(); x.arc(p.x,p.y,r+1.5,0,7); x.stroke(); }
+    // Source logo (data: URI) drawn inside the node when zoomed in and loaded.
+    const iconSrc=nodeIcon(n);
+    if (iconSrc && cam.z>0.5 && n.kind!=='ghost'){
+      const img=getIcon(iconSrc);
+      if (img && img.complete && img.naturalWidth){ const s=r*1.3; x.save(); x.beginPath(); x.arc(p.x,p.y,r,0,7); x.clip(); x.drawImage(img,p.x-s/2,p.y-s/2,s,s); x.restore(); }
+    }
     if (cam.z>0.6 || active){
       x.fillStyle = active?'#fff':'#878593';
       x.font = (n.kind==='index'?'600 ':'')+(11*Math.min(cam.z,1.3))+'px "Noto Sans",sans-serif';

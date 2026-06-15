@@ -147,4 +147,25 @@ describe("Brain visualizer — vault parser", () => {
     const html = renderBrainHtml(parseBrainVault(vault));
     expect(html).not.toContain('class="back-link"');
   });
+
+  it("reads a note's `source:` frontmatter as a node property", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "brain-src-"));
+    fs.writeFileSync(
+      path.join(dir, "deal.md"),
+      `---\nsource: gmail\ntags:\n  - deal/closed\n---\n# Deal\nFrom email.\n`
+    );
+    const g = parseBrainVault(dir);
+    expect(g.nodes.find((n) => n.id === "deal")?.source).toBe("gmail");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("passes the source style map into the rendered graph (presentation only)", () => {
+    const g = parseBrainVault(vault);
+    const html = renderBrainHtml(g, {
+      sources: { gmail: { color: "#EA4335", icon: "data:image/svg+xml;base64,AAA" } },
+    });
+    expect(html).toContain('"gmail":{"color":"#EA4335"');
+    expect(html).toContain("data:image/svg+xml;base64,AAA"); // icon arrives pre-inlined
+    expect(html).toContain("DATA.sources"); // the renderer consults the map
+  });
 });

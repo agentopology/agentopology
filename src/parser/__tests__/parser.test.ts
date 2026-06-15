@@ -7770,6 +7770,41 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     expect(v88[0].level).toBe("warning");
   });
 
+  it("parses a brain store's presentation-only `sources` block", () => {
+    const src = `topology cb : [brain] {
+      meta { version: "1.0.0" description: "x" }
+      memory {
+        store brain {
+          type: brain
+          path: "brain/"
+          sources {
+            gmail {
+              color: "#EA4335"
+              icon: "./logos/gmail.svg"
+            }
+            slack {
+              color: "#4A154B"
+            }
+          }
+        }
+      }
+      agent lib { model: sonnet description: "k" tools: [Read, Write] custodian-of: [brain] }
+      action intake {
+        kind: inline
+        description: "in"
+      }
+      flow { intake -> lib }
+    }`;
+    const ast = parse(src);
+    const store = (ast.stores ?? []).find((s) => s.id === "brain");
+    expect(store?.sources).toEqual({
+      gmail: { color: "#EA4335", icon: "./logos/gmail.svg" },
+      slack: { color: "#4A154B" },
+    });
+    // It is presentation-only — purely data on the AST, no validation error.
+    expect(validate(ast).filter((r) => r.level === "error")).toHaveLength(0);
+  });
+
   it("round-trips the company-brain.at example with no validation errors", () => {
     const src = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain.at"),

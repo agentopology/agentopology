@@ -1013,6 +1013,34 @@ export function parseStore(id: string, body: string): StoreNode {
   const lifecycleBlock = extractBlock(body, "lifecycle");
   if (lifecycleBlock) store.lifecycle = parseLifecycleConfig(lifecycleBlock.body);
 
+  // Presentation-only `sources { gmail { color icon } slack { ... } }` block.
+  // Maps a note's `source:` frontmatter to a graph color/icon. Cosmetic — the
+  // visualizer reads it; bindings ignore it entirely.
+  const sourcesBlock = extractBlock(body, "sources");
+  if (sourcesBlock) {
+    const sources: Record<string, { color?: string; icon?: string }> = {};
+    const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+    let sm: RegExpExecArray | null;
+    while ((sm = re.exec(sourcesBlock.body)) !== null) {
+      const name = sm[1];
+      const startIdx = sm.index! + sm[0].length;
+      let depth = 1, i = startIdx;
+      while (i < sourcesBlock.body.length && depth > 0) {
+        if (sourcesBlock.body[i] === "{") depth++;
+        else if (sourcesBlock.body[i] === "}") depth--;
+        i++;
+      }
+      if (depth === 0) {
+        const inner = parseFields(sourcesBlock.body.slice(startIdx, i - 1));
+        const style: { color?: string; icon?: string } = {};
+        if (inner.color) style.color = unquote(inner.color);
+        if (inner.icon) style.icon = unquote(inner.icon);
+        if (style.color || style.icon) sources[name] = style;
+      }
+    }
+    if (Object.keys(sources).length > 0) store.sources = sources;
+  }
+
   // Backend-config passthrough bag
   const backendConfigBlock = extractBlock(body, "backend-config");
   if (backendConfigBlock) {

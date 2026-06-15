@@ -489,6 +489,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
       const brainHtml = renderBrainHtml(graph, {
         topologyHref: topoFileName, // sibling — both files land in outDir
         topologyName: ast.topology.name,
+        sources: buildSourceStyles(store.sources, atDir),
       });
       fs.writeFileSync(path.join(outDir, brainFileName), brainHtml, "utf-8");
       brains.push({ id: store.id, href: brainFileName });
@@ -521,13 +522,57 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   }
 }
 
+/** MIME types for the icon extensions we inline. */
+const ICON_MIME: Record<string, string> = {
+  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+};
+
+/**
+ * Build the source→style map for a brain store, INLINING each icon file as a
+ * data: URI so the output HTML stays self-contained. The .at only ever holds a
+ * path; the bytes are read here at generate-time, never stored in the language.
+ * `baseDir` is the directory icon paths are resolved against (the .at's dir).
+ */
+function buildSourceStyles(
+  storeSources: Record<string, { color?: string; icon?: string }> | undefined,
+  baseDir: string
+): Record<string, { color?: string; icon?: string }> | undefined {
+  if (!storeSources) return undefined;
+  const out: Record<string, { color?: string; icon?: string }> = {};
+  for (const [name, style] of Object.entries(storeSources)) {
+    const resolved: { color?: string; icon?: string } = {};
+    if (style.color) resolved.color = style.color;
+    if (style.icon) {
+      const iconPath = path.resolve(baseDir, style.icon);
+      const ext = path.extname(iconPath).toLowerCase();
+      const mime = ICON_MIME[ext];
+      if (!mime) {
+        console.log(c.yellow(`  source "${name}": icon "${style.icon}" has unsupported type — skipping icon`));
+      } else if (!fs.existsSync(iconPath)) {
+        console.log(c.yellow(`  source "${name}": icon "${style.icon}" not found — skipping icon`));
+      } else {
+        const b64 = fs.readFileSync(iconPath).toString("base64");
+        resolved.icon = `data:${mime};base64,${b64}`;
+      }
+    }
+    if (resolved.color || resolved.icon) out[name] = resolved;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
  * Find the .at topology (if any) that owns a brain vault, for the reverse
  * cross-link. Scans the vault's directory and its parent for .at files, parses
  * each, and returns the first whose `type: brain` store path resolves to this
  * vault. Best-effort: parse failures on unrelated .at files are ignored.
  */
-function findOwningTopology(vaultPath: string): { stem: string; name: string } | null {
+function findOwningTopology(vaultPath: string): {
+  stem: string;
+  name: string;
+  atDir: string;
+  sources?: Record<string, { color?: string; icon?: string }>;
+} | null {
   const searchDirs = [path.dirname(vaultPath), path.dirname(path.dirname(vaultPath))];
   const seen = new Set<string>();
   for (const dir of searchDirs) {
@@ -551,7 +596,7 @@ function findOwningTopology(vaultPath: string): { stem: string; name: string } |
         if (store.type !== "brain") continue;
         const storeVault = path.resolve(dir, store.path ?? `${store.id}/`);
         if (storeVault === vaultPath) {
-          return { stem: path.basename(full, ".at"), name: ast.topology.name };
+          return { stem: path.basename(full, ".at"), name: ast.topology.name, atDir: dir, sources: store.sources };
         }
       }
     }
@@ -592,7 +637,11 @@ function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
   // back-link pointing at where its topology visualization would live.
   const owner = findOwningTopology(resolved);
   const renderOpts = owner
-    ? { topologyHref: `${owner.stem}-topology.html`, topologyName: owner.name }
+    ? {
+        topologyHref: `${owner.stem}-topology.html`,
+        topologyName: owner.name,
+        sources: buildSourceStyles(owner.sources, owner.atDir),
+      }
     : {};
 
   const html = renderBrainHtml(graph, renderOpts);

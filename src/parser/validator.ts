@@ -178,6 +178,8 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "semantic", "episodic", "procedural", "entity", "graph", "brain",
   // Company-brain pattern: file-native store type + custody primitive
   "custodian-of", "does", "format", "obsidian",
+  // Brain presentation (visualizer-only): provenance source styling
+  "sources", "color", "icon",
   "lancedb", "sqlite-vec", "chroma", "kuzu", "falkordb", "pinecone",
   "qdrant", "pgvector", "neo4j",
   "vector", "keyword", "hybrid",
