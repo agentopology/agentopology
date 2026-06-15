@@ -646,6 +646,7 @@ memory {
 | `connection` | secret-string | no | -- | Connection URI for remote backends (V34) |
 | `extraction` | extraction-enum | no | -- | Entity/fact extraction method |
 | `format` | string | no | -- | File format/convention for file-native stores. For `brain`, typically `obsidian` ([[wikilinks]], #tags, YAML frontmatter) — a promise the store round-trips as a real Obsidian vault. |
+| `sources` | sources-block | no | -- | **Presentation only** — provenance styling for the brain graph view. Maps a note's `source:` frontmatter to a color/icon. Visualizer-only; bindings ignore it. See below. |
 | `embedding` | embedding-block | no | -- | Embedding configuration (V31 warning if omitted for semantic/episodic/procedural) |
 | `index` | index-block | no | -- | Index/collection configuration |
 | `ingestion` | ingestion-block | no | -- | Data ingestion configuration |
@@ -660,6 +661,26 @@ memory {
 **The `brain` store type (file-native).** A `brain` store is the file-native memory primitive behind the `brain` pattern: a folder of Obsidian-format markdown where the graph is a *projection* of the files, not a separate database. It is deliberately backend-less — its `backend` defaults to `files` and is exempt from the backend-enum check (V81), it needs no embedding (V82), and it compiles to direct file access (no MCP server). Edges come from inline `[[wikilinks]]` and `#tags`; backlinks are computed. Because the format is Obsidian, a `brain` store round-trips as a real Obsidian vault — agents build it, a human opens it in Obsidian for the graph view, and an existing vault becomes an agent-readable brain with zero migration. Heavyweight stores (`semantic`, `graph`, `entity`) remain available as an opt-in power-up alongside a brain. See `docs/company-brain-design.md`.
 
 **Custody (`custodian-of`).** Custody is the one new primitive the brain pattern needs. `memory:` grants an agent *read* access to a store; `custodian-of:` makes the agent *responsible for the store's upkeep* — wiring dropped files into the graph (resolving mentions into `[[wikilinks]]`, assigning `#tags`, updating index/hub notes, flagging ghost nodes and duplicates). The optional `does:` sub-list declares the maintenance verbs as visible architecture (like an optional type annotation); omitting it lets the agent infer its duties from its prompt. The verb *names* are language vocabulary; *how* each verb is performed well is an implementation/skill concern, not part of the spec. V88 validates that every `custodian-of` reference resolves to a declared store and warns when custody targets a non-brain store.
+
+**Provenance styling (`sources`).** A presentation-only sub-block on a brain store that colors the graph view by where each note came from. Each named entry maps a source key (matching a note's `source:` frontmatter, stamped by its ingester) to a `color` (hex) and/or `icon` (a file path):
+
+```
+store brain {
+  type: brain
+  path: "brain/"
+  sources {
+    gmail {
+      color: "#EA4335"
+      icon: "./logos/gmail.svg"
+    }
+    slack {
+      color: "#4A154B"
+    }
+  }
+}
+```
+
+This is **strictly cosmetic and affects only the `visualize-brain` rendering** — it never touches ingestion, agents, files, or binding output. Bindings emit nothing for it; delete it and the brain behaves identically (the graph just falls back to category coloring). The language stores **no image bytes** — only the path string; the visualizer reads the icon file at generate-time and inlines it as a `data:` URI, keeping the output a single self-contained HTML file. When a node's `source` matches a `sources` key, it is colored/iconed accordingly; otherwise it falls back to category-based coloring (person/org/topic inferred from tag namespaces).
 
 **Local vs remote backends:** Backends `lancedb`, `sqlite-vec`, `sqlite`, `kuzu`, and `chroma` are local-first (use `path`). Backends `pinecone`, `qdrant`, `pgvector`, `neo4j`, `mongodb`, and `falkordb` are remote (require `connection`, V34).
 

@@ -1,8 +1,8 @@
 <h1 align="center">AgenTopology</h1>
 
 <p align="center">
-  <strong>The Terraform for AI agents.</strong><br/>
-  Define your agent team once. Deploy to any platform.
+  <strong>Harness as code.</strong> The Terraform for AI agents.<br/>
+  Define your agent team — and its memory — once. Deploy to any platform.
 </p>
 
 <p align="center">
@@ -366,6 +366,36 @@ mcp-servers {
 
 </td>
 </tr>
+<tr>
+<td>
+
+**Company Brain** — agent-maintained, Obsidian-portable
+```
+store brain {
+  type: brain          # markdown, no DB
+  path: "brain/"
+  format: obsidian     # ports both ways
+}
+agent librarian {
+  custodian-of: [brain]  # owns its upkeep
+}
+```
+
+</td>
+<td>
+
+**Provenance styling** — color the graph by source
+```
+store brain {
+  sources {
+    gmail { color: "#EA4335" icon: "./gmail.svg" }
+    slack { color: "#4A154B" }
+  }
+}
+```
+
+</td>
+</tr>
 </table>
 
 Plus: **memory stores** (semantic, graph, episodic — 11 backends), **retrieval strategies** (scoring weights, cache-hit routing), schemas, artifacts, metering, circuit breakers, scale configs, depth levels, environment overrides, prompt variants, composition via imports, and [more](spec/grammar.md).
@@ -388,6 +418,39 @@ group design-review {
 In Claude Code, this compiles to a **file-based protocol** — a shared transcript file that agents read and append to sequentially. No HTTP, no message bus. Just the filesystem as shared state.
 
 ---
+
+## Company Brain — Knowledge That Builds Itself
+
+A **brain** is a folder of linked markdown that agents maintain, not you. It's the [Obsidian](https://obsidian.md) graph model — notes connected by `[[wikilinks]]` and `#tags` — but **agent-maintained instead of hand-curated**.
+
+```
+store brain {
+  type: brain          # file-native: markdown, no database, no embeddings
+  path: "brain/"
+  format: obsidian     # ports both ways — open it in Obsidian, the graph just works
+}
+
+agent librarian {
+  custodian-of: [brain] {       # OWNS the brain's upkeep, not just read access
+    does: [link, tag, index, dedupe]
+  }
+}
+```
+
+- **Custodian agents** own a memory layer. Drop a note in, the librarian wires it into the graph — resolving `[[links]]`, assigning `#tags`, updating hub notes. Humans drop; agents wire.
+- **Ingester agents** feed it from anywhere. One agent per source (Gmail, Slack, calendar) writes raw notes; the librarian links them. See [`examples/company-brain-team.at`](examples/company-brain-team.at).
+- **Pure markdown, zero infrastructure.** No vector DB, no MCP server. Coding agents retrieve with `grep`. The whole brain is a folder you can `git clone`.
+- **100% Obsidian-compatible.** The vault *is* an Obsidian vault — agents build it, you open it in Obsidian for the graph view. Or use our built-in graph viewer (below) and skip Obsidian entirely.
+
+**See it without Obsidian** — render any brain vault as an interactive graph in a single self-contained HTML file:
+
+```bash
+agentopology visualize-brain brain/
+```
+
+Nodes are colored by what they *are* (person / org / topic) and by where they *came from* (declare `sources { gmail { color, icon } }` and notes from Gmail render in Gmail red with the logo). When you `visualize` a topology that owns brains, the two graphs **cross-link** — jump from the team diagram to its brain and back.
+
+This is **brain as code**: you declare the brain's architecture — its layers, its custodians, its sources — the same way you declare the agent team. See [`docs/company-brain.md`](docs/company-brain.md) for the full walkthrough.
 
 ---
 
@@ -462,6 +525,8 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 - [`data-processing.at`](examples/data-processing.at) — ETL pipeline with batch processing and metering
 - [`scheduled-monitor.at`](examples/scheduled-monitor.at) — Monitoring system with scheduled health checks
 - [`openclaw-assistant.at`](examples/openclaw-assistant.at) — Customer support with routing and scheduling
+- [`company-brain.at`](examples/company-brain.at) — A plug-and-play company brain (librarian + researcher)
+- [`company-brain-team.at`](examples/company-brain-team.at) — A team that ingests (Gmail/Slack/calendar), wires, and audits a brain
 
 ---
 
@@ -472,7 +537,8 @@ agentopology validate <file>              Validate an .at file (82 rules)
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at
 agentopology import --target <t> --dir <d>       Reverse-engineer platform files to .at
-agentopology visualize <file>             Interactive topology graph
+agentopology visualize <file>             Interactive topology graph (+ cross-links any brains)
+agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-style graph (no Obsidian)
 agentopology export <file> --format <fmt> Export as markdown, mermaid, or json
 agentopology info <file>                  Topology analysis and suggestions
 agentopology targets                      List supported platforms
