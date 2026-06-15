@@ -164,6 +164,68 @@ function agentPhase(agent: AgentNode): number {
 }
 
 /**
+ * The standard meaning of each custody maintenance verb. The verb NAMES are
+ * language vocabulary (public); these one-line charters tell the agent what each
+ * verb means operationally. The deeper "how to do it brilliantly" stays in the
+ * skill repo (MOAT) — these are intentionally the safe, obvious definitions.
+ */
+const CUSTODY_VERBS: Record<string, string> = {
+  link: "find mentions of existing notes and turn them into `[[wikilinks]]` (add-only — never delete a human's links)",
+  tag: "assign `#nested/tags` consistent with the tag hierarchy already present in the vault",
+  index: "update the relevant hub note (a Map-of-Content that `[[links]]` the cluster) so the new note is reachable",
+  backlink: "rely on computed backlinks from the `[[links]]` you write — never author backlinks by hand",
+  dedupe: "flag near-duplicate notes for human review — never auto-merge or delete",
+  summarize: "keep a short synthesized summary at the top of hub notes, refreshed when the cluster changes",
+  heal: "repair broken links after renames and surface ghost nodes (`[[links]]` to notes that don't exist yet)",
+};
+
+/**
+ * Generate the custody charter section for an agent that is `custodian-of` one
+ * or more stores. This is what makes custody a real binding behavior: the agent
+ * gets a standing instruction set to MAINTAIN the store(s), not just read them.
+ */
+function generateCustodyCharter(
+  agent: AgentNode,
+  storeMap: Map<string, StoreNode>
+): string[] {
+  const out: string[] = [];
+  out.push("## Custody — you maintain these stores");
+  out.push("");
+  out.push(
+    "You are the **custodian** of the store(s) below: you own their upkeep, not just read access. " +
+    "Humans drop raw notes; your job is to wire them into the graph and keep it healthy."
+  );
+  out.push("");
+
+  for (const storeId of agent.custodianOf ?? []) {
+    const store = storeMap.get(storeId);
+    out.push(`### ${storeId}`);
+    if (store?.path) {
+      out.push(`The vault lives at \`${store.path}\`. Maintain it with \`Read\`, \`Write\`, \`Edit\`, \`Grep\`, \`Glob\` — no database, just files.`);
+    }
+    if (store?.format === "obsidian") {
+      out.push("It is **Obsidian-format** markdown: only ever write `[[wikilinks]]`, `#tags`, `![[embeds]]`, and YAML frontmatter — nothing custom — so the vault round-trips in Obsidian.");
+    }
+    out.push("");
+
+    // Maintenance verbs — declared ones, or the safe default set.
+    const verbs = (agent.custodianDoes && agent.custodianDoes.length > 0)
+      ? agent.custodianDoes
+      : ["link", "tag", "index", "heal", "dedupe"];
+    out.push("When a note is added or changed, perform these maintenance steps:");
+    for (const verb of verbs) {
+      const meaning = CUSTODY_VERBS[verb] ?? `apply the \`${verb}\` maintenance step`;
+      out.push(`- **${verb}** — ${meaning}`);
+    }
+    out.push("");
+    out.push("Wire add-only and conservatively: prefer leaving a human's content untouched over a risky rewrite. When unsure, flag for review rather than edit.");
+    out.push("");
+  }
+
+  return out;
+}
+
+/**
  * The set of phases that compile into the embedded workflow rung — every phase
  * that contains ≥1 agent marked `execution: workflow`. (Matches the
  * claude-workflow binding's `workflowPhases`: an agent sharing a workflow phase
@@ -570,6 +632,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
         sections.push("");
       }
+    }
+
+    // Custody — the agent OWNS the upkeep of these stores (the `brain` pattern).
+    // Generated even when the agent has no hand-written prompt, so custody is a
+    // real binding behavior, not just prose the author happened to write.
+    if (agent.custodianOf && agent.custodianOf.length > 0) {
+      const storeMap = new Map((ast.stores ?? []).map(s => [s.id, s]));
+      sections.push(...generateCustodyCharter(agent, storeMap));
     }
 
     // Retrieval strategy — rich details
@@ -1516,13 +1586,52 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
     files.push(gitkeep(`.claude/skills/${name}/runs`));
   }
 
-  // Store directory markers
+  // Store directory markers. A `brain` store is a real, user-facing Obsidian
+  // vault — it lives at its declared `path:` (e.g. `brain/`), not buried under
+  // `.claude/stores/`, so a human can open the folder directly in Obsidian.
+  // We seed it with a root Map-of-Content note so the vault opens to something.
   const stores = ast.stores ?? [];
   for (const store of stores) {
-    files.push(gitkeep(`.claude/stores/${store.id}`));
+    if (store.type === "brain") {
+      const vault = (store.path ?? `${store.id}/`).replace(/\/+$/, "");
+      files.push(brainVaultSeed(store, vault));
+    } else {
+      files.push(gitkeep(`.claude/stores/${store.id}`));
+    }
   }
 
   return files;
+}
+
+/**
+ * Seed a brain vault with a root index note (`_brain.md`) — an Obsidian Map-of-
+ * Content the librarian grows over time. Gives the vault a home page and proves
+ * the format contract (wikilinks, tags, frontmatter) from the first commit.
+ */
+function brainVaultSeed(store: StoreNode, vault: string): GeneratedFile {
+  const lines = [
+    "---",
+    "tags:",
+    "  - brain/index",
+    "---",
+    "",
+    `# ${toTitle(store.id)}`,
+    "",
+    store.description ? `> ${store.description}` : "> The company brain.",
+    "",
+    "This is the root index of the brain — a Map of Content the librarian maintains.",
+    "Drop new notes into this folder and run `/wire-in <file>` to fold them in.",
+    "",
+    "## Clusters",
+    "",
+    "_New hub notes appear here as the brain grows._",
+    "",
+  ];
+  return {
+    path: `${vault}/_brain.md`,
+    content: lines.join("\n"),
+    category: "machine",
+  };
 }
 
 /**

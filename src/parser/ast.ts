@@ -305,8 +305,34 @@ export interface StoreNode {
   lifecycle?: LifecycleConfig;
   /** Entity/fact extraction method: "llm" | "regex" | "hybrid". */
   extraction?: string;
+  /**
+   * File format/convention for file-native stores. For `brain` stores this is
+   * typically `obsidian` — a promise that the store holds only Obsidian-format
+   * markdown ([[wikilinks]], #tags, YAML frontmatter), so it round-trips as a
+   * real Obsidian vault. See `docs/company-brain-design.md`.
+   */
+  format?: string;
+  /**
+   * PRESENTATION ONLY — provenance styling for the brain graph view. Maps a
+   * note's `source:` frontmatter value (e.g. "gmail", "slack") to a display
+   * color and/or icon path. This is purely cosmetic: it affects ONLY the
+   * `visualize-brain` rendering, never ingestion, agents, files, or any
+   * binding output (bindings ignore it entirely). Delete it and the brain
+   * behaves identically — the graph just falls back to category coloring.
+   * The language stores only strings (a hex color, a path); image bytes are
+   * read and inlined by the visualizer at generate-time, never by the language.
+   */
+  sources?: Record<string, SourceStyle>;
   /** Backend-specific passthrough configuration. */
   backendConfig?: Record<string, unknown>;
+}
+
+/** Presentation styling for one provenance source (e.g. gmail) in the graph. */
+export interface SourceStyle {
+  /** Hex color (e.g. "#EA4335") for nodes whose `source:` matches this key. */
+  color?: string;
+  /** Path to a logo/icon file. Inlined as a data: URI by the visualizer. */
+  icon?: string;
 }
 
 /** Scoring weight configuration for retrieval ranking. */
@@ -509,6 +535,20 @@ export interface AgentNode extends BaseNode {
   memory?: string[];
   /** Retrieval strategy ID this agent uses for memory queries. */
   retrieval?: string;
+  /**
+   * Memory store IDs this agent is the CUSTODIAN of — i.e. it owns the upkeep
+   * of the store, not merely read access. The primitive behind the `brain`
+   * pattern: a custodian wires dropped files into the graph (links, tags,
+   * index hubs, dedupe). See `docs/company-brain-design.md`.
+   */
+  custodianOf?: string[];
+  /**
+   * Optional, declared vocabulary of maintenance verbs this custodian performs
+   * (e.g. ["link", "tag", "index", "dedupe"]). Omit to let the agent infer its
+   * duties from its prompt. The verb NAMES are language vocabulary; HOW each is
+   * done well stays in the skill repo (MOAT).
+   */
+  custodianDoes?: string[];
   /** Output enum definitions. */
   outputs?: OutputsMap;
   /** Scale / parallelism configuration. */

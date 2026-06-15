@@ -73,11 +73,31 @@ const DAGRE_SRC = loadDagreSrc();
  *
  * Save the returned string to a `.html` file and open it in any browser.
  */
-export function generateVisualization(ast: TopologyAST): string {
+/** A brain store this topology owns, with where its graph was rendered. */
+export interface BrainLinkRef {
+  /** The store id (e.g. "brain", "client-brain"). */
+  id: string;
+  /** Relative href to the brain graph HTML. */
+  href: string;
+}
+
+/**
+ * Options for the topology visualization.
+ */
+export interface VisualizationOptions {
+  /**
+   * Brain stores this topology declares (`type: brain`) that were visualized
+   * alongside it. One → an "Open Brain →" button; several → a dropdown listing
+   * each brain by name. A topology can own multiple brains.
+   */
+  brains?: BrainLinkRef[];
+}
+
+export function generateVisualization(ast: TopologyAST, opts: VisualizationOptions = {}): string {
   const dataJson = JSON.stringify(astToViewData(ast));
   const issues = validate(ast);
   const issuesJson = JSON.stringify(issues);
-  return buildHtml(dataJson, ast.topology.name, issuesJson);
+  return buildHtml(dataJson, ast.topology.name, issuesJson, opts.brains ?? []);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +217,21 @@ function astToViewData(ast: TopologyAST): Record<string, any> {
 // HTML builder
 // ---------------------------------------------------------------------------
 
-function buildHtml(dataJson: string, title: string, issuesJson: string): string {
+function buildHtml(dataJson: string, title: string, issuesJson: string, brains: BrainLinkRef[] = []): string {
+  let brainLink = "";
+  if (brains.length === 1) {
+    brainLink = `<a class="header-btn brain-link" href="${escHtml(brains[0].href)}" title="Open the company brain graph">🧠 Open Brain →</a>`;
+  } else if (brains.length > 1) {
+    // Several brains → a dropdown listing each by store id.
+    const items = brains
+      .map((b) => `<a href="${escHtml(b.href)}">🧠 ${escHtml(b.id)} →</a>`)
+      .join("");
+    brainLink =
+      `<div class="brain-menu">` +
+      `<button class="header-btn brain-link" onclick="this.parentNode.classList.toggle('open')">🧠 ${brains.length} Brains ▾</button>` +
+      `<div class="brain-menu-list">${items}</div>` +
+      `</div>`;
+  }
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -236,6 +270,7 @@ ${CSS}
     <div id="header-actions">
       <div class="topo-desc" id="topo-desc"></div>
       <div class="pattern-badges" id="pattern-badges"></div>
+      ${brainLink}
       <input type="text" id="search-input" class="search-input" placeholder="Search nodes..." oninput="onSearchInput(this.value)" />
       <button class="header-btn" id="dataflow-btn" onclick="toggleDataFlow()">Data Flow</button>
       <button class="header-btn" id="orientation-btn" onclick="toggleOrientation()" title="Switch between vertical and horizontal layout">&#8596; Horizontal</button>
@@ -365,6 +400,13 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .pattern-badge.fan-out{background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-br)}
 .pattern-badge.human-gate{background:var(--gold-bg);color:var(--gold);border:1px solid var(--gold-br)}
 .header-btn{background:var(--s2);border:1px solid var(--b);color:var(--t2);padding:5px 12px;border-radius:6px;font-size:11px;cursor:pointer;transition:all .15s;font-family:var(--font-mono);letter-spacing:.3px}
+.brain-link{text-decoration:none;color:var(--purple);border-color:var(--purple-br);background:var(--purple-bg)}
+.brain-link:hover{background:rgba(167,139,250,.18);border-color:var(--purple)}
+.brain-menu{position:relative;display:inline-block}
+.brain-menu-list{display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:30;min-width:160px;background:var(--s);border:1px solid var(--b2);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.brain-menu.open .brain-menu-list{display:block}
+.brain-menu-list a{display:block;text-decoration:none;color:var(--purple);font-family:var(--font-mono);font-size:11px;padding:6px 10px;border-radius:5px}
+.brain-menu-list a:hover{background:var(--purple-bg)}
 .header-btn:hover{background:rgba(255,255,255,.06);color:var(--t);border-color:var(--b2)}
 .header-btn.active{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-br)}
 

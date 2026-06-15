@@ -1,0 +1,104 @@
+# company-brain.at — A plug-and-play company brain
+#
+# A folder of Obsidian-format markdown, maintained by agents, not by hand.
+# - Humans drop a new note and run /wire-in. The librarian links & tags it.
+# - The researcher traverses the [[link]] graph (with grep) to answer questions.
+# - No vector DB, no MCP server. The brain is a folder you can git clone and
+#   open in Obsidian for the graph view.
+#
+# Demonstrates the `brain` PATTERN + the `custodian-of` PRIMITIVE.
+
+topology company-brain : [brain, human-gate] {
+
+  meta {
+    version: "0.1.0"
+    description: "An agent-maintained, Obsidian-portable company brain"
+  }
+
+  # --- The brain itself: one markdown store, no backend ---
+
+  memory {
+    store brain {
+      type: brain                 # NEW store type — no DB, just files
+      description: "The company brain — a folder of linked markdown"
+      path: "brain/"              # this folder IS a valid Obsidian vault
+      format: obsidian            # [[wikilinks]], #nested/tags, YAML frontmatter
+      scope: org
+    }
+  }
+
+  # --- The librarian: KEEPER of the brain (the new primitive) ---
+
+  agent librarian {
+    model: sonnet
+    description: "Maintains the brain — wires new notes into the graph"
+    tools: [Read, Write, Edit, Grep, Glob]
+
+    custodian-of: [brain] {       # owns upkeep, not just read access
+      does: [link, tag, index, dedupe]   # OPTIONAL verbs — visible strategy
+    }
+
+    prompt {
+        You are the brain's librarian. The brain lives in `brain/` as Obsidian
+        markdown. You never invent content — you wire what's dropped in.
+
+        When a note is added or changed:
+        - link:   find mentions of existing notes and turn them into [[wikilinks]]
+        - tag:    add #nested/tags consistent with the existing tag hierarchy
+        - index:  update the relevant hub note (a Map-of-Content that [[links]]
+                  the cluster) so the new note is reachable
+        - dedupe: flag near-duplicate notes for human review; never auto-delete
+
+        Backlinks are computed from the [[links]] you write — never author them
+        by hand. If a note links to something that doesn't exist yet, leave the
+        ghost link; it marks a gap to fill later.
+    }
+  }
+
+  # --- The researcher: READS the brain to answer questions ---
+
+  agent researcher {
+    model: sonnet
+    description: "Answers questions by traversing the brain"
+    tools: [Read, Grep, Glob]
+    memory: [brain]               # read access — the ordinary wiring
+
+    prompt {
+        Answer questions using only the brain in `brain/`. Start by grepping for
+        relevant notes, then follow their [[wikilinks]] and #tags to gather the
+        full picture. Cite the notes you used by filename.
+    }
+  }
+
+  # --- What the human can do (actions are the flow entry points) ---
+
+  action wire-in {
+    kind: inline
+    description: "Fold a dropped markdown file into the brain"
+  }
+
+  action query {
+    kind: inline
+    description: "Ask the brain a question"
+  }
+
+  triggers {
+    command wire-in {
+      pattern: "/wire-in <FILE>"
+      argument: FILE
+      description: "Fold a dropped markdown file into the brain"
+    }
+    command query {
+      pattern: "/ask <QUESTION>"
+      argument: QUESTION
+      description: "Ask the brain a question"
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    wire-in -> librarian          # human drops a file → librarian wires it
+    query   -> researcher         # human asks → researcher traverses & answers
+  }
+}
