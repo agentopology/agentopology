@@ -26,6 +26,7 @@ import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
+import { parseBrainVault, renderBrainHtml } from "../visualizer/brain.js";
 import { exporters } from "../exporters/index.js";
 import { analyze } from "../analyzer/index.js";
 import { listTopics, getTopic, getAllTopics, searchTopics } from "../docs/index.js";
@@ -63,6 +64,7 @@ ${c.bold("Usage:")}
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
+  agentopology visualize-brain <vault-folder> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid|json> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
@@ -478,6 +480,58 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   }
 }
 
+/**
+ * Visualize a brain vault (a folder of Obsidian-format markdown) as an
+ * interactive force-directed graph — an Obsidian-style graph view in a single
+ * self-contained HTML file, no Obsidian install required.
+ */
+function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
+  const resolved = path.resolve(vaultPath);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    console.error(c.red(`Error: "${vaultPath}" is not a directory. Point visualize-brain at a vault folder of .md files.`));
+    process.exit(1);
+  }
+
+  let graph;
+  try {
+    graph = parseBrainVault(resolved);
+  } catch (err) {
+    console.error(c.red(`Error reading vault: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  if (graph.nodes.length === 0) {
+    console.error(c.yellow(`No .md files found under "${vaultPath}". Nothing to visualize.`));
+    process.exit(1);
+  }
+
+  const html = renderBrainHtml(graph);
+  const vaultName = path.basename(resolved) || "brain";
+  const outDir = outputDir ? path.resolve(outputDir) : resolved;
+  const outFile = path.join(outDir, `${vaultName}-graph.html`);
+
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(outFile, html, "utf-8");
+  } catch (err) {
+    console.error(c.red(`Error: Cannot write "${outFile}"`));
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  const ghosts = graph.nodes.filter((n) => n.kind === "ghost").length;
+  const real = graph.nodes.length - ghosts;
+  console.log(c.green(`  Brain graph written to ${outFile}`));
+  console.log(c.dim(`  ${real} notes · ${graph.edges.length} links · ${ghosts} ghost nodes · ${graph.tags.length} tags`));
+
+  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+  } catch {
+    // Non-fatal.
+  }
+}
+
 function cmdExport(filePath: string, formatName: string, outputDir?: string): void {
   const source = readFile(filePath);
 
@@ -778,6 +832,15 @@ function main(): void {
         process.exit(1);
       }
       cmdVisualize(args.file, args.output);
+      break;
+
+    case "visualize-brain":
+      if (!args.file) {
+        console.error(c.red("Error: visualize-brain requires a vault folder argument."));
+        usage();
+        process.exit(1);
+      }
+      cmdVisualizeBrain(args.file, args.output);
       break;
 
     case "export":
