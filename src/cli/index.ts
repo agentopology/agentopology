@@ -79,6 +79,9 @@ ${c.bold("Commands:")}
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
+             Auto-renders + cross-links any brain stores it declares.
+  visualize-brain  Render a brain vault (folder of markdown) as an Obsidian-style
+             graph. Auto-detects + links back to its owning topology if nearby.
   export     Export topology as Markdown documentation or Mermaid diagram.
   info       Analyze topology: detect patterns, compute layers, suggest improvements.
   import     Reverse-engineer platform files into an .at topology file.
@@ -453,15 +456,52 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
     process.exit(1);
   }
 
-  const html = generateVisualization(ast);
-
   const resolved = path.resolve(filePath);
   const stem = path.basename(resolved, ".at");
   const outDir = outputDir ? path.resolve(outputDir) : path.dirname(resolved);
-  const outFile = path.join(outDir, `${stem}-topology.html`);
+  const atDir = path.dirname(resolved);
+  const topoFileName = `${stem}-topology.html`;
+  const outFile = path.join(outDir, topoFileName);
 
   try {
     fs.mkdirSync(outDir, { recursive: true });
+  } catch (err) {
+    console.error(c.red(`Error: Cannot create output dir "${outDir}"`));
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+
+  // Discover and render every `type: brain` store this topology owns. A
+  // topology can have multiple brains; each gets its own graph file, linked
+  // back to this topology. The vault path is resolved relative to the .at file.
+  const brainStores = (ast.stores ?? []).filter((s) => s.type === "brain");
+  const brains: { id: string; href: string }[] = [];
+  for (const store of brainStores) {
+    const vaultPath = path.resolve(atDir, store.path ?? `${store.id}/`);
+    if (!fs.existsSync(vaultPath) || !fs.statSync(vaultPath).isDirectory()) {
+      console.log(c.yellow(`  brain "${store.id}": vault folder "${store.path ?? store.id}" not found — skipping its graph`));
+      continue;
+    }
+    try {
+      const graph = parseBrainVault(vaultPath);
+      if (graph.nodes.length === 0) continue;
+      const brainFileName = `${stem}-brain-${store.id}.html`;
+      const brainHtml = renderBrainHtml(graph, {
+        topologyHref: topoFileName, // sibling — both files land in outDir
+        topologyName: ast.topology.name,
+      });
+      fs.writeFileSync(path.join(outDir, brainFileName), brainHtml, "utf-8");
+      brains.push({ id: store.id, href: brainFileName });
+      const ghosts = graph.nodes.filter((n) => n.kind === "ghost").length;
+      console.log(c.green(`  Brain "${store.id}" → ${brainFileName}`) + c.dim(` (${graph.nodes.length - ghosts} notes, ${ghosts} ghosts)`));
+    } catch (err) {
+      console.log(c.yellow(`  brain "${store.id}": ${(err as Error).message} — skipping`));
+    }
+  }
+
+  const html = generateVisualization(ast, { brains });
+
+  try {
     fs.writeFileSync(outFile, html, "utf-8");
   } catch (err) {
     console.error(c.red(`Error: Cannot write "${outFile}"`));
@@ -470,6 +510,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   }
 
   console.log(c.green(`  Visualization written to ${outFile}`));
+  if (brains.length) console.log(c.dim(`  ${brains.length} brain graph(s) linked from the topology header.`));
 
   // Try to open in the default browser (non-fatal if it fails).
   const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
@@ -478,6 +519,44 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   } catch {
     // Non-fatal — the file was written successfully regardless.
   }
+}
+
+/**
+ * Find the .at topology (if any) that owns a brain vault, for the reverse
+ * cross-link. Scans the vault's directory and its parent for .at files, parses
+ * each, and returns the first whose `type: brain` store path resolves to this
+ * vault. Best-effort: parse failures on unrelated .at files are ignored.
+ */
+function findOwningTopology(vaultPath: string): { stem: string; name: string } | null {
+  const searchDirs = [path.dirname(vaultPath), path.dirname(path.dirname(vaultPath))];
+  const seen = new Set<string>();
+  for (const dir of searchDirs) {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir).filter((f) => f.endsWith(".at"));
+    } catch {
+      continue;
+    }
+    for (const file of entries) {
+      const full = path.resolve(dir, file);
+      if (seen.has(full)) continue;
+      seen.add(full);
+      let ast;
+      try {
+        ast = parse(fs.readFileSync(full, "utf-8"));
+      } catch {
+        continue; // unrelated / invalid .at — skip
+      }
+      for (const store of ast.stores ?? []) {
+        if (store.type !== "brain") continue;
+        const storeVault = path.resolve(dir, store.path ?? `${store.id}/`);
+        if (storeVault === vaultPath) {
+          return { stem: path.basename(full, ".at"), name: ast.topology.name };
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -505,9 +584,18 @@ function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
     process.exit(1);
   }
 
-  const html = renderBrainHtml(graph);
   const vaultName = path.basename(resolved) || "brain";
   const outDir = outputDir ? path.resolve(outputDir) : resolved;
+
+  // Auto-detect the owning topology: scan nearby .at files for a `type: brain`
+  // store whose path resolves to THIS vault. If found, render a "← Topology"
+  // back-link pointing at where its topology visualization would live.
+  const owner = findOwningTopology(resolved);
+  const renderOpts = owner
+    ? { topologyHref: `${owner.stem}-topology.html`, topologyName: owner.name }
+    : {};
+
+  const html = renderBrainHtml(graph, renderOpts);
   const outFile = path.join(outDir, `${vaultName}-graph.html`);
 
   try {

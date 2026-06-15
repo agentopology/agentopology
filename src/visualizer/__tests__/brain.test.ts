@@ -140,5 +140,11 @@ describe("Brain visualizer — vault parser", () => {
     });
     expect(html).toContain('class="back-link"');
     expect(html).toContain("company-brain-team-topology.html");
+    expect(html).toContain("← company-brain-team");
+  });
+
+  it("omits the back-link when no topology owns the vault", () => {
+    const html = renderBrainHtml(parseBrainVault(vault));
+    expect(html).not.toContain('class="back-link"');
   });
 });
