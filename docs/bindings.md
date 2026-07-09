@@ -252,6 +252,7 @@ An Agent SDK binding would generate `agents/writer.json`:
 | `openclaw` | **Stable** | OpenClaw | soul.md, skill files, channel/gateway/workspace config |
 | `kiro` | **Stable** | Kiro | Kiro agent definitions and config |
 | `cursor` | **Stable** | Cursor | Cursor rules and agent config |
+| `antigravity` | **Stable** | Google Antigravity IDE | Single flat `.agents/workflows/<name>-autopilot.md` phase-based prose workflow |
 | `agent-sdk` | Planned | Anthropic Agent SDK | Tool definitions and agent configs for the Agent SDK |
 | `e2b` | Planned | E2B | Sandbox configuration and tool registration |
 | `openai-swarm` | Planned | OpenAI Swarm | Swarm agent definitions and handoff logic |

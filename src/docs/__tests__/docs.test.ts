@@ -250,7 +250,7 @@ describe("keywords topic covers reserved keywords", () => {
 // ---------------------------------------------------------------------------
 describe("bindings topic covers all targets", () => {
   const bindingTargets = [
-    "claude-code", "codex", "gemini-cli", "copilot-cli", "openclaw", "kiro",
+    "claude-code", "codex", "gemini-cli", "copilot-cli", "openclaw", "kiro", "antigravity",
   ];
 
   const bindingsContent = topics["bindings"]?.content() ?? "";
