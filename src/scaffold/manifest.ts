@@ -27,6 +27,8 @@ export function getManifestPath(target: string): string {
       return join(".claude", MANIFEST_FILENAME);
     case "codex":
       return join(".codex", MANIFEST_FILENAME);
+    case "cursor":
+      return join(".cursor", MANIFEST_FILENAME);
     case "gemini-cli":
       return join(".gemini", MANIFEST_FILENAME);
     case "copilot-cli":
@@ -42,14 +44,9 @@ export function getManifestPath(target: string): string {
 }
 
 /**
- * Read an existing scaffold manifest from disk.
- * Returns `null` if the manifest does not exist or cannot be parsed.
+ * Read and parse a manifest file, returning `null` when it is absent or invalid.
  */
-export function readManifest(
-  basePath: string,
-  target: string,
-): ScaffoldManifest | null {
-  const manifestPath = join(basePath, getManifestPath(target));
+function loadManifestFile(manifestPath: string): ScaffoldManifest | null {
   if (!existsSync(manifestPath)) return null;
 
   try {
@@ -58,6 +55,37 @@ export function readManifest(
   } catch {
     return null;
   }
+}
+
+/**
+ * Read an existing scaffold manifest from disk.
+ * Returns `null` if the manifest does not exist or cannot be parsed.
+ *
+ * A manifest that names a *different* target is treated as absent. Targets
+ * without a dedicated config directory all resolve to the same root path, so
+ * without this check one binding would read another's file list and act on it.
+ */
+export function readManifest(
+  basePath: string,
+  target: string,
+): ScaffoldManifest | null {
+  const manifestPath = join(basePath, getManifestPath(target));
+  const manifest = loadManifestFile(manifestPath);
+  if (manifest) {
+    // `target` is absent in manifests written before it was recorded; those
+    // predate multi-binding projects, so accept them rather than discard them.
+    return !manifest.target || manifest.target === target ? manifest : null;
+  }
+
+  // Legacy fallback: targets that have since gained a dedicated config
+  // directory used to write their manifest to the project root. Adopt it only
+  // when it names this target, so the first re-scaffold after an upgrade stays
+  // incremental instead of being mistaken for a first run.
+  const rootPath = join(basePath, MANIFEST_FILENAME);
+  if (rootPath === manifestPath) return null;
+
+  const rootManifest = loadManifestFile(rootPath);
+  return rootManifest && rootManifest.target === target ? rootManifest : null;
 }
 
 /**
