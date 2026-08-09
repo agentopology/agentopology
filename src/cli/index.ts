@@ -33,6 +33,9 @@ import { listTopics, getTopic, getAllTopics, searchTopics } from "../docs/index.
 import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
+import { describeOwner, findUnownedCollisions } from "../scaffold/ownership.js";
+import type { OwnershipCollision } from "../scaffold/ownership.js";
+import { getManifestPath } from "../scaffold/manifest.js";
 import type { ScaffoldManifest } from "../scaffold/types.js";
 
 // ---------------------------------------------------------------------------
@@ -96,7 +99,8 @@ ${c.bold("Options:")}
   --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
-  --force           Overwrite all files, ignoring manifest and conflicts.
+  --force           Overwrite all files, ignoring manifest, conflicts, and files
+                    owned by another binding's scaffold.
   --prune           Delete files that were previously scaffolded but are no longer generated.
   --all             Show all documentation topics (for LLM ingestion).
   --search <term>   Search across all documentation topics.
@@ -284,6 +288,45 @@ function cmdValidate(filePath: string): void {
   }
 }
 
+/**
+ * Print the ownership collisions that stopped a first-run scaffold, with the
+ * ways out. Goes to stderr so it survives stdout redirection in build scripts.
+ */
+function reportOwnershipCollisions(
+  targetName: string,
+  collisions: OwnershipCollision[],
+): void {
+  const count = collisions.length;
+  console.error("");
+  console.error(
+    c.red(
+      `  Refusing to overwrite ${count} existing file(s) the "${targetName}" scaffold does not own:`,
+    ),
+  );
+  console.error("");
+  for (const collision of collisions) {
+    const attribution = collision.owner
+      ? `${describeOwner(collision)} (${getManifestPath(collision.owner)})`
+      : describeOwner(collision);
+    console.error(`    ${c.bold("!")} ${collision.path} — ${attribution}`);
+  }
+  console.error("");
+  console.error(
+    `  "${targetName}" has no manifest here, so this is its first scaffold in this`,
+  );
+  console.error(
+    "  directory and every generated file would be written unconditionally.",
+  );
+  console.error("");
+  console.error("  Resolve with one of:");
+  console.error(
+    `    --output <dir>   scaffold elsewhere, then copy back only what you need`,
+  );
+  console.error(`    move or delete the listed file(s), then re-run`);
+  console.error(`    --force          overwrite them (destructive)`);
+  console.error("");
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean): void {
   const source = readFile(filePath);
 
@@ -333,8 +376,23 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         }
       }
     } else {
+      const collisions = force
+        ? []
+        : findUnownedCollisions(basePath, targetName, files, Object.keys(bindings));
+      const byPath = new Map(collisions.map((collision) => [collision.path, collision]));
+
       for (const file of files) {
-        console.log(`  ${c.green("+")} ${file.path} (${file.content.length} bytes)`);
+        const collision = byPath.get(file.path);
+        if (collision) {
+          console.log(
+            `  ${c.bold("!")} ${file.path} (${describeOwner(collision)} — would be refused)`,
+          );
+        } else {
+          console.log(`  ${c.green("+")} ${file.path} (${file.content.length} bytes)`);
+        }
+      }
+      if (collisions.length > 0) {
+        reportOwnershipCollisions(targetName, collisions);
       }
     }
     console.log("");
@@ -359,7 +417,25 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       console.log("");
       console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${result.conflicts} conflicts${prune ? `, ${result.deleted} deleted` : ""}`);
     } else {
-      // FIRST RUN or --force — write everything
+      // FIRST RUN or --force — write everything.
+      //
+      // Without a manifest nothing here is known to belong to this target, so
+      // the incremental conflict protection never runs. Check ownership before
+      // the first byte is written: five bindings generate the same root
+      // AGENTS.md, and whichever ran last used to win silently.
+      if (!force) {
+        const collisions = findUnownedCollisions(
+          basePath,
+          targetName,
+          files,
+          Object.keys(bindings),
+        );
+        if (collisions.length > 0) {
+          reportOwnershipCollisions(targetName, collisions);
+          process.exit(1);
+        }
+      }
+
       for (const file of files) {
         writeFile(basePath, file.path, file.content, file.executable);
         console.log(`  ${c.green("+")} ${file.path}`);

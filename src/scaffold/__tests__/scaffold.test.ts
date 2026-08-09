@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { hashContent, readManifest, writeManifest } from "../manifest.js";
+import { getManifestPath, hashContent, readManifest, writeManifest } from "../manifest.js";
 import { mergeAgentFile, shouldOverwriteScript } from "../merge.js";
 import { computeIncrementalPlan, executeActions } from "../incremental.js";
 import type { ScaffoldManifest } from "../types.js";
@@ -77,6 +77,62 @@ describe("manifest round-trip", () => {
   it("returns null when no manifest exists", () => {
     const loaded = readManifest(tmpDir, "claude-code");
     expect(loaded).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Manifest ownership and location
+// ---------------------------------------------------------------------------
+
+describe("manifest ownership", () => {
+  it("gives cursor its own config directory instead of the shared root", () => {
+    expect(getManifestPath("cursor")).toBe(
+      path.join(".cursor", ".scaffold-manifest.json"),
+    );
+  });
+
+  it("still falls back to the root for unknown targets", () => {
+    expect(getManifestPath("some-sdk")).toBe(".scaffold-manifest.json");
+  });
+
+  it("adopts a legacy root manifest that names this target", () => {
+    // What an older binary left behind, before cursor had its own directory.
+    const legacy: ScaffoldManifest = {
+      source: "test.at",
+      sourceHash: hashContent("topology TestTop"),
+      target: "cursor",
+      generatedAt: "2025-01-01T00:00:00.000Z",
+      files: { "AGENTS.md": { hash: hashContent("cursor"), category: "agent" } },
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, ".scaffold-manifest.json"),
+      JSON.stringify(legacy, null, 2),
+      "utf-8",
+    );
+
+    // Without the fallback the next scaffold reads as a first run.
+    const loaded = readManifest(tmpDir, "cursor");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.target).toBe("cursor");
+  });
+
+  it("ignores a root manifest belonging to a different target", () => {
+    const foreign: ScaffoldManifest = {
+      source: "test.at",
+      sourceHash: hashContent("topology TestTop"),
+      target: "some-sdk",
+      generatedAt: "2025-01-01T00:00:00.000Z",
+      files: { "AGENTS.md": { hash: hashContent("sdk"), category: "agent" } },
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, ".scaffold-manifest.json"),
+      JSON.stringify(foreign, null, 2),
+      "utf-8",
+    );
+
+    expect(readManifest(tmpDir, "cursor")).toBeNull();
+    expect(readManifest(tmpDir, "some-other-sdk")).toBeNull();
+    expect(readManifest(tmpDir, "some-sdk")).not.toBeNull();
   });
 });
 
