@@ -218,7 +218,7 @@ In Claude Code, type `/agentopology` — or just ask naturally:
 Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
 
 1. Generates the `.at` file with the right syntax
-2. Validates it against 82 rules
+2. Validates it against 92 rules
 3. Scaffolds it to Claude Code, OpenClaw, Cursor, or any target
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.

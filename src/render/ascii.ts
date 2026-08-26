@@ -83,7 +83,14 @@ function renderSpine(ast: TopologyAST): string[] {
   // one big "agent ×N, parallel" line that read like real concurrent work.
   const wired = new Set(ast.edges.flatMap((e) => [e.from, e.to]));
   const orphans = ast.nodes
-    .filter((n) => n.type !== "orchestrator" && !wired.has(n.id))
+    .filter((n) => {
+      if (n.type === "orchestrator") return false;
+      // A GATE never appears in an edge — it binds through `after`/`before`.
+      // Treating "no edge" as "not in the flow" dropped every gate from the
+      // spine, which is the whole reason `resolve/order.ts` splices them.
+      if (n.type === "gate") return false;
+      return !wired.has(n.id);
+    })
     .map((n) => n.id);
   const orphanSet = new Set(orphans);
 

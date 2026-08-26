@@ -2,6 +2,26 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.4.1] — 2026-08-26
+
+### [fix] `plan` dropped every gate from the rendered flow
+
+`0.4.0` held nodes with no edges out of the terminal spine, so a topology's
+manual-invocation agents would not read as concurrent work. But a **gate** never
+appears in an edge either — it binds through `after`/`before`, which is the
+whole reason `resolve/order.ts` splices them by anchor. So every gate was
+classified as "declared but not in the flow" and vanished from the render.
+
+Only the ASCII render was affected. The execution brief, the order resolver and
+all 8 bindings were correct throughout — a scaffolded gate still compiled to its
+hook.
+
+The test that should have caught this compared the gate's line POSITION against
+the agent it gates. When the gate was dropped from the spine, its name still
+appeared in the "declared but not in the flow" line further down, so the
+positional assertion held. It now asserts the gate is present in the spine by
+its glyph, before comparing anything.
+
 ## [0.4.0] — 2026-08-26
 
 ### [feat] `agentopology plan` — interpreted mode, a second lifecycle for a topology
