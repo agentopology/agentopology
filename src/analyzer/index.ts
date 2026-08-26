@@ -104,7 +104,7 @@ function buildAdjacency(edges: EdgeDef[]): Map<string, string[]> {
 // Layer computation (Kahn's algorithm)
 // ---------------------------------------------------------------------------
 
-function computeLayers(edges: EdgeDef[], nodeIds: Set<string>): LayerInfo[] {
+export function computeLayers(edges: EdgeDef[], nodeIds: Set<string>): LayerInfo[] {
   // Only consider forward edges (no back-edges with maxIterations)
   const forwardEdges = edges.filter((e) => !e.maxIterations);
 

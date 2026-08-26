@@ -347,7 +347,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
-| `prompt` | block | no | -- | Inline agent instructions (multi-line text block) |
+| `prompt` | block | no | -- | Inline agent instructions (multi-line text **block**). A key-value `prompt: "path"` is NOT valid on an agent — that form belongs to `skill` — and is rejected by V89. |
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |

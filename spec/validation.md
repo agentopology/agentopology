@@ -702,3 +702,8 @@ agent researcher {
 | V33 | error | Retrieval sources resolve — retrieval sources must reference declared store IDs |
 | V34 | error | Connection required for remote backends — pinecone, qdrant, pgvector, neo4j, mongodb, falkordb require connection |
 | V35 | error | Agent memory/retrieval references — agent memory and retrieval fields must reference valid IDs |
+| V89 | error | Block field misuse — `agent.prompt` must be a `prompt { }` block, not a `prompt: "path"` key-value pair (the string form belongs to `skill`) |
+
+> **Doc drift:** this table documents 35 rules; `src/parser/validator.ts` implements 85
+> (V1-V89, with V12/V23/V24 collected at parse time and a few numbers unused). The
+> remaining rules are documented only in the source. Worth a reconciliation pass.

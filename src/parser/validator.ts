@@ -267,7 +267,7 @@ function collectOutputs(
  * a topological ordering derived from the flow). We approximate this by
  * checking whether the target has an edge path leading to the source.
  */
-function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
+export function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
   // Step 1: Remove edges that already have [max N] — those are acknowledged loops.
   // We compute the topological order on the remaining "forward" edges only.
   const forwardEdges = edges.filter((e) => e.maxIterations === null);
@@ -659,6 +659,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _edgeAttributeErrors?: ValidationResult[];
   _duplicateSectionWarnings?: ValidationResult[];
   _unknownMemorySubBlockWarnings?: ValidationResult[];
+  _blockFieldMisuseWarnings?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
@@ -990,6 +991,20 @@ function v23DuplicateSections(ast: TopologyAST): ValidationResult[] {
  */
 function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._unknownMemorySubBlockWarnings ?? [];
+}
+
+/**
+ * V89: A field the grammar defines as a block must not be written as a
+ * key-value pair.
+ *
+ * `agent.prompt` is a block (spec/grammar.md:350). The string form belongs to
+ * `skill` (spec/grammar.md:1377). Writing `prompt: "path.md"` on an agent
+ * parses to nothing, so the agent silently ships with no instructions — the
+ * binding then falls back to repeating its role sentence. Collected at parse
+ * time because the misuse leaves no trace in the AST.
+ */
+function v89BlockFieldMisuse(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? [];
 }
 
 /** V26: `action.kind` must be one of the allowed values. */
@@ -3090,6 +3105,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v22FallbackChainModels(ast),
     ...v23DuplicateSections(ast),
     ...v24UnknownMemorySubBlocks(ast),
+    ...v89BlockFieldMisuse(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

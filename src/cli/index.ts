@@ -3,6 +3,7 @@
  * AgenTopology CLI.
  *
  * Commands:
+ *   agentopology plan <file.at>                            — interpreted-mode brief
  *   agentopology validate <file.at>                        — parse and validate
  *   agentopology scaffold <file.at> --target <binding>     — generate files
  *   agentopology scaffold <file.at> --target <binding> --dry-run — preview only
@@ -34,6 +35,9 @@ import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
 import type { ScaffoldManifest } from "../scaffold/types.js";
+import { renderAscii } from "../render/ascii.js";
+import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
+import { renderBriefMarkdown } from "../plan/render.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -60,12 +64,13 @@ function usage(): void {
 ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
+  agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--log <path>]
   agentopology validate <file.at>
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
   agentopology visualize-brain <vault-folder> [--output <dir>]
-  agentopology export <file.at> --format <markdown|mermaid|json> [--output <dir>]
+  agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
   agentopology stubs [<project-dir>]
@@ -75,6 +80,9 @@ ${c.bold("Usage:")}
   agentopology docs --search <term>
 
 ${c.bold("Commands:")}
+  plan       Resolve a topology for interpreted execution: validate, apply spec
+             defaults, order the flow (gates spliced by after/before), and render.
+             A CLI cannot spawn agents — this prepares, the host agent enacts.
   validate   Parse an .at file and run all validation rules.
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
@@ -91,13 +99,16 @@ ${c.bold("Commands:")}
 
 ${c.bold("Options:")}
   --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli, kiro)
-  --format <name>   Export format (markdown, mermaid, json).
+  --format <name>   Export format (markdown, mermaid, json, ascii, brief).
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite all files, ignoring manifest and conflicts.
   --prune           Delete files that were previously scaffolded but are no longer generated.
+  --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
+  --brief           Emit the machine brief only, without the terminal render.
+  --log <path>      Ambiguity log path recorded in the brief (session scratchpad).
   --all             Show all documentation topics (for LLM ingestion).
   --search <term>   Search across all documentation topics.
   --help, -h        Show this help message.
@@ -139,6 +150,9 @@ interface ParsedArgs {
   prune: boolean;
   all: boolean;
   search: string | undefined;
+  mode: string | undefined;
+  brief: boolean;
+  log: string | undefined;
   help: boolean;
 }
 
@@ -157,6 +171,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     prune: false,
     all: false,
     search: undefined,
+    mode: undefined,
+    brief: false,
+    log: undefined,
     help: false,
   };
 
@@ -216,6 +233,21 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--name" && i + 1 < args.length) {
       result.name = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--mode" && i + 1 < args.length) {
+      result.mode = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--brief") {
+      result.brief = true;
+      i++;
+      continue;
+    }
+    if (arg === "--log" && i + 1 < args.length) {
+      result.log = args[i + 1];
       i += 2;
       continue;
     }
@@ -705,6 +737,97 @@ function cmdExport(filePath: string, formatName: string, outputDir?: string): vo
   console.log("");
 }
 
+/**
+ * `agentopology plan <file.at>` — resolve a topology for interpreted execution.
+ *
+ * A CLI cannot spawn subagents, so this does not run anything. It is a linter
+ * and an orderer: validate, apply the spec's defaults, resolve execution order
+ * (gates spliced by after/before rather than left at Kahn's depth 0), render
+ * the flow for a human, and emit the brief a host coding agent enacts.
+ */
+function cmdPlan(
+  filePath: string,
+  mode: string | undefined,
+  briefOnly: boolean,
+  logPath: string | undefined
+): void {
+  const source = readFile(filePath);
+
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (err) {
+    console.error(c.red(`Parse error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  const notch = (mode ?? "execute") as Autonomy;
+  if (!["plan", "execute", "auto"].includes(notch)) {
+    console.error(c.red(`Unknown --mode "${mode}". Expected: plan, execute, auto.`));
+    process.exit(1);
+  }
+
+  const results = validate(ast);
+  const errors = results.filter((r) => r.level === "error");
+
+  const brief = buildExecutionBrief(ast, {
+    source: filePath,
+    autonomy: notch,
+    ambiguityLog: logPath ?? null,
+    errors: errors.map((e) => ({ rule: e.rule, message: e.message, node: e.node })),
+  });
+
+  if (!briefOnly) {
+    console.log("");
+    console.log(renderAscii(ast));
+    console.log("");
+
+    if (errors.length > 0) {
+      console.error(c.red(`  ${errors.length} validation error(s) — this topology cannot be enacted.`));
+      for (const e of errors) {
+        console.error(c.red(`    [${e.rule}] ${e.node ? e.node + ": " : ""}${e.message}`));
+      }
+      console.log("");
+      process.exit(1);
+    }
+
+    // Surface the things the host would otherwise discover mid-run.
+    if (brief.unenforceable.length > 0) {
+      const nodes = [...new Set(brief.unenforceable.map((u) => u.node))];
+      console.log(
+        c.yellow(
+          `  ⚠  ${nodes.length} role(s) declare tool or MCP restrictions that cannot be set inline — running unrestricted:`
+        )
+      );
+      for (const u of brief.unenforceable) {
+        console.log(c.dim(`       ${u.node}: ${u.field} ${JSON.stringify(u.declared)}`));
+      }
+      console.log("");
+    }
+    if (brief.persistent.length > 0) {
+      const parts = brief.persistent.map((p) => `${p.count} ${p.feature}`);
+      console.log(
+        c.yellow(`  ⛔  ${parts.join(", ")} declared — these need \`agentopology scaffold\`.`)
+      );
+      console.log("");
+    }
+    if (brief.preflagged.length > 0) {
+      console.log(c.dim(`  ${brief.preflagged.length} ambiguity/ies pre-flagged in the brief (§10).`));
+      console.log("");
+    }
+
+    console.log(c.dim("  ── brief below; everything past this line is for the agent ──"));
+    console.log("");
+  } else if (errors.length > 0) {
+    // --brief still emits, but the document itself refuses to be enacted.
+    console.log(renderBriefMarkdown(brief));
+    process.exit(1);
+  }
+
+  console.log(renderBriefMarkdown(brief));
+  console.log("");
+}
+
 function cmdInfo(filePath: string): void {
   const source = readFile(filePath);
 
@@ -987,11 +1110,20 @@ function main(): void {
         process.exit(1);
       }
       if (!args.format) {
-        console.error(c.red("Error: export requires --format <markdown|mermaid|json>."));
+        console.error(c.red("Error: export requires --format <markdown|mermaid|json|ascii|brief>."));
         usage();
         process.exit(1);
       }
       cmdExport(args.file, args.format, args.output);
+      break;
+
+    case "plan":
+      if (!args.file) {
+        console.error(c.red("Error: plan requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      cmdPlan(args.file, args.mode, args.brief, args.log);
       break;
 
     case "info":

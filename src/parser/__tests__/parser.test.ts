@@ -7805,6 +7805,79 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     expect(validate(ast).filter((r) => r.level === "error")).toHaveLength(0);
   });
 
+  it("V24: a store's `sources` sub-block does not trigger memory sub-block warnings", () => {
+    // Regression: the V24 scanner used to regex the whole memory body flatly,
+    // flagging blocks NESTED in a store (sources/gmail/slack) as unknown memory
+    // sub-blocks. The scanner is now depth-aware — only top-level memory blocks
+    // are checked, and `store <id> {` is recognized by its leading keyword.
+    const src = `topology cb : [brain] {
+      meta { version: "1.0.0" description: "x" }
+      memory {
+        store brain {
+          type: brain
+          path: "brain/"
+          scope: org
+          sources {
+            gmail { color: "#EA4335" }
+            slack { color: "#4A154B" }
+          }
+        }
+      }
+      agent lib { model: sonnet description: "k" tools: [Read, Write] custodian-of: [brain] }
+      action intake {
+        kind: inline
+        description: "in"
+      }
+      flow { intake -> lib }
+    }`;
+    const v24 = validate(parse(src)).filter((r) => r.rule === "V24");
+    expect(v24).toHaveLength(0);
+  });
+
+  it("V89: a KV `prompt:` on an agent is an error, not a silent drop", () => {
+    // Regression: spec/grammar.md:350 defines agent.prompt as a BLOCK. The
+    // string form belongs to `skill` (grammar.md:1377). Writing
+    // `prompt: "path.md"` on an agent parsed to nothing and validate() said
+    // PASS — so the agent shipped with no instructions and the binding fell
+    // back to repeating its role sentence. examples/code-review.at did this on
+    // four agents, pointing at a prompts/ directory that never existed.
+    const src = `topology t : [pipeline] {
+      meta { version: "1.0.0" description: "x" }
+      agent worker {
+        model: sonnet
+        description: "w"
+        prompt: "prompts/worker.md"
+      }
+      action intake { kind: inline description: "in" }
+      flow { intake -> worker }
+    }`;
+    const ast = parse(src);
+    expect(ast.nodes.find((n) => n.id === "worker")).not.toHaveProperty("prompt");
+    const v89 = validate(ast).filter((r) => r.rule === "V89");
+    expect(v89).toHaveLength(1);
+    expect(v89[0].level).toBe("error");
+    expect(v89[0].node).toBe("worker");
+  });
+
+  it("V89: the `prompt { }` block form is accepted and reaches the AST", () => {
+    const src = `topology t : [pipeline] {
+      meta { version: "1.0.0" description: "x" }
+      agent worker {
+        model: sonnet
+        description: "w"
+        prompt {
+          Do the thing.
+        }
+      }
+      action intake { kind: inline description: "in" }
+      flow { intake -> worker }
+    }`;
+    const ast = parse(src);
+    const worker = ast.nodes.find((n) => n.id === "worker") as { prompt?: string };
+    expect(worker.prompt).toBe("Do the thing.");
+    expect(validate(ast).filter((r) => r.rule === "V89")).toHaveLength(0);
+  });
+
   it("round-trips the company-brain.at example with no validation errors", () => {
     const src = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain.at"),

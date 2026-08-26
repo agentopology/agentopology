@@ -103,7 +103,15 @@ topology data-processing : [pipeline, fan-out] {
     role: extractor
     model: sonnet
     permissions: autonomous
-    prompt: "prompts/extractor.md"
+    prompt {
+      Read source documents from workspace/raw/.
+
+      Extract their text and structure using the extract-pdf and extract-doc
+      tools. Preserve tables and headings — downstream classification depends
+      on them.
+
+      Write one extracted file per source into workspace/extracted/.
+    }
     phase: 1
     tools: [Read, Write, extract-pdf, extract-doc]
     skills: [extraction]
@@ -123,7 +131,14 @@ topology data-processing : [pipeline, fan-out] {
     role: classifier
     model: haiku
     permissions: autonomous
-    prompt: "prompts/classifier.md"
+    prompt {
+      Read extracted documents from workspace/extracted/.
+
+      Assign each one a category and confidence. Run validate-output on your
+      result before writing it.
+
+      Write classified records into workspace/classified/.
+    }
     phase: 2
     tools: [Read, Write, validate-output]
     skills: [classification]
@@ -143,7 +158,14 @@ topology data-processing : [pipeline, fan-out] {
     role: synthesizer
     model: opus
     permissions: autonomous
-    prompt: "prompts/synthesizer.md"
+    prompt {
+      Read all classified records from workspace/classified/.
+
+      Merge them with merge-results into a single structured view. Where records
+      conflict, keep both and mark the conflict rather than choosing.
+
+      Write the result to workspace/synthesis.json.
+    }
     phase: 3
     tools: [Read, Write, merge-results]
     reads: ["workspace/classified/"]
@@ -154,7 +176,14 @@ topology data-processing : [pipeline, fan-out] {
     role: reporter
     model: sonnet
     permissions: autonomous
-    prompt: "prompts/reporter.md"
+    prompt {
+      Read workspace/synthesis.json.
+
+      Produce a report for a human reader: what was processed, what was found,
+      and what remains unresolved. No new analysis.
+
+      Write workspace/report.md and workspace/report.pdf, then set quality.
+    }
     phase: 4
     tools: [Read, Write]
     reads: ["workspace/synthesis.json"]

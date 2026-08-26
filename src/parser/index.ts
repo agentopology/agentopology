@@ -360,7 +360,8 @@ export function parseAction(id: string, body: string): ActionNode {
 export function parseAgent(
   id: string,
   body: string,
-  roles: Record<string, string>
+  roles: Record<string, string>,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
 ): AgentNode {
   const fields = parseFields(body);
   const tools = parseMultilineList(body, "tools");
@@ -380,7 +381,22 @@ export function parseAgent(
   if (fields.model) node.model = fields.model;
   if (fields.permissions) node.permissions = fields.permissions;
 
-  // Extract prompt from prompt {} block (not KV pair)
+  // Extract prompt from prompt {} block (not KV pair).
+  //
+  // V89: `agent.prompt` is a BLOCK per spec/grammar.md:350. The string form
+  // (`prompt: "path.md"`) belongs to `skill`, a different node type
+  // (spec/grammar.md:1377). A KV `prompt` on an agent is silently unparseable,
+  // so flag it rather than dropping the author's instructions on the floor.
+  if (fields.prompt) {
+    _blockFieldMisuseWarnings?.push({
+      rule: "V89",
+      level: "error",
+      message:
+        `agent "${id}" uses \`prompt:\` as a key-value field, but agent prompts must be a \`prompt { }\` block — ` +
+        `this value is ignored and the agent will have no instructions`,
+      node: id,
+    });
+  }
   const promptBlock = extractBlock(body, "prompt");
   if (promptBlock) {
     node.prompt = dedentBlock(promptBlock.body);
@@ -1109,10 +1125,7 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
   ];
   const knownSubsSet = new Set([
     ...knownSubs,
-    "store", "retrieval",
-    // Sub-blocks within store {} and retrieval {} (not top-level memory subs,
-    // but the V24 scanner sees them because it doesn't track depth)
-    "embedding", "index", "ingestion", "search", "lifecycle", "backend-config", "scoring",
+    "store", "retrieval", // the two typed top-level blocks
   ]);
 
   for (const name of knownSubs) {
@@ -1148,19 +1161,47 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
     retrievals.push(parseRetrieval(block.id, block.body));
   }
 
-  // Detect unknown sub-blocks
+  // Detect unknown sub-blocks. Only consider TOP-LEVEL blocks of the memory
+  // body — names nested inside a `store {}` or `retrieval {}` (e.g. a brain
+  // store's `sources { gmail {} }`) are that block's own concern, not memory
+  // sub-blocks. Walk the body tracking brace depth so we only flag depth-0 names.
   if (_unknownSubBlockWarnings) {
-    const subBlockRe = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-    let m: RegExpExecArray | null;
-    while ((m = subBlockRe.exec(body)) !== null) {
-      const name = m[1];
-      if (!knownSubsSet.has(name)) {
-        _unknownSubBlockWarnings.push({
-          rule: "V24",
-          level: "warning",
-          message: `Unknown sub-block "${name}" in memory block — known sub-blocks are: ${knownSubs.join(", ")}`,
-        });
+    let depth = 0;
+    let i = 0;
+    while (i < body.length) {
+      const ch = body[i];
+      if (ch === "}") {
+        depth = Math.max(0, depth - 1);
+        i++;
+        continue;
       }
+      if (ch === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      // At top level, match a block header before `{`. Handles both the bare
+      // form (`workspace {`) and the typed-block form (`store brain {`,
+      // `retrieval smart {`) — in the latter the FIRST token is the keyword.
+      if (depth === 0) {
+        const rest = body.slice(i);
+        const m = /^([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+[a-zA-Z][a-zA-Z0-9_-]*)?\s*\{/.exec(rest);
+        if (m && (i === 0 || /\s/.test(body[i - 1]))) {
+          const name = m[1]; // the leading keyword (store / retrieval / workspace / …)
+          if (!knownSubsSet.has(name)) {
+            _unknownSubBlockWarnings.push({
+              rule: "V24",
+              level: "warning",
+              message: `Unknown sub-block "${name}" in memory block — known sub-blocks are: ${knownSubs.join(", ")}`,
+            });
+          }
+          // Advance into the block (past the `{`) so its body is depth-counted.
+          i += m[0].length;
+          depth++;
+          continue;
+        }
+      }
+      i++;
     }
   }
 
@@ -2117,6 +2158,10 @@ export function parse(source: string): TopologyAST {
   // --- Nodes ---
   const nodes: NodeDef[] = [];
 
+  // V89: collected while parsing agents — a field declared as a block in the
+  // grammar but written as a key-value pair. Attached to the AST below.
+  const blockFieldMisuseWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+
   // Orchestrator
   const orchBlock = extractBlock(topBody, "orchestrator");
   if (orchBlock) {
@@ -2135,7 +2180,7 @@ export function parse(source: string): TopologyAST {
   const agentBlocks = extractAllBlocks(topBody, "agent");
   for (const block of agentBlocks) {
     if (block.id) {
-      nodes.push(parseAgent(block.id, block.body, roles));
+      nodes.push(parseAgent(block.id, block.body, roles, blockFieldMisuseWarnings));
     }
   }
 
@@ -2329,6 +2374,7 @@ export function parse(source: string): TopologyAST {
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
+    _blockFieldMisuseWarnings?: typeof blockFieldMisuseWarnings;
     _sourceMap?: Record<string, number>;
   } = {
     topology,
@@ -2379,6 +2425,11 @@ export function parse(source: string): TopologyAST {
   // Attach V24 unknown memory sub-block warnings for the validator to consume.
   if (unknownMemorySubBlockWarnings.length > 0) {
     ast._unknownMemorySubBlockWarnings = unknownMemorySubBlockWarnings;
+  }
+
+  // Attach V89 block-vs-KV field misuse errors for the validator to consume.
+  if (blockFieldMisuseWarnings.length > 0) {
+    ast._blockFieldMisuseWarnings = blockFieldMisuseWarnings;
   }
 
   // Attach source map for line number tracking in validation results.
