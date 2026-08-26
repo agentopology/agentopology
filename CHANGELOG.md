@@ -2,6 +2,33 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.4.3] — 2026-08-26
+
+### [fix] An error edge pointing backward made the whole downstream unreachable
+
+Reported on first contact: a 13-step topology that **validates clean** rendered
+eleven nodes as "unreachable from the entry point".
+
+`-x->` error edges were skipped by back-edge detection but still handed to the
+ranker. So `take6-staging -x-> oom-fix` looked like a genuine cycle
+(`oom-fix → take6-staging → oom-fix`), Kahn could not rank it, and everything
+downstream fell to depth −1.
+
+An error edge is an exception route, not a step — a catch, not part of the happy
+path. It no longer contributes to ranking at all.
+
+The report attributed this to the second root of a parallel fan-out. That part
+was already correct; there is now a test pinning it so the fix cannot regress it.
+
+### [docs] `docs/FEEDBACK-FIRST-CONTACT.md`
+
+The seven capability asks from that session, each checked against what the
+package actually supports today and ranked by value over cost. Two are small
+(multi-anchor gates, an `effort` field), one is Phase 2's first honest step
+(edge schema compatibility — the schemas already exist, nothing compares them),
+and the largest names an axis the roadmap did not have: **a topology can
+describe intention and has no vocabulary for what actually happened.**
+
 ## [0.4.2] — 2026-08-26
 
 ### [feat] `agentopology/plan`, `/render`, `/resolve` subpath exports

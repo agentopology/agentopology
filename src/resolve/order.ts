@@ -134,8 +134,16 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
 
   // Classify first: rank with only the REAL back-edges removed, so a forward
   // edge carrying `[max N]` still advances the depth of its target.
+  //
+  // ERROR EDGES (`-x->`) are excluded from ranking entirely. They are exception
+  // routes, not the happy path — a catch, not a step. Feeding one to Kahn made
+  // `take6-staging -x-> oom-fix` look like a genuine cycle
+  // (oom-fix → take6-staging → oom-fix), so the ranker gave up and reported
+  // ELEVEN downstream nodes as unreachable on a topology that validates clean.
   const backKeys = trueBackEdges(ast.edges, flowIds);
-  const forwardEdges = ast.edges.filter((e) => !backKeys.has(`${e.from} ${e.to}`));
+  const forwardEdges = ast.edges.filter(
+    (e) => !e.isError && !backKeys.has(`${e.from} ${e.to}`)
+  );
   const layers = computeLayers(
     // computeLayers strips `maxIterations` itself, so clear it on the edges we
     // have already established are forward — otherwise they vanish again.
