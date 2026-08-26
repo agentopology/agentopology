@@ -25,6 +25,8 @@
  * @module
  */
 
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import type {
   TopologyAST,
   AgentNode,
@@ -101,10 +103,15 @@ export interface RoleCard {
   /** Authored prompt, or null when the topology only gave a role/description. */
   prompt: string | null;
   role: string;
+  /** Declared, as written in the topology. */
   reads: string[];
   writes: string[];
+  /** Resolved against `root` — what the prompt actually names. */
+  readsAbs: string[];
+  writesAbs: string[];
   /** Paths this role writes that its downstream readers must NOT be offered. */
   withheld: string[];
+  withheldAbs: string[];
   /** Sibling ids in the same step it must stay blind to. */
   blindTo: string[];
   outputs: Record<string, string[]>;
@@ -117,13 +124,23 @@ export interface ExecutionBrief {
   topology: string;
   version: string;
   source: string;
+  /** Absolute directory every declared path resolves against. */
+  root: string;
+  /** The task text substituted into `{{TASK}}`, or null if none was given. */
+  task: string | null;
+  /** Source-tree revision at plan time, for drift detection. */
+  revision: string | null;
   autonomy: Autonomy;
   ambiguityLog: string | null;
   /** Validation errors. A non-empty list means the brief must not be enacted. */
   errors: Array<{ rule: string; message: string; node?: string }>;
   steps: OrderStep[];
-  /** `reads` paths no node produces. They must exist before step 1. */
-  preconditions: string[];
+  /**
+   * `reads` paths no node produces — they must exist before step 1. Each is
+   * checked on disk, because "must exist first" that nobody verifies is a
+   * runtime surprise instead of a plan-time refusal.
+   */
+  preconditions: Array<{ path: string; absolute: string; exists: boolean }>;
   roles: RoleCard[];
   handoffs: Handoff[];
   blindPairs: BlindPair[];
@@ -144,6 +161,21 @@ export interface BriefOptions {
   ambiguityLog?: string | null;
   /** Validation results, so the brief can refuse to be enacted on errors. */
   errors?: Array<{ rule: string; message: string; node?: string }>;
+  /**
+   * The concrete task this run is for — substituted into every role prompt's
+   * `{{TASK}}`. Dogfooding found the brief told the host to substitute it while
+   * never saying what it was or where it came from.
+   */
+  task?: string | null;
+  /**
+   * Directory that `reads`/`writes` paths resolve against. Role cards emit
+   * ABSOLUTE paths: dogfooding found three subagents each normalised a relative
+   * path differently, so the declared handoff pointed nowhere and the receiving
+   * role had to be corrected by hand.
+   */
+  root?: string;
+  /** Commit sha of the source tree, so mid-run drift is detectable. */
+  revision?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,10 +260,26 @@ function computeBlindPairs(steps: OrderStep[], ast: TopologyAST): BlindPair[] {
   return out;
 }
 
-function computePreconditions(ast: TopologyAST): string[] {
+/** Resolve a declared path against the run root. Absolute paths pass through. */
+function abs(root: string, p: string): string {
+  return isAbsolute(p) ? p : resolvePath(root, p);
+}
+
+function computePreconditions(
+  ast: TopologyAST,
+  root: string
+): Array<{ path: string; absolute: string; exists: boolean }> {
   const produced = new Set(agentsOf(ast).flatMap((a) => a.writes ?? []));
   const needed = new Set(agentsOf(ast).flatMap((a) => a.reads ?? []));
-  return [...needed].filter((p) => !produced.has(p)).sort();
+  return [...needed]
+    .filter((p) => !produced.has(p))
+    .sort()
+    .map((p) => {
+      const absolute = abs(root, p);
+      // A directory prefix like "workspace/raw/" is a legal `reads` target, so
+      // existsSync covers both files and dirs.
+      return { path: p, absolute, exists: existsSync(absolute) };
+    });
 }
 
 function computeRoutes(ast: TopologyAST): Array<{ from: string; key: string; edges: EdgeDef[] }> {
@@ -264,7 +312,8 @@ function computePreflagged(
   ast: TopologyAST,
   handoffs: Handoff[],
   unenforceable: Unenforceable[],
-  persistent: Array<{ feature: string; count: number }>
+  persistent: Array<{ feature: string; count: number }>,
+  preconditions: Array<{ path: string; absolute: string; exists: boolean }>
 ): PreflaggedAmbiguity[] {
   const out: PreflaggedAmbiguity[] = [];
 
@@ -321,6 +370,17 @@ function computePreflagged(
     });
   }
 
+  for (const pre of preconditions) {
+    if (pre.exists) continue;
+    out.push({
+      kind: "precondition-missing",
+      at: { section: "2" },
+      question: `run input \`${pre.path}\` is read by a role, produced by none, and does not exist at ${pre.absolute}.`,
+      alternatives: ["stop and ask the human", "let the first reader discover it"],
+      fix: `create ${pre.path}, or add a role that writes it`,
+    });
+  }
+
   if (persistent.length) {
     out.push({
       kind: "persistent-feature-ignored",
@@ -342,6 +402,7 @@ function computePreflagged(
  * @returns The typed brief. Render it with {@link renderBriefMarkdown}.
  */
 export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}): ExecutionBrief {
+  const root = resolvePath(opts.root ?? process.cwd());
   const { ast, applied } = resolveDefaults(rawAst);
   const { steps, loops, orchestrator } = resolveOrder(ast);
 
@@ -349,7 +410,8 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
   const blindPairs = computeBlindPairs(steps, ast);
   const unenforceable = computeUnenforceable(ast);
   const persistent = persistentFeatures(ast);
-  const preflagged = computePreflagged(ast, handoffs, unenforceable, persistent);
+  const preconditions = computePreconditions(ast, root);
+  const preflagged = computePreflagged(ast, handoffs, unenforceable, persistent, preconditions);
 
   const stepOf = new Map<string, OrderStep>();
   for (const s of steps) for (const id of s.ids) stepOf.set(id, s);
@@ -372,7 +434,10 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
       role: a.role ?? a.description ?? a.id,
       reads: a.reads ?? [],
       writes: a.writes ?? [],
+      readsAbs: (a.reads ?? []).map((p) => abs(root, p)),
+      writesAbs: (a.writes ?? []).map((p) => abs(root, p)),
       withheld: [...(withheldByWriter.get(a.id) ?? [])],
+      withheldAbs: [...(withheldByWriter.get(a.id) ?? [])].map((p) => abs(root, p)),
       blindTo,
       outputs: a.outputs ?? {},
       declaredTools: a.tools,
@@ -384,11 +449,14 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
     topology: ast.topology.name,
     version: ast.topology.version ?? "0.0.0",
     source: opts.source ?? "<stdin>",
+    root,
+    task: opts.task ?? null,
+    revision: opts.revision ?? null,
     autonomy: opts.autonomy ?? "execute",
     ambiguityLog: opts.ambiguityLog ?? null,
     errors: opts.errors ?? [],
     steps,
-    preconditions: computePreconditions(ast),
+    preconditions,
     roles,
     handoffs,
     blindPairs,

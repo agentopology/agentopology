@@ -28,7 +28,7 @@ function fence(body: string): string {
 function rolePrompt(brief: ExecutionBrief, role: RoleCard): string {
   const lines: string[] = [];
   lines.push("TASK CONTEXT");
-  lines.push("{{TASK}}");
+  lines.push(brief.task ?? "{{TASK}}");
   lines.push("");
   lines.push(`You are \`${role.id}\` in the topology \`${brief.topology}\`.`);
   lines.push("");
@@ -41,16 +41,16 @@ function rolePrompt(brief: ExecutionBrief, role: RoleCard): string {
     lines.push(role.prompt);
   }
 
-  if (role.reads.length) {
+  if (role.readsAbs.length) {
     lines.push("");
-    lines.push("INPUTS — read exactly these paths:");
-    for (const r of role.reads) lines.push(`  ${r}`);
+    lines.push("INPUTS — read exactly these paths. They are absolute; use them as given.");
+    for (const r of role.readsAbs) lines.push(`  ${r}`);
   }
 
-  if (role.writes.length) {
+  if (role.writesAbs.length) {
     lines.push("");
-    lines.push("OUTPUTS — write exactly these paths:");
-    for (const w of role.writes) lines.push(`  ${w}`);
+    lines.push("OUTPUTS — write exactly these paths. They are absolute; use them as given.");
+    for (const w of role.writesAbs) lines.push(`  ${w}`);
   }
 
   if (role.blindTo.length) {
@@ -62,10 +62,10 @@ function rolePrompt(brief: ExecutionBrief, role: RoleCard): string {
     );
   }
 
-  if (role.withheld.length) {
+  if (role.withheldAbs.length) {
     lines.push("");
     lines.push("WITHHELD — you write these, but downstream roles must not receive them:");
-    for (const w of role.withheld) lines.push(`  ${w}`);
+    for (const w of role.withheldAbs) lines.push(`  ${w}`);
   }
 
   if (role.declaredTools?.length) {
@@ -84,8 +84,8 @@ function rolePrompt(brief: ExecutionBrief, role: RoleCard): string {
   lines.push("");
   lines.push("```at-output");
   for (const k of keys) lines.push(`${k}: <${role.outputs[k].join("|")}>`);
-  for (const w of role.writes) lines.push(`wrote: ${w}`);
-  if (!keys.length && !role.writes.length) lines.push("done: yes");
+  for (const w of role.writesAbs) lines.push(`wrote: ${w}`);
+  if (!keys.length && !role.writesAbs.length) lines.push("done: yes");
   lines.push("```");
 
   return lines.join("\n");
@@ -104,6 +104,8 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   L.push("brief: agentopology/v1");
   L.push(`topology: ${brief.topology}@${brief.version}`);
   L.push(`source: ${brief.source}`);
+  L.push(`root: ${brief.root}`);
+  if (brief.revision) L.push(`revision: ${brief.revision}`);
   L.push(`autonomy: ${brief.autonomy}`);
   if (brief.ambiguityLog) L.push(`ambiguity-log: ${brief.ambiguityLog}`);
   L.push("---");
@@ -134,8 +136,13 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   L.push("   message** before reading any result. This is not an optimisation — it is");
   L.push("   how §4's isolation is enforced. If you have not yet seen a sibling's");
   L.push("   output when you compose its neighbour's prompt, you cannot leak it.");
-  L.push("5. Spawn with the role card's parameters and its prompt verbatim, substituting");
-  L.push("   `{{TASK}}`. You may change nothing else in a prompt.");
+  L.push("5. Spawn with the role card's parameters and its prompt verbatim. The task");
+  L.push("   text is in §1b — it is already substituted into each prompt unless the");
+  L.push("   prompt still shows a literal `{{TASK}}`, in which case put the user's");
+  L.push("   request there. You may change nothing else in a prompt.");
+  L.push("   `name` is a CONVENIENCE, not a requirement. Some hosts reject it (\"Teammates");
+  L.push("   cannot spawn other teammates\"). If a spawn is rejected for `name`, drop it");
+  L.push("   and re-dispatch — do not treat that as a failed step.");
   L.push("6. Extract each reply's ```at-output``` block. Resolve each declared output:");
   L.push("   **T1 contract** (key present, value in enum) → **T2 scan** (find enum tokens");
   L.push("   in the reply; exactly one distinct token wins) → **T3 infer** (you decide).");
@@ -147,6 +154,13 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   L.push("   scan / by inference) · gate exit codes · loop traversals used · one line per");
   L.push("   ambiguity recorded, with its `fix:`.");
   L.push("");
+  if (brief.revision) {
+    L.push(
+      `The source tree was at \`${brief.revision}\` when this brief was built. If it moved ` +
+        "under you mid-run, say so — a role may have read a file that has since changed."
+    );
+    L.push("");
+  }
 
   // §1 -----------------------------------------------------------------
   L.push("# §1 — Run contract");
@@ -166,13 +180,45 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
     L.push("");
   }
 
+  // §1b ----------------------------------------------------------------
+  L.push("# §1b — Run inputs");
+  L.push("");
+  L.push(`**Root.** Every path in this brief is absolute, resolved against \`${brief.root}\`.`);
+  L.push("Use them exactly as written. Do not re-resolve them against your own working");
+  L.push("directory — sibling roles that normalise the same relative path differently");
+  L.push("break the handoff in §4 silently.");
+  L.push("");
+  if (brief.task) {
+    L.push("**Task.** This is what the run is for. It is already substituted into every");
+    L.push("role prompt below:");
+    L.push("");
+    L.push("> " + brief.task.split("\n").join("\n> "));
+  } else {
+    L.push("**Task.** None was given to `plan`, so role prompts carry a literal");
+    L.push("`{{TASK}}`. Substitute the user's actual request there before spawning, and");
+    L.push("use the same text for every role — they are working on one task, not several.");
+    L.push("Pass `--task \"...\"` to have `plan` bake it in instead.");
+  }
+  L.push("");
+
   // §2 -----------------------------------------------------------------
   L.push("# §2 — Execution order");
   L.push("");
   if (brief.preconditions.length) {
-    L.push("Preconditions — read by a role but produced by none, so they must exist first:");
+    L.push("Preconditions — read by a role but produced by none, so they must exist first.");
+    L.push("Checked on disk at plan time:");
     L.push("");
-    for (const p of brief.preconditions) L.push(`    ${p}`);
+    for (const p of brief.preconditions) {
+      L.push(`  ${p.exists ? "✅" : "⛔ MISSING"}  ${p.absolute}`);
+    }
+    const missing = brief.preconditions.filter((p) => !p.exists);
+    if (missing.length) {
+      L.push("");
+      L.push(
+        `**${missing.length} run input(s) do not exist.** Stop and ask before step 1 — ` +
+          "the first role to need one will fail, and it will fail late."
+      );
+    }
     L.push("");
   } else {
     L.push("No preconditions — every declared input is produced inside the run.");
@@ -191,7 +237,11 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   // §3 -----------------------------------------------------------------
   L.push("# §3 — Role cards");
   L.push("");
-  L.push("Spawn parameters, then the prompt verbatim. Substitute only `{{TASK}}`.");
+  L.push(
+    brief.task
+      ? "Spawn parameters, then the prompt verbatim. The task is already substituted — change nothing."
+      : "Spawn parameters, then the prompt verbatim. Substitute the task where the prompt shows a placeholder; change nothing else."
+  );
   L.push("");
   for (const role of brief.roles) {
     L.push(`### \`${role.id}\``);
@@ -199,7 +249,7 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
     L.push("| param | value |");
     L.push("|---|---|");
     L.push("| `subagent_type` | `general-purpose` |");
-    L.push(`| \`name\` | \`${role.id}\` |`);
+    L.push(`| \`name\` | \`${role.id}\` — optional; drop it if the host rejects it |`);
     L.push(`| \`model\` | ${role.model ? `\`${role.model}\`` : "— (inherit)"} |`);
     L.push(`| \`isolation\` | ${role.isolation ? `\`${role.isolation}\`` : "—"} |`);
     L.push("");

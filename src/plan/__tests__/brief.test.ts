@@ -68,11 +68,79 @@ describe("buildExecutionBrief", () => {
     expect(analyzer.blindTo).toEqual(["security-scanner"]);
   });
 
-  it("lists reads nobody produces as run preconditions", () => {
+  it("lists reads nobody produces as run preconditions, and checks them on disk", () => {
     const b = briefFor("code-review.at");
-    expect(b.preconditions).toContain("workspace/pr-diff.md");
+    const paths = b.preconditions.map((p) => p.path);
+    expect(paths).toContain("workspace/pr-diff.md");
     // Anything a role writes is produced inside the run, so it is not a precondition.
-    expect(b.preconditions).not.toContain("workspace/analysis.md");
+    expect(paths).not.toContain("workspace/analysis.md");
+
+    // Each carries an absolute path and a real existence check — "must exist
+    // first" that nobody verifies is a runtime surprise, not a contract.
+    for (const p of b.preconditions) {
+      expect(p.absolute.startsWith("/"), p.path).toBe(true);
+      expect(typeof p.exists).toBe("boolean");
+    }
+  });
+
+  it("pre-flags a precondition that does not exist on disk", () => {
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+        reads: ["definitely/not/here.md"]
+      }
+      action intake {
+        kind: inline
+        description: "in"
+      }
+      flow { intake -> a }
+    }`;
+    const b = buildExecutionBrief(parse(src));
+    const flag = b.preflagged.find((p) => p.kind === "precondition-missing")!;
+    expect(flag).toBeDefined();
+    expect(flag.question).toContain("definitely/not/here.md");
+  });
+
+  it("resolves every declared path to an absolute one for the role cards", () => {
+    // Dogfooding found three subagents each normalising the same relative path
+    // differently, so the declared handoff pointed nowhere.
+    const b = briefFor("code-review.at");
+    for (const r of b.roles) {
+      for (const p of [...r.readsAbs, ...r.writesAbs]) {
+        expect(p.startsWith("/"), `${r.id}: ${p}`).toBe(true);
+      }
+    }
+  });
+
+  it("carries the task into the brief so {{TASK}} is never undefined", () => {
+    const b = briefFor("code-review.at", { task: "Review PR 42" });
+    expect(b.task).toBe("Review PR 42");
+    const md = renderBriefMarkdown(b);
+    expect(md).toContain("§1b — Run inputs");
+    expect(md).toContain("Review PR 42");
+    // §0 legitimately mentions the placeholder when explaining it. What must
+    // not contain it is the ROLE PROMPTS — those are copied verbatim.
+    const cards = md.slice(md.indexOf("# §3 — Role cards"));
+    expect(cards).not.toContain("{{TASK}}");
+    expect(cards).toContain("Review PR 42");
+  });
+
+  it("says what to do about {{TASK}} when no task was given", () => {
+    const md = renderBriefMarkdown(briefFor("code-review.at"));
+    const cards = md.slice(md.indexOf("# §3 — Role cards"));
+    expect(cards).toContain("{{TASK}}");
+    expect(md).toContain("Substitute the user's actual request");
+  });
+
+  it("marks the `name` spawn parameter optional", () => {
+    // Some hosts reject it outright ("Teammates cannot spawn other teammates").
+    const md = renderBriefMarkdown(briefFor("code-review.at"));
+    expect(md).toContain("drop it if the host rejects it");
   });
 
   it("names every unenforceable declaration rather than dropping it", () => {

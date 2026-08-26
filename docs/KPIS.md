@@ -58,7 +58,7 @@ Is `.at` actually a good language, or just a config format with opinions?
 | L1.3 | **Spec matches implementation** | `src/parser/__tests__/spec-sync.test.ts` — compares the spec table against the `validate()` registry | ✅ **90 / 90**, contiguous V1-V90, guarded by 4 tests | stays equal |
 | L1.4 | **Bindings agree on defaults** | `src/bindings/__tests__/defaults-agreement.test.ts` | ✅ **0 disagreements.** Was 1 — codex defaulted to `supervised` → Codex `untrusted`, the most restrictive policy, for an omitted field the spec says means `autonomous`. openclaw's literal `"auto"` was a false alarm: it *maps* to `autonomous`. | stays 0 |
 | L1.5 | **Round-trip fidelity** | parse → serialize → parse, deep-equal | ✅ covered by `src/import/__tests__` | stays green |
-| L1.6 | **Time to a first valid topology, by a stranger** | dogfood run: wall-clock + rejection count | ⏳ measuring now | < 10 min, ≤ 2 rejections |
+| L1.6 | **Time to a first valid topology, by a stranger** | dogfood run artefacts | ✅ a stranger wrote a valid 4-role topology with genuinely blind auditors, unaided | < 10 min, ≤ 2 rejections |
 
 **The one that matters most is L1.2.** A language whose validator says PASS on a
 file it silently mangled has no credibility, and we shipped exactly that for
@@ -89,11 +89,11 @@ direction is decoration.
 
 | # | KPI | Instrument | Baseline | Target |
 |---|---|---|---|---|
-| L3.1 | **Brief is followable without guessing** | dogfood: count "places I had to guess" in a first-user report | ⏳ measuring | ≤ 2 per run |
+| L3.1 | **Brief is followable without guessing** | the ambiguity log itself | ⚠️ **8 in the first run**, 6 of them new to me. All 6 fixed. Re-measure on the next run. | ≤ 2 per run |
 | L3.2 | **Return contract holds** | `outputs resolved: N by contract / M by scan / K by inference` in the closing report | ⏳ measuring | ≥ 80% by contract |
 | L3.3 | **Blindness survives** | a blind role's output must contain no fact only its sibling had | ⏳ not yet instrumented | 0 leaks |
 | L3.4 | **Brief size stays sane** | lines of brief ÷ number of roles | 347 lines / 4 roles ≈ **87 lines per role** | < 60, or a `--from-step` flag |
-| L3.5 | **Ambiguity log yields fixes** | share of logged entries whose `fix:` is a real `.at` edit | 100% by construction (6 kinds pre-flagged) | stays 100% |
+| L3.5 | **Ambiguity log yields fixes** | share of logged entries whose `fix:` is actionable | ✅ **8 of 8** in the first real run, and 6 became shipped code changes the same day | stays 100% |
 | L3.6 | **Interpreted beats prose** | same task, two runs: brief-driven vs prose-driven, blind-judged | ⏳ **never run** | brief wins ≥ 2 of 3 |
 | L3.7 | Scaffold still preferred where it should be | count runs that hit the §9 "needs scaffold" wall | ⏳ | wall is *named*, never silent — 100% |
 

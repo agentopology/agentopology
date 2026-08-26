@@ -64,7 +64,7 @@ function usage(): void {
 ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
-  agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--log <path>]
+  agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
   agentopology validate <file.at>
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
@@ -108,6 +108,8 @@ ${c.bold("Options:")}
   --prune           Delete files that were previously scaffolded but are no longer generated.
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
   --brief           Emit the machine brief only, without the terminal render.
+  --task <text>     The concrete task, baked into every role prompt (plan).
+  --root <dir>      Directory declared paths resolve against (plan; default: cwd).
   --log <path>      Ambiguity log path recorded in the brief (session scratchpad).
   --all             Show all documentation topics (for LLM ingestion).
   --search <term>   Search across all documentation topics.
@@ -153,6 +155,8 @@ interface ParsedArgs {
   mode: string | undefined;
   brief: boolean;
   log: string | undefined;
+  task: string | undefined;
+  root: string | undefined;
   help: boolean;
 }
 
@@ -174,6 +178,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     mode: undefined,
     brief: false,
     log: undefined,
+    task: undefined,
+    root: undefined,
     help: false,
   };
 
@@ -248,6 +254,16 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--log" && i + 1 < args.length) {
       result.log = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--task" && i + 1 < args.length) {
+      result.task = args[i + 1];
+      i += 2;
+      continue;
+    }
+    if (arg === "--root" && i + 1 < args.length) {
+      result.root = args[i + 1];
       i += 2;
       continue;
     }
@@ -749,7 +765,9 @@ function cmdPlan(
   filePath: string,
   mode: string | undefined,
   briefOnly: boolean,
-  logPath: string | undefined
+  logPath: string | undefined,
+  task: string | undefined,
+  rootDir: string | undefined
 ): void {
   const source = readFile(filePath);
 
@@ -770,8 +788,24 @@ function cmdPlan(
   const results = validate(ast);
   const errors = results.filter((r) => r.level === "error");
 
+  // Record the source-tree revision so mid-run drift is detectable. Best
+  // effort: not every project is a git repo, and that is not an error.
+  let revision: string | null = null;
+  try {
+    revision = execSync("git rev-parse --short HEAD", {
+      cwd: rootDir ?? process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    revision = null;
+  }
+
   const brief = buildExecutionBrief(ast, {
     source: filePath,
+    root: rootDir,
+    task: task ?? null,
+    revision,
     autonomy: notch,
     ambiguityLog: logPath ?? null,
     errors: errors.map((e) => ({ rule: e.rule, message: e.message, node: e.node })),
@@ -792,6 +826,14 @@ function cmdPlan(
     }
 
     // Surface the things the host would otherwise discover mid-run.
+    const missingInputs = brief.preconditions.filter((p) => !p.exists);
+    if (missingInputs.length > 0) {
+      console.log(
+        c.red(`  ⛔  ${missingInputs.length} run input(s) declared but missing on disk:`)
+      );
+      for (const m of missingInputs) console.log(c.dim(`       ${m.absolute}`));
+      console.log("");
+    }
     if (brief.unenforceable.length > 0) {
       const nodes = [...new Set(brief.unenforceable.map((u) => u.node))];
       console.log(
@@ -1123,7 +1165,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdPlan(args.file, args.mode, args.brief, args.log);
+      cmdPlan(args.file, args.mode, args.brief, args.log, args.task, args.root);
       break;
 
     case "info":
