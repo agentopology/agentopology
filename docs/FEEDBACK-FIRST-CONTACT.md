@@ -253,3 +253,69 @@ identical everywhere.
 5. Concurrency class — needs its scope settled first
 
 The first two need no grammar change at all, which is the right way in.
+
+---
+
+# Built — shipped as 0.5.0, 2026-08-26
+
+Four of the seven, plus the bug. What was measured, including what missed.
+
+| # | Ask | Outcome |
+|---|---|---|
+| 8 | the bug | ✅ shipped `0.4.3` — cause was NOT the fan-out, see above |
+| 1 | live-state overlay | ✅ **built differently** — derived from disk, no sidecar |
+| 2 | gate templates | ✅ `after: [a, b, c]` |
+| 7 | prove the dataflow | ✅ **built differently** — V93 on `reads`/`writes`, not schemas |
+| 6 | reasoning effort | ✅ **built differently** — `thinking` extended, no `effort` field |
+| 4 | run results | ⛔ **dissolved** — no run artifact, so no run history |
+| 5 | concurrency class | ⏳ deferred, scope undecided |
+| 3 | callback contract | ⏳ deferred — likely already solved, question below |
+
+## What we measured, including the miss
+
+**KPI L1 — derived state decidable on real files — MISSED.**
+
+```
+  70%  agents declaring writes     <- what set the target
+  77%  spawn steps decidable       <- fair measure of the feature
+  39%  ALL steps decidable         <- what the KPI asked for
+   0%  saturday-road.at            <- YOUR file
+```
+
+The miscalibration was ours: a 70% target taken from an *agent-level* count and
+applied to a *step-level* metric that also counts actions, gates and human
+nodes — undecidable by construction.
+
+**The zero matters more.** Derived run state does nothing for you, because
+`saturday-road.at` declares no `writes` on any agent. The feature works as
+designed and has nothing to work with. If you add `writes:` to the lanes that
+produce artifacts, `plan` will start telling you which of them are done — and
+V93 will start checking that each lane hands the next one something.
+
+**KPI L2 — V93 fires on something real — MET.** 26 edges across six files,
+including two genuine design bugs in our own examples.
+
+**KPI C4 — compile path untouched — MET with one deliberate exception.** 1208 of
+1213 scaffolded files byte-identical; the five that differ are a cursor bug fix
+found by the diff itself.
+
+## Two questions back to you
+
+1. **Is #3 already solved?** The brief requires every sub-agent to end with a
+   fenced ` ```at-output ` block, resolves it in three tiers, logs any fallback,
+   and **halts the run if the very first sub-agent fails the contract**. So
+   "reported in prose" should already be a detected violation. Does that cover
+   the two losses you described, or were those runs before the brief existed?
+
+2. **What is a concurrency class scoped to?** Your law is *"max 2 test-running
+   builders on this laptop"* — that is a property of the machine, not the
+   topology, and the same file on a bigger box should allow more. Does the cap
+   belong in the `.at` at all, or in something machine-local that `plan` reads?
+
+## One correction worth having
+
+Your repro for the bug blamed the second root of a parallel fan-out. That path
+was already correct and now has a test pinning it. The actual cause was
+`take6-staging -x-> oom-fix [max 2]` — an **error edge pointing backward**,
+which the ranker was treating as ordinary flow. Worth knowing, because the
+stated repro would send someone hunting the wrong code.
