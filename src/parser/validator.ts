@@ -20,6 +20,7 @@
  */
 
 import { MISSING } from "./index.js";
+import { gateAnchors } from "./ast.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -674,20 +675,22 @@ function v13GatePlacement(ast: TopologyAST): ValidationResult[] {
 
   for (const node of ast.nodes) {
     if (!isGate(node)) continue;
-    if (node.after && !ids.has(node.after)) {
+    for (const anchor of gateAnchors(node, "after")) {
+      if (ids.has(anchor)) continue;
       results.push({
         rule: "V13",
         level: "error",
-        message: `Gate "${node.id}" references undeclared node "${node.after}" in "after"`,
+        message: `Gate "${node.id}" references undeclared node "${anchor}" in "after"`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
     }
-    if (node.before && !ids.has(node.before)) {
+    for (const anchor of gateAnchors(node, "before")) {
+      if (ids.has(anchor)) continue;
       results.push({
         rule: "V13",
         level: "error",
-        message: `Gate "${node.id}" references undeclared node "${node.before}" in "before"`,
+        message: `Gate "${node.id}" references undeclared node "${anchor}" in "before"`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
@@ -1068,6 +1071,62 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * the last `]`, yielding a condition string containing brackets — and nothing
  * reported it. Collected at parse time, where the raw line is still visible.
  */
+/**
+ * V93: an edge between two agents that both declare paths should declare a
+ * handoff.
+ *
+ * `writer.writes ∩ reader.reads` is what actually crosses an edge. When it is
+ * empty, the topology draws a dependency it does not describe — the receiving
+ * agent is told to run after the sender and given nothing the sender produced.
+ *
+ * A WARNING, not an error: an edge may legitimately pass its result inline
+ * rather than through a file, and real topologies do. It is a smell worth
+ * surfacing, not a rejection.
+ *
+ * Skipped when either side declares nothing — that is undecidable, not a
+ * violation. This is the same computation `plan` reports as the
+ * `handoff-overlap-empty` pre-flagged ambiguity; having it here makes it work
+ * under `scaffold` too, and for anyone who never runs `plan`.
+ */
+function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const byId = new Map(ast.nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+
+  for (const edge of ast.edges) {
+    if (edge.isError) continue;
+    const key = `${edge.from} ${edge.to}`;
+    if (seen.has(key)) continue;
+
+    const from = byId.get(edge.from);
+    const to = byId.get(edge.to);
+    if (from?.type !== "agent" || to?.type !== "agent") continue;
+
+    const writes = (from as AgentNode).writes ?? [];
+    const reads = (to as AgentNode).reads ?? [];
+    // Undecidable, not a violation.
+    if (writes.length === 0 || reads.length === 0) continue;
+
+    seen.add(key);
+    const readSet = new Set(reads);
+    if (writes.some((w) => readSet.has(w))) continue;
+
+    results.push({
+      rule: "V93",
+      level: "warning",
+      message:
+        `Edge "${edge.from} -> ${edge.to}" declares no handoff — ` +
+        `"${edge.from}" writes [${writes.join(", ")}] and "${edge.to}" reads ` +
+        `[${reads.join(", ")}], which do not overlap. Add a shared path to ` +
+        `"${edge.to}" reads, or the receiver runs after the sender with none of its output`,
+      node: edge.to,
+      line: lookupLine(ast, edge.to),
+    });
+  }
+
+  return results;
+}
+
 function v92EdgeTwoBrackets(ast: TopologyAST): ValidationResult[] {
   return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
     (r) => r.rule === "V92"
@@ -1174,11 +1233,12 @@ function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (gate.onFail !== "bounce-back") continue;
-    if (gate.after && registeredIds.has(gate.after)) {
+    if (gate.after && gateAnchors(gate, "after").every((a) => registeredIds.has(a))) {
       // Agent/group target — enforceable on claude-code via SubagentStop. No warning.
       continue;
     }
-    const target = gate.after ? `non-agent target "${gate.after}"` : "no after: target";
+    const _anchors = gateAnchors(gate, "after");
+    const target = _anchors.length ? `non-agent target "${_anchors.join('", "')}"` : "no after: target";
     results.push({
       rule: "V25",
       level: "warning",
@@ -1417,7 +1477,11 @@ function v34TemperatureRange(ast: TopologyAST): ValidationResult[] {
 /** V35: Validate `thinking` is one of: off, low, medium, high, max. */
 function v35ThinkingEnum(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  const VALID_THINKING = new Set(["off", "low", "medium", "high", "max"]);
+  // `xhigh` sits between high and max, matching the effort tiers modern routing
+  // exposes. Added in 0.5.0 — `thinking` IS the reasoning-effort field, and a
+  // separate `effort` was deliberately NOT added rather than have two words for
+  // one concept.
+  const VALID_THINKING = new Set(["off", "low", "medium", "high", "xhigh", "max"]);
 
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
@@ -3182,6 +3246,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v90SwallowedField(ast),
     ...v91RequiredFieldPlaceholder(ast),
     ...v92EdgeTwoBrackets(ast),
+    ...v93EdgeHandoffDeclared(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

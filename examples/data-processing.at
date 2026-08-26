@@ -168,7 +168,7 @@ topology data-processing : [pipeline, fan-out] {
     }
     phase: 3
     tools: [Read, Write, merge-results]
-    reads: ["workspace/classified/"]
+    reads: ["workspace/classified/", "workspace/report.md"]
     writes: ["workspace/synthesis.json"]
   }
 

@@ -8914,6 +8914,104 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     expect(e.maxIterations).toBe(3);
   });
 
+  it("V93: an edge whose ends declare no shared path is flagged", () => {
+    // Found real design bugs on its first run: simple-pipeline's revision loop
+    // sent the writer back to revise WITHOUT giving it the review.
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent w {",
+      "    model: sonnet",
+      '    description: "w"',
+      '    writes: ["out/a.md"]',
+      "  }",
+      "  agent r {",
+      "    model: sonnet",
+      '    description: "r"',
+      '    reads: ["out/other.md"]',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> w",
+      "         w -> r }",
+      "}",
+    ].join("\n");
+    const v93 = validate(parse(src)).filter((x) => x.rule === "V93");
+    expect(v93).toHaveLength(1);
+    expect(v93[0].level).toBe("warning"); // a smell, not a rejection
+    expect(v93[0].message).toContain("declares no handoff");
+  });
+
+  it("V93: an overlapping path is clean", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent w {",
+      "    model: sonnet",
+      '    description: "w"',
+      '    writes: ["out/a.md"]',
+      "  }",
+      "  agent r {",
+      "    model: sonnet",
+      '    description: "r"',
+      '    reads: ["out/a.md"]',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> w",
+      "         w -> r }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((x) => x.rule === "V93")).toHaveLength(0);
+  });
+
+  it("V93: an edge where either side declares nothing is UNDECIDABLE, not a violation", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent w {",
+      "    model: sonnet",
+      '    description: "w"',
+      '    writes: ["out/a.md"]',
+      "  }",
+      "  agent r {",
+      "    model: sonnet",
+      '    description: "declares no reads"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> w",
+      "         w -> r }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((x) => x.rule === "V93")).toHaveLength(0);
+  });
+
+  it("V93: every shipped example declares its handoffs", () => {
+    const dir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".at"))) {
+      const hits = validate(parse(readFileSync(resolve(dir, f), "utf8"))).filter(
+        (r) => r.rule === "V93"
+      );
+      expect(hits, `${f}: ${hits.map((h) => h.message).join("; ")}`).toHaveLength(0);
+    }
+  });
+
   it("V91: a required field satisfied by an injected placeholder is still missing", () => {
     // The parser substitutes a sentinel because the AST types are non-optional,
     // and every downstream "is it present?" check then passed. V7 (model

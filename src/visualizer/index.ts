@@ -24,6 +24,7 @@ import type {
   RetrievalNode,
 } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -149,8 +150,18 @@ function astToViewData(ast: TopologyAST): Record<string, any> {
       }
       case "gate": {
         const g = n as GateNode;
-        if (g.after) base.after = g.after;
-        if (g.before) base.before = g.before;
+        // NORMALISE AT THE BOUNDARY. Everything downstream of here is a
+        // template literal of browser JS that TypeScript never checks — roughly
+        // a dozen `positions[gate.after]` lookups and `g.after === nodeId`
+        // comparisons. An array would coerce to "a,b" on lookup (miss) and
+        // never satisfy the equality (gate silently vanishes from the graph).
+        // So the payload carries a STRING here, plus the full list separately.
+        const afters = gateAnchors(g, "after");
+        const befores = gateAnchors(g, "before");
+        if (afters.length) base.after = afters[0];
+        if (befores.length) base.before = befores[0];
+        if (afters.length > 1) base.afterAll = afters;
+        if (befores.length > 1) base.beforeAll = befores;
         if (g.run) base.run = g.run;
         if (g.checks) base.checks = g.checks;
         if (g.onFail) base.onFail = g.onFail;

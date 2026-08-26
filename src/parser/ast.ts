@@ -631,10 +631,25 @@ export interface GroupNode extends BaseNode {
 /** A gate node (quality / security checkpoint). */
 export interface GateNode extends BaseNode {
   type: "gate";
-  /** Agent or action id this gate runs after. */
-  after?: string;
-  /** Agent or action id this gate runs before. */
-  before?: string;
+  /**
+   * Node id(s) this gate runs after. A list attaches ONE declaration to many
+   * anchors — the gate fires after each named node independently.
+   *
+   * The list form exists to stop a repeated verification ritual being copied
+   * per lane, where one copy inevitably drifts and the whole value of a ritual
+   * is that it is identical everywhere. It changes nothing an agent sees: the
+   * brief still gets one gate step per anchor, and bindings still emit one hook
+   * entry per anchor.
+   *
+   * **Never read this directly — use {@link gateAnchors}.** Roughly eighteen
+   * sites across the bindings, the visualizer and the serializer would accept
+   * an array SILENTLY and mis-handle it: a hook matcher would ship `["a","b"]`
+   * into settings.json and never fire, `g.after === id` would never match, and
+   * the round-trip serializer would emit `after: a,b` which re-parses as one id.
+   */
+  after?: string | string[];
+  /** Node id(s) this gate runs before. See {@link after}. */
+  before?: string | string[];
   /** Script to execute for the gate check. */
   run?: string;
   /** List of check identifiers. */
@@ -649,6 +664,39 @@ export interface GateNode extends BaseNode {
   timeout?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/**
+ * The anchors of a gate, always as a list.
+ *
+ * The single normalisation point for `after` / `before`. No consumer should
+ * branch on the union — the seven-phase-sentinel bug fixed earlier the same day
+ * is what happens when each consumer decides for itself.
+ *
+ * @param gate - Any gate node.
+ * @param which - Which anchor field to read.
+ * @returns Zero or more node ids, never undefined.
+ */
+export function gateAnchors(
+  gate: Pick<GateNode, "after" | "before">,
+  which: "after" | "before"
+): string[] {
+  const v = gate[which];
+  if (v === undefined) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+/**
+ * The FIRST anchor, for the handful of places that genuinely need one value —
+ * a hook matcher on a platform whose matcher field is a string, for instance.
+ * Callers must handle the remaining anchors themselves (usually by emitting one
+ * entry per anchor); this exists so nobody reaches for `gate.after as string`.
+ */
+export function primaryAnchor(
+  gate: Pick<GateNode, "after" | "before">,
+  which: "after" | "before"
+): string | undefined {
+  return gateAnchors(gate, which)[0];
 }
 
 /** A human-in-the-loop node requiring manual input or approval. */

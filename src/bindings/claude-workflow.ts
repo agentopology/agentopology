@@ -36,6 +36,7 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { SEAM_NS, isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Lossy / unrepresentable bookkeeping
@@ -150,6 +151,13 @@ function buildAgentOpts(
   fields.push(`label: ${sq(extraLabel ?? agent.id)}`);
   if (agent.model) fields.push(`model: ${sq(agent.model)}`);
   if (agent.isolation) fields.push(`isolation: ${sq(agent.isolation)}`);
+  // `thinking` is the topology's reasoning-effort field, and the Workflow tool's
+  // agent() accepts exactly this as `effort`. This binding emitted nothing for
+  // it and never read `agent.thinking` at all, so a declared reasoning level was
+  // silently dropped on the one target that could honour it natively.
+  if (agent.thinking && agent.thinking !== "off") {
+    fields.push(`effort: ${sq(agent.thinking)}`);
+  }
   if (agent.outputs && Object.keys(agent.outputs).length > 0) {
     fields.push(`schema: ${buildSchemaLiteral(agent.outputs)}`);
   }
@@ -402,8 +410,8 @@ function generateWorkflowScript(
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate");
   const gatesByAfterPhase = new Map<number, GateNode[]>();
   for (const g of gates) {
-    const afterAgent = agents.find((a) => a.id === g.after);
-    const beforeAgent = agents.find((a) => a.id === g.before);
+    const afterAgent = agents.find((a) => gateAnchors(g, "after").includes(a.id));
+    const beforeAgent = agents.find((a) => gateAnchors(g, "before").includes(a.id));
     const afterInWf = afterAgent ? wfPhases.has(phaseOf(afterAgent)) : false;
     const beforeInWf = beforeAgent ? wfPhases.has(phaseOf(beforeAgent)) : false;
     // Require the gate to be wholly inside the workflow span: its after-agent must
@@ -413,7 +421,7 @@ function generateWorkflowScript(
         severity: "LOSSY",
         primitive: "gate",
         scope: g.id,
-        reason: `gate '${g.id}' (after: ${g.after ?? "—"}, before: ${g.before ?? "—"}) is HOST-side — it does not sit between two workflow-marked phases, so it is NOT in the workflow.js. The host (claude-code binding) enforces it after the workflow returns.`,
+        reason: `gate '${g.id}' (after: ${gateAnchors(g, "after").join(", ") || "—"}, before: ${gateAnchors(g, "before").join(", ") || "—"}) is HOST-side — it does not sit between two workflow-marked phases, so it is NOT in the workflow.js. The host (claude-code binding) enforces it after the workflow returns.`,
       });
       continue;
     }

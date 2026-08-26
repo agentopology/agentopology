@@ -9,6 +9,7 @@ import type { TopologyAST, NodeDef, EdgeDef, AgentNode, GateNode, ActionNode, Or
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
 import { byPhase } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -305,8 +306,8 @@ function renderGate(node: GateNode): string {
   lines.push(`#### ${toTitle(node.id)}`);
   lines.push("");
   const parts: string[] = [];
-  if (node.after) parts.push(`After: \`${node.after}\``);
-  if (node.before) parts.push(`Before: \`${node.before}\``);
+  if (node.after) parts.push(`After: \`${gateAnchors(node, "after").join(", ")}\``);
+  if (node.before) parts.push(`Before: \`${gateAnchors(node, "before").join(", ")}\``);
   if (node.run) parts.push(`Run: \`${node.run}\``);
   if (node.onFail) parts.push(`On fail: \`${node.onFail}\``);
   if (node.retry) parts.push(`Retry: ${node.retry}x`);

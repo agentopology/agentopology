@@ -33,6 +33,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1055,8 +1056,8 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
       "",
     ];
 
-    lines.push(`# After: ${gate.after ?? "any"}`);
-    lines.push(`# Before: ${gate.before ?? "any"}`);
+    lines.push(`# After: ${gateAnchors(gate, "after").join(", ") || "any"}`);
+    lines.push(`# Before: ${gateAnchors(gate, "before").join(", ") || "any"}`);
     if (gate.onFail) lines.push(`# On failure: ${gate.onFail}`);
     if (gate.behavior) lines.push(`# Behavior: ${gate.behavior}`);
     if (gate.timeout) lines.push(`# Timeout: ${gate.timeout}`);
@@ -1401,18 +1402,23 @@ function generateHooksJson(ast: TopologyAST): GeneratedFile | null {
   for (const gate of gates) {
     const scriptPath = `.cursor/hooks/gate-${gate.id}.sh`;
 
-    // Determine event
+    // Determine event. Use the normalised anchors — an EMPTY array is truthy,
+    // so branching on `gate.before` directly would pick preToolUse for a gate
+    // that declares `before: []`.
+    const afters = gateAnchors(gate, "after");
+    const befores = gateAnchors(gate, "before");
     let event: string;
-    if (gate.before) {
+    if (befores.length > 0) {
       event = "preToolUse";
-    } else if (gate.after) {
+    } else if (afters.length > 0) {
       event = "postToolUse";
     } else {
       event = "preToolUse";
     }
 
-    // Determine matcher
-    const matcher = gate.after ?? gate.before ?? undefined;
+    // ONE ENTRY PER ANCHOR — a Cursor matcher is a string, and an array would
+    // ship into the JSON and never match.
+    const matchers = befores.length > 0 ? befores : afters;
 
     // Determine failClosed
     const failClosed =
@@ -1422,6 +1428,7 @@ function generateHooksJson(ast: TopologyAST): GeneratedFile | null {
       command: scriptPath,
     };
     if (failClosed) entry.failClosed = true;
+    const matcher = matchers[0];
     if (matcher) entry.matcher = matcher;
     if (gate.timeout) {
       // Parse duration string to seconds (best-effort)

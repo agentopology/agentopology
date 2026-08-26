@@ -32,6 +32,7 @@ import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub, STUB_MARKER } from "./lib/stub.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1329,8 +1330,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
-      if (gate.after) sections.push(`After: ${gate.after}`);
-      if (gate.before) sections.push(`Before: ${gate.before}`);
+      if (gate.after) sections.push(`After: ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`Before: ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`Run: ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`Checks: ${gate.checks.join(", ")}`);
@@ -1781,17 +1782,21 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
 
     const inlineMode = getDelegationMode(ast) === "inline";
-    const wiredAsHook = !inlineMode && isRegisteredSubagentType(ast, gate.after);
+    const gateAfters = gateAnchors(gate, "after");
+    const wiredAsHook =
+      !inlineMode &&
+      gateAfters.length > 0 &&
+      gateAfters.every((a) => isRegisteredSubagentType(ast, a));
     let enforcementNote: string;
     let enforcementNote2: string;
     if (inlineMode) {
       enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (orchestrator.delegation is "inline").`;
       enforcementNote2 = `#              Invoke this script from your /${ast.topology.name} playbook at the right step.`;
     } else if (wiredAsHook) {
-      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gate.after}". Exit 2 blocks the subagent`;
+      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gateAnchors(gate, "after").join('", "')}". Exit 2 blocks the subagent`;
       enforcementNote2 = `#              from stopping (Claude Code prevents stop and surfaces stderr to Claude).`;
     } else {
-      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gate.after || "<unset>"} is not an agent).`;
+      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gateAnchors(gate, "after").join(", ") || "<unset>"} is not an agent).`;
       enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
     }
 
@@ -1803,8 +1808,8 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       enforcementNote2,
       "set -euo pipefail",
       "",
-      "# Gate runs after: " + (gate.after || "any"),
-      "# Gate runs before: " + (gate.before || "any"),
+      "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
+      "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),
       `# On failure: ${gate.onFail || "halt"}`,
     ];
 
@@ -2072,8 +2077,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     // SubagentStop matcher must be a registered subagent_type. If the gate
     // doesn't target an agent node, we cannot wire it as a hook — warn and
     // skip so we don't ship dead config that never fires.
-    if (!isRegisteredSubagentType(ast, gate.after)) {
-      const targetDesc = gate.after ? `non-agent target "${gate.after}"` : "no after: target";
+    const anchors = gateAnchors(gate, "after");
+    if (anchors.length === 0 || !anchors.every((a) => isRegisteredSubagentType(ast, a))) {
+      const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
+      const targetDesc = anchors.length
+        ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
+        : "no after: target";
       console.warn(
         `[claude-code] Gate "${gate.id}" has ${targetDesc} — SubagentStop hook not emitted ` +
           `(matcher must be an agent node id). The gate wrapper script is still generated; ` +
@@ -2088,17 +2097,20 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     const scriptName = `gate-${gate.id}.sh`;
     const command = `bash .claude/skills/${topologyName}/scripts/${scriptName}`;
 
-    const hookEntry: Record<string, unknown> = {
-      matcher: gate.after,
+    // ONE ENTRY PER ANCHOR. A SubagentStop matcher is a STRING — an array would
+    // land in settings.json, type-check clean through Record<string, unknown>,
+    // and the hook would simply never fire. Silent, and the gate would look
+    // wired while doing nothing.
+    const hookEntries: Array<Record<string, unknown>> = anchors.map((anchor) => ({
+      matcher: anchor,
       hooks: [
         {
           type: "command",
           command,
         },
       ],
-    };
-
-    hooksByEvent[eventName].push(hookEntry);
+    }));
+    hooksByEvent[eventName].push(...hookEntries);
   }
 
   // HYBRID: host-layer concurrent Blackboard observer.
@@ -2506,8 +2518,8 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
         );
         sections.push("");
         for (const gate of blockingGates) {
-          const after = gate.after ?? "(any)";
-          const before = gate.before ?? "(any)";
+          const after = gateAnchors(gate, "after").join(", ") || "(any)";
+          const before = gateAnchors(gate, "before").join(", ") || "(any)";
           const onFail = gate.onFail ?? "halt";
           sections.push(`### gate \`${gate.id}\` — after \`${after}\`, before \`${before}\`, on-fail \`${onFail}\``);
           sections.push("");

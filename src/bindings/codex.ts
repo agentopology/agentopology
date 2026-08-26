@@ -36,6 +36,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -429,8 +430,12 @@ function mapReasoningEffort(thinking: string): string | null {
       return "medium";
     case "high":
       return "high";
+    case "xhigh":
+      return "xhigh";
     case "max":
-      return "high";
+      // Was collapsed onto "high", which left `max` and `xhigh` with no
+      // distinct Codex value at all.
+      return "max";
     default:
       return null;
   }
@@ -930,8 +935,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     for (const gate of gates) {
       sections.push(`### ${gate.label || toTitle(gate.id)}`);
       sections.push("");
-      if (gate.after) sections.push(`- **After:** ${gate.after}`);
-      if (gate.before) sections.push(`- **Before:** ${gate.before}`);
+      if (gate.after) sections.push(`- **After:** ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`- **Before:** ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`- **Run:** ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`- **Checks:** ${gate.checks.join(", ")}`);

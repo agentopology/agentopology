@@ -11,6 +11,7 @@
  */
 
 import type { ExecutionBrief, GateTier, RoleCard } from "./brief.js";
+import { gateAnchors } from "../parser/ast.js";
 
 const TIER_NOTE: Record<GateTier, string> = {
   preventive: "tool allowlist — needs a file, unavailable here",
@@ -228,14 +229,35 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
     L.push("No preconditions — every declared input is produced inside the run.");
     L.push("");
   }
-  L.push("| step | kind | id(s) | depth |");
+  const EV: Record<string, string> = {
+    present: "✅ outputs on disk",
+    missing: "⬜ outputs missing",
+    undecidable: "— undecidable",
+  };
+  L.push("| step | kind | id(s) | evidence |");
   L.push("|---|---|---|---|");
   for (const s of brief.steps) {
-    const note = s.ids.length > 1 ? " *(parallel, mutually blind)*" : "";
+    const note = s.ids.length > 1
+      ? s.exclusive ? " *(branch — one runs)*" : " *(parallel, mutually blind)*"
+      : "";
     L.push(
-      `| ${s.index} | ${s.kind} | \`${s.ids.join("`, `")}\`${note} | ${s.depth ?? "spliced"} |`
+      `| ${s.index} | ${s.kind} | \`${s.ids.join("`, `")}\`${note} | ${EV[s.evidence]} |`
     );
   }
+  L.push("");
+
+  // Run state is derived, not stored — so it must state its own limits.
+  const present = brief.steps.filter((s) => s.evidence === "present").length;
+  const undec = brief.steps.filter((s) => s.evidence === "undecidable").length;
+  L.push(
+    `**${present} of ${brief.steps.length} steps have their declared outputs on disk.** ` +
+      `${undec} declare no writes and cannot be judged this way.`
+  );
+  L.push("");
+  L.push("This is evidence, not a record. A file existing means something wrote");
+  L.push("it, not that the step succeeded — and a step may have run and written");
+  L.push("nothing. **Cross-check against `git log` before assuming, and do not");
+  L.push("skip a step on this alone.**");
   L.push("");
 
   // §3 -----------------------------------------------------------------
@@ -350,8 +372,8 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
       // A gate may anchor by `after`, by `before`, or both. Rendering only
       // `after` made a before-only gate read as anchored to nothing.
       const anchor = [
-        g.after ? `after \`${g.after}\`` : "",
-        g.before ? `before \`${g.before}\`` : "",
+        g.after ? `after \`${gateAnchors(g, "after").join(", ")}\`` : "",
+        g.before ? `before \`${gateAnchors(g, "before").join(", ")}\`` : "",
       ]
         .filter(Boolean)
         .join(", ");

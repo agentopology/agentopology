@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 92 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 93 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -766,6 +766,7 @@ through the validator like any other rule.
 | V90 | error | A field value must not swallow the next field — fields are one per line (`spec/grammar.md` §2) |
 | V91 | error | A required field must not be satisfied by a parser-injected placeholder — `meta.version` and `orchestrator.model` are required, and their sentinels (`0.0.0`, `unknown`) satisfied every downstream check |
 | V92 | error | An edge's attributes go in ONE bracket, comma-separated — `[when ...] [max N]` produced a condition string containing brackets, silently |
+| V93 | warning | An edge between two agents that both declare paths should declare a handoff — `writer.writes \| reader.reads` empty means the receiver runs after the sender with none of its output |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

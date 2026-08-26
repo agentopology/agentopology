@@ -32,6 +32,7 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { byPhase } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1204,8 +1205,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
-      if (gate.after) sections.push(`After: ${gate.after}`);
-      if (gate.before) sections.push(`Before: ${gate.before}`);
+      if (gate.after) sections.push(`After: ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`Before: ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`Run: ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`Checks: ${gate.checks.join(", ")}`);
@@ -1464,7 +1465,7 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
     const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
 
     // Derive file patterns from the `after` agent's writes paths
-    const afterWrites = gate.after ? agentWrites.get(gate.after) : undefined;
+    const afterWrites = gate.after ? gateAnchors(gate, "after").flatMap((a) => agentWrites.get(a) ?? []) : undefined;
     const filePatterns = afterWrites
       ? afterWrites.map((p) => p.replace(/\/$/, "/**"))
       : ["workspace/**"];
@@ -1472,7 +1473,7 @@ function generateGateHooks(ast: TopologyAST): GeneratedFile[] {
     const hookJson: Record<string, unknown> = {
       enabled: true,
       name: `${toTitle(gate.id)} Gate`,
-      description: `Quality gate that runs after ${gate.after || "any agent"}${gate.before ? ` and before ${gate.before}` : ""}.${gate.checks && gate.checks.length > 0 ? ` Checks: ${gate.checks.join(", ")}.` : ""}`,
+      description: `Quality gate that runs after ${gateAnchors(gate, "after").join(", ") || "any agent"}${gate.before ? ` and before ${gateAnchors(gate, "before").join(", ")}` : ""}.${gate.checks && gate.checks.length > 0 ? ` Checks: ${gate.checks.join(", ")}.` : ""}`,
       version: "1",
       when: {
         type: "fileEdited",

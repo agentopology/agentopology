@@ -67,7 +67,7 @@ market-routing, consensus, fan-out, event-driven, human-gate
 backoff, interval, max-interval, jitter,
 non-retryable, exponential, linear,
 temperature, max-tokens, top-p, top-k, stop, seed,
-thinking, thinking-budget, off, low, medium, high,
+thinking, thinking-budget, off, low, medium, high, xhigh,
 sensitive,
 log-level, debug, info, warn, error,
 output-format, json-schema, text

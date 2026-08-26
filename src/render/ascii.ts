@@ -15,6 +15,8 @@
 
 import type { TopologyAST, NodeDef, AgentNode, GateNode, EdgeDef } from "../parser/ast.js";
 import { resolveOrder, type OrderStep } from "../resolve/order.js";
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 
 /** Glyph per node kind. Mirrors the shape vocabulary in `exporters/mermaid.ts`. */
 const GLYPH: Record<string, string> = {
@@ -73,6 +75,26 @@ function stepAnnotation(step: OrderStep, byId: Map<string, NodeDef>): string {
   return step.kind;
 }
 
+/**
+ * What the filesystem says about a step. Mirrors `plan/brief.ts` stepEvidence —
+ * kept local so the renderer stays a pure function of the AST plus disk, with no
+ * dependency on the brief.
+ */
+function evidenceMark(step: OrderStep, byId: Map<string, NodeDef>): string {
+  const declared: string[] = [];
+  for (const id of step.ids) {
+    const n = byId.get(id);
+    if (n?.type !== "agent") continue;
+    declared.push(...((n as AgentNode).writes ?? []));
+  }
+  if (declared.length === 0) return " ";
+  const root = process.cwd();
+  const all = declared.every((p) =>
+    existsSync(isAbsolute(p) ? p : resolvePath(root, p))
+  );
+  return all ? "✓" : "·";
+}
+
 function renderSpine(ast: TopologyAST): string[] {
   const byId = new Map<string, NodeDef>(ast.nodes.map((n) => [n.id, n]));
   const { steps, loops, unreachable, orchestrator } = resolveOrder(ast);
@@ -122,13 +144,16 @@ function renderSpine(ast: TopologyAST): string[] {
   spineSteps.forEach((step, i) => {
     const glyph = step.exclusive ? "⑂" : (GLYPH[step.kind] ?? "▸");
     const num = String(step.index).padStart(numWidth, " ");
-    out.push(`  ${num}  ${glyph} ${pad(bodies[i], width)}   ${stepAnnotation(step, byId)}`);
+    const mark = evidenceMark(step, byId);
+    out.push(
+      `  ${num} ${mark} ${glyph} ${pad(bodies[i], width)}   ${stepAnnotation(step, byId)}`
+    );
     if (step.exclusive && step.branchOn) {
       for (const b of step.branchOn) {
-        out.push(`  ${" ".repeat(numWidth)}  ├─ ${b.id}  when ${b.condition}`);
+        out.push(`  ${" ".repeat(numWidth)}   ├─ ${b.id}  when ${b.condition}`);
       }
     }
-    if (i < spineSteps.length - 1) out.push(`  ${" ".repeat(numWidth)}  │`);
+    if (i < spineSteps.length - 1) out.push(`  ${" ".repeat(numWidth)}   │`);
   });
 
   if (loops.length) {

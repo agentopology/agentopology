@@ -19,6 +19,7 @@
  */
 
 import type { TopologyAST, EdgeDef, GateNode, NodeDef } from "../parser/ast.js";
+import { gateAnchors } from "../parser/ast.js";
 import { computeLayers } from "../analyzer/index.js";
 
 /** What the host does at one step. */
@@ -199,7 +200,7 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
     let moved = false;
     for (let i = 0; i < pending.length; ) {
       const g = pending[i];
-      const anchors = [g.after, g.before].filter((a): a is string => !!a);
+      const anchors = [...gateAnchors(g, "after"), ...gateAnchors(g, "before")];
       const waitingOnGate = anchors.some((a) => gateIds.has(a) && !placedIds.has(a));
       if (waitingOnGate) {
         i++;
@@ -215,23 +216,37 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
   ordered.push(...pending);
 
   for (const gate of ordered) {
-    let at = -1;
-    if (gate.after) {
-      const i = withGates.findIndex((s) => s.ids.includes(gate.after!));
-      if (i >= 0) {
-        const already = placedPerAnchor.get(gate.after) ?? 0;
-        at = i + 1 + already;
-        placedPerAnchor.set(gate.after, already + 1);
+    // ONE STEP PER ANCHOR. A gate declared once with three anchors fires three
+    // times, after each named node independently — that is what makes a
+    // repeated ritual a single declaration instead of three copies that drift.
+    const afters = gateAnchors(gate, "after");
+    const befores = gateAnchors(gate, "before");
+    const placements: number[] = [];
+
+    for (const anchor of afters) {
+      const i = withGates.findIndex((s) => s.ids.includes(anchor));
+      if (i < 0) continue;
+      const already = placedPerAnchor.get(anchor) ?? 0;
+      placements.push(i + 1 + already);
+      placedPerAnchor.set(anchor, already + 1);
+    }
+
+    // `before` only positions the gate when no `after` resolved — `after` is
+    // when the check can actually run.
+    if (placements.length === 0) {
+      for (const anchor of befores) {
+        const i = withGates.findIndex((s) => s.ids.includes(anchor));
+        if (i >= 0) placements.push(i);
       }
     }
-    if (at === -1 && gate.before) {
-      const i = withGates.findIndex((s) => s.ids.includes(gate.before!));
-      if (i >= 0) at = i;
-    }
-    // A gate anchored to nothing resolvable runs last — visible, not dropped.
-    if (at === -1) at = withGates.length;
 
-    withGates.splice(at, 0, { kind: "gate", ids: [gate.id], depth: null });
+    // A gate anchored to nothing resolvable runs last — visible, not dropped.
+    if (placements.length === 0) placements.push(withGates.length);
+
+    // Splice from the back so earlier indices stay valid.
+    for (const at of [...placements].sort((a, b) => b - a)) {
+      withGates.splice(at, 0, { kind: "gate", ids: [gate.id], depth: null });
+    }
   }
 
   // Classify each multi-node step: parallel fan-out, or exclusive branch?

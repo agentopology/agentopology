@@ -183,7 +183,7 @@ agent NAME {
 | topK | number | no | -- | Top-k sampling |
 | stop | string[] | no | -- | Stop sequences |
 | seed | number | no | -- | Random seed for reproducibility |
-| thinking | string | no | -- | "off", "low", "medium", "high", "max" |
+| thinking | string | no | -- | "off", "low", "medium", "high", "xhigh", "max" — the reasoning-effort field. Compiles to Codex model_reasoning_effort and to the Workflow tool effort option. |
 | thinkingBudget | number | no | -- | Token budget for reasoning (min 1000) |
 
 ### Observability
