@@ -35,8 +35,10 @@ graphs*. `docs/AGENTOPOLOGY_CONTEXT_FIRST_VISION.md` makes exactly that split �
 practice, not from reading the term.
 
 **KPI-0 — priority is defensible.** Instrument: a single page that a stranger can
-check in 60 seconds without trusting us. Target: exists before launch. Status:
-⏳ not written (this section is the raw material).
+check in 60 seconds without trusting us. Status: ✅ **`docs/PRIOR_ART.md`** — three
+copy-pasteable commands, each hitting a public record (npm registry, GitHub API,
+git history), plus the definition compared line by line against `.at` as it
+shipped in `0.1.0`.
 
 **Anti-goal:** do not claim to have *coined* the term. We did not. The claim is
 narrower and stronger — we shipped the practice, publicly and versioned, before
@@ -151,7 +153,7 @@ Naming these stops them creeping in as accidental goals.
   TOOLING      ██████████  6 of 6 green
   INTERPRETED  ░░░░░░░░░░  0 of 7 measured — dogfood in flight
   ADOPTION     ░░░░░░░░░░  0 of 5 measured — pre-launch
-  PRIORITY     █████░░░░░  receipts exist, the page does not
+  PRIORITY     ██████████  page written, every claim independently checkable
 ```
 
 **Every red is closed.** The two that would have embarrassed us in public are
