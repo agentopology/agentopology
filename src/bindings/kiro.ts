@@ -31,6 +31,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { byPhase } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1640,7 +1641,7 @@ function generateSpecs(ast: TopologyAST): GeneratedFile[] {
     // Group agents by phase
     const phased = agents
       .filter((a) => a.phase != null)
-      .sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0));
+      .sort(byPhase);
     const unphased = agents.filter((a) => a.phase == null);
 
     if (phased.length > 0) {

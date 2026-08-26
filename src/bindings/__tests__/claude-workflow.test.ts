@@ -210,9 +210,18 @@ describe("claude-workflow binding — UNREPRESENTABLE never dropped silently", (
 describe("claude-workflow binding — no execution:workflow marker", () => {
   const NO_SEAM = `
 topology no-seam : [pipeline] {
-  meta { version: "1.0.0" description: "no workflow phase" }
-  orchestrator { model: opus handles: [intake] }
-  action intake { kind: external source: "user" }
+  meta {
+    version: "1.0.0"
+    description: "no workflow phase"
+  }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
+  action intake {
+    kind: external
+    source: "user"
+  }
   agent solo {
     model: sonnet
     phase: 1

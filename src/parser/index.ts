@@ -85,6 +85,79 @@ export type * from "./ast.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * V90: detect a field value that swallowed the next field.
+ *
+ * `parseFields` is line-based, and the grammar never says so. Writing two
+ * fields on one line — `agent a { model: sonnet retry: 3 }` — makes the first
+ * key take the whole rest of the line as its value (`"sonnet retry: 3"`), and
+ * nothing catches it. The value is then silently wrong: a model name that does
+ * not exist, a version string carrying a description, an action `kind` that
+ * fails its enum for a confusing reason.
+ *
+ * Detection: an UNQUOTED value containing whitespace followed by
+ * `identifier:` is almost certainly a swallowed field. Quoted values are
+ * exempt (a description may legitimately contain a colon), and a leading
+ * scheme like `https://` is not matched because it has no preceding
+ * whitespace.
+ */
+function detectSwallowedFields(
+  fields: Record<string, string>,
+  nodeId: string,
+  out: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): void {
+  for (const [key, raw] of Object.entries(fields)) {
+    if (typeof raw !== "string") continue;
+    const value = raw.trim();
+    // Free-prose fields whose quotes have already been stripped are exempt: a
+    // colon inside a description is ordinary English ("Demo: agent pipeline"),
+    // and once the quotes are gone there is no way to tell prose from a
+    // swallow. Where quotes SURVIVE parsing — every block except `meta` — the
+    // check below still catches `description: "k" model: sonnet`.
+    const PROSE_FIELDS = new Set(["description", "role", "generates", "termination"]);
+    if (PROSE_FIELDS.has(key) && !value.startsWith('"')) continue;
+    // A balanced brace block is a NESTED OBJECT, not a swallow. The single-line
+    // form is spec-legal and parses correctly — `spec/grammar.md:117` gives
+    // `outputs: { depth: 1 | 2 | 3 }` verbatim. Flagging it rejected valid
+    // topologies, which is worse than missing one.
+    if (value.startsWith("{") && value.endsWith("}")) continue;
+    // Same for a list.
+    if (value.startsWith("[") && value.endsWith("]")) continue;
+    // A WELL-FORMED quoted string is exempt — a description may contain a
+    // colon. `"1.0.0" description: "x"` is NOT well-formed: it is one quoted
+    // token followed by more content, i.e. a swallowed field.
+    if (/^"(?:[^"\\]|\\.)*"$/.test(value)) continue;
+    const search = value.startsWith('"')
+      ? value.replace(/^"(?:[^"\\]|\\.)*"/, "")
+      : value;
+    const m = /\s([a-zA-Z][a-zA-Z0-9_-]*):/.exec(search.startsWith(" ") ? search : " " + search);
+    if (!m) continue;
+    out.push({
+      rule: "V90",
+      level: "error",
+      message:
+        `"${nodeId}" field \`${key}\` has the value \`${value}\`, which looks like it swallowed the ` +
+        `field \`${m[1]}\` — fields must be one per line`,
+      node: nodeId,
+    });
+  }
+}
+
+/**
+ * Placeholders the parser injects for REQUIRED fields that were not declared.
+ *
+ * The parser cannot leave them undefined without changing non-optional AST
+ * types, so it substitutes a sentinel — and that sentinel then satisfied every
+ * "is it present?" check downstream. V91 recognises them and reports the field
+ * as missing, which is what the spec says it is.
+ */
+export const MISSING = {
+  /** `orchestrator.model` — spec/grammar.md, orchestrator field table. */
+  model: "unknown",
+  /** `meta.version` — spec/grammar.md:282, Required: yes. */
+  version: "0.0.0",
+} as const;
+
 /** Convert a kebab-case or snake_case identifier to a Title Case label. */
 function toLabel(id: string): string {
   return id
@@ -287,8 +360,14 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
 /**
  * Parse the `orchestrator { ... }` block into an {@link OrchestratorNode}.
  */
-export function parseOrchestrator(body: string): OrchestratorNode {
+export function parseOrchestrator(
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): OrchestratorNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, "orchestrator", _blockFieldMisuseWarnings);
+  }
   const handles = parseMultilineList(body, "handles");
   const outputs = parseOutputsBlock(body);
 
@@ -330,8 +409,15 @@ export function parseRoles(body: string): Record<string, string> {
 /**
  * Parse an `action <id> { ... }` block into an {@link ActionNode}.
  */
-export function parseAction(id: string, body: string): ActionNode {
+export function parseAction(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): ActionNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const commands = parseMultilineList(body, "commands");
 
   const node: ActionNode = {
@@ -360,7 +446,8 @@ export function parseAction(id: string, body: string): ActionNode {
 export function parseAgent(
   id: string,
   body: string,
-  roles: Record<string, string>
+  roles: Record<string, string>,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
 ): AgentNode {
   const fields = parseFields(body);
   const tools = parseMultilineList(body, "tools");
@@ -380,7 +467,26 @@ export function parseAgent(
   if (fields.model) node.model = fields.model;
   if (fields.permissions) node.permissions = fields.permissions;
 
-  // Extract prompt from prompt {} block (not KV pair)
+  // Extract prompt from prompt {} block (not KV pair).
+  //
+  // V89: `agent.prompt` is a BLOCK per spec/grammar.md:350. The string form
+  // (`prompt: "path.md"`) belongs to `skill`, a different node type
+  // (spec/grammar.md:1377). A KV `prompt` on an agent is silently unparseable,
+  // so flag it rather than dropping the author's instructions on the floor.
+  if (fields.prompt) {
+    _blockFieldMisuseWarnings?.push({
+      rule: "V89",
+      level: "error",
+      message:
+        `agent "${id}" uses \`prompt:\` as a key-value field, but agent prompts must be a \`prompt { }\` block — ` +
+        `this value is ignored and the agent will have no instructions`,
+      node: id,
+    });
+  }
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
+
   const promptBlock = extractBlock(body, "prompt");
   if (promptBlock) {
     node.prompt = dedentBlock(promptBlock.body);
@@ -610,8 +716,15 @@ export function parseAgent(
 /**
  * Parse a `gate <id> { ... }` block into a {@link GateNode}.
  */
-export function parseGate(id: string, body: string): GateNode {
+export function parseGate(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): GateNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const checks = parseMultilineList(body, "checks");
 
   const node: GateNode = {
@@ -638,8 +751,15 @@ export function parseGate(id: string, body: string): GateNode {
 /**
  * Parse a `human <id> { ... }` block into a {@link HumanNode}.
  */
-export function parseHuman(id: string, body: string): HumanNode {
+export function parseHuman(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): HumanNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
 
   const node: HumanNode = {
     id,
@@ -657,8 +777,15 @@ export function parseHuman(id: string, body: string): HumanNode {
 /**
  * Parse a `group <id> { ... }` block into a {@link GroupNode}.
  */
-export function parseGroup(id: string, body: string): GroupNode {
+export function parseGroup(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): GroupNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const members = parseList(fields.members ?? "");
 
   const node: GroupNode = {
@@ -706,6 +833,26 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     const bracketMatch = trimmed.match(
       /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?)\]\s*$/
     );
+    // V92: two bracket groups on one edge. The grammar defines ONE annotation
+    // with comma-separated attributes (`[when ..., max N]`). Written as
+    // `[when ...] [max N]`, the matcher below spans from the first `[` to the
+    // last `]` and produces a corrupt condition — literally
+    // `a.verdict == fail] [max 3` — with no error at all.
+    // Count only ANNOTATION brackets. A fan-out list is also bracketed —
+    // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
+    // `] [` alone flagged valid topologies.
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection)\b/g;
+    const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
+    if (annotationBrackets > 1 && _edgeAttributeErrors) {
+      _edgeAttributeErrors.push({
+        rule: "V92",
+        level: "error",
+        message:
+          "Edge has two bracket groups — attributes go in ONE bracket, " +
+          `comma-separated: [when ..., max N] (line: ${trimmed})`,
+      });
+    }
+
     if (bracketMatch) {
       flowPart = trimmed.slice(0, bracketMatch.index!).trim();
       const annotation = bracketMatch[1];
@@ -1109,10 +1256,7 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
   ];
   const knownSubsSet = new Set([
     ...knownSubs,
-    "store", "retrieval",
-    // Sub-blocks within store {} and retrieval {} (not top-level memory subs,
-    // but the V24 scanner sees them because it doesn't track depth)
-    "embedding", "index", "ingestion", "search", "lifecycle", "backend-config", "scoring",
+    "store", "retrieval", // the two typed top-level blocks
   ]);
 
   for (const name of knownSubs) {
@@ -1148,19 +1292,47 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
     retrievals.push(parseRetrieval(block.id, block.body));
   }
 
-  // Detect unknown sub-blocks
+  // Detect unknown sub-blocks. Only consider TOP-LEVEL blocks of the memory
+  // body — names nested inside a `store {}` or `retrieval {}` (e.g. a brain
+  // store's `sources { gmail {} }`) are that block's own concern, not memory
+  // sub-blocks. Walk the body tracking brace depth so we only flag depth-0 names.
   if (_unknownSubBlockWarnings) {
-    const subBlockRe = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-    let m: RegExpExecArray | null;
-    while ((m = subBlockRe.exec(body)) !== null) {
-      const name = m[1];
-      if (!knownSubsSet.has(name)) {
-        _unknownSubBlockWarnings.push({
-          rule: "V24",
-          level: "warning",
-          message: `Unknown sub-block "${name}" in memory block — known sub-blocks are: ${knownSubs.join(", ")}`,
-        });
+    let depth = 0;
+    let i = 0;
+    while (i < body.length) {
+      const ch = body[i];
+      if (ch === "}") {
+        depth = Math.max(0, depth - 1);
+        i++;
+        continue;
       }
+      if (ch === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      // At top level, match a block header before `{`. Handles both the bare
+      // form (`workspace {`) and the typed-block form (`store brain {`,
+      // `retrieval smart {`) — in the latter the FIRST token is the keyword.
+      if (depth === 0) {
+        const rest = body.slice(i);
+        const m = /^([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+[a-zA-Z][a-zA-Z0-9_-]*)?\s*\{/.exec(rest);
+        if (m && (i === 0 || /\s/.test(body[i - 1]))) {
+          const name = m[1]; // the leading keyword (store / retrieval / workspace / …)
+          if (!knownSubsSet.has(name)) {
+            _unknownSubBlockWarnings.push({
+              rule: "V24",
+              level: "warning",
+              message: `Unknown sub-block "${name}" in memory block — known sub-blocks are: ${knownSubs.join(", ")}`,
+            });
+          }
+          // Advance into the block (past the `{`) so its body is depth-counted.
+          i += m[0].length;
+          depth++;
+          continue;
+        }
+      }
+      i++;
     }
   }
 
@@ -2095,7 +2267,12 @@ export function parse(source: string): TopologyAST {
 
   // --- Meta ---
   const metaBlock = extractBlock(topBody, "meta");
+  // V89/V90: collected while parsing blocks — a field written in a form the
+  // grammar does not define. Attached to the AST below.
+  const blockFieldMisuseWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+
   const metaFields = metaBlock ? parseMeta(metaBlock.body) : {};
+  detectSwallowedFields(metaFields as Record<string, string>, "<meta>", blockFieldMisuseWarnings);
 
   const topology: TopologyMeta = {
     name: header.name,
@@ -2117,17 +2294,18 @@ export function parse(source: string): TopologyAST {
   // --- Nodes ---
   const nodes: NodeDef[] = [];
 
+
   // Orchestrator
   const orchBlock = extractBlock(topBody, "orchestrator");
   if (orchBlock) {
-    nodes.push(parseOrchestrator(orchBlock.body));
+    nodes.push(parseOrchestrator(orchBlock.body, blockFieldMisuseWarnings));
   }
 
   // Actions
   const actionBlocks = extractAllBlocks(topBody, "action");
   for (const block of actionBlocks) {
     if (block.id) {
-      nodes.push(parseAction(block.id, block.body));
+      nodes.push(parseAction(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 
@@ -2135,7 +2313,7 @@ export function parse(source: string): TopologyAST {
   const agentBlocks = extractAllBlocks(topBody, "agent");
   for (const block of agentBlocks) {
     if (block.id) {
-      nodes.push(parseAgent(block.id, block.body, roles));
+      nodes.push(parseAgent(block.id, block.body, roles, blockFieldMisuseWarnings));
     }
   }
 
@@ -2145,7 +2323,7 @@ export function parse(source: string): TopologyAST {
     const gateBlocks = extractAllBlocks(gatesBlock.body, "gate");
     for (const block of gateBlocks) {
       if (block.id) {
-        nodes.push(parseGate(block.id, block.body));
+        nodes.push(parseGate(block.id, block.body, blockFieldMisuseWarnings));
       }
     }
   }
@@ -2154,7 +2332,7 @@ export function parse(source: string): TopologyAST {
   const humanBlocks = extractAllBlocks(topBody, "human");
   for (const block of humanBlocks) {
     if (block.id) {
-      nodes.push(parseHuman(block.id, block.body));
+      nodes.push(parseHuman(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 
@@ -2162,7 +2340,7 @@ export function parse(source: string): TopologyAST {
   const groupBlocks = extractAllBlocks(topBody, "group");
   for (const block of groupBlocks) {
     if (block.id) {
-      nodes.push(parseGroup(block.id, block.body));
+      nodes.push(parseGroup(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 
@@ -2329,6 +2507,7 @@ export function parse(source: string): TopologyAST {
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
+    _blockFieldMisuseWarnings?: typeof blockFieldMisuseWarnings;
     _sourceMap?: Record<string, number>;
   } = {
     topology,
@@ -2379,6 +2558,11 @@ export function parse(source: string): TopologyAST {
   // Attach V24 unknown memory sub-block warnings for the validator to consume.
   if (unknownMemorySubBlockWarnings.length > 0) {
     ast._unknownMemorySubBlockWarnings = unknownMemorySubBlockWarnings;
+  }
+
+  // Attach V89 block-vs-KV field misuse errors for the validator to consume.
+  if (blockFieldMisuseWarnings.length > 0) {
+    ast._blockFieldMisuseWarnings = blockFieldMisuseWarnings;
   }
 
   // Attach source map for line number tracking in validation results.

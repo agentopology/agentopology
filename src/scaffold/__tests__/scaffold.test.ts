@@ -236,7 +236,10 @@ describe("computeIncrementalPlan", () => {
 
     const manifest: ScaffoldManifest = {
       source: "t.at", sourceHash: "x", target: "claude-code",
-      generatedAt: "", files: { "gate.sh": { hash: hashContent(originalScript), category: "script" } },
+      generatedAt: "", files: { "gate.sh": {
+        hash: hashContent(originalScript),
+        category: "script"
+      } },
     };
 
     const files: GeneratedFile[] = [
@@ -255,7 +258,10 @@ describe("computeIncrementalPlan", () => {
 
     const manifest: ScaffoldManifest = {
       source: "t.at", sourceHash: "x", target: "claude-code",
-      generatedAt: "", files: { "gate.sh": { hash: hashContent(originalScript), category: "script" } },
+      generatedAt: "", files: { "gate.sh": {
+        hash: hashContent(originalScript),
+        category: "script"
+      } },
     };
 
     const files: GeneratedFile[] = [

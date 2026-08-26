@@ -35,6 +35,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { SEAM_NS, isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
+import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Lossy / unrepresentable bookkeeping
@@ -176,7 +177,7 @@ const isWorkflowSeam = isWorkflowSeamAgent;
 
 /** Resolve an agent's phase (defaults to a large value so unphased trails). */
 function phaseOf(agent: AgentNode): number {
-  return agent.phase ?? Number.MAX_SAFE_INTEGER;
+  return sharedPhaseOf(agent);
 }
 
 /**

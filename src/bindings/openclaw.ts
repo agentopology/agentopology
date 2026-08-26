@@ -26,6 +26,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { byPhase } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -144,7 +145,7 @@ function getOrchestrator(ast: TopologyAST): OrchestratorNode | undefined {
 /** Get all agent nodes from AST, sorted by phase. */
 function getAgentsSorted(ast: TopologyAST): AgentNode[] {
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  return agents.sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0));
+  return agents.sort(byPhase);
 }
 
 /** Get all gate nodes from AST. */

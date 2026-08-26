@@ -4,10 +4,25 @@ import { generateVisualization } from "../index.js";
 
 /** A minimal topology with one brain store. */
 const ONE_BRAIN = `topology cb : [brain] {
-  meta { version: "1.0.0" description: "x" }
-  memory { store brain { type: brain path: "brain/" format: obsidian } }
-  agent lib { model: sonnet description: "k" tools: [Read, Write] custodian-of: [brain] }
-  action intake { kind: inline description: "in" }
+  meta {
+    version: "1.0.0"
+    description: "x"
+  }
+  memory { store brain {
+    type: brain
+    path: "brain/"
+    format: obsidian
+  } }
+  agent lib {
+    model: sonnet
+    description: "k"
+    tools: [Read, Write]
+    custodian-of: [brain]
+  }
+  action intake {
+    kind: inline
+    description: "in"
+  }
   flow { intake -> lib }
 }`;
 

@@ -318,8 +318,14 @@ topology gate-target-test : [pipeline] {
     description: "Gate targeting test"
   }
 
-  orchestrator { model: opus handles: [intake] }
-  action intake { kind: external source: "user" }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
+  action intake {
+    kind: external
+    source: "user"
+  }
 
   agent writer {
     model: sonnet
@@ -460,7 +466,10 @@ describe("claude-code binding — youtube-flywheel integration (#3)", () => {
 topology youtube-flywheel : [pipeline, fan-out, human-gate] {
   meta { version: "1.0.0" }
 
-  orchestrator { model: opus handles: [start] }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
 
   agent briefer {
@@ -2687,7 +2696,10 @@ topology debate-test : [fan-out, debate, pipeline] {
 describe("claude-code binding — inline orchestrator delegation (#7)", () => {
   const INLINE_SOURCE = `
 topology inline-test : [pipeline] {
-  meta { version: "1.0.0" description: "Inline-orchestrator topology" }
+  meta {
+    version: "1.0.0"
+    description: "Inline-orchestrator topology"
+  }
   orchestrator {
     model: opus
     delegation: inline
@@ -2793,7 +2805,10 @@ describe("claude-code binding — default delegation: subagent (backward compat)
   const SUBAGENT_SOURCE = `
 topology subagent-test : [pipeline] {
   meta { version: "1.0.0" }
-  orchestrator { model: opus handles: [start] }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent writer {
     model: sonnet

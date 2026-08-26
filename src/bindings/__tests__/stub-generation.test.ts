@@ -37,8 +37,14 @@ afterEach(() => {
 
 const STUB_TOPOLOGY = `
 topology stub-test : [supervisor] {
-  meta { version: "1.0.0" description: "Stub generation test" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "Stub generation test"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent tracker { model: sonnet phase: 1 prompt { You are tracker. } }
   flow { start -> tracker }

@@ -13,7 +13,12 @@ import { dirname, join } from "node:path";
 
 import type { GeneratedFile } from "../bindings/types.js";
 import type { FileAction, ScaffoldManifest } from "./types.js";
-import { mergeAgentFile, shouldOverwriteScript, deepMergeJson } from "./merge.js";
+import {
+  mergeAgentFile,
+  shouldOverwriteScript,
+  deepMergeJson,
+  deepMergeSettingsJson,
+} from "./merge.js";
 
 /**
  * Compute an incremental scaffold plan.
@@ -103,7 +108,18 @@ export function computeIncrementalPlan(
       }
 
       case "shared-config": {
-        const merged = deepMergeJson(existingContent, file.content);
+        // settings.json needs the DOMAIN-AWARE merge, not the generic one.
+        // The generic `deepMergeJson` keeps the existing value whenever a key
+        // exists on both sides and either side is not a plain object — and
+        // `hooks[event]` is an ARRAY. So adding a hook to an event the file
+        // already declares silently dropped it, and removing a hook was
+        // impossible. `deepMergeSettingsJson` unions permissions, merges env,
+        // and lets the topology own `hooks` outright (including deleting it).
+        // It was written and fully tested but never reachable until now.
+        const isSettings = /(^|\/)settings\.json$/.test(file.path);
+        const merged = isSettings
+          ? deepMergeSettingsJson(existingContent, file.content)
+          : deepMergeJson(existingContent, file.content);
         if (merged === existingContent) {
           actions.push({ type: "unchanged", path: file.path });
         } else {

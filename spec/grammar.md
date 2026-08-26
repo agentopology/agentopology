@@ -43,6 +43,30 @@ template-var     = [A-Z] [A-Z0-9_-]*
 
 **Rule:** Quote strings. Don't quote identifiers, numbers, or booleans.
 
+**Rule: one field per line.** Key-value fields are newline-separated. Writing two
+on one line makes the first key take the rest of the line as its value:
+
+```
+# WRONG — `model` becomes the string "sonnet retry: 3"
+agent a { model: sonnet retry: 3 }
+
+# RIGHT
+agent a {
+  model: sonnet
+  retry: 3
+}
+```
+
+This is not a parser limitation to route around — some unquoted values are
+legitimately multi-token (`on-fail: fallback reviewer`), so whitespace could not
+separate fields without ambiguity. V90 rejects the collapsed form, in `meta` and in every node block.
+
+**Exception:** free-prose fields (`description`, `role`, `generates`,
+`termination`) are exempt once their quotes have been stripped by the parser,
+because a colon in English is ordinary — `description: "Demo: agent pipeline"`.
+Where quotes survive parsing the check is still sharp: one well-formed quoted
+token followed by more content means a field was eaten.
+
 ### Composite Types
 
 ```ebnf
@@ -347,7 +371,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
-| `prompt` | block | no | -- | Inline agent instructions (multi-line text block) |
+| `prompt` | block | no | -- | Inline agent instructions (multi-line text **block**). A key-value `prompt: "path"` is NOT valid on an agent — that form belongs to `skill` — and is rejected by V89. |
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |

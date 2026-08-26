@@ -19,6 +19,7 @@
  * @module
  */
 
+import { MISSING } from "./index.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -267,7 +268,7 @@ function collectOutputs(
  * a topological ordering derived from the flow). We approximate this by
  * checking whether the target has an edge path leading to the source.
  */
-function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
+export function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
   // Step 1: Remove edges that already have [max N] — those are acknowledged loops.
   // We compute the topological order on the remaining "forward" edges only.
   const forwardEdges = edges.filter((e) => e.maxIterations === null);
@@ -651,7 +652,9 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
 function v12EdgeAttributeOrder(ast: TopologyAST): ValidationResult[] {
   // Errors are collected during parsing and attached to the AST.
   // See parseFlow() in src/parser/index.ts.
-  return (ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? [];
+  return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
+    (r) => r.rule === "V12"
+  );
 }
 
 /** Extended AST type that may carry parse-time errors/warnings. */
@@ -659,6 +662,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _edgeAttributeErrors?: ValidationResult[];
   _duplicateSectionWarnings?: ValidationResult[];
   _unknownMemorySubBlockWarnings?: ValidationResult[];
+  _blockFieldMisuseWarnings?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
@@ -990,6 +994,90 @@ function v23DuplicateSections(ast: TopologyAST): ValidationResult[] {
  */
 function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._unknownMemorySubBlockWarnings ?? [];
+}
+
+/**
+ * V89: A field the grammar defines as a block must not be written as a
+ * key-value pair.
+ *
+ * `agent.prompt` is a block (spec/grammar.md:350). The string form belongs to
+ * `skill` (spec/grammar.md:1377). Writing `prompt: "path.md"` on an agent
+ * parses to nothing, so the agent silently ships with no instructions — the
+ * binding then falls back to repeating its role sentence. Collected at parse
+ * time because the misuse leaves no trace in the AST.
+ */
+function v89BlockFieldMisuse(ast: TopologyAST): ValidationResult[] {
+  return (
+    (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? []
+  ).filter((r) => r.rule === "V89");
+}
+
+/**
+ * V90: A field value must not swallow the next field.
+ *
+ * Fields are one per line. `parseFields` is line-based, so two on one line
+ * makes the first key take the rest of the line as its value — silently, with
+ * no trace in the AST. Collected at parse time for that reason.
+ */
+/**
+ * V91: A required field must not be satisfied by an injected placeholder.
+ *
+ * The parser substitutes a sentinel when a required field is absent, because
+ * the AST types are non-optional. Every downstream "is it present?" check then
+ * passed — V7 (model required) saw `"unknown"` and was satisfied, and a
+ * topology with no `meta.version` validated clean and scaffolded a config
+ * naming a model that does not exist.
+ *
+ * Recognising the sentinels turns "silently defaulted" back into "missing",
+ * which is what `spec/grammar.md` says these are.
+ */
+function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  if (ast.topology.version === MISSING.version) {
+    results.push({
+      rule: "V91",
+      level: "error",
+      message:
+        "meta is missing `version`, which the spec marks required — the parser " +
+        `substituted "${MISSING.version}" and every downstream check accepted it`,
+    });
+  }
+
+  for (const node of ast.nodes) {
+    if (node.type !== "orchestrator") continue;
+    if (node.model === MISSING.model) {
+      results.push({
+        rule: "V91",
+        level: "error",
+        message:
+          "orchestrator is missing `model`, which the spec marks required — the " +
+          `parser substituted "${MISSING.model}", which bindings then emit verbatim`,
+        node: node.id,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * V92: An edge's attributes belong in ONE bracket, comma-separated.
+ *
+ * `[when ...] [max N]` made the annotation matcher span from the first `[` to
+ * the last `]`, yielding a condition string containing brackets — and nothing
+ * reported it. Collected at parse time, where the raw line is still visible.
+ */
+function v92EdgeTwoBrackets(ast: TopologyAST): ValidationResult[] {
+  return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
+    (r) => r.rule === "V92"
+  );
+}
+
+function v90SwallowedField(ast: TopologyAST): ValidationResult[] {
+  return (
+    (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? []
+  ).filter((r) => r.rule === "V90");
 }
 
 /** V26: `action.kind` must be one of the allowed values. */
@@ -3090,6 +3178,10 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v22FallbackChainModels(ast),
     ...v23DuplicateSections(ast),
     ...v24UnknownMemorySubBlocks(ast),
+    ...v89BlockFieldMisuse(ast),
+    ...v90SwallowedField(ast),
+    ...v91RequiredFieldPlaceholder(ast),
+    ...v92EdgeTwoBrackets(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

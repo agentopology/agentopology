@@ -788,7 +788,10 @@ topology complex : [pipeline, fan-out] {
   roles {
     lead: "Lead researcher"
   }
-  action intake { kind: inline description: "Start" }
+  action intake {
+    kind: inline
+    description: "Start"
+  }
   agent lead-researcher {
     role: lead
     model: gpt-4o
@@ -815,7 +818,10 @@ topology complex : [pipeline, fan-out] {
       You write documents.
     }
   }
-  action report { kind: report description: "Done" }
+  action report {
+    kind: report
+    description: "Done"
+  }
   flow {
     intake -> lead-researcher
     lead-researcher -> writer

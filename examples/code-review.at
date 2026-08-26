@@ -50,7 +50,14 @@ topology code-review : [pipeline, fan-out, human-gate] {
     role: analyzer
     model: sonnet
     permissions: supervised
-    prompt: "prompts/analyzer.md"
+    prompt {
+      Read the diff at workspace/pr-diff.md.
+
+      Report structural risk only — complexity, dependency changes, and blast
+      radius. Do not comment on security; a separate agent covers that.
+
+      Write your findings to workspace/analysis.md and set risk-level.
+    }
     phase: 1
     tools: [Read, Grep, Glob]
     reads: ["workspace/pr-diff.md"]
@@ -64,7 +71,14 @@ topology code-review : [pipeline, fan-out, human-gate] {
     role: security
     model: sonnet
     permissions: supervised
-    prompt: "prompts/security-scanner.md"
+    prompt {
+      Read the diff at workspace/pr-diff.md.
+
+      Look for injection, auth or authorization changes, secret handling, and
+      unsafe deserialization. Do not comment on style or complexity.
+
+      Write your findings to workspace/security.md and set has-vulnerabilities.
+    }
     phase: 1
     tools: [Read, Grep, Glob]
     reads: ["workspace/pr-diff.md"]
@@ -79,7 +93,14 @@ topology code-review : [pipeline, fan-out, human-gate] {
     role: reviewer
     model: opus
     permissions: supervised
-    prompt: "prompts/reviewer.md"
+    prompt {
+      Read the diff, workspace/analysis.md and workspace/security.md.
+
+      The two reports were produced independently. Where they disagree, say so
+      rather than silently picking one.
+
+      Write your review to workspace/review.md and set a verdict.
+    }
     phase: 2
     tools: [Read, Grep, Glob]
     reads: ["workspace/pr-diff.md", "workspace/analysis.md", "workspace/security.md"]
@@ -93,7 +114,14 @@ topology code-review : [pipeline, fan-out, human-gate] {
     role: reporter
     model: haiku
     permissions: autonomous
-    prompt: "prompts/reporter.md"
+    prompt {
+      Read workspace/analysis.md, workspace/security.md and workspace/review.md.
+
+      Produce one report a human can act on: the verdict, the reasons behind it,
+      and the specific changes required. No new analysis.
+
+      Write it to workspace/final-report.md.
+    }
     phase: 3
     tools: [Read, Write, Glob]
     reads: ["workspace/analysis.md", "workspace/security.md", "workspace/review.md"]
