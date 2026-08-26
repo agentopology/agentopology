@@ -2,6 +2,34 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.4.2] — 2026-08-26
+
+### [feat] `agentopology/plan`, `/render`, `/resolve` subpath exports
+
+The interpreted-mode modules were shipped but not reachable — `package.json`
+exported only `.`, `./parser`, `./bindings` and `./visualizer`, so
+`import { buildExecutionBrief } from "agentopology/plan"` threw. Now exported,
+with `renderBriefMarkdown` re-exported from `plan` so both halves are one import.
+
+### [docs] README covers both lifecycles
+
+The hero and the "What It Does" diagram still described a one-way compiler:
+`.at` in, platform configs out. It now shows the fork — `scaffold` to files, or
+`plan` to a brief your coding agent enacts — plus a section on interpreted
+execution with a real render, the four questions the brief answers, and the
+three autonomy notches.
+
+Corrected a stale "29 built-in rules" (it is 92) and the programmatic API
+example, which imported subpaths that did not exist.
+
+### [test] The README is now checked against the package
+
+`src/docs/__tests__/readme-sync.test.ts` fails if the README imports a subpath
+`package.json` does not export, states a rule count the validator disagrees
+with, points at a `docs` topic that does not exist, or contains an `.at` snippet
+that does not parse and validate. Documentation drift is not a discipline
+problem — it is a missing test, the same shape as the spec drift fixed in 0.4.0.
+
 ## [0.4.1] — 2026-08-26
 
 ### [fix] `plan` dropped every gate from the rendered flow

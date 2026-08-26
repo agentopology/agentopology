@@ -1,6 +1,6 @@
 {
   "name": "agentopology",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "The declarative language for multi-agent systems. Write once, scaffold for any platform.",
   "author": "Nadav Naveh",
   "license": "Apache-2.0",
@@ -34,6 +34,18 @@
     "./visualizer": {
       "import": "./dist/visualizer/index.js",
       "types": "./dist/visualizer/index.d.ts"
+    },
+    "./plan": {
+      "import": "./dist/plan/brief.js",
+      "types": "./dist/plan/brief.d.ts"
+    },
+    "./render": {
+      "import": "./dist/render/ascii.js",
+      "types": "./dist/render/ascii.d.ts"
+    },
+    "./resolve": {
+      "import": "./dist/resolve/order.js",
+      "types": "./dist/resolve/order.d.ts"
     }
   },
   "scripts": {
