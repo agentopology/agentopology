@@ -2,6 +2,104 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.4.0] — 2026-08-26
+
+### [feat] `agentopology plan` — interpreted mode, a second lifecycle for a topology
+
+A `.at` file has always compiled to a persisted harness. It can now also be
+**enacted directly**, by the coding agent already in your session, with nothing
+written outside the session scratchpad.
+
+```bash
+agentopology plan <file>.at --mode plan|execute|auto [--task "..."] [--brief]
+```
+
+The premise: **the host coding agent is already the runtime.** It plans, spawns
+subagents, runs them in parallel, reads files, retries and re-plans. It does not
+need generated agent files to do any of that. So `plan` does not run anything —
+a CLI cannot spawn subagents. It is a **linter and an orderer**: it validates
+(the agent that wrote the file can write an illegal one), applies the spec's
+defaults, resolves execution order, and emits an **execution brief** — a
+Markdown program in eleven fixed sections that a host agent follows.
+
+The brief resolves what a host would otherwise guess: handoffs as
+`writes ∩ reads`, what each reader **must not** read, which same-step roles are
+mutually blind, gate tiers, loop budgets, and every declaration that cannot be
+honoured at runtime. Nine ambiguity kinds are detected statically and pre-filled,
+each carrying a concrete `.at` edit that would remove the guess.
+
+Not a replacement for `scaffold`. The same declaration, two execution backends —
+a **lifetime** choice, not a strategy one. `agentopology docs interpreted-mode`
+explains which to reach for.
+
+### [feat] Terminal flow renderer, and two new export formats
+
+`plan` prints an ASCII flow graph ranked by real execution order — gates spliced
+where their `after`/`before` puts them, exclusive branches drawn as branches with
+their conditions, loops with their budgets. Also available as
+`--format ascii` and `--format brief`.
+
+### [fix] Gates were ranked as graph sources
+
+Gates bind through `after`/`before`, never through edges, so their in-degree is
+zero and a topological sort ranks them **first**. On `examples/code-review.at` a
+post-review gate sat next to the entry action. Execution order is now resolved
+with gates spliced at their anchors, including gate-to-gate anchors regardless of
+declaration order.
+
+### [fix] An unphased agent no longer sorts differently on every target
+
+Seven consumers each chose their own sentinel for an undeclared `agent.phase`:
+`MAX_SAFE_INTEGER` in claude-code and claude-workflow, `999` in gemini-cli, `0`
+in openclaw, kiro, mermaid and the markdown exporter. The same topology put the
+same agent **first on four targets and last on three** — the exact failure
+"write once, deploy to any platform" exists to prevent. `src/resolve/phase.ts` is
+now the single definition, and a test fails if any consumer reintroduces its own.
+
+### [fix] `codex` no longer defaults `permissions` to the strictest policy
+
+The spec's default is `autonomous`, which maps to Codex `on-request`. The binding
+used `supervised`, which maps to `untrusted`. Omitting the field produced an
+agent that asked permission for everything.
+
+### [fix] `settings.json` hook merging was written, tested, and unreachable
+
+`deepMergeSettingsJson` handles union-merged permissions, merged env, and
+topology-owned hooks. The scaffold pipeline routed `settings.json` to the generic
+JSON merge instead, which cannot update an existing `hooks[event]` array and can
+never remove one — so scaffolding a hook into settings that already declared that
+event silently dropped it.
+
+### [feat] Four new validation rules, and the spec now tracks the validator
+
+| Rule | Catches |
+|---|---|
+| **V89** | `agent.prompt` written as `prompt: "path"` — the string form belongs to `skill`. Two shipped examples did this on eight agents, pointing at a directory that never existed, and those agents scaffolded with their own description as their entire instruction set. |
+| **V90** | A field value that swallowed the next field. Fields are one per line; the grammar never said so, and `{ model: sonnet retry: 3 }` made `model` the string `"sonnet retry: 3"`. |
+| **V91** | A required field satisfied by a parser-injected placeholder. V7 is named *Model required* and passed on an orchestrator with no model, because the parser had substituted `"unknown"`. |
+| **V92** | An edge's attributes split across two brackets. `[when ...] [max N]` produced the condition string `a.verdict == fail] [max 3`, silently. |
+
+`spec/validation.md` documented 35 rules while the validator implemented 89 —
+fifty-four existed only in source, because nothing compared them. The table is
+now generated from the registry and a test fails if the two ever diverge. **92
+rules, V1-V92, contiguous.**
+
+### [feat] `docs/KPIS.md` and `docs/PRIOR_ART.md`
+
+29 metrics across four layers, each naming the instrument that measures it. And
+the priority record: `agentopology@0.1.0` was published to npm on **2026-03-19**,
+four months before "graph engineering" became the name for the practice. Three
+copy-pasteable commands let a stranger verify that without trusting us.
+
+### Notes
+
+Every fix above was found by **using the tool on itself** — a stranger's topology
+run through `plan`, and a review topology whose verifier stage reproduced each
+claim against the real CLI before accepting it. 22 findings acted on. The compile
+path is unchanged: all 8 bindings produce byte-identical output.
+
+1467 tests, up from 1351.
+
 ## [0.2.5] — 2026-05-30
 
 ### [feat] `claude-workflow` binding — compile topologies to the Claude Workflow runtime
