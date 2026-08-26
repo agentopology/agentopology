@@ -73,9 +73,18 @@ describe("resolveOrder", () => {
 
   it("places a gate anchored to nothing resolvable last, rather than dropping it", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
-      agent a { model: sonnet description: "a" }
-      action intake { kind: inline description: "in" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+      }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       gates {
         gate orphan {
           after: nowhere

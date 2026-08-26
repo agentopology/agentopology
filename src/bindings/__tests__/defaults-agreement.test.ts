@@ -21,7 +21,10 @@ import type { AgentNode } from "../../parser/ast.js";
 
 /** A topology that declares NO optional agent fields, so every default shows. */
 const BARE = `topology bare : [pipeline] {
-  meta { version: "1.0.0" description: "declares no optional agent fields" }
+  meta {
+    version: "1.0.0"
+    description: "declares no optional agent fields"
+  }
   agent worker {
     model: sonnet
     description: "does the work"

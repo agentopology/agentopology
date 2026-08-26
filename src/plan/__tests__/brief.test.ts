@@ -27,7 +27,10 @@ describe("buildExecutionBrief", () => {
 
   it("derives withholds from the same intersection, so they cannot drift", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent builder {
         model: sonnet
         description: "b"
@@ -38,7 +41,10 @@ describe("buildExecutionBrief", () => {
         description: "v"
         reads: ["workspace/notes.md"]
       }
-      action intake { kind: inline description: "in" }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> builder -> validator }
     }`;
     const b = buildExecutionBrief(parse(src));
@@ -101,12 +107,18 @@ describe("buildExecutionBrief", () => {
 
   it("pre-flags a prompt-less role, because its whole instruction set is one line", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent bare {
         model: sonnet
         description: "does a thing"
       }
-      action intake { kind: inline description: "in" }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> bare }
     }`;
     const b = buildExecutionBrief(parse(src));
@@ -117,10 +129,24 @@ describe("buildExecutionBrief", () => {
 
   it("pre-flags an edge across which nothing is declared to cross", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
-      agent a { model: sonnet description: "a" writes: ["workspace/a.md"] }
-      agent b { model: sonnet description: "b" reads: ["workspace/other.md"] }
-      action intake { kind: inline description: "in" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+        writes: ["workspace/a.md"]
+      }
+      agent b {
+        model: sonnet
+        description: "b"
+        reads: ["workspace/other.md"]
+      }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> a -> b }
     }`;
     const brief = buildExecutionBrief(parse(src));
@@ -147,13 +173,19 @@ describe("buildExecutionBrief", () => {
 describe("renderBriefMarkdown", () => {
   it("refuses to be enacted when the topology has validation errors", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent a {
         model: sonnet
         description: "a"
         prompt: "prompts/a.md"
       }
-      action intake { kind: inline description: "in" }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> a }
     }`;
     const ast = parse(src);

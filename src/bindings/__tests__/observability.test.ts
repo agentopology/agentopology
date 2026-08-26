@@ -116,8 +116,14 @@ describe("Change 1 — observability SubagentStop hook", () => {
 
 const PTLU_TOPOLOGY = `
 topology ptlu-test : [pipeline] {
-  meta { version: "1.0.0" description: "PostToolUse hook test" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "PostToolUse hook test"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent worker { model: sonnet phase: 1 prompt { You are worker. } }
   flow { start -> worker }

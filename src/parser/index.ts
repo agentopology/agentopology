@@ -109,6 +109,13 @@ function detectSwallowedFields(
   for (const [key, raw] of Object.entries(fields)) {
     if (typeof raw !== "string") continue;
     const value = raw.trim();
+    // Free-prose fields whose quotes have already been stripped are exempt: a
+    // colon inside a description is ordinary English ("Demo: agent pipeline"),
+    // and once the quotes are gone there is no way to tell prose from a
+    // swallow. Where quotes SURVIVE parsing — every block except `meta` — the
+    // check below still catches `description: "k" model: sonnet`.
+    const PROSE_FIELDS = new Set(["description", "role", "generates", "termination"]);
+    if (PROSE_FIELDS.has(key) && !value.startsWith('"')) continue;
     // A WELL-FORMED quoted string is exempt — a description may contain a
     // colon. `"1.0.0" description: "x"` is NOT well-formed: it is one quoted
     // token followed by more content, i.e. a swallowed field.
@@ -2198,7 +2205,12 @@ export function parse(source: string): TopologyAST {
 
   // --- Meta ---
   const metaBlock = extractBlock(topBody, "meta");
+  // V89/V90: collected while parsing blocks — a field written in a form the
+  // grammar does not define. Attached to the AST below.
+  const blockFieldMisuseWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+
   const metaFields = metaBlock ? parseMeta(metaBlock.body) : {};
+  detectSwallowedFields(metaFields as Record<string, string>, "<meta>", blockFieldMisuseWarnings);
 
   const topology: TopologyMeta = {
     name: header.name,
@@ -2220,9 +2232,6 @@ export function parse(source: string): TopologyAST {
   // --- Nodes ---
   const nodes: NodeDef[] = [];
 
-  // V89: collected while parsing agents — a field declared as a block in the
-  // grammar but written as a key-value pair. Attached to the AST below.
-  const blockFieldMisuseWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
 
   // Orchestrator
   const orchBlock = extractBlock(topBody, "orchestrator");

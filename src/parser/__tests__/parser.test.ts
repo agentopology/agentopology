@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -277,7 +277,14 @@ describe("Lexer", () => {
 describe("Parser sections", () => {
   describe("meta", () => {
     it("parses version, description, and patterns from header", () => {
-      const src = `topology test : [pipeline] {\n  meta {\n    version: "2.0.0"\n    description: "A test topology"\n    domain: legal\n  }\n  orchestrator {\n    model: opus\n    handles: [intake]\n  }\n  action intake {\n    kind: inline\n  }\n  flow {\n    intake -> intake\n  }\n}`;
+      const src = `topology test : [pipeline] {\n  meta {
+        version: "2.0.0"\n
+        description: "A test topology"\n
+        domain: legal\n
+      }\n  orchestrator {
+        model: opus\n
+        handles: [intake]\n
+      }\n  action intake {\n    kind: inline\n  }\n  flow {\n    intake -> intake\n  }\n}`;
       const ast = parse(src);
       expect(ast.topology.name).toBe("test");
       expect(ast.topology.version).toBe("2.0.0");
@@ -287,7 +294,14 @@ describe("Parser sections", () => {
     });
 
     it("parses foundations and advanced lists", () => {
-      const src = `topology t : [pipeline] {\n  meta {\n    version: "1.0.0"\n    foundations: [pipeline, fan-out]\n    advanced: [consensus]\n  }\n  orchestrator {\n    model: opus\n    handles: [a]\n  }\n  action a { kind: inline }\n  flow { a -> a }\n}`;
+      const src = `topology t : [pipeline] {\n  meta {
+        version: "1.0.0"\n
+        foundations: [pipeline, fan-out]\n
+        advanced: [consensus]\n
+      }\n  orchestrator {
+        model: opus\n
+        handles: [a]\n
+      }\n  action a { kind: inline }\n  flow { a -> a }\n}`;
       const ast = parse(src);
       expect(ast.topology.foundations).toEqual(["pipeline", "fan-out"]);
       expect(ast.topology.advanced).toEqual(["consensus"]);
@@ -309,7 +323,10 @@ describe("Parser sections", () => {
 
   describe("roles", () => {
     it("parses multiple role definitions", () => {
-      const src = `topology t : [pipeline] {\n  roles {\n    writer: "Writes drafts"\n    reviewer: "Reviews content"\n  }\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n}`;
+      const src = `topology t : [pipeline] {\n  roles {\n    writer: "Writes drafts"\n    reviewer: "Reviews content"\n  }\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n}`;
       const ast = parse(src);
       expect(ast.roles).toEqual({
         writer: "Writes drafts",
@@ -320,7 +337,13 @@ describe("Parser sections", () => {
 
   describe("action", () => {
     it("parses inline action", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a {\n    kind: inline\n    description: "Parse request"\n  }\n  flow { a -> a }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a {
+        kind: inline\n
+        description: "Parse request"\n
+      }\n  flow { a -> a }\n}`;
       const ast = parse(src);
       const action = ast.nodes.find((n) => n.id === "a");
       expect(action).toBeDefined();
@@ -332,7 +355,13 @@ describe("Parser sections", () => {
     });
 
     it("parses external action with source", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [fetch] }\n  action fetch {\n    kind: external\n    source: "github-pr"\n  }\n  flow { fetch -> fetch }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [fetch]
+      }\n  action fetch {
+        kind: external\n
+        source: "github-pr"\n
+      }\n  flow { fetch -> fetch }\n}`;
       const ast = parse(src);
       const action = ast.nodes.find((n) => n.id === "fetch");
       if (action!.type === "action") {
@@ -342,7 +371,13 @@ describe("Parser sections", () => {
     });
 
     it("parses action with commands list", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [build] }\n  action build {\n    kind: inline\n    commands: [npm install, npm test]\n  }\n  flow { build -> build }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [build]
+      }\n  action build {
+        kind: inline\n
+        commands: [npm install, npm test]\n
+      }\n  flow { build -> build }\n}`;
       const ast = parse(src);
       const action = ast.nodes.find((n) => n.id === "build");
       if (action!.type === "action") {
@@ -353,7 +388,25 @@ describe("Parser sections", () => {
 
   describe("agent", () => {
     it("parses all basic fields", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent my-agent {\n    model: sonnet\n    phase: 2\n    tools: [Read, Write]\n    reads: ["workspace/input"]\n    writes: ["workspace/output"]\n    permissions: auto\n    behavior: advisory\n    invocation: manual\n    isolation: worktree\n    background: true\n    retry: 3\n    skip: "depth < 2"\n    description: "Test agent"\n    max-turns: 10\n  }\n  flow { a -> a }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent my-agent {
+        model: sonnet\n
+        phase: 2\n
+        tools: [Read, Write]\n
+        reads: ["workspace/input"]\n
+        writes: ["workspace/output"]\n
+        permissions: auto\n
+        behavior: advisory\n
+        invocation: manual\n
+        isolation: worktree\n
+        background: true\n
+        retry: 3\n
+        skip: "depth < 2"\n
+        description: "Test agent"\n
+        max-turns: 10\n
+      }\n  flow { a -> a }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "my-agent") as AgentNode;
       expect(agent).toBeDefined();
@@ -374,7 +427,10 @@ describe("Parser sections", () => {
     });
 
     it("parses inline prompt block", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n    prompt {\n      You are a writer.\n      Write good content.\n    }\n  }\n  flow { a -> writer }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n    prompt {\n      You are a writer.\n      Write good content.\n    }\n  }\n  flow { a -> writer }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "writer") as AgentNode;
       expect(agent.prompt).toBeDefined();
@@ -383,21 +439,33 @@ describe("Parser sections", () => {
     });
 
     it("parses disallowed-tools", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent safe {\n    model: opus\n    disallowed-tools: [Bash, Write]\n  }\n  flow { a -> safe }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent safe {
+        model: opus\n
+        disallowed-tools: [Bash, Write]\n
+      }\n  flow { a -> safe }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "safe") as AgentNode;
       expect(agent.disallowedTools).toEqual(["Bash", "Write"]);
     });
 
     it("parses outputs block", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent scorer {\n    model: opus\n    outputs {\n      quality: high | medium | low\n    }\n  }\n  flow { a -> scorer }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent scorer {\n    model: opus\n    outputs {\n      quality: high | medium | low\n    }\n  }\n  flow { a -> scorer }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "scorer") as AgentNode;
       expect(agent.outputs).toEqual({ quality: ["high", "medium", "low"] });
     });
 
     it("parses scale block", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker {\n    model: opus\n    scale {\n      mode: auto\n      by: doc-count\n      min: 2\n      max: 8\n      batch-size: 50\n    }\n  }\n  flow { a -> worker }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent worker {\n    model: opus\n    scale {\n      mode: auto\n      by: doc-count\n      min: 2\n      max: 8\n      batch-size: 50\n    }\n  }\n  flow { a -> worker }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "worker") as AgentNode;
       expect(agent.scale).toEqual({
@@ -410,7 +478,16 @@ describe("Parser sections", () => {
     });
 
     it("parses per-agent hooks block", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent hooked {\n    model: opus\n    hooks {\n      hook pre-tool {\n        on: PreToolUse\n        matcher: "Bash"\n        run: "scripts/check.sh"\n        type: command\n        timeout: 5000\n      }\n    }\n  }\n  flow { a -> hooked }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent hooked {\n    model: opus\n    hooks {\n      hook pre-tool {
+        on: PreToolUse\n
+        matcher: "Bash"\n
+        run: "scripts/check.sh"\n
+        type: command\n
+        timeout: 5000\n
+      }\n    }\n  }\n  flow { a -> hooked }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "hooked") as AgentNode;
       expect(agent.hooks).toBeDefined();
@@ -424,7 +501,10 @@ describe("Parser sections", () => {
     });
 
     it("parses extensions block", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent extended {\n    model: opus\n    extensions {\n      openclaw {\n        calendar-integration: true\n        port: 8080\n      }\n    }\n  }\n  flow { a -> extended }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent extended {\n    model: opus\n    extensions {\n      openclaw {\n        calendar-integration: true\n        port: 8080\n      }\n    }\n  }\n  flow { a -> extended }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "extended") as AgentNode;
       expect(agent.extensions).toBeDefined();
@@ -435,21 +515,36 @@ describe("Parser sections", () => {
     });
 
     it("parses mcp-servers list", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent mcp-user {\n    model: opus\n    mcp-servers: [storage, monitoring]\n  }\n  flow { a -> mcp-user }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent mcp-user {
+        model: opus\n
+        mcp-servers: [storage, monitoring]\n
+      }\n  flow { a -> mcp-user }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "mcp-user") as AgentNode;
       expect(agent.mcpServers).toEqual(["storage", "monitoring"]);
     });
 
     it("parses skills list", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent skilled {\n    model: opus\n    skills: [extraction, classification]\n  }\n  flow { a -> skilled }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent skilled {
+        model: opus\n
+        skills: [extraction, classification]\n
+      }\n  flow { a -> skilled }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "skilled") as AgentNode;
       expect(agent.skills).toEqual(["extraction", "classification"]);
     });
 
     it("attaches role from roles block", () => {
-      const src = `topology t : [pipeline] {\n  roles {\n    writer: "Writes things"\n  }\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n  }\n  flow { a -> writer }\n}`;
+      const src = `topology t : [pipeline] {\n  roles {\n    writer: "Writes things"\n  }\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n  }\n  flow { a -> writer }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "writer") as AgentNode;
       expect(agent.role).toBe("Writes things");
@@ -458,7 +553,10 @@ describe("Parser sections", () => {
 
   describe("flow", () => {
     it("parses simple chain", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a, c] }\n  action a { kind: inline }\n  agent b { model: opus }\n  action c { kind: report }\n  flow {\n    a -> b -> c\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a, c]
+      }\n  action a { kind: inline }\n  agent b { model: opus }\n  action c { kind: report }\n  flow {\n    a -> b -> c\n  }\n}`;
       const ast = parse(src);
       expect(ast.edges).toHaveLength(2);
       expect(ast.edges[0]).toEqual({ from: "a", to: "b", condition: null, maxIterations: null, per: null });
@@ -466,7 +564,10 @@ describe("Parser sections", () => {
     });
 
     it("parses fan-out [a, b]", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [start] }\n  action start { kind: inline }\n  agent x { model: opus }\n  agent y { model: opus }\n  flow {\n    start -> [x, y]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [start]
+      }\n  action start { kind: inline }\n  agent x { model: opus }\n  agent y { model: opus }\n  flow {\n    start -> [x, y]\n  }\n}`;
       const ast = parse(src);
       expect(ast.edges).toHaveLength(2);
       expect(ast.edges[0].from).toBe("start");
@@ -476,7 +577,10 @@ describe("Parser sections", () => {
     });
 
     it("parses conditions [when x.y == z]", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { verdict: yes | no } }\n  agent c { model: opus }\n  flow {\n    b -> c [when b.verdict == yes]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { verdict: yes | no } }\n  agent c { model: opus }\n  flow {\n    b -> c [when b.verdict == yes]\n  }\n}`;
       const ast = parse(src);
       const edge = ast.edges.find((e) => e.from === "b" && e.to === "c");
       expect(edge).toBeDefined();
@@ -485,7 +589,10 @@ describe("Parser sections", () => {
     });
 
     it("parses bounded loops [max N]", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus }\n  agent c { model: opus }\n  flow {\n    c -> b [max 3]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent b { model: opus }\n  agent c { model: opus }\n  flow {\n    c -> b [max 3]\n  }\n}`;
       const ast = parse(src);
       const edge = ast.edges.find((e) => e.from === "c" && e.to === "b");
       expect(edge).toBeDefined();
@@ -494,7 +601,10 @@ describe("Parser sections", () => {
     });
 
     it("parses combined [when x.y == z, max 3]", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { verdict: yes | no } }\n  agent c { model: opus }\n  flow {\n    c -> b [when c.verdict == no, max 3]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { verdict: yes | no } }\n  agent c { model: opus }\n  flow {\n    c -> b [when c.verdict == no, max 3]\n  }\n}`;
       const ast = parse(src);
       const edge = ast.edges.find((e) => e.from === "c" && e.to === "b");
       expect(edge).toBeDefined();
@@ -505,7 +615,18 @@ describe("Parser sections", () => {
 
   describe("gates", () => {
     it("parses gate with all fields", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus }\n  agent c { model: opus }\n  gates {\n    gate quality {\n      after: b\n      before: c\n      run: "scripts/check.sh"\n      checks: [grammar, formatting]\n      on-fail: bounce-back\n      retry: 2\n      behavior: blocking\n    }\n  }\n  flow { a -> b -> c }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent b { model: opus }\n  agent c { model: opus }\n  gates {\n    gate quality {
+        after: b\n
+        before: c\n
+        run: "scripts/check.sh"\n
+        checks: [grammar, formatting]\n
+        on-fail: bounce-back\n
+        retry: 2\n
+        behavior: blocking\n
+      }\n  }\n  flow { a -> b -> c }\n}`;
       const ast = parse(src);
       const gate = ast.nodes.find((n) => n.id === "quality") as GateNode;
       expect(gate).toBeDefined();
@@ -520,7 +641,10 @@ describe("Parser sections", () => {
     });
 
     it("parses gate with extensions", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus }\n  gates {\n    gate ext-gate {\n      after: b\n      run: "check.sh"\n      extensions {\n        custom {\n          enabled: true\n        }\n      }\n    }\n  }\n  flow { a -> b }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent b { model: opus }\n  gates {\n    gate ext-gate {\n      after: b\n      run: "check.sh"\n      extensions {\n        custom {\n          enabled: true\n        }\n      }\n    }\n  }\n  flow { a -> b }\n}`;
       const ast = parse(src);
       const gate = ast.nodes.find((n) => n.id === "ext-gate") as GateNode;
       expect(gate.extensions).toBeDefined();
@@ -530,7 +654,10 @@ describe("Parser sections", () => {
 
   describe("depth", () => {
     it("parses levels and factors", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  depth {\n    factors: [batch-count, token-volume]\n    level 1 "Quick" {\n      omit: [reviewer]\n    }\n    level 2 "Full" {\n      omit: []\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  depth {\n    factors: [batch-count, token-volume]\n    level 1 "Quick" {\n      omit: [reviewer]\n    }\n    level 2 "Full" {\n      omit: []\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.depth.factors).toEqual(["batch-count", "token-volume"]);
       expect(ast.depth.levels).toHaveLength(2);
@@ -541,7 +668,10 @@ describe("Parser sections", () => {
 
   describe("memory", () => {
     it("parses workspace, domains, and metrics", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    workspace {\n      path: "workspace/"\n      protocol: "proto.md"\n      structure: [raw, processed]\n    }\n    domains {\n      path: "domains/"\n      routing: "FILE_MAP.md"\n    }\n    metrics {\n      path: "metrics.jsonl"\n      mode: append-only\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    workspace {\n      path: "workspace/"\n      protocol: "proto.md"\n      structure: [raw, processed]\n    }\n    domains {\n      path: "domains/"\n      routing: "FILE_MAP.md"\n    }\n    metrics {\n      path: "metrics.jsonl"\n      mode: append-only\n    }\n  }\n}`;
       const ast = parse(src);
       const ws = ast.memory["workspace"] as Record<string, unknown>;
       expect(ws["path"]).toBe("workspace/");
@@ -560,7 +690,10 @@ describe("Parser sections", () => {
 
   describe("batch", () => {
     it("parses parallel, per, workspace, and conflicts", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  batch {\n    parallel: true\n    per: ticket\n    workspace: "runs/{BATCH_ID}/"\n    conflicts {\n      detect: ["workspace/out.json"]\n      resolve: sequential-rebase\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  batch {\n    parallel: true\n    per: ticket\n    workspace: "runs/{BATCH_ID}/"\n    conflicts {\n      detect: ["workspace/out.json"]\n      resolve: sequential-rebase\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.batch["parallel"]).toBe(true);
       expect(ast.batch["per"]).toBe("ticket");
@@ -573,7 +706,10 @@ describe("Parser sections", () => {
 
   describe("environments", () => {
     it("parses multiple named environment blocks", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  environments {\n    staging {\n      bucket: "stage-bucket"\n    }\n    production {\n      bucket: "prod-bucket"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  environments {\n    staging {\n      bucket: "stage-bucket"\n    }\n    production {\n      bucket: "prod-bucket"\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.environments["staging"]).toEqual({ bucket: "stage-bucket" });
       expect(ast.environments["production"]).toEqual({ bucket: "prod-bucket" });
@@ -582,7 +718,10 @@ describe("Parser sections", () => {
 
   describe("triggers", () => {
     it("parses command with pattern", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  triggers {\n    command audit {\n      pattern: "/audit"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  triggers {\n    command audit {\n      pattern: "/audit"\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.triggers).toHaveLength(1);
       expect(ast.triggers[0].name).toBe("audit");
@@ -591,7 +730,10 @@ describe("Parser sections", () => {
     });
 
     it("parses command with pattern and argument", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  triggers {\n    command create {\n      pattern: "/create <TOPIC>"\n      argument: TOPIC\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  triggers {\n    command create {\n      pattern: "/create <TOPIC>"\n      argument: TOPIC\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.triggers[0].name).toBe("create");
       expect(ast.triggers[0].pattern).toBe("/create <TOPIC>");
@@ -601,7 +743,16 @@ describe("Parser sections", () => {
 
   describe("hooks", () => {
     it("parses hooks with on, run, type, matcher, timeout", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  hooks {\n    hook my-hook {\n      on: PreToolUse\n      matcher: "Bash"\n      run: "scripts/guard.sh"\n      type: command\n      timeout: 3000\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  hooks {\n    hook my-hook {
+        on: PreToolUse\n
+        matcher: "Bash"\n
+        run: "scripts/guard.sh"\n
+        type: command\n
+        timeout: 3000\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.hooks).toHaveLength(1);
       expect(ast.hooks[0].name).toBe("my-hook");
@@ -615,7 +766,10 @@ describe("Parser sections", () => {
 
   describe("settings", () => {
     it("parses allow, deny, ask lists", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    allow: [Read, Write]\n    deny: [Bash]\n    ask: [Edit]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    allow: [Read, Write]\n    deny: [Bash]\n    ask: [Edit]\n  }\n}`;
       const ast = parse(src);
       expect(ast.settings["allow"]).toEqual(["Read", "Write"]);
       expect(ast.settings["deny"]).toEqual(["Bash"]);
@@ -625,7 +779,10 @@ describe("Parser sections", () => {
 
   describe("mcp-servers", () => {
     it("parses stdio and http server types", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  mcp-servers {\n    storage {\n      type: stdio\n      command: "npx"\n      args: ["-y", "storage-server"]\n    }\n    monitor {\n      type: http\n      url: "https://mcp.example.com"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  mcp-servers {\n    storage {\n      type: stdio\n      command: "npx"\n      args: ["-y", "storage-server"]\n    }\n    monitor {\n      type: http\n      url: "https://mcp.example.com"\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.mcpServers["storage"]).toBeDefined();
       expect(ast.mcpServers["storage"]["type"]).toBe("stdio");
@@ -638,7 +795,10 @@ describe("Parser sections", () => {
 
   describe("metering", () => {
     it("parses track, per, output, format, pricing", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  metering {\n    track: [tokens-in, tokens-out, cost]\n    per: [agent, run]\n    output: "metrics/"\n    format: jsonl\n    pricing: anthropic-current\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  metering {\n    track: [tokens-in, tokens-out, cost]\n    per: [agent, run]\n    output: "metrics/"\n    format: jsonl\n    pricing: anthropic-current\n  }\n}`;
       const ast = parse(src);
       expect(ast.metering).not.toBeNull();
       expect(ast.metering!.track).toEqual(["tokens-in", "tokens-out", "cost"]);
@@ -651,7 +811,10 @@ describe("Parser sections", () => {
 
   describe("tools", () => {
     it("parses tool with script, args, lang, description", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  tools {\n    tool extract-pdf {\n      script: "scripts/extract.py"\n      args: [input, output]\n      lang: python\n      description: "Extract text from PDF"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  tools {\n    tool extract-pdf {\n      script: "scripts/extract.py"\n      args: [input, output]\n      lang: python\n      description: "Extract text from PDF"\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.toolDefs).toHaveLength(1);
       expect(ast.toolDefs[0].id).toBe("extract-pdf");
@@ -664,7 +827,10 @@ describe("Parser sections", () => {
 
   describe("skill", () => {
     it("parses all skill fields", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  skill my-skill {\n    description: "A test skill"\n    scripts: [script-a, script-b]\n    domains: ["domains/rubric.md"]\n    references: ["ref/guide.md"]\n    prompt: "prompts/skill.md"\n    disable-model-invocation: true\n    user-invocable: false\n    context: fork\n    agent: task-agent\n    allowed-tools: [Read, Write]\n    extensions {\n      custom {\n        key: value\n      }\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  skill my-skill {\n    description: "A test skill"\n    scripts: [script-a, script-b]\n    domains: ["domains/rubric.md"]\n    references: ["ref/guide.md"]\n    prompt: "prompts/skill.md"\n    disable-model-invocation: true\n    user-invocable: false\n    context: fork\n    agent: task-agent\n    allowed-tools: [Read, Write]\n    extensions {\n      custom {\n        key: value\n      }\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.skills).toHaveLength(1);
       const skill = ast.skills[0];
@@ -686,7 +852,10 @@ describe("Parser sections", () => {
 
   describe("context", () => {
     it("parses file and includes", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  context {\n    file: "CONTEXT.md"\n    includes: [README.md, CONTRIBUTING.md]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  context {\n    file: "CONTEXT.md"\n    includes: [README.md, CONTRIBUTING.md]\n  }\n}`;
       const ast = parse(src);
       expect(ast.context.file).toBe("CONTEXT.md");
       expect(ast.context.includes).toEqual(["README.md", "CONTRIBUTING.md"]);
@@ -695,7 +864,10 @@ describe("Parser sections", () => {
 
   describe("env", () => {
     it("parses key-value pairs", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  env {\n    API_KEY: "sk-123"\n    REGION: "us-east-1"\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  env {\n    API_KEY: "sk-123"\n    REGION: "us-east-1"\n  }\n}`;
       const ast = parse(src);
       expect(ast.env["API_KEY"]).toBe("sk-123");
       expect(ast.env["REGION"]).toBe("us-east-1");
@@ -704,7 +876,10 @@ describe("Parser sections", () => {
 
   describe("providers", () => {
     it("parses provider with all fields", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  providers {\n    anthropic {\n      api-key: "\${ANTHROPIC_API_KEY}"\n      base-url: "https://api.anthropic.com"\n      models: [opus, sonnet, haiku]\n      default: true\n    }\n    openai {\n      api-key: "\${OPENAI_API_KEY}"\n      models: [gpt-4o]\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  providers {\n    anthropic {\n      api-key: "\${ANTHROPIC_API_KEY}"\n      base-url: "https://api.anthropic.com"\n      models: [opus, sonnet, haiku]\n      default: true\n    }\n    openai {\n      api-key: "\${OPENAI_API_KEY}"\n      models: [gpt-4o]\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.providers).toHaveLength(2);
       expect(ast.providers[0].name).toBe("anthropic");
@@ -720,7 +895,13 @@ describe("Parser sections", () => {
 
   describe("schedule", () => {
     it("parses job with cron", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job nightly {\n      cron: "0 0 * * *"\n      agent: worker\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job nightly {
+        cron: "0 0 * * *"\n
+        agent: worker\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.schedules).toHaveLength(1);
       expect(ast.schedules[0].id).toBe("nightly");
@@ -730,7 +911,14 @@ describe("Parser sections", () => {
     });
 
     it("parses job with every", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job weekly {\n      every: "monday 9:00"\n      agent: worker\n      enabled: true\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job weekly {
+        every: "monday 9:00"\n
+        agent: worker\n
+        enabled: true\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.schedules).toHaveLength(1);
       expect(ast.schedules[0].id).toBe("weekly");
@@ -740,7 +928,14 @@ describe("Parser sections", () => {
     });
 
     it("parses job with enabled: false", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job disabled-job {\n      cron: "0 0 * * *"\n      agent: worker\n      enabled: false\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent worker { model: opus }\n  flow { a -> worker }\n  schedule {\n    job disabled-job {
+        cron: "0 0 * * *"\n
+        agent: worker\n
+        enabled: false\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.schedules[0].enabled).toBe(false);
     });
@@ -748,7 +943,10 @@ describe("Parser sections", () => {
 
   describe("interfaces", () => {
     it("parses multiple interfaces with type and config", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  interfaces {\n    slack {\n      type: webhook\n      webhook: "\${SLACK_URL}"\n      channel: "alerts"\n    }\n    dashboard {\n      type: http\n      port: 8080\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  interfaces {\n    slack {\n      type: webhook\n      webhook: "\${SLACK_URL}"\n      channel: "alerts"\n    }\n    dashboard {\n      type: http\n      port: 8080\n    }\n  }\n}`;
       const ast = parse(src);
       expect(ast.interfaces).toHaveLength(2);
 
@@ -767,21 +965,36 @@ describe("Parser sections", () => {
 
   describe("sandbox", () => {
     it("parses sandbox field on agent (string value)", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent sandboxed { model: opus\n    sandbox: docker }\n  flow { a -> sandboxed }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent sandboxed {
+        model: opus\n
+        sandbox: docker
+      }\n  flow { a -> sandboxed }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "sandboxed") as AgentNode;
       expect(agent.sandbox).toBe("docker");
     });
 
     it("parses sandbox: true on agent", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent sandboxed { model: opus\n    sandbox: true }\n  flow { a -> sandboxed }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent sandboxed {
+        model: opus\n
+        sandbox: true
+      }\n  flow { a -> sandboxed }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "sandboxed") as AgentNode;
       expect(agent.sandbox).toBe(true);
     });
 
     it("parses sandbox in settings", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    sandbox: network-only\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    sandbox: network-only\n  }\n}`;
       const ast = parse(src);
       expect(ast.settings["sandbox"]).toBe("network-only");
     });
@@ -789,14 +1002,23 @@ describe("Parser sections", () => {
 
   describe("fallback-chain", () => {
     it("parses fallback-chain on agent", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent resilient { model: opus\n    fallback-chain: [sonnet, haiku] }\n  flow { a -> resilient }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  agent resilient {
+        model: opus\n
+        fallback-chain: [sonnet, haiku]
+      }\n  flow { a -> resilient }\n}`;
       const ast = parse(src);
       const agent = ast.nodes.find((n) => n.id === "resilient") as AgentNode;
       expect(agent.fallbackChain).toEqual(["sonnet", "haiku"]);
     });
 
     it("parses fallback-chain in settings", () => {
-      const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    fallback-chain: [opus, sonnet, haiku]\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  orchestrator {
+        model: opus\n
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  settings {\n    fallback-chain: [opus, sonnet, haiku]\n  }\n}`;
       const ast = parse(src);
       expect(ast.settings["fallbackChain"]).toEqual(["opus", "sonnet", "haiku"]);
     });
@@ -1550,7 +1772,13 @@ describe("Integration: example files", () => {
 
 describe("Edge cases", () => {
   it("inline comments are stripped from agent model", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent worker {\n    model: opus  # main model\n    tools: [Read, Write]  # core tools\n  }\n  flow { a -> worker }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent worker {
+      model: opus  # main model\n
+      tools: [Read, Write]  # core tools\n
+    }\n  flow { a -> worker }\n}`;
     const ast = parse(src);
     const agent = ast.nodes.find((n) => n.id === "worker") as AgentNode;
     expect(agent.model).toBe("opus");
@@ -1558,7 +1786,10 @@ describe("Edge cases", () => {
   });
 
   it("prompt blocks with # characters inside are preserved", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n    prompt {\n      # Step 1: Research\n      Do research.\n      # Step 2: Write\n      Write content.\n    }\n  }\n  flow { a -> writer }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent writer {\n    model: opus\n    prompt {\n      # Step 1: Research\n      Do research.\n      # Step 2: Write\n      Write content.\n    }\n  }\n  flow { a -> writer }\n}`;
     const ast = parse(src);
     const agent = ast.nodes.find((n) => n.id === "writer") as AgentNode;
     expect(agent.prompt).toContain("# Step 1: Research");
@@ -1566,21 +1797,39 @@ describe("Edge cases", () => {
   });
 
   it("nested braces in prompt blocks", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent coder {\n    model: opus\n    prompt {\n      Output JSON like:\n      { "key": { "nested": true } }\n    }\n  }\n  flow { a -> coder }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent coder {\n    model: opus\n    prompt {\n      Output JSON like:\n      { "key": { "nested": true } }\n    }\n  }\n  flow { a -> coder }\n}`;
     const ast = parse(src);
     const agent = ast.nodes.find((n) => n.id === "coder") as AgentNode;
     expect(agent.prompt).toContain('"key"');
   });
 
   it("agent with decimal phase numbers", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent precise {\n    model: opus\n    phase: 4.5\n  }\n  flow { a -> precise }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent precise {
+      model: opus\n
+      phase: 4.5\n
+    }\n  flow { a -> precise }\n}`;
     const ast = parse(src);
     const agent = ast.nodes.find((n) => n.id === "precise") as AgentNode;
     expect(agent.phase).toBe(4.5);
   });
 
   it("multiple agents with same phase number", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent p1 {\n    model: opus\n    phase: 1\n  }\n  agent p2 {\n    model: opus\n    phase: 1\n  }\n  flow { a -> [p1, p2] }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent p1 {
+      model: opus\n
+      phase: 1\n
+    }\n  agent p2 {
+      model: opus\n
+      phase: 1\n
+    }\n  flow { a -> [p1, p2] }\n}`;
     const ast = parse(src);
     const p1 = ast.nodes.find((n) => n.id === "p1") as AgentNode;
     const p2 = ast.nodes.find((n) => n.id === "p2") as AgentNode;
@@ -1589,7 +1838,13 @@ describe("Edge cases", () => {
   });
 
   it("gate with only after (no before)", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus }\n  gates {\n    gate after-only {\n      after: b\n      run: "check.sh"\n    }\n  }\n  flow { a -> b }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent b { model: opus }\n  gates {\n    gate after-only {
+      after: b\n
+      run: "check.sh"\n
+    }\n  }\n  flow { a -> b }\n}`;
     const ast = parse(src);
     const gate = ast.nodes.find((n) => n.id === "after-only") as GateNode;
     expect(gate.after).toBe("b");
@@ -1597,7 +1852,13 @@ describe("Edge cases", () => {
   });
 
   it("hook with only on and run (minimal)", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  hooks {\n    hook minimal {\n      on: Stop\n      run: "cleanup.sh"\n    }\n  }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  flow { a -> a }\n  hooks {\n    hook minimal {
+      on: Stop\n
+      run: "cleanup.sh"\n
+    }\n  }\n}`;
     const ast = parse(src);
     expect(ast.hooks).toHaveLength(1);
     expect(ast.hooks[0].name).toBe("minimal");
@@ -1608,7 +1869,10 @@ describe("Edge cases", () => {
   });
 
   it("empty sections produce reasonable defaults", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n  }\n  settings {\n  }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n  }\n  settings {\n  }\n}`;
     const ast = parse(src);
     expect(ast.memory).toEqual({});
     expect(ast.settings).toEqual({ allow: [], deny: [], ask: [] });
@@ -1616,7 +1880,10 @@ describe("Edge cases", () => {
 
   it("extremely long prompt block", () => {
     const longContent = "This is a very long line. ".repeat(500);
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent verbose {\n    model: opus\n    prompt {\n      ${longContent}\n    }\n  }\n  flow { a -> verbose }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent verbose {\n    model: opus\n    prompt {\n      ${longContent}\n    }\n  }\n  flow { a -> verbose }\n}`;
     const ast = parse(src);
     const agent = ast.nodes.find((n) => n.id === "verbose") as AgentNode;
     expect(agent.prompt).toBeDefined();
@@ -1624,7 +1891,10 @@ describe("Edge cases", () => {
   });
 
   it("flow with combined [when x.y == z, max 3]", () => {
-    const src = `topology t : [pipeline] {\n  orchestrator { model: opus\n    handles: [a] }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { status: pass | fail } }\n  agent c { model: opus }\n  flow {\n    c -> b [when b.status == fail, max 3]\n  }\n}`;
+    const src = `topology t : [pipeline] {\n  orchestrator {
+      model: opus\n
+      handles: [a]
+    }\n  action a { kind: inline }\n  agent b { model: opus\n    outputs { status: pass | fail } }\n  agent c { model: opus }\n  flow {\n    c -> b [when b.status == fail, max 3]\n  }\n}`;
     const ast = parse(src);
     const edge = ast.edges.find((e) => e.from === "c" && e.to === "b");
     expect(edge).toBeDefined();
@@ -1668,7 +1938,10 @@ describe("Parse errors (should throw)", () => {
 describe("Validation errors", () => {
   it("V1 UniqueNames: two agents with the same id", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent dup { model: opus }
   agent dup { model: sonnet }
@@ -1683,7 +1956,10 @@ describe("Validation errors", () => {
 
   it("V3 FlowReferences: flow edge referencing a non-existent node", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent real { model: opus }
   flow { a -> ghost }
@@ -1697,7 +1973,10 @@ describe("Validation errors", () => {
 
   it("V14 ToolExclusivity: agent with both tools and disallowed-tools", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent confused {
     model: opus
@@ -1715,7 +1994,10 @@ describe("Validation errors", () => {
 
   it("V6 LoopBound: back-edge without max N annotation", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent step1 { model: opus }
   agent step2 { model: opus }
@@ -1734,7 +2016,10 @@ describe("Validation errors", () => {
 
   it("V6 NoSelfEdges: self-referencing edge without max bound", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent analyzer { model: opus }
   flow {
@@ -1751,7 +2036,10 @@ describe("Validation errors", () => {
 
   it("V13 GateAnchors: gate with after referencing non-existent node", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent worker { model: opus }
   gates {
@@ -1777,7 +2065,10 @@ describe("Validation errors", () => {
 describe("Validation warnings", () => {
   it("V18 ModelNotInProvider: agent uses model not listed in any provider", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent worker {
     model: mystery-model
@@ -1799,7 +2090,10 @@ describe("Validation warnings", () => {
 
   it("V22 FallbackNotInProvider: fallback chain model not in provider", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent worker {
     model: opus
@@ -1828,7 +2122,10 @@ describe("Validation warnings", () => {
 describe("Edge cases that should NOT throw", () => {
   it("agent with no tools parses fine", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent bare { model: opus }
   flow { a -> bare }
@@ -1841,7 +2138,10 @@ describe("Edge cases that should NOT throw", () => {
 
   it("agent with empty prompt block", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent empty-prompt {
     model: opus
@@ -1857,7 +2157,10 @@ describe("Edge cases that should NOT throw", () => {
 
   it("flow with no conditions (all unconditional edges)", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent s1 { model: opus }
   agent s2 { model: opus }
@@ -1877,7 +2180,10 @@ describe("Edge cases that should NOT throw", () => {
 
   it("topology with no agents (just an orchestrator)", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
 }`;
@@ -1965,7 +2271,10 @@ topology test-v12-invalid : [pipeline] {
   it("[max 3] alone (no when) should produce no V12 error", () => {
     const src = `
 topology test-v12-maxonly : [pipeline] {
-  orchestrator { model: sonnet handles: [intake] }
+  orchestrator {
+    model: sonnet
+    handles: [intake]
+  }
   action intake {}
   agent worker { model: sonnet }
   flow {
@@ -2002,7 +2311,10 @@ topology test-v12-whenonly : [pipeline] {
 describe("Flow parsing edge cases (Phase 2)", () => {
   it("chain with 3+ nodes: a -> b -> c -> d produces 3 edges", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   agent c { model: opus }
@@ -2043,7 +2355,10 @@ describe("Flow parsing edge cases (Phase 2)", () => {
 
   it("empty flow block produces empty edges array", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow {
   }
@@ -2054,9 +2369,15 @@ describe("Flow parsing edge cases (Phase 2)", () => {
 
   it("single node (no arrow) produces no edges", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
-  agent lonely { model: opus invocation: manual }
+  agent lonely {
+    model: opus
+    invocation: manual
+  }
   flow {
   }
 }`;
@@ -2071,7 +2392,10 @@ describe("Role prefix matching (Phase 2)", () => {
   roles {
     review: "Performs reviews"
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent review-security {
     model: opus
@@ -2090,7 +2414,10 @@ describe("Role prefix matching (Phase 2)", () => {
     review: "Generic reviewer"
     review-security: "Security reviewer"
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent review-security {
     model: opus
@@ -2108,7 +2435,10 @@ describe("Role prefix matching (Phase 2)", () => {
   roles {
     writer: "Writes content"
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent analyzer {
     model: opus
@@ -2198,7 +2528,10 @@ describe("Line number tracking", () => {
     // Gate after: a human node — cannot be wired as a SubagentStop hook
     // because human nodes do not register as subagent_types.
     const ast = parse(`topology t : [pipeline] {
-    orchestrator { model: opus handles: [a] }
+    orchestrator {
+      model: opus
+      handles: [a]
+    }
     action a { kind: inline }
     agent b { model: opus }
     human review-step {
@@ -2227,7 +2560,10 @@ describe("Line number tracking", () => {
     // Gate after: an agent node — compiles to a SubagentStop hook that
     // blocks (exit 2 prevents subagent from stopping). No warning needed.
     const ast = parse(`topology t : [pipeline] {
-    orchestrator { model: opus handles: [a] }
+    orchestrator {
+      model: opus
+      handles: [a]
+    }
     action a { kind: inline }
     agent b { model: opus }
     agent c { model: opus }
@@ -2298,7 +2634,10 @@ describe("Line number tracking", () => {
 
   it("V87: orchestrator with no delegation field is accepted (defaults to subagent)", () => {
     const ast = parse(`topology t : [pipeline] {
-    orchestrator { model: opus handles: [a] }
+    orchestrator {
+      model: opus
+      handles: [a]
+    }
     action a { kind: inline }
     flow { a -> a }
   }`);
@@ -2315,7 +2654,10 @@ describe("Line number tracking", () => {
 describe("C12: env sub-map inside mcp-servers entries", () => {
   it("parses env block inside an mcp-server entry", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   mcp-servers {
@@ -2342,7 +2684,10 @@ describe("C12: env sub-map inside mcp-servers entries", () => {
 
   it("mcp-server without env block still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   mcp-servers {
@@ -2361,7 +2706,10 @@ describe("C12: env sub-map inside mcp-servers entries", () => {
 
   it("parses multiple mcp-servers with env blocks", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   mcp-servers {
@@ -2389,7 +2737,10 @@ describe("C12: env sub-map inside mcp-servers entries", () => {
 describe("C13: extensions block inside hook bodies", () => {
   it("parses extensions inside a global hook", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   hooks {
@@ -2416,7 +2767,10 @@ describe("C13: extensions block inside hook bodies", () => {
 
   it("parses extensions inside a per-agent hook", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: opus
@@ -2444,7 +2798,10 @@ describe("C13: extensions block inside hook bodies", () => {
 
   it("hook without extensions still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   hooks {
@@ -2465,7 +2822,10 @@ describe("C13: extensions block inside hook bodies", () => {
 describe("C14: top-level extensions block in topology body", () => {
   it("parses a top-level extensions block", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   extensions {
@@ -2492,7 +2852,10 @@ describe("C14: top-level extensions block in topology body", () => {
 
   it("topology without extensions block has no extensions field", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: opus }
   flow { a -> w }
@@ -2511,7 +2874,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
   describe("Parsing", () => {
     it("agent with timeout parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2526,7 +2892,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("agent with on-fail: halt parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2541,7 +2910,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("agent with on-fail: retry parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2556,7 +2928,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("agent with on-fail: skip parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2571,7 +2946,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("agent with on-fail: fallback parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2589,7 +2967,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("simple retry: 3 still works (backward compat)", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2604,7 +2985,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("retry block parses all fields", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -2633,7 +3017,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("action with timeout and on-fail parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a {
     kind: inline
     timeout: 30s
@@ -2651,7 +3038,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
 
     it("gate with timeout parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: sonnet }
   gates {
@@ -2832,7 +3222,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "I" },
-          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, backoff: "random" as any } } as AgentNode,
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: {
+            max: 3,
+            backoff: "random" as any
+          } } as AgentNode,
         ],
       });
       const results = validate(ast);
@@ -2846,7 +3239,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "I" },
-          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, interval: "forever" } } as AgentNode,
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: {
+            max: 3,
+            interval: "forever"
+          } } as AgentNode,
         ],
       });
       const results = validate(ast);
@@ -2860,7 +3256,10 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "I" },
-          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, maxInterval: "nope" } } as AgentNode,
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: {
+            max: 3,
+            maxInterval: "nope"
+          } } as AgentNode,
         ],
       });
       const results = validate(ast);
@@ -2874,7 +3273,14 @@ describe("Error Handling (timeout, on-fail, retry block)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "I" },
-          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: { max: 3, backoff: "exponential", interval: "1s", maxInterval: "60s", jitter: true, nonRetryable: ["auth-error"] } } as AgentNode,
+          { id: "worker", type: "agent", label: "W", model: "sonnet", retry: {
+            max: 3,
+            backoff: "exponential",
+            interval: "1s",
+            maxInterval: "60s",
+            jitter: true,
+            nonRetryable: ["auth-error"]
+          } } as AgentNode,
         ],
       });
       const results = validate(ast);
@@ -3201,7 +3607,10 @@ topology code-review : [pipeline] {
 describe("Wave 2: Error edges (-x->)", () => {
   it("parses -x-> as an error edge with isError: true", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent analyzer { model: opus }
   agent error-handler { model: opus }
@@ -3219,7 +3628,10 @@ describe("Wave 2: Error edges (-x->)", () => {
 
   it("parses -x[timeout]-> as a typed error edge", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent analyzer { model: opus }
   agent fallback { model: opus }
@@ -3237,7 +3649,10 @@ describe("Wave 2: Error edges (-x->)", () => {
 
   it("parses -x[auth-error]-> with hyphenated error type", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent caller { model: opus }
   agent auth-fallback { model: opus }
@@ -3255,7 +3670,10 @@ describe("Wave 2: Error edges (-x->)", () => {
 
   it("normal edges do not have isError set", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   flow {
@@ -3270,7 +3688,10 @@ describe("Wave 2: Error edges (-x->)", () => {
 
   it("mixed normal and error edges on same node", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent analyzer { model: opus }
   agent reviewer { model: opus }
@@ -3295,7 +3716,10 @@ describe("Wave 2: Error edges (-x->)", () => {
 describe("Wave 2: [tolerance] edge attribute", () => {
   it("parses [tolerance: 2] as integer tolerance", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   agent c { model: opus }
@@ -3314,7 +3738,10 @@ describe("Wave 2: [tolerance] edge attribute", () => {
 
   it("parses [tolerance: 33%] as percentage string", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   agent c { model: opus }
@@ -3334,7 +3761,10 @@ describe("Wave 2: [tolerance] edge attribute", () => {
 describe("Wave 2: [race] edge attribute", () => {
   it("parses [race] as boolean edge attribute", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent fast { model: opus }
   agent slow { model: opus }
@@ -3354,7 +3784,10 @@ describe("Wave 2: [race] edge attribute", () => {
 describe("Wave 2: [wait N] edge attribute", () => {
   it("parses [wait 30s] as inline timer", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent notifier { model: opus }
   flow {
@@ -3369,7 +3802,10 @@ describe("Wave 2: [wait N] edge attribute", () => {
 
   it("parses [wait 5m] with minute duration", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent notifier { model: opus }
   flow {
@@ -3386,7 +3822,10 @@ describe("Wave 2: [wait N] edge attribute", () => {
 describe("Wave 2: join field on agent/action", () => {
   it("parses join: all on agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent synthesizer {
     model: opus
@@ -3401,7 +3840,10 @@ describe("Wave 2: join field on agent/action", () => {
 
   it("parses join: any on agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent fast-consumer {
     model: opus
@@ -3416,7 +3858,10 @@ describe("Wave 2: join field on agent/action", () => {
 
   it("parses join: all-done on agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent collector {
     model: opus
@@ -3431,7 +3876,10 @@ describe("Wave 2: join field on agent/action", () => {
 
   it("parses join on action", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [merge-step] }
+  orchestrator {
+    model: opus
+    handles: [merge-step]
+  }
   action merge-step {
     kind: inline
     join: none-failed
@@ -3452,7 +3900,10 @@ describe("Wave 2: Topology meta timeout and error-handler", () => {
     version: "1.0.0"
     timeout: 30m
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
 }`;
@@ -3466,7 +3917,10 @@ describe("Wave 2: Topology meta timeout and error-handler", () => {
     version: "1.0.0"
     error-handler: global-error-agent
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent global-error-agent { model: opus }
   flow { a -> global-error-agent }
@@ -3482,7 +3936,10 @@ describe("Wave 2: Topology meta timeout and error-handler", () => {
     timeout: 2h
     error-handler: catch-all
   }
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent catch-all { model: opus }
   flow { a -> catch-all }
@@ -3741,7 +4198,10 @@ describe("Wave 2: Validator rules V39-V45", () => {
 describe("Wave 2: Backward compatibility", () => {
   it("existing flow syntax with [when] and [max] still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus
     outputs { verdict: yes | no } }
@@ -3763,7 +4223,10 @@ describe("Wave 2: Backward compatibility", () => {
 
   it("existing fan-out syntax still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [start] }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent x { model: opus }
   agent y { model: opus }
@@ -3781,7 +4244,10 @@ describe("Wave 2: Backward compatibility", () => {
 
   it("existing chain syntax a -> b -> c still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   agent c { model: opus }
@@ -3797,7 +4263,10 @@ describe("Wave 2: Backward compatibility", () => {
 
   it("existing [per id] syntax still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   flow {
@@ -3812,7 +4281,10 @@ describe("Wave 2: Backward compatibility", () => {
 
   it("existing [when ..., max N] combined syntax still works", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus
     outputs { status: pass | fail } }
@@ -4244,7 +4716,10 @@ topology test : [pipeline] {
 
 describe("Sensitive and Secret env values", () => {
   const minimalPrefix = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }`;
 
@@ -4327,7 +4802,10 @@ describe("Sensitive and Secret env values", () => {
 
 describe("V51 - Sensitive literal warning", () => {
   const minimalPrefix = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }`;
 
@@ -4384,7 +4862,10 @@ describe("V51 - Sensitive literal warning", () => {
 
 describe("V52 - Secret URI scheme validation", () => {
   const minimalPrefix = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }`;
 
@@ -4437,7 +4918,10 @@ describe("V52 - Secret URI scheme validation", () => {
 describe("Wave 3: Observability block parsing", () => {
   it("full observability block parses correctly", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
   observability {
@@ -4481,7 +4965,10 @@ describe("Wave 3: Observability block parsing", () => {
 
   it("observability with only capture sub-block", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
   observability {
@@ -4510,7 +4997,10 @@ describe("Wave 3: Observability block parsing", () => {
 
   it("observability with only spans sub-block", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
   observability {
@@ -4536,7 +5026,10 @@ describe("Wave 3: Observability block parsing", () => {
 
   it("defaults are applied when fields omitted", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
   observability {
@@ -4562,7 +5055,10 @@ describe("Wave 3: Observability block parsing", () => {
 
   it("backward compat: topology without observability -> null", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
 }`;
@@ -4572,7 +5068,10 @@ describe("Wave 3: Observability block parsing", () => {
 
   it("observability with enabled: false", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   flow { a -> a }
   observability {
@@ -5289,7 +5788,10 @@ topology simple : [pipeline] {
 describe("Wave 5 — Compensation / Saga (F27)", () => {
   it("parses agent with compensates field", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent deployer {
     model: sonnet
@@ -5308,7 +5810,10 @@ describe("Wave 5 — Compensation / Saga (F27)", () => {
 
   it("agent without compensates has no compensates field", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent worker {
     model: sonnet
@@ -5323,7 +5828,10 @@ describe("Wave 5 — Compensation / Saga (F27)", () => {
 
   it("V58: compensates referencing non-existent agent -> error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent rollback {
     model: sonnet
@@ -5342,7 +5850,10 @@ describe("Wave 5 — Compensation / Saga (F27)", () => {
 
   it("V58: compensates referencing existing agent -> no error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent deployer {
     model: sonnet
@@ -5361,7 +5872,10 @@ describe("Wave 5 — Compensation / Saga (F27)", () => {
 
   it("backward compat: existing topologies without compensates still work", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w1 { model: sonnet }
   agent w2 { model: opus }
@@ -5389,7 +5903,10 @@ describe("Circuit Breaker (F26)", () => {
   describe("Parsing", () => {
     it("agent with circuit-breaker block parses correctly", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w {
     model: sonnet
@@ -5411,7 +5928,10 @@ describe("Circuit Breaker (F26)", () => {
 
     it("agent without circuit-breaker has no circuitBreaker field", () => {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w { model: sonnet }
   flow { a -> w }
@@ -5472,7 +5992,11 @@ describe("Circuit Breaker (F26)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "Intake" },
-          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 5, window: "5m", cooldown: "30s" } },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: {
+            threshold: 5,
+            window: "5m",
+            cooldown: "30s"
+          } },
         ],
       });
       const results = validate(ast);
@@ -5485,7 +6009,11 @@ describe("Circuit Breaker (F26)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "Intake" },
-          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 0, window: "5m", cooldown: "30s" } },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: {
+            threshold: 0,
+            window: "5m",
+            cooldown: "30s"
+          } },
         ],
       });
       const results = validate(ast);
@@ -5499,7 +6027,11 @@ describe("Circuit Breaker (F26)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "Intake" },
-          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 3, window: "five-min", cooldown: "30s" } },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: {
+            threshold: 3,
+            window: "five-min",
+            cooldown: "30s"
+          } },
         ],
       });
       const results = validate(ast);
@@ -5513,7 +6045,11 @@ describe("Circuit Breaker (F26)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "Intake" },
-          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: 3, window: "5m", cooldown: "invalid" } },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: {
+            threshold: 3,
+            window: "5m",
+            cooldown: "invalid"
+          } },
         ],
       });
       const results = validate(ast);
@@ -5527,7 +6063,11 @@ describe("Circuit Breaker (F26)", () => {
         nodes: [
           { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
           { id: "intake", type: "action", label: "Intake" },
-          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: { threshold: -1, window: "bad", cooldown: "worse" } },
+          { id: "worker", type: "agent", label: "Worker", model: "sonnet", circuitBreaker: {
+            threshold: -1,
+            window: "bad",
+            cooldown: "worse"
+          } },
         ],
       });
       const results = validate(ast);
@@ -5551,7 +6091,10 @@ describe("Circuit Breaker (F26)", () => {
 describe("Human node type (F32)", () => {
   it("parses human node with all fields", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   human approval {
     description: "Human reviews and approves the deployment plan"
@@ -5572,7 +6115,10 @@ describe("Human node type (F32)", () => {
 
   it("human node appears in flow edges", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   human review {
     description: "Review step"
@@ -5588,7 +6134,10 @@ describe("Human node type (F32)", () => {
 
   it("V59: invalid on-timeout -> error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   human approval {
     timeout: 1h
@@ -5608,7 +6157,10 @@ describe("Human node type (F32)", () => {
   it("V59: valid on-timeout values pass", () => {
     for (const value of ["halt", "skip", "fallback backup-agent"]) {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   human approval {
     timeout: 1h
@@ -5625,7 +6177,10 @@ describe("Human node type (F32)", () => {
 
   it("V30: invalid timeout on human node -> error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   human approval {
     timeout: forever
@@ -5642,7 +6197,10 @@ describe("Human node type (F32)", () => {
 
   it("backward compat: existing topologies without human nodes still work", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent w1 { model: sonnet }
   agent w2 { model: opus }
@@ -5665,7 +6223,10 @@ describe("Human node type (F32)", () => {
 describe("F31: Quorum join (N-of-M)", () => {
   it("parses join: 2-of-3 on agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent synthesizer {
     model: opus
@@ -5680,7 +6241,10 @@ describe("F31: Quorum join (N-of-M)", () => {
 
   it("parses join: 3-of-5 on agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent voter {
     model: opus
@@ -5756,7 +6320,10 @@ describe("F31: Quorum join (N-of-M)", () => {
 describe("F35: Weighted routing [weight N]", () => {
   it("parses [weight 0.7] as edge attribute", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   flow {
@@ -5771,7 +6338,10 @@ describe("F35: Weighted routing [weight N]", () => {
 
   it("parses [weight 1.0] as edge attribute", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [a] }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
   action a { kind: inline }
   agent b { model: opus }
   flow {
@@ -5786,7 +6356,10 @@ describe("F35: Weighted routing [weight N]", () => {
 
   it("parses [weight N] on fan-out edges", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [router] }
+  orchestrator {
+    model: opus
+    handles: [router]
+  }
   action router { kind: inline }
   agent a { model: opus }
   agent b { model: opus }
@@ -5927,7 +6500,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     ttl: 7d
   }
 
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -5947,7 +6523,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     version: "1.0.0"
     durable: true
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -5959,7 +6538,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
   it("durable defaults to undefined when not set", () => {
     const src = `topology t : [pipeline] {
   meta { version: "1.0.0" }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -5971,7 +6553,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
   it("checkpoint defaults to null when not present", () => {
     const src = `topology t : [pipeline] {
   meta { version: "1.0.0" }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -5986,7 +6571,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     backend: mongodb
     strategy: every-node
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6006,7 +6594,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     backend: ${backend}
     strategy: every-node
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6024,7 +6615,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     backend: postgres
     strategy: periodic
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6044,7 +6638,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     strategy: every-node
     ttl: forever
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6063,7 +6660,10 @@ describe("Checkpoint / Durable Execution (F34)", () => {
     strategy: every-node
     ttl: 7d
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6091,7 +6691,10 @@ describe("Time-Travel / Replay (F37)", () => {
       branch: true
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6113,7 +6716,10 @@ describe("Time-Travel / Replay (F37)", () => {
       enabled: true
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6133,7 +6739,10 @@ describe("Time-Travel / Replay (F37)", () => {
       enabled: true
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6154,7 +6763,10 @@ describe("Time-Travel / Replay (F37)", () => {
       max-history: -5
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6174,7 +6786,10 @@ describe("Time-Travel / Replay (F37)", () => {
       enabled: true
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6206,7 +6821,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       depends-on: [research-notes]
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent researcher {
     model: sonnet
@@ -6241,7 +6859,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
 
   it("empty artifacts block returns empty array", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6260,7 +6881,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       type: json
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6280,7 +6904,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       type: markdown
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker {
     model: sonnet
@@ -6303,7 +6930,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       type: markdown
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker {
     model: sonnet
@@ -6326,7 +6956,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       depends-on: [phantom]
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6349,7 +6982,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       depends-on: [notes]
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent writer {
     model: sonnet
@@ -6376,7 +7012,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       depends-on: [a]
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6404,7 +7043,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
       depends-on: [clean]
     }
   }
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent worker { model: sonnet }
   flow { intake -> worker }
@@ -6423,7 +7065,10 @@ describe("Asset / Artifact Lineage (F38)", () => {
 describe("Reflection edge attribute (F33)", () => {
   it("parses [reflection] attribute — sets reflection to true", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent writer { model: sonnet }
   agent evaluator { model: opus }
@@ -6444,7 +7089,10 @@ describe("Reflection edge attribute (F33)", () => {
 
   it("V62: [reflection] without [max N] — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent writer { model: sonnet }
   agent evaluator { model: opus }
@@ -6465,7 +7113,10 @@ describe("Reflection edge attribute (F33)", () => {
 
   it("V62: [reflection] on non-back-edge — warning", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent writer { model: sonnet }
   agent evaluator { model: opus }
@@ -6488,7 +7139,10 @@ describe("Reflection edge attribute (F33)", () => {
 describe("Group chat node (F36)", () => {
   it("parses group node with all fields", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent architect { model: opus }
   agent critic { model: sonnet }
@@ -6517,7 +7171,10 @@ describe("Group chat node (F36)", () => {
 
   it("group node appears in flow edges", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent a1 { model: sonnet }
   agent a2 { model: sonnet }
@@ -6535,7 +7192,10 @@ describe("Group chat node (F36)", () => {
 
   it("V63: members reference non-existent agents — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent a1 { model: sonnet }
   group chat {
@@ -6553,7 +7213,10 @@ describe("Group chat node (F36)", () => {
 
   it("V64: invalid speaker-selection — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent a1 { model: sonnet }
   group chat {
@@ -6572,7 +7235,10 @@ describe("Group chat node (F36)", () => {
 
   it("V65: max-rounds is 0 — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent a1 { model: sonnet }
   group chat {
@@ -6590,7 +7256,10 @@ describe("Group chat node (F36)", () => {
 
   it("group node with minimal fields (just members) — succeeds", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent a1 { model: sonnet }
   agent a2 { model: sonnet }
@@ -6619,7 +7288,10 @@ describe("Group chat node (F36)", () => {
 describe("Rate limiting (F39)", () => {
   it("parses rate-limit: 60/min", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6635,7 +7307,10 @@ describe("Rate limiting (F39)", () => {
 
   it("parses rate-limit: 1000/hour", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6650,7 +7325,10 @@ describe("Rate limiting (F39)", () => {
 
   it("V66: invalid format rate-limit: fast — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6668,7 +7346,10 @@ describe("Rate limiting (F39)", () => {
 
   it("V66: invalid unit rate-limit: 60/week — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6685,7 +7366,10 @@ describe("Rate limiting (F39)", () => {
 
   it("V66: zero rate rate-limit: 0/min — error", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6703,7 +7387,10 @@ describe("Rate limiting (F39)", () => {
   it("valid rate-limit values pass validation", () => {
     for (const rl of ["1/sec", "60/min", "1000/hour", "10000/day"]) {
       const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent api-caller {
     model: sonnet
@@ -6867,7 +7554,10 @@ describe("Registry imports (F28-F30)", () => {
 describe("Prompt variants (F40)", () => {
   it("parses variants block in agent", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent reviewer {
     model: sonnet
@@ -6901,7 +7591,10 @@ describe("Prompt variants (F40)", () => {
 
   it("parses variant with model override", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent reviewer {
     model: sonnet
@@ -6998,7 +7691,10 @@ describe("Prompt variants (F40)", () => {
 describe("Encrypted values (F41)", () => {
   it("parses encrypted value in env block", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent w { model: sonnet }
   env {
@@ -7016,7 +7712,10 @@ describe("Encrypted values (F41)", () => {
 
   it("encrypted implies sensitive", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent w { model: sonnet }
   env {
@@ -7073,7 +7772,10 @@ describe("Encrypted values (F41)", () => {
 describe("Auth block in providers (F42)", () => {
   it("parses auth block in provider", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent w { model: sonnet }
   providers {
@@ -7099,7 +7801,10 @@ describe("Auth block in providers (F42)", () => {
 
   it("provider without auth block (backward compat) passes", () => {
     const src = `topology t : [pipeline] {
-  orchestrator { model: opus handles: [intake] }
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
   action intake { kind: inline }
   agent w { model: sonnet }
   providers {
@@ -7181,7 +7886,14 @@ describe("Auth block in providers (F42)", () => {
 
   describe("store and retrieval blocks", () => {
     it("parses a basic store with type, backend, and path", () => {
-      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store my-store {\n      type: semantic\n      backend: lancedb\n      path: ".memory/"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator {
+        model: opus
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store my-store {
+        type: semantic\n
+        backend: lancedb\n
+        path: ".memory/"\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.stores).toHaveLength(1);
       expect(ast.stores[0].id).toBe("my-store");
@@ -7191,7 +7903,19 @@ describe("Auth block in providers (F42)", () => {
     });
 
     it("parses multiple stores in one memory block", () => {
-      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store kb {\n      type: semantic\n      backend: lancedb\n    }\n    store relations {\n      type: graph\n      backend: kuzu\n    }\n    store history {\n      type: episodic\n      backend: sqlite-vec\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator {
+        model: opus
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store kb {
+        type: semantic\n
+        backend: lancedb\n
+      }\n    store relations {
+        type: graph\n
+        backend: kuzu\n
+      }\n    store history {
+        type: episodic\n
+        backend: sqlite-vec\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.stores).toHaveLength(3);
       expect(ast.stores[0].id).toBe("kb");
@@ -7293,7 +8017,14 @@ describe("Auth block in providers (F42)", () => {
     });
 
     it("parses store with connection secret", () => {
-      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store remote-db {\n      type: semantic\n      backend: pinecone\n      connection: secret "DB_URL"\n    }\n  }\n}`;
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator {
+        model: opus
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {\n    store remote-db {
+        type: semantic\n
+        backend: pinecone\n
+        connection: secret "DB_URL"\n
+      }\n  }\n}`;
       const ast = parse(src);
       expect(ast.stores).toHaveLength(1);
       expect(ast.stores[0].connection).toBe("DB_URL");
@@ -7388,7 +8119,10 @@ describe("Auth block in providers (F42)", () => {
     });
 
     it("parses empty memory block with no stores", () => {
-      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator { model: opus handles: [a] }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {}\n}`;
+      const src = `topology t : [pipeline] {\n  meta { version: "1.0.0" }\n  orchestrator {
+        model: opus
+        handles: [a]
+      }\n  action a { kind: inline }\n  flow { a -> a }\n  memory {}\n}`;
       const ast = parse(src);
       expect(ast.stores).toEqual([]);
       expect(ast.retrievals).toEqual([]);
@@ -7649,7 +8383,10 @@ describe("Auth block in providers (F42)", () => {
 
 describe("Company brain — pattern, brain store type, custody primitive", () => {
   const brainSrc = `topology cb : [brain] {
-    meta { version: "1.0.0" description: "x" }
+    meta {
+      version: "1.0.0"
+      description: "x"
+    }
     memory {
       store brain {
         type: brain
@@ -7772,7 +8509,10 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
 
   it("parses a brain store's presentation-only `sources` block", () => {
     const src = `topology cb : [brain] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       memory {
         store brain {
           type: brain
@@ -7816,7 +8556,10 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     // sub-blocks. The scanner is now depth-aware — only top-level memory blocks
     // are checked, and `store <id> {` is recognized by its leading keyword.
     const src = `topology cb : [brain] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       memory {
         store brain {
           type: brain
@@ -7852,13 +8595,19 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     // back to repeating its role sentence. examples/code-review.at did this on
     // four agents, pointing at a prompts/ directory that never existed.
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent worker {
         model: sonnet
         description: "w"
         prompt: "prompts/worker.md"
       }
-      action intake { kind: inline description: "in" }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> worker }
     }`;
     const ast = parse(src);
@@ -7871,7 +8620,10 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
 
   it("V89: the `prompt { }` block form is accepted and reaches the AST", () => {
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent worker {
         model: sonnet
         description: "w"
@@ -7879,13 +8631,113 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
           Do the thing.
         }
       }
-      action intake { kind: inline description: "in" }
+      action intake {
+        kind: inline
+        description: "in"
+      }
       flow { intake -> worker }
     }`;
     const ast = parse(src);
     const worker = ast.nodes.find((n) => n.id === "worker") as { prompt?: string };
     expect(worker.prompt).toBe("Do the thing.");
     expect(validate(ast).filter((r) => r.rule === "V89")).toHaveLength(0);
+  });
+
+  it("V90: a collapsed meta block is caught — it corrupts the version", () => {
+    // The damaging case. `version` silently became `1.0.0" description: "x`,
+    // which then printed in every binding's output and in the plan brief.
+    const src = [
+      "topology t : [pipeline] {",
+      '  meta { version: "1.0.0" description: "x" }',
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const v90 = validate(parse(src)).filter((r) => r.rule === "V90");
+    expect(v90).toHaveLength(1);
+    expect(v90[0].message).toContain("version");
+  });
+
+  it("V90: a collapsed agent block is caught", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a { model: sonnet retry: 3 }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const v90 = validate(parse(src)).filter((r) => r.rule === "V90");
+    expect(v90.some((r) => r.message.includes("model"))).toBe(true);
+  });
+
+  it("V90: a colon inside a prose description is NOT flagged", () => {
+    // `parseMeta` strips quotes, so a description arrives as bare prose. A
+    // colon in English is ordinary — "Demo: agent pipeline with DuckDB".
+    // Two shipped examples do exactly this and must stay clean.
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "Demo: agent pipeline with DuckDB storage"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "Static analysis: complexity and blast radius"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((r) => r.rule === "V90")).toHaveLength(0);
+  });
+
+  it("V90: a quoted value FOLLOWED by more content is still a swallow", () => {
+    // Where quotes survive parsing, the check is sharper: one well-formed
+    // quoted token then more content means a field was eaten.
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a {",
+      '    description: "k" model: sonnet',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((r) => r.rule === "V90").length).toBeGreaterThan(0);
+  });
+
+  it("V90: every shipped example is free of swallowed fields", () => {
+    const dir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".at"))) {
+      const v90 = validate(parse(readFileSync(resolve(dir, f), "utf8"))).filter(
+        (r) => r.rule === "V90"
+      );
+      expect(v90, `${f}: ${v90.map((r) => r.message).join("; ")}`).toHaveLength(0);
+    }
   });
 
   it("round-trips the company-brain.at example with no validation errors", () => {

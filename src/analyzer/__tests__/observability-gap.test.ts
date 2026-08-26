@@ -15,8 +15,14 @@ import { analyze } from "../index.js";
 
 const NO_HOOKS_TOPOLOGY = `
 topology no-hooks : [pipeline] {
-  meta { version: "1.0.0" description: "No hooks at all" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "No hooks at all"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent worker-a { model: sonnet phase: 1 prompt { You are worker-a. } }
   agent worker-b { model: haiku phase: 2 prompt { You are worker-b. } }
@@ -27,8 +33,14 @@ topology no-hooks : [pipeline] {
 // Topology WITH SubagentStop hook — should NOT warn
 const WITH_SUBAGENT_STOP_TOPOLOGY = `
 topology with-hooks : [pipeline] {
-  meta { version: "1.0.0" description: "Has SubagentStop hook" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "Has SubagentStop hook"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent worker { model: sonnet phase: 1 prompt { You are worker. } }
   flow { start -> worker }
@@ -46,8 +58,14 @@ topology with-hooks : [pipeline] {
 // Topology WITH Stop hook — should NOT warn
 const WITH_STOP_TOPOLOGY = `
 topology with-stop : [pipeline] {
-  meta { version: "1.0.0" description: "Has Stop hook" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "Has Stop hook"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent worker { model: sonnet phase: 1 prompt { You are worker. } }
   flow { start -> worker }
@@ -65,8 +83,14 @@ topology with-stop : [pipeline] {
 // Topology WITH enforced gate (compiles to SubagentStop) — should NOT warn
 const WITH_GATE_TOPOLOGY = `
 topology with-gate : [pipeline] {
-  meta { version: "1.0.0" description: "Has an enforced gate" }
-  orchestrator { model: opus handles: [start] }
+  meta {
+    version: "1.0.0"
+    description: "Has an enforced gate"
+  }
+  orchestrator {
+    model: opus
+    handles: [start]
+  }
   action start { kind: inline }
   agent worker { model: sonnet phase: 1 prompt { You are worker. } }
   flow { start -> worker }
@@ -84,8 +108,14 @@ topology with-gate : [pipeline] {
 // Zero-agent topology — should NOT warn
 const ZERO_AGENTS_TOPOLOGY = `
 topology zero-agents : [pipeline] {
-  meta { version: "1.0.0" description: "No agents" }
-  orchestrator { model: opus handles: [start, done] }
+  meta {
+    version: "1.0.0"
+    description: "No agents"
+  }
+  orchestrator {
+    model: opus
+    handles: [start, done]
+  }
   action start { kind: inline }
   action done { kind: report }
   flow { start -> done }

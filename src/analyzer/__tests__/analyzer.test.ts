@@ -63,11 +63,23 @@ topology simple-pipeline : [pipeline, human-gate] {
 
 const FAN_OUT = `
 topology code-review : [pipeline, fan-out] {
-  meta { version: "2.0.0" description: "Fan-out review" }
-  orchestrator { model: opus handles: [intake, report] }
+  meta {
+    version: "2.0.0"
+    description: "Fan-out review"
+  }
+  orchestrator {
+    model: opus
+    handles: [intake, report]
+  }
   action intake { kind: inline }
-  agent analyzer { model: sonnet phase: 1 }
-  agent security { model: sonnet phase: 1 }
+  agent analyzer {
+    model: sonnet
+    phase: 1
+  }
+  agent security {
+    model: sonnet
+    phase: 1
+  }
   agent reporter { model: sonnet phase: 2 prompt { Summarize findings. } }
   action report { kind: report }
   flow {
@@ -82,10 +94,19 @@ topology code-review : [pipeline, fan-out] {
 
 const MINIMAL = `
 topology minimal : [pipeline] {
-  meta { version: "0.1.0" description: "Bare minimum" }
-  orchestrator { model: sonnet handles: [start] }
+  meta {
+    version: "0.1.0"
+    description: "Bare minimum"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [start]
+  }
   action start { kind: inline }
-  agent worker { model: haiku phase: 1 }
+  agent worker {
+    model: haiku
+    phase: 1
+  }
   flow { start -> worker }
 }
 `;
@@ -285,11 +306,17 @@ describe("analyze — suggestions", () => {
     const ast = parse(`
 topology test : [pipeline] {
   meta { version: "1.0.0" }
-  orchestrator { model: sonnet handles: [start] }
+  orchestrator {
+    model: sonnet
+    handles: [start]
+  }
   action start { kind: inline }
   agent a { model: sonnet prompt { test } }
   flow { start -> a }
-  gates { gate g { after: a run: "check.sh" } }
+  gates { gate g {
+    after: a
+    run: "check.sh"
+  } }
 }
 `);
     const result = analyze(ast);

@@ -51,7 +51,10 @@ describe("renderAscii", () => {
     // NB: fields are newline-separated. parseFields is line-based, so putting
     // them on one line makes `model` swallow the rest as its value.
     const src = `topology t : [pipeline] {
-      meta { version: "1.0.0" description: "x" }
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
       agent a {
         model: sonnet
         description: "a"

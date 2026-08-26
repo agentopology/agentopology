@@ -10,9 +10,18 @@ const example = (name: string) =>
   readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples", name), "utf8");
 
 const MINIMAL = `topology t : [pipeline] {
-  meta { version: "1.0.0" description: "x" }
-  agent worker { model: sonnet description: "w" }
-  action intake { kind: inline description: "in" }
+  meta {
+    version: "1.0.0"
+    description: "x"
+  }
+  agent worker {
+    model: sonnet
+    description: "w"
+  }
+  action intake {
+    kind: inline
+    description: "in"
+  }
   flow { intake -> worker }
 }`;
 
@@ -49,8 +58,15 @@ describe("resolveDefaults", () => {
     // NB: fields must be newline-separated. parseFields is line-based, so two
     // fields on one line make the first key swallow the rest of the line.
     const src = MINIMAL.replace(
-      'agent worker { model: sonnet description: "w" }',
-      ['agent worker {', '    model: sonnet', '    description: "w"', '    permissions: supervised', '    retry: 3', '  }'].join("\n")
+      'agent worker {\n    model: sonnet\n    description: "w"\n  }',
+      [
+        "agent worker {",
+        "    model: sonnet",
+        '    description: "w"',
+        "    permissions: supervised",
+        "    retry: 3",
+        "  }",
+      ].join("\n")
     );
     const { ast, applied } = resolveDefaults(parse(src));
     const worker = ast.nodes.find((n) => n.id === "worker") as AgentNode;
