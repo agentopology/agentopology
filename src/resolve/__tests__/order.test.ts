@@ -253,4 +253,86 @@ describe("resolveOrder", () => {
     expect(idx("second")).toBe(idx("first") + 1);
     expect(idx("second")).toBeLessThan(idx("b"));
   });
+
+  it("an error back-edge does not make the whole downstream unreachable", () => {
+    // Reported from first contact: a 13-step topology that VALIDATES CLEAN
+    // rendered 11 nodes as "unreachable from the entry point".
+    //
+    // Cause: `-x->` error edges were skipped by back-edge detection but still
+    // fed to the ranker, so `staging -x-> worker` looked like a genuine cycle
+    // (worker -> staging -> worker). Kahn could not rank it and everything
+    // downstream fell to depth -1.
+    //
+    // An error edge is an exception route, not a step — a catch, not part of
+    // the happy path. It must not contribute to the ranking at all.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "error edge pointing backward"
+      }
+      agent worker {
+        model: sonnet
+        description: "w"
+      }
+      agent later {
+        model: sonnet
+        description: "l"
+      }
+      agent last {
+        model: sonnet
+        description: "z"
+      }
+      action start {
+        kind: inline
+        description: "in"
+      }
+      action staging {
+        kind: inline
+        description: "s"
+      }
+      flow { start -> worker
+             worker -> staging
+             staging -> later
+             later -> last
+             staging -x-> worker [max 2] }
+    }`;
+    const { steps, unreachable } = resolveOrder(parse(src));
+    expect(unreachable, `unreachable: ${unreachable.join(", ")}`).toEqual([]);
+    const order = steps.flatMap((s) => s.ids);
+    expect(order).toContain("later");
+    expect(order).toContain("last");
+    expect(order.indexOf("last")).toBeGreaterThan(order.indexOf("later"));
+  });
+
+  it("a fan-out's SECOND target is reachable, and so is everything below it", () => {
+    // The same report blamed the second root of a parallel fan-out. That part
+    // was already correct, and this pins it so the fix above cannot regress it.
+    const src = `topology t : [pipeline, fan-out] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+      }
+      agent b {
+        model: sonnet
+        description: "b"
+      }
+      agent belowB {
+        model: sonnet
+        description: "d"
+      }
+      action start {
+        kind: inline
+        description: "in"
+      }
+      flow { start -> [a, b]
+             b -> belowB }
+    }`;
+    const { steps, unreachable } = resolveOrder(parse(src));
+    expect(unreachable).toEqual([]);
+    expect(steps.flatMap((s) => s.ids)).toContain("belowB");
+  });
 });
