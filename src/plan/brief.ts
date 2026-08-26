@@ -154,7 +154,19 @@ export interface ExecutionBrief {
   roles: RoleCard[];
   handoffs: Handoff[];
   blindPairs: BlindPair[];
-  routes: Array<{ from: string; key: string; edges: EdgeDef[] }>;
+  /**
+   * Routing decisions, grouped by (source, output key). Previously grouped by
+   * source alone with the key read off `edges[0]`, so a node routing on two
+   * different outputs got one heading naming whichever came first — and every
+   * row underneath it looked like it tested that output.
+   */
+  routes: Array<{
+    from: string;
+    key: string;
+    edges: EdgeDef[];
+    /** Unconditional out-edges from the same source: the default path. */
+    fallbacks: EdgeDef[];
+  }>;
   loops: LoopInfo[];
   gates: GatePlan[];
   unenforceable: Unenforceable[];
@@ -296,18 +308,38 @@ function computePreconditions(
     });
 }
 
-function computeRoutes(ast: TopologyAST): Array<{ from: string; key: string; edges: EdgeDef[] }> {
-  const byFrom = new Map<string, EdgeDef[]>();
+/** The output name a condition tests: the part after the dot in `x.y == v`. */
+function conditionKey(condition: string | null): string {
+  const m = /([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)/.exec(condition ?? "");
+  return m?.[2] ?? "?";
+}
+
+function computeRoutes(ast: TopologyAST): ExecutionBrief["routes"] {
+  // Group by (source, output key). A node may route on more than one output,
+  // and each is a separate decision with its own exhaustiveness.
+  const groups = new Map<string, { from: string; key: string; edges: EdgeDef[] }>();
+  const fallbacksByFrom = new Map<string, EdgeDef[]>();
+
   for (const e of ast.edges) {
-    if (!e.condition) continue;
-    if (!byFrom.has(e.from)) byFrom.set(e.from, []);
-    byFrom.get(e.from)!.push(e);
+    if (e.isError) continue;
+    if (!e.condition) {
+      // An unconditional out-edge is the default path. Dropping it while
+      // telling the host to halt when nothing matches sent runs into a dead
+      // end that the topology had an answer for.
+      if (!fallbacksByFrom.has(e.from)) fallbacksByFrom.set(e.from, []);
+      fallbacksByFrom.get(e.from)!.push(e);
+      continue;
+    }
+    const key = conditionKey(e.condition);
+    const id = `${e.from}\u0000${key}`;
+    if (!groups.has(id)) groups.set(id, { from: e.from, key, edges: [] });
+    groups.get(id)!.edges.push(e);
   }
-  return [...byFrom.entries()].map(([from, edges]) => {
-    // `[when x.y == v]` — the key is the output name after the dot.
-    const m = /([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)/.exec(edges[0].condition ?? "");
-    return { from, key: m?.[2] ?? "?", edges };
-  });
+
+  return [...groups.values()].map((g) => ({
+    ...g,
+    fallbacks: fallbacksByFrom.get(g.from) ?? [],
+  }));
 }
 
 function computeUnenforceable(ast: TopologyAST): Unenforceable[] {

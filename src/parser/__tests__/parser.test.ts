@@ -8740,6 +8740,78 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     }
   });
 
+  it("V90: a spec-legal single-line nested object is NOT a swallow", () => {
+    // `spec/grammar.md:117` gives `outputs: { depth: 1 | 2 | 3 }` verbatim as
+    // legal, and it parses correctly. V90 flagged it, which rejected valid
+    // topologies — a false positive is worse than a miss.
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "    outputs: { verdict: approve | reject }",
+      "    tools: [Read, Write]",
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const ast = parse(src);
+    expect(validate(ast).filter((r) => r.rule === "V90")).toHaveLength(0);
+    // and it really did parse — the exemption must not hide a broken parse
+    const a = ast.nodes.find((n) => n.id === "a") as { outputs?: Record<string, string[]> };
+    expect(a.outputs?.verdict).toEqual(["approve", "reject"]);
+  });
+
+  it("V90: a swallow with no space after the colon is still caught", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a { model: sonnet retry:3 }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((r) => r.rule === "V90").length).toBeGreaterThan(0);
+  });
+
+  it("V90: orchestrator, human and group blocks are checked too", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  orchestrator { model: opus handles: [i] }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const v90 = validate(parse(src)).filter((r) => r.rule === "V90");
+    expect(v90.length).toBeGreaterThan(0);
+    expect(v90[0].node).toBe("orchestrator");
+  });
+
   it("V91: a required field satisfied by an injected placeholder is still missing", () => {
     // The parser substitutes a sentinel because the AST types are non-optional,
     // and every downstream "is it present?" check then passed. V7 (model

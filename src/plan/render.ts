@@ -301,9 +301,19 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
           `| \`${e.condition}\` | \`${e.to}\` | ${e.maxIterations ? `max ${e.maxIterations}` : "—"} |`
         );
       }
+      if (r.fallbacks.length) {
+        for (const f of r.fallbacks) {
+          L.push(`| *(no condition — default)* | \`${f.to}\` | — |`);
+        }
+      }
       L.push("");
     }
-    L.push("If no condition matches at runtime, log `route-unmatched` and stop. Never guess.");
+    const anyFallback = brief.routes.some((r) => r.fallbacks.length > 0);
+    L.push(
+      anyFallback
+        ? "If no condition matches, take the unconditional default row. Only if there is none, log `route-unmatched` and stop. Never guess."
+        : "If no condition matches at runtime, log `route-unmatched` and stop. Never guess."
+    );
   } else {
     L.push("No conditional edges — the order in §2 is the whole control flow.");
   }

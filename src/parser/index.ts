@@ -116,6 +116,13 @@ function detectSwallowedFields(
     // check below still catches `description: "k" model: sonnet`.
     const PROSE_FIELDS = new Set(["description", "role", "generates", "termination"]);
     if (PROSE_FIELDS.has(key) && !value.startsWith('"')) continue;
+    // A balanced brace block is a NESTED OBJECT, not a swallow. The single-line
+    // form is spec-legal and parses correctly — `spec/grammar.md:117` gives
+    // `outputs: { depth: 1 | 2 | 3 }` verbatim. Flagging it rejected valid
+    // topologies, which is worse than missing one.
+    if (value.startsWith("{") && value.endsWith("}")) continue;
+    // Same for a list.
+    if (value.startsWith("[") && value.endsWith("]")) continue;
     // A WELL-FORMED quoted string is exempt — a description may contain a
     // colon. `"1.0.0" description: "x"` is NOT well-formed: it is one quoted
     // token followed by more content, i.e. a swallowed field.
@@ -123,7 +130,7 @@ function detectSwallowedFields(
     const search = value.startsWith('"')
       ? value.replace(/^"(?:[^"\\]|\\.)*"/, "")
       : value;
-    const m = /\s*\s([a-zA-Z][a-zA-Z0-9_-]*):\s/.exec(search.startsWith(" ") ? search : " " + search);
+    const m = /\s([a-zA-Z][a-zA-Z0-9_-]*):/.exec(search.startsWith(" ") ? search : " " + search);
     if (!m) continue;
     out.push({
       rule: "V90",
@@ -353,8 +360,14 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
 /**
  * Parse the `orchestrator { ... }` block into an {@link OrchestratorNode}.
  */
-export function parseOrchestrator(body: string): OrchestratorNode {
+export function parseOrchestrator(
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): OrchestratorNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, "orchestrator", _blockFieldMisuseWarnings);
+  }
   const handles = parseMultilineList(body, "handles");
   const outputs = parseOutputsBlock(body);
 
@@ -738,8 +751,15 @@ export function parseGate(
 /**
  * Parse a `human <id> { ... }` block into a {@link HumanNode}.
  */
-export function parseHuman(id: string, body: string): HumanNode {
+export function parseHuman(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): HumanNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
 
   const node: HumanNode = {
     id,
@@ -757,8 +777,15 @@ export function parseHuman(id: string, body: string): HumanNode {
 /**
  * Parse a `group <id> { ... }` block into a {@link GroupNode}.
  */
-export function parseGroup(id: string, body: string): GroupNode {
+export function parseGroup(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): GroupNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const members = parseList(fields.members ?? "");
 
   const node: GroupNode = {
@@ -2251,7 +2278,7 @@ export function parse(source: string): TopologyAST {
   // Orchestrator
   const orchBlock = extractBlock(topBody, "orchestrator");
   if (orchBlock) {
-    nodes.push(parseOrchestrator(orchBlock.body));
+    nodes.push(parseOrchestrator(orchBlock.body, blockFieldMisuseWarnings));
   }
 
   // Actions
@@ -2285,7 +2312,7 @@ export function parse(source: string): TopologyAST {
   const humanBlocks = extractAllBlocks(topBody, "human");
   for (const block of humanBlocks) {
     if (block.id) {
-      nodes.push(parseHuman(block.id, block.body));
+      nodes.push(parseHuman(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 
@@ -2293,7 +2320,7 @@ export function parse(source: string): TopologyAST {
   const groupBlocks = extractAllBlocks(topBody, "group");
   for (const block of groupBlocks) {
     if (block.id) {
-      nodes.push(parseGroup(block.id, block.body));
+      nodes.push(parseGroup(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 

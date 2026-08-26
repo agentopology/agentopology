@@ -73,11 +73,11 @@ V89 closed that instance. The class is still open.
 | # | KPI | Instrument | Baseline | Target |
 |---|---|---|---|---|
 | L2.1 | Type-clean | `npx tsc --noEmit`, exit code | ✅ 0 | 0 |
-| L2.2 | Test count and pass rate | `npx vitest run` | ✅ **1444 / 1444** | 100%, count grows with surface |
+| L2.2 | Test count and pass rate | `npx vitest run` | ✅ **1457 / 1457** | 100%, count grows with surface |
 | L2.3 | **Regression tests actually regress** | revert the fix, confirm the test fails | ✅ verified twice — settings merge (3 fail without it) and codex defaults (1 fails without it) | every bugfix test proven this way |
 | L2.4 | Compile path stability | `git diff src/bindings/` after any non-binding change | ✅ empty | empty unless bindings are the subject |
 | L2.5 | CLI has tests | `npx vitest run src/cli` | ✅ **17 tests** — real subprocess runs, so exit codes and arg guards are covered | ≥ 1 per command; grows with the surface |
-| L2.6 | Docs drift | `CLAUDE.md` claims vs measured | ✅ refreshed: **1444 tests / 91 rules / 10 examples / 5 exporters**. Was 1141 / 82 / 5 / 2. | refreshed at each release |
+| L2.6 | Docs drift | `CLAUDE.md` claims vs measured | ✅ refreshed: **1457 tests / 91 rules / 10 examples / 5 exporters**. Was 1141 / 82 / 5 / 2. | refreshed at each release |
 
 ---
 

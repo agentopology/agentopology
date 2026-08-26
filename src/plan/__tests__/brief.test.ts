@@ -280,6 +280,81 @@ describe("buildExecutionBrief", () => {
     expect(b.orchestrator).toBe("orchestrator");
     expect(b.steps.some((s) => s.ids.includes("orchestrator"))).toBe(false);
   });
+
+  const TWO_OUTPUTS = `topology t : [pipeline] {
+    meta {
+      version: "1.0.0"
+      description: "one node routing on two different outputs, plus a default"
+    }
+    agent judge {
+      model: opus
+      description: "j"
+      outputs: {
+        verdict: pass | fail
+        severity: minor | major
+      }
+    }
+    agent sink {
+      model: sonnet
+      description: "s"
+    }
+    agent worker {
+      model: sonnet
+      description: "w"
+    }
+    agent always {
+      model: sonnet
+      description: "al"
+    }
+    action i {
+      kind: inline
+      description: "in"
+    }
+    flow { i -> judge
+           judge -> sink [when judge.verdict == pass]
+           judge -> worker [when judge.severity == major]
+           judge -> always }
+  }`;
+
+  it("groups routing by (source, output), not by source alone", () => {
+    // Regression: grouped by source with the key read off edges[0], so a node
+    // routing on two outputs got ONE heading naming whichever came first, and
+    // every row under it looked like it tested that output.
+    const routes = buildExecutionBrief(parse(TWO_OUTPUTS)).routes;
+    expect(routes).toHaveLength(2);
+    expect(routes.map((r) => r.key).sort()).toEqual(["severity", "verdict"]);
+    for (const r of routes) {
+      for (const e of r.edges) expect(e.condition).toContain(`.${r.key}`);
+    }
+  });
+
+  it("keeps the unconditional out-edge as a default instead of dropping it", () => {
+    // Regression: it was dropped entirely, and §5 then told the host to halt
+    // when nothing matched — a dead end the topology had an answer for.
+    const routes = buildExecutionBrief(parse(TWO_OUTPUTS)).routes;
+    for (const r of routes) {
+      expect(r.fallbacks.map((f) => f.to)).toContain("always");
+    }
+    const md = renderBriefMarkdown(buildExecutionBrief(parse(TWO_OUTPUTS)));
+    expect(md).toContain("(no condition — default)");
+    expect(md).toContain("take the unconditional default row");
+  });
+
+  it("still says halt when a decision has no default", () => {
+    const md = renderBriefMarkdown(briefFor("code-review.at"));
+    expect(md).toContain("log `route-unmatched` and stop");
+  });
+
+  it("does not mark exclusive branches as mutually blind", () => {
+    // They never co-run, so they cannot leak into each other — and marking them
+    // blind told the host to dispatch every branch of a decision at once.
+    const b = buildExecutionBrief(parse(TWO_OUTPUTS));
+    const exclusive = b.steps.filter((s) => s.exclusive).flatMap((s) => s.ids);
+    for (const p of b.blindPairs) {
+      expect(exclusive).not.toContain(p.a);
+      expect(exclusive).not.toContain(p.b);
+    }
+  });
 });
 
 describe("renderBriefMarkdown", () => {
