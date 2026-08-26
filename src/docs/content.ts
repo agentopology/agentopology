@@ -4061,7 +4061,7 @@ npx agentopology targets
   "interpreted-mode": {
     name: "interpreted-mode",
     description: "Run a topology directly, with no scaffolded files",
-    content: () => `# Interpreted mode
+    content: () => `# interpreted-mode
 
 A \`.at\` file has two lifecycles, and they are the same declaration with two
 execution backends.
