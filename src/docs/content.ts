@@ -4055,4 +4055,116 @@ npx agentopology targets
 - Unknown extension namespaces are silently ignored, so a single .at file can target multiple platforms.
 `,
   },
+  // -------------------------------------------------------------------------
+  // interpreted-mode
+  // -------------------------------------------------------------------------
+  "interpreted-mode": {
+    name: "interpreted-mode",
+    description: "Run a topology directly, with no scaffolded files",
+    content: () => `# Interpreted mode
+
+A \`.at\` file has two lifecycles, and they are the same declaration with two
+execution backends.
+
+| | \`scaffold\` | \`plan\` |
+|---|---|---|
+| Who executes | the platform, later | this session's coding agent, now |
+| On disk | \`.claude/\`, \`.codex/\`, ... | nothing |
+| Lifetime | outlives the session | dies with it |
+| Portable | 8 targets | wherever the host agent runs |
+| Gates | real hooks, mechanically enforced | evidence contract |
+| Cost to change | regenerate and reconcile | free |
+
+Not a strategy choice. A lifetime choice.
+
+## The command
+
+\`\`\`bash
+agentopology plan <file>.at --mode plan|execute|auto [--brief] [--log <path>]
+\`\`\`
+
+**A CLI cannot spawn subagents**, so \`plan\` does not run anything. It is a
+linter and an orderer: it validates the topology (the agent that wrote the file
+can write an illegal one), applies the spec's defaults, resolves execution
+order, and emits a brief that a host coding agent follows.
+
+It prints two things: an ASCII flow graph for you, then the brief for the agent.
+\`--brief\` prints only the brief.
+
+## The autonomy notch
+
+One knob, governing two moments — before the run, and when the plan changes
+mid-run.
+
+| notch | before the run | mid-run rewrite |
+|---|---|---|
+| \`plan\` | show the render, wait for a word | show the diff, wait |
+| \`execute\` *(default)* | run | announce, keep going |
+| \`auto\` | run | silent, report at the end |
+
+A topology can carry its own default without any grammar change, since
+\`extensions\` is untyped passthrough:
+
+\`\`\`at
+extensions {
+  interpreted { autonomy: execute }
+}
+\`\`\`
+
+The invocation flag always wins.
+
+## What interpreted mode cannot do
+
+Five features are platform **registrations**, not steps in a run. They cannot
+work without files on any vendor:
+
+| ⛔ needs \`scaffold\` |
+|---|
+| \`triggers\` / slash commands |
+| \`schedules\` / cron |
+| \`mcp-servers\` |
+| \`hooks\` |
+| per-agent \`tools\` / \`permissions\` |
+
+The last one is the constraint that shapes everything: a subagent's tool grant
+cannot be set at runtime. So ephemeral is a spectrum **per role**, not a mode
+per topology. \`plan\` names every role that loses a restriction rather than
+pretending it applied.
+
+## Gates without hooks
+
+Four tiers. Interpreted mode reaches only the last.
+
+| tier | mechanism | portable | fileless |
+|---|---|---|---|
+| preventive | tool allowlist | all | needs a file |
+| enforced verify | hook, exit code 2 | 3 of 4 vendors | needs a file |
+| fileless verify | Workflow script | Claude Code only | yes |
+| **evidence contract** | the check's exit code is reported and inspected | all | yes |
+
+An evidence contract does not *stop* a skip. It makes a skip **loud** — the exit
+code is missing rather than fabricated. For a deterministic check, loud is close
+to stopped and costs zero platform features.
+
+If a gate must be unskippable, that topology wants \`scaffold\`.
+
+## The ambiguity log
+
+\`--log <path>\` records every place the host had to guess what to pass between
+roles: session scratchpad only, one JSON object per line. Six kinds are detected
+statically and pre-filled by \`plan\`, each carrying a concrete \`.at\` edit that
+would remove the guess.
+
+That \`fix\` field is the point. With it the log is a patch queue for the source
+topology. Without it, a diary.
+
+## See also
+
+\`\`\`bash
+agentopology plan examples/code-review.at          # try it
+agentopology docs flow                             # the control graph
+agentopology docs gate                             # gates and enforcement
+\`\`\`
+`,
+  },
 };
