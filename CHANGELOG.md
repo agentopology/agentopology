@@ -2,6 +2,104 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.5.0] — 2026-08-26
+
+Everything here came from **first contact**: a session that orchestrated ~20
+agent lanes, wrote the remaining four days as a topology, and filed one bug and
+seven capability asks. Their framing set the direction — *"closing the loop
+between the plan, the run, and the next plan."*
+
+Two of the seven were built as asked. Two were built differently, because
+measuring them first showed the ask was aimed at the wrong thing. Two were
+deferred. One turned out to be already solved.
+
+### [feat] `plan` reports what the filesystem says about each step
+
+A topology already declares what each role writes. Whether those files exist on
+disk **is** the run state. `plan` now reports per step — outputs present,
+outputs missing, or undecidable — and stops there.
+
+Deliberately **not** built: a run-state sidecar, `status:` fields in the `.at`,
+or `--resume`. A sidecar would record *"I finished"*; the filesystem records
+*"the artifact exists"*, and only the second survives a crash between stamping
+and writing. And skipping a step on this evidence would make a judgement on the
+agent's behalf and hide it — a truncated file counts as present. **Report, don't
+decide.** The brief says so and points at `git log`.
+
+The invariant this protects: **a `.at` file never contains a fact about a
+specific run.** A test asserts the brief never mutates the AST.
+
+### [feat] V93 — an edge should declare what crosses it
+
+For an edge between two agents that both declare paths, `writer.writes ∩
+reader.reads` must be non-empty. Empty means the receiver runs after the sender
+with none of its output.
+
+A **warning**: passing a result inline is legitimate. Skipped entirely when
+either side declares nothing — undecidable, not wrong.
+
+It fired on 26 edges across six real files on its first run, and two were
+genuine design bugs **in our own examples**: `simple-pipeline`'s revision loop
+sent the writer back to revise without giving it the review, and
+`data-processing`'s back-edge re-ran the synthesizer without the report. Both
+fixed.
+
+### [feat] Multi-anchor gates — `after: [a, b, c]`
+
+One declaration, many attachment points, one gate step per anchor. A repeated
+verification ritual copied per lane will drift, and the whole value of a ritual
+is that it is identical everywhere.
+
+Not an agent capability — the brief gets the same gate steps and `scaffold`
+emits the same hook entries either way. What changes is that they can no longer
+disagree.
+
+`gateAnchors()` is the single normalisation point. An audit mapped every read
+site first: TypeScript catches four, and ~18 more would have accepted an array
+**silently** — a hook matcher shipping `["a","b"]` into `settings.json` where the
+hook simply never fires, `g.after === id` never matching, ~12 lookups inside the
+visualizer's untyped browser-JS template literal, and a serializer emitting
+`after: a,b` which re-parses as the single id `"a,b"`. Each class now has a test
+verified to fail without its fix.
+
+### [fix] Cursor's `preToolUse` matcher named the wrong node
+
+Found by byte-diffing all 10 examples across all 8 bindings before and after:
+1208 of 1213 files identical, and the five that differed were a bug. Cursor
+selects `preToolUse` **because** `before` is set, then matched on `after` — so
+`after: writer, before: reviewer` emitted `matcher: "writer"` and the pre-hook
+fired before the wrong node.
+
+### [feat] `thinking` gains `xhigh`, and `max` stops collapsing
+
+The ask was an `effort` field beside `model`. `AgentNode.thinking` already
+existed and codex already compiled it to `model_reasoning_effort` — so `effort`
+would have been a second word for one concept. Instead:
+
+- `xhigh` added to the enum
+- codex mapped `max → "high"`, leaving `max` and `xhigh` with no distinct value
+- `claude-workflow` emitted nothing for reasoning and never read
+  `agent.thinking` at all — on the one target whose runtime accepts `effort` as
+  a literal `agent()` option. It now emits it.
+
+A test asserts no `effort` field exists, so the decision cannot quietly reverse.
+
+### [fix] An error back-edge no longer breaks reachability *(shipped in 0.4.3)*
+
+### Honest KPI result
+
+The derived-run-state target was **missed**, and the miscalibration was mine: a
+70% target set from an *agent-level* measurement, applied to a *step-level*
+metric that also counts actions, gates and human nodes — undecidable by
+construction. On the steps evidence can apply to it is 77%; across all steps,
+39%.
+
+More importantly: **0% on the topology of the person who asked for it**, because
+it declares no `writes` anywhere. The feature works as designed and is useless
+without the data.
+
+1505 tests, up from 1474. 93 rules, V1-V93 contiguous.
+
 ## [0.4.3] — 2026-08-26
 
 ### [fix] An error edge pointing backward made the whole downstream unreachable
