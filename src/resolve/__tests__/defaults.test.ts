@@ -109,4 +109,18 @@ describe("resolveDefaults", () => {
     expect(analyzer.tools).toEqual(["Read", "Grep", "Glob"]); // authored
     expect(analyzer.memory).toEqual([]); // filled
   });
+
+  it("does not hand the caller a reference to the defaults table", () => {
+    // Regression: `applied[].value` aliased the module-level table, so mutating
+    // a reported value poisoned the default for every later topology in the
+    // process.
+    const first = resolveDefaults(parse(MINIMAL));
+    const reads = first.applied.find((a) => a.field === "reads")!;
+    (reads.value as string[]).push("POISON");
+
+    const second = resolveDefaults(parse(MINIMAL));
+    const worker = second.ast.nodes.find((n) => n.id === "worker") as AgentNode;
+    expect(worker.reads).toEqual([]);
+    expect(second.applied.find((a) => a.field === "reads")!.value).toEqual([]);
+  });
 });

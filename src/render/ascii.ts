@@ -89,16 +89,20 @@ function renderSpine(ast: TopologyAST): string[] {
   const bodies = steps.map((s) => s.ids.join(s.exclusive ? "  |  " : "  ∥  "));
   const width = Math.max(...bodies.map((b) => b.length), 20);
 
+  // Pad the step number to the widest index, not a fixed 2 — at step 100 the
+  // column shifted and the whole spine lost alignment.
+  const numWidth = String(steps.length).length;
+
   steps.forEach((step, i) => {
     const glyph = step.exclusive ? "⑂" : (GLYPH[step.kind] ?? "▸");
-    const num = String(step.index).padStart(2, " ");
+    const num = String(step.index).padStart(numWidth, " ");
     out.push(`  ${num}  ${glyph} ${pad(bodies[i], width)}   ${stepAnnotation(step, byId)}`);
     if (step.exclusive && step.branchOn) {
       for (const b of step.branchOn) {
-        out.push(`         ├─ ${b.id}  when ${b.condition}`);
+        out.push(`  ${" ".repeat(numWidth)}  ├─ ${b.id}  when ${b.condition}`);
       }
     }
-    if (i < steps.length - 1) out.push(`         │`);
+    if (i < steps.length - 1) out.push(`  ${" ".repeat(numWidth)}  │`);
   });
 
   if (loops.length) {

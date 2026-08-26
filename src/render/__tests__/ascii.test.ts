@@ -115,4 +115,37 @@ describe("renderAscii", () => {
     expect(out).toContain("when judge.verdict == pass");
     expect(out).toContain("when judge.verdict == fail");
   });
+
+  it("keeps the spine aligned past step 99", () => {
+    // Regression: the step number was padded to a fixed width of 2, so the
+    // whole column shifted at step 100.
+    const agents = Array.from({ length: 105 }, (_, i) => i + 1)
+      .map(
+        (n) =>
+          `  agent a${n} {\n    model: sonnet\n    description: "a${n}"\n    phase: ${n}\n  }`
+      )
+      .join("\n");
+    const chain = Array.from({ length: 105 }, (_, i) => `a${i + 1}`).join(" -> ");
+    const src = [
+      "topology big : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      agents,
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      `  flow { i -> ${chain} }`,
+      "}",
+    ].join("\n");
+    const lines = renderAscii(parse(src)).split("\n");
+    const step9 = lines.find((l) => /^\s+9\s+[▸▪]/.test(l))!;
+    const step100 = lines.find((l) => /^\s+100\s+[▸▪]/.test(l))!;
+    expect(step9).toBeDefined();
+    expect(step100).toBeDefined();
+    // The glyph must sit in the same column on both.
+    expect(step9.indexOf("▸")).toBe(step100.indexOf("▸"));
+  });
 });

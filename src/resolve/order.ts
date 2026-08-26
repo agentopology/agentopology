@@ -173,11 +173,21 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
   // both prefers `after`, since that is when its check can actually run.
   const withGates: Array<{ kind: StepKind; ids: string[]; depth: number | null }> = [...spine];
 
+  // Splice in declaration order, tracking how many gates already landed on each
+  // anchor. Without the offset each new gate inserted at the same index and
+  // pushed its predecessor down, so two gates after the same agent ran in
+  // reverse declaration order.
+  const placedPerAnchor = new Map<string, number>();
+
   for (const gate of gates) {
     let at = -1;
     if (gate.after) {
       const i = withGates.findIndex((s) => s.ids.includes(gate.after!));
-      if (i >= 0) at = i + 1;
+      if (i >= 0) {
+        const already = placedPerAnchor.get(gate.after) ?? 0;
+        at = i + 1 + already;
+        placedPerAnchor.set(gate.after, already + 1);
+      }
     }
     if (at === -1 && gate.before) {
       const i = withGates.findIndex((s) => s.ids.includes(gate.before!));

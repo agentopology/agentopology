@@ -344,11 +344,19 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   L.push("# §7 — Gates");
   L.push("");
   if (brief.gates.length) {
-    L.push("| gate | after | tier | mechanism | blocking |");
+    L.push("| gate | anchor | tier | mechanism | blocking |");
     L.push("|---|---|---|---|---|");
     for (const g of brief.gates) {
+      // A gate may anchor by `after`, by `before`, or both. Rendering only
+      // `after` made a before-only gate read as anchored to nothing.
+      const anchor = [
+        g.after ? `after \`${g.after}\`` : "",
+        g.before ? `before \`${g.before}\`` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
       L.push(
-        `| \`${g.id}\` | ${g.after ? `\`${g.after}\`` : "—"} | ${g.tier} | ${TIER_NOTE[g.tier]} | ${g.blocking ? `yes · on-fail: ${g.onFail}` : "no"} |`
+        `| \`${g.id}\` | ${anchor || "⚠ unanchored — runs last"} | ${g.tier} | ${TIER_NOTE[g.tier]} | ${g.blocking ? `yes · on-fail: ${g.onFail}` : "no"} |`
       );
     }
     L.push("");

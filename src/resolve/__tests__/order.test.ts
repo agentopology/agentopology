@@ -175,4 +175,42 @@ describe("resolveOrder", () => {
     expect(loops.length).toBeGreaterThan(0);
     expect(loops.find((l) => l.from === "reviewer" && l.to === "writer")!.budget).toBe(2);
   });
+
+  it("keeps two gates on the same anchor in declaration order", () => {
+    // Regression: each gate spliced at the same index and pushed its
+    // predecessor down, so they ran in REVERSE declaration order.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+      }
+      agent b {
+        model: sonnet
+        description: "b"
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      gates {
+        gate first {
+          after: a
+          run: "true"
+        }
+        gate second {
+          after: a
+          run: "true"
+        }
+      }
+      flow { i -> a -> b }
+    }`;
+    const gateSteps = resolveOrder(parse(src))
+      .steps.filter((s) => s.kind === "gate")
+      .map((s) => s.ids[0]);
+    expect(gateSteps).toEqual(["first", "second"]);
+  });
 });

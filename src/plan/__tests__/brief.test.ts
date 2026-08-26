@@ -434,4 +434,12 @@ describe("renderBriefMarkdown", () => {
       expect(() => renderBriefMarkdown(briefFor(f)), f).not.toThrow();
     }
   });
+
+  it("renders a gate's `before` anchor, not just `after`", () => {
+    // Regression: only `after` was shown, so a before-only gate read as
+    // anchored to nothing.
+    const md = renderBriefMarkdown(briefFor("simple-pipeline.at"));
+    expect(md).toContain("| gate | anchor |");
+    expect(md).toMatch(/after `writer`, before `reviewer`/);
+  });
 });

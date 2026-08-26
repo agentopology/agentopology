@@ -89,7 +89,10 @@ function applyTo(
   for (const { key, grammarName, value } of table) {
     if (node[key] === undefined) {
       node[key] = cloneValue(value);
-      applied.push({ node: id, field: grammarName, value });
+      // Clone for the REPORT too. Pushing `value` handed the caller a reference
+      // to the module-level table, so one mutation of a reported value poisoned
+      // the default for every later topology in the process.
+      applied.push({ node: id, field: grammarName, value: cloneValue(value) });
     }
   }
 }
