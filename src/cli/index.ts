@@ -12,6 +12,7 @@
  *   agentopology targets                                   — list bindings
  *   agentopology docs [topic]                              — language reference
  *   agentopology docs --all                                — all docs (LLM ingestion)
+ *   agentopology docs --agent                              — compact write-a-.at guide
  *   agentopology docs --search <term>                      — search docs
  *
  * @module
@@ -30,7 +31,8 @@ import { generateVisualization } from "../visualizer/index.js";
 import { parseBrainVault, renderBrainHtml } from "../visualizer/brain.js";
 import { exporters } from "../exporters/index.js";
 import { analyze } from "../analyzer/index.js";
-import { listTopics, getTopic, getAllTopics, searchTopics } from "../docs/index.js";
+import { listTopics, getTopic, getAllTopics, searchTopics, getAgentGuide } from "../docs/index.js";
+import { lessonsFor } from "../docs/teach.js";
 import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
@@ -77,6 +79,7 @@ ${c.bold("Usage:")}
   agentopology targets
   agentopology docs [topic]
   agentopology docs --all
+  agentopology docs --agent
   agentopology docs --search <term>
 
 ${c.bold("Commands:")}
@@ -111,6 +114,7 @@ ${c.bold("Options:")}
   --task <text>     The concrete task, baked into every role prompt (plan).
   --root <dir>      Directory declared paths resolve against (plan; default: cwd).
   --log <path>      Ambiguity log path recorded in the brief (session scratchpad).
+  --agent           Compact guide for writing a .at from scratch (~3 KB, not 104 KB).
   --all             Show all documentation topics (for LLM ingestion).
   --search <term>   Search across all documentation topics.
   --help, -h        Show this help message.
@@ -152,6 +156,7 @@ interface ParsedArgs {
   prune: boolean;
   all: boolean;
   search: string | undefined;
+  agentGuide: boolean;
   mode: string | undefined;
   brief: boolean;
   log: string | undefined;
@@ -175,6 +180,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     prune: false,
     all: false,
     search: undefined,
+    agentGuide: false,
     mode: undefined,
     brief: false,
     log: undefined,
@@ -245,6 +251,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--mode" && i + 1 < args.length) {
       result.mode = args[i + 1];
       i += 2;
+      continue;
+    }
+    if (arg === "--agent") {
+      result.agentGuide = true;
+      i++;
       continue;
     }
     if (arg === "--brief") {
@@ -327,8 +338,37 @@ function cmdValidate(filePath: string): void {
   );
   console.log("");
 
+  printLessons(results.map((r) => r.rule));
+
   if (errors.length > 0) {
     process.exit(1);
+  }
+}
+
+/**
+ * Show the correct form for what just failed.
+ *
+ * The package ships 41 doc topics and 93 rules, and until now the two never
+ * met — a rule said what was wrong, nothing showed what right looks like. This
+ * closes that, at the moment it matters, without anyone having to know a second
+ * command exists.
+ *
+ * Deduplicated by rule and capped, so a badly broken file cannot produce more
+ * teaching than output: twelve V90 errors get the lesson once.
+ */
+function printLessons(rules: string[]): void {
+  const lessons = lessonsFor(rules);
+  if (lessons.length === 0) return;
+
+  console.log(c.dim("  ── how to write it ──────────────────────────────────"));
+  console.log("");
+  for (const lesson of lessons) {
+    console.log(c.dim(`  [${lesson.rule}]`));
+    for (const line of lesson.snippet.split("\n")) {
+      console.log(line.trim().startsWith("#") ? c.dim(`    ${line}`) : `    ${line}`);
+    }
+    console.log(c.dim(`    → agentopology docs ${lesson.topic}`));
+    console.log("");
   }
 }
 
@@ -822,6 +862,7 @@ function cmdPlan(
         console.error(c.red(`    [${e.rule}] ${e.node ? e.node + ": " : ""}${e.message}`));
       }
       console.log("");
+      printLessons(errors.map((e) => e.rule));
       process.exit(1);
     }
 
@@ -1204,7 +1245,11 @@ function main(): void {
     }
 
     case "docs":
-      if (args.all) {
+      if (args.agentGuide) {
+        // The compact path. getAllTopics() is ~104 KB — loading it to write one
+        // topology is the opposite of context-efficient.
+        console.log(getAgentGuide());
+      } else if (args.all) {
         console.log(getAllTopics());
       } else if (args.search) {
         console.log(searchTopics(args.search));

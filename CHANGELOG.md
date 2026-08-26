@@ -2,6 +2,57 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.5.1] — 2026-08-26
+
+### [feat] The validator teaches the fix, not just the failure
+
+The package shipped 41 documentation topics and 93 validation rules, and the two
+never met. A rule told you a field was wrong; nothing showed the right form.
+
+Now every rule whose fix is a **shape** carries a worked example, printed inline
+when it fires:
+
+```
+  ERROR [V89] agent "a" uses `prompt:` as a key-value field, but agent
+              prompts must be a `prompt { }` block — this value is ignored
+
+  ── how to write it ──────────────────────────────────
+
+  [V89]
+    agent analyzer {
+      model: sonnet
+      prompt {
+        Read the diff at workspace/pr-diff.md.
+      }
+    }
+    → agentopology docs agent
+```
+
+Deduplicated by rule and capped at three, so a badly broken file cannot produce
+more teaching than output — twelve V90 errors get the lesson once. `plan` shows
+the same on its refusal path.
+
+**Why in the tool rather than beside it:** a skill loads its prose up front
+whether you need it or not and only works on one vendor. A CLI serves the right
+snippet at the moment of the mistake, in a few hundred bytes, on Codex and
+Gemini too.
+
+### [feat] `agentopology docs --agent`
+
+The compact path for writing a `.at` from scratch: **2 KB**, against 104 KB for
+`docs --all`. The shape, plus the five rules that actually bite in practice.
+Nobody should load a hundred kilobytes to write one topology.
+
+### [test] The lessons cannot teach a mistake
+
+Every example a lesson presents as correct is parsed and validated, and must be
+clean under the rule it teaches. It caught two on its first run: V13's snippet
+referenced undeclared nodes (a V13 violation), and the agent guide's own
+topology failed V15 — it did not cover the `approve` branch, which is trap #4
+in the guide's own list.
+
+1513 tests.
+
 ## [0.5.0] — 2026-08-26
 
 Everything here came from **first contact**: a session that orchestrated ~20
