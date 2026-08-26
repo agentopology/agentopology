@@ -12,9 +12,26 @@ describe("renderAscii", () => {
   it("puts the gate after the agent it gates, not first", () => {
     const out = renderAscii(parse(example("code-review.at")));
     const lines = out.split("\n");
+    // Assert PRESENCE in the spine first, by its gate glyph. An earlier version
+    // of this test only compared positions, so when a bug dropped the gate from
+    // the spine entirely the test still passed — the name appeared in the
+    // "declared but not in the flow" line, which sorts after `reviewer`.
+    const gate = lines.findIndex((l) => l.includes("human-approval") && l.includes("◆"));
+    expect(gate, "gate must appear in the spine with its glyph").toBeGreaterThan(-1);
     const reviewer = lines.findIndex((l) => l.includes("reviewer") && l.includes("▸"));
-    const gate = lines.findIndex((l) => l.includes("human-approval"));
     expect(gate).toBeGreaterThan(reviewer);
+  });
+
+  it("never treats a gate as unwired — gates bind by after/before, not edges", () => {
+    for (const f of ["code-review.at", "simple-pipeline.at"]) {
+      const ast = parse(example(f));
+      const gates = ast.nodes.filter((n) => n.type === "gate").map((n) => n.id);
+      const out = renderAscii(ast);
+      for (const g of gates) {
+        expect(out, `${f}: ${g} must be in the spine`).toContain(`◆ ${g}`);
+      }
+      expect(out).not.toContain("declared but not in the flow");
+    }
   });
 
   it("shows a parallel step on one line", () => {
