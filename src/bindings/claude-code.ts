@@ -31,6 +31,7 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub, STUB_MARKER } from "./lib/stub.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
+import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,7 +161,7 @@ function gitkeep(dirPath: string): GeneratedFile {
 
 /** Resolve an agent's phase (defaults to a large value so unphased trails). */
 function agentPhase(agent: AgentNode): number {
-  return agent.phase ?? Number.MAX_SAFE_INTEGER;
+  return sharedPhaseOf(agent);
 }
 
 /**

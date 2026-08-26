@@ -10,6 +10,7 @@
 import type { TopologyAST, NodeDef, EdgeDef, AgentNode, StoreNode } from "../parser/ast.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
+import { phaseOf } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,7 +109,7 @@ function generateMermaid(ast: TopologyAST): string {
   const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
   const phases = new Map<number, AgentNode[]>();
   for (const agent of agents) {
-    const phase = agent.phase ?? 0;
+    const phase = phaseOf(agent);
     if (!phases.has(phase)) phases.set(phase, []);
     phases.get(phase)!.push(agent);
   }

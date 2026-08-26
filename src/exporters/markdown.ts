@@ -8,6 +8,7 @@
 import type { TopologyAST, NodeDef, EdgeDef, AgentNode, GateNode, ActionNode, OrchestratorNode, HumanNode, GroupNode, StoreNode, RetrievalNode } from "../parser/ast.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
+import { byPhase } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -377,7 +378,7 @@ function renderNodes(ast: TopologyAST): string {
   if (agents.length) {
     lines.push("## Agents");
     lines.push("");
-    const sorted = [...agents].sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0));
+    const sorted = [...agents].sort(byPhase);
     for (const n of sorted) lines.push(renderAgent(n, ast.roles));
   }
 

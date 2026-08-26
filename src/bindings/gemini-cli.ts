@@ -33,6 +33,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { byPhase } from "../resolve/phase.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1011,7 +1012,7 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
   // Collect agents sorted by phase for orchestration prompts
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
   const sortedAgents = [...agents].sort(
-    (a, b) => (a.phase ?? 999) - (b.phase ?? 999)
+    (a, b) => byPhase(a, b)
   );
 
   // Collect human/group nodes for special handling
