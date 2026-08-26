@@ -177,7 +177,11 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
   const primaryModel =
     (orchestrator as any)?.model ?? agents[0]?.model ?? "o4-mini";
-  const primaryPermission = agents[0]?.permissions ?? "supervised";
+  // The spec's default is `autonomous` (spec/grammar.md:1717), which maps to
+  // Codex `on-request`. This used to default to `supervised` → `untrusted`,
+  // silently making an omitted `permissions` the MOST restrictive policy
+  // instead of the one the language says it means.
+  const primaryPermission = agents[0]?.permissions ?? "autonomous";
 
   lines.push(`model = ${tomlString(primaryModel)}`);
   lines.push(`approval_policy = ${tomlString(mapApprovalPolicy(primaryPermission))}`);
@@ -644,7 +648,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
 
       // Model and permissions
       const model = agent.model ?? "o4-mini";
-      const policy = mapApprovalPolicy(agent.permissions ?? "supervised");
+      const policy = mapApprovalPolicy(agent.permissions ?? "autonomous"); // spec default
       sections.push(`- **Model:** ${model}`);
       sections.push(`- **Approval policy:** ${policy}`);
 

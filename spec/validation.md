@@ -665,45 +665,105 @@ agent researcher {
 
 ## Summary Table
 
+All 89 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+from the implementation. Rules V8, V12, V23, V24 and V89 are collected at
+**parse time** — the misuse they catch leaves no trace in the AST — and surfaced
+through the validator like any other rule.
+
+`error` fails `agentopology validate` with exit 1. `warning` reports and exits 0.
+
 | Rule | Severity | Description |
 |------|----------|-------------|
-| V1 | error | Unique names — all agent, action, and gate names must be globally unique |
-| V2 | error | No keyword names — names cannot match reserved keywords |
-| V3 | error | Flow resolves — every flow reference must be a declared node |
-| V4 | error | No orphans — every agent must appear in flow or have `invocation: manual` |
-| V5 | error | Outputs exist — `[when x.y]` must reference a declared output |
-| V6 | error | Bounded loops — every back-edge must have `[max N]` |
-| V7 | error | Model required — every agent and orchestrator must have a model |
-| V8 | error | Imports resolve — import paths must point to existing files |
-| V9 | error | Actions handled — flow actions must appear in `orchestrator.handles` |
-| V10 | warning | Prompts exist — prompt blocks should not be empty |
-| V11 | error | Reads/writes consistent — data dependencies must match flow order |
-| V12 | error | Edge attribute order — must be `[when, max, per]` |
-| V13 | error | Gate placement — `after` and `before` must reference declared nodes |
-| V14 | error | Tool exclusivity — cannot have both `tools` and `disallowed-tools` |
-| V15 | error | Exhaustive conditions — conditional edges must cover all output values |
-| V16 | error | API key env vars — provider `api-key` must use `${ENV_VAR}` syntax |
-| V17 | error | Single default provider — at most one provider may be default |
-| V18 | warning | Model in provider — agent models should exist in a provider's list |
-| V19 | error | Unique provider names — no duplicate provider names |
-| V20 | error | Schedule job references — jobs must reference declared nodes; cron/every exclusive |
-| V21 | error | Interface secret detection — sensitive fields must use `${ENV_VAR}` syntax |
-| V22 | warning | Fallback chain models — fallback models should exist in a provider's list |
-| V23 | warning | Duplicate sections — singleton sections should appear at most once |
-| V24 | warning | Unknown memory sub-blocks — only known sub-blocks are expected |
-| V25 | warning | Bounce-back advisory — `on-fail: bounce-back` is advisory on CLI bindings |
-| V26 | error | Action kind enum — must be external, git, decision, inline, or report |
-| V27 | warning | Agent permissions enum — should be a recognized permission mode |
-| V28 | error | Metering format enum — must be json, jsonl, or csv |
-| V29 | warning | Metering pricing enum — should be a recognized pricing model |
-| V30 | error | Store backend enum — must be lancedb, sqlite-vec, chroma, kuzu, falkordb, mongodb, pinecone, qdrant, pgvector, neo4j, or sqlite |
-| V31 | warning | Embedding recommended — embedding should be present for semantic, episodic, and procedural stores |
-| V32 | warning | Store scope recommended — every store should have a scope field |
-| V33 | error | Retrieval sources resolve — retrieval sources must reference declared store IDs |
-| V34 | error | Connection required for remote backends — pinecone, qdrant, pgvector, neo4j, mongodb, falkordb require connection |
-| V35 | error | Agent memory/retrieval references — agent memory and retrieval fields must reference valid IDs |
-| V89 | error | Block field misuse — `agent.prompt` must be a `prompt { }` block, not a `prompt: "path"` key-value pair (the string form belongs to `skill`) |
+| V1 | error | All agent, action, and gate names must be globally unique |
+| V2 | error | No name may match a reserved keyword |
+| V3 | error | Every node referenced in flow must be a declared agent, action, or gate |
+| V4 | error | Every agent must appear in flow unless it has `invocation: manual` or is a group member |
+| V5 | error/warning | Every `[when x.y]` must reference a declared output |
+| V6 | error/warning | Every back-edge must have `max N` |
+| V7 | error/warning | Every agent and orchestrator must have a model |
+| V8 | error/warning | Import references should resolve (warning only -- we cannot check the filesystem) |
+| V9 | error/warning | Every action referenced in flow must appear in orchestrator.handles |
+| V10 | error/warning | Prompt content should not be empty if a prompt block is declared |
+| V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow |
+| V12 | error | Edge attribute order must be [when, max, per] |
+| V13 | error | Gate `after` and `before` must reference declared nodes |
+| V14 | error | `tools` and `disallowed-tools` cannot both appear on the same agent |
+| V15 | error/warning | When a node has ONLY conditional outgoing edges, the conditions must |
+| V16 | error/warning | `api-key` must be a `${...}` env-var reference (no literal secrets) |
+| V17 | error/warning | At most one provider may have `default: true` |
+| V18 | error/warning | Every model referenced by an agent should exist in at least one provider's models list |
+| V19 | error/warning | Provider names must be unique |
+| V20 | error/warning | Every schedule job must reference a declared agent or action; cron and every are mutually exclusive |
+| V21 | error/warning | Interface webhook/auth values containing literal secrets (not `${ENV_VAR}`) should error |
+| V22 | error/warning | Every model in a fallback-chain should exist in at least one provider's models list |
+| V23 | error/warning | Duplicate top-level singleton sections |
+| V24 | error/warning | Unknown sub-blocks in the `memory` section |
+| V25 | error/warning | `on-fail: bounce-back` enforcement depends on the gate's `after` target |
+| V26 | error/warning | `action.kind` must be one of the allowed values |
+| V27 | error/warning | `agent.permissions` should be one of the known values |
+| V28 | error/warning | `metering.format` must be one of the allowed values |
+| V29 | error/warning | `metering.pricing` should be one of the known values |
+| V30 | error | Validate `timeout` format is a valid duration string (matches /^\d+[smhd]$/) |
+| V31 | error | Validate `on-fail` is one of: halt, retry, skip, continue, or starts with "fallback " |
+| V32 | error | If `on-fail: fallback <id>`, validate that the referenced agent exists |
+| V33 | error | Validate retry block fields (backoff enum, interval format, non-retryable is list) |
+| V34 | error | Validate `temperature` is between 0 and 2 (on agents and defaults) |
+| V35 | error | Validate `thinking` is one of: off, low, medium, high, max |
+| V36 | error | Validate `output-format` is one of: text, json, json-schema |
+| V37 | error | Validate `log-level` is one of: debug, info, warn, error |
+| V38 | error | Validate `max-tokens` is a positive integer |
+| V39 | error | Validate `join` is one of: all, any, all-done, none-failed, or N-of-M |
+| V40 | error | Error edge target must be a declared node |
+| V41 | error | `[race]` is only valid on fan-out edges (node has multiple outgoing edges) |
+| V42 | error | `[tolerance]` format is valid (integer or percentage string matching /^\d+%?$/) |
+| V43 | error | `[wait]` format is a valid duration string (reuse timeout validation pattern) |
+| V44 | error | Topology-level `error-handler` must reference a declared node |
+| V45 | error | Topology-level `timeout` must be a valid duration string |
+| V46 | error | Schema type names must be valid (primitive, array of X, enum, or ref) |
+| V47 | error | Schema `ref` names must resolve to a declared schema in the top-level `schemas` block |
+| V48 | error/warning | Validate `observability.level` is one of: debug, info, warn, error |
+| V49 | error/warning | Validate `observability.exporter` is one of: otlp, langsmith, datadog, stdout, none |
+| V50 | error/warning | Validate `observability.sample-rate` is between 0 and 1 (inclusive) |
+| V51 | error/warning | When `sensitive` is used with a literal string (not a `${...}` env var |
+| V52 | error | Validate that secret URI schemes are one of the supported providers |
+| V53 | error | Param type must be one of: `string`, `number`, `boolean` |
+| V54 | error | Interface entry and exit must reference declared node ids |
+| V55 | error | No two imports may share the same alias |
+| V56 | error | Import source must be a syntactically valid path (starts with `./`, |
+| V57 | error | Validate circuit-breaker fields — threshold must be a positive integer, |
+| V58 | error/warning | `compensates` must reference a declared agent node |
+| V59 | error | Human node `on-timeout` must be one of: halt, skip, or start with "fallback " |
+| V60 | error/warning | When `join` uses quorum syntax `N-of-M`, validate: |
+| V61 | error/warning | Validate `[weight N]` edge attributes: |
+| V62 | error/warning | `[reflection]` is only valid on back-edges (edges that form cycles) |
+| V63 | error | `members` in a group node must reference declared agent nodes |
+| V64 | error | `speaker-selection` must be one of: auto, round-robin, random, manual |
+| V65 | error | `max-rounds` must be a positive integer |
+| V66 | error/warning | `rate-limit` must match N/unit where N >= 1 and unit is sec\|min\|hour\|day |
+| V67 | error/warning | checkpoint `backend` must be one of the known values |
+| V68 | error/warning | checkpoint `strategy` must be one of the known values, |
+| V69 | error/warning | replay requires strategy "every-node"; max-history must be a positive |
+| V70 | error | All artifact IDs in the artifacts block must be unique |
+| V71 | error | depends-on, produces, and consumes must reference declared artifact IDs |
+| V72 | error | Artifact dependency graph must be acyclic |
+| V73 | error/warning | Registry package names must match `[a-z0-9-]+(/[a-z0-9-]+)*` |
+| V74 | error/warning | Registry package version must be valid semver or "latest" |
+| V75 | error/warning | If sha256 is present on an import, it must be a valid 64-char hex string |
+| V76 | error/warning | Variant ids must be unique within each agent |
+| V77 | error/warning | Variant weights must sum to approximately 1.0 (within 0.01 tolerance) |
+| V78 | error/warning | `encrypted` values must match SOPS envelope format ENC[METHOD,data:BASE64] |
+| V79 | error/warning | provider auth.type must be one of the known auth types |
+| V80 | error/warning | OIDC and OAuth2 auth types require an issuer field |
+| V81 | error/warning | StoreNode.backend must be one of the known values |
+| V82 | error/warning | When StoreNode.type is "semantic", "episodic", or "procedural", |
+| V83 | error/warning | Every store should have a scope defined. Warning level |
+| V84 | error | Every source in RetrievalNode.sources must match a store ID in ast.stores |
+| V85 | error | Remote backends (pinecone, neo4j, qdrant, pgvector) require a connection field |
+| V86 | error | Every ID in AgentNode.memory must match a store ID in ast.stores |
+| V87 | error/warning | `orchestrator.delegation` must be "subagent" or "inline" |
+| V88 | error/warning | Every store in an agent's `custodian-of` must reference a declared store |
+| V89 | error/warning | A field the grammar defines as a block must not be written as a |
 
-> **Doc drift:** this table documents 35 rules; `src/parser/validator.ts` implements 85
-> (V1-V89, with V12/V23/V24 collected at parse time and a few numbers unused). The
-> remaining rules are documented only in the source. Worth a reconciliation pass.
+> Sections above document the first 35 rules with worked examples. The rest are
+> single-line entries here plus their doc comment in the source. Adding an
+> example section for a rule is always welcome.
