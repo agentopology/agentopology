@@ -8740,6 +8740,95 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     }
   });
 
+  it("V91: a required field satisfied by an injected placeholder is still missing", () => {
+    // The parser substitutes a sentinel because the AST types are non-optional,
+    // and every downstream "is it present?" check then passed. V7 (model
+    // required) saw "unknown" and was satisfied; codex emitted it verbatim into
+    // config.toml as a model that does not exist.
+    const noVersion = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    description: "no version declared"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const ast = parse(noVersion);
+    expect(ast.topology.version).toBe("0.0.0"); // the sentinel is still injected
+    const v91 = validate(ast).filter((r) => r.rule === "V91");
+    expect(v91).toHaveLength(1);
+    expect(v91[0].message).toContain("version");
+  });
+
+  it("V91: an orchestrator with no model is caught, where V7 was satisfied", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  orchestrator {",
+      "    handles: [i]",
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    const results = validate(parse(src));
+    expect(results.filter((r) => r.rule === "V7")).toHaveLength(0); // V7 still passes
+    expect(results.filter((r) => r.rule === "V91")).toHaveLength(1); // V91 does not
+  });
+
+  it("V91: a topology declaring both required fields is clean", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  orchestrator {",
+      "    model: opus",
+      "    handles: [i]",
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((r) => r.rule === "V91")).toHaveLength(0);
+  });
+
+  it("V91: every shipped example declares its required fields", () => {
+    const dir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".at"))) {
+      const v91 = validate(parse(readFileSync(resolve(dir, f), "utf8"))).filter(
+        (r) => r.rule === "V91"
+      );
+      expect(v91, `${f}: ${v91.map((r) => r.message).join("; ")}`).toHaveLength(0);
+    }
+  });
+
   it("round-trips the company-brain.at example with no validation errors", () => {
     const src = readFileSync(
       resolve(dirname(fileURLToPath(import.meta.url)), "../../../examples/company-brain.at"),

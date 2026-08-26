@@ -19,6 +19,7 @@
  * @module
  */
 
+import { MISSING } from "./index.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -1016,6 +1017,48 @@ function v89BlockFieldMisuse(ast: TopologyAST): ValidationResult[] {
  * makes the first key take the rest of the line as its value — silently, with
  * no trace in the AST. Collected at parse time for that reason.
  */
+/**
+ * V91: A required field must not be satisfied by an injected placeholder.
+ *
+ * The parser substitutes a sentinel when a required field is absent, because
+ * the AST types are non-optional. Every downstream "is it present?" check then
+ * passed — V7 (model required) saw `"unknown"` and was satisfied, and a
+ * topology with no `meta.version` validated clean and scaffolded a config
+ * naming a model that does not exist.
+ *
+ * Recognising the sentinels turns "silently defaulted" back into "missing",
+ * which is what `spec/grammar.md` says these are.
+ */
+function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+
+  if (ast.topology.version === MISSING.version) {
+    results.push({
+      rule: "V91",
+      level: "error",
+      message:
+        "meta is missing `version`, which the spec marks required — the parser " +
+        `substituted "${MISSING.version}" and every downstream check accepted it`,
+    });
+  }
+
+  for (const node of ast.nodes) {
+    if (node.type !== "orchestrator") continue;
+    if (node.model === MISSING.model) {
+      results.push({
+        rule: "V91",
+        level: "error",
+        message:
+          "orchestrator is missing `model`, which the spec marks required — the " +
+          `parser substituted "${MISSING.model}", which bindings then emit verbatim`,
+        node: node.id,
+      });
+    }
+  }
+
+  return results;
+}
+
 function v90SwallowedField(ast: TopologyAST): ValidationResult[] {
   return (
     (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? []
@@ -3122,6 +3165,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v24UnknownMemorySubBlocks(ast),
     ...v89BlockFieldMisuse(ast),
     ...v90SwallowedField(ast),
+    ...v91RequiredFieldPlaceholder(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

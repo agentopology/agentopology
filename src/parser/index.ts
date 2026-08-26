@@ -136,6 +136,21 @@ function detectSwallowedFields(
   }
 }
 
+/**
+ * Placeholders the parser injects for REQUIRED fields that were not declared.
+ *
+ * The parser cannot leave them undefined without changing non-optional AST
+ * types, so it substitutes a sentinel — and that sentinel then satisfied every
+ * "is it present?" check downstream. V91 recognises them and reports the field
+ * as missing, which is what the spec says it is.
+ */
+export const MISSING = {
+  /** `orchestrator.model` — spec/grammar.md, orchestrator field table. */
+  model: "unknown",
+  /** `meta.version` — spec/grammar.md:282, Required: yes. */
+  version: "0.0.0",
+} as const;
+
 /** Convert a kebab-case or snake_case identifier to a Title Case label. */
 function toLabel(id: string): string {
   return id
