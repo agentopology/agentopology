@@ -43,6 +43,24 @@ template-var     = [A-Z] [A-Z0-9_-]*
 
 **Rule:** Quote strings. Don't quote identifiers, numbers, or booleans.
 
+**Rule: one field per line.** Key-value fields are newline-separated. Writing two
+on one line makes the first key take the rest of the line as its value:
+
+```
+# WRONG — `model` becomes the string "sonnet retry: 3"
+agent a { model: sonnet retry: 3 }
+
+# RIGHT
+agent a {
+  model: sonnet
+  retry: 3
+}
+```
+
+This is not a parser limitation to route around — some unquoted values are
+legitimately multi-token (`on-fail: fallback reviewer`), so whitespace could not
+separate fields without ambiguity. V90 rejects the collapsed form.
+
 ### Composite Types
 
 ```ebnf

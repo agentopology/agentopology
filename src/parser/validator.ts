@@ -1004,7 +1004,22 @@ function v24UnknownMemorySubBlocks(ast: TopologyAST): ValidationResult[] {
  * time because the misuse leaves no trace in the AST.
  */
 function v89BlockFieldMisuse(ast: TopologyAST): ValidationResult[] {
-  return (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? [];
+  return (
+    (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? []
+  ).filter((r) => r.rule === "V89");
+}
+
+/**
+ * V90: A field value must not swallow the next field.
+ *
+ * Fields are one per line. `parseFields` is line-based, so two on one line
+ * makes the first key take the rest of the line as its value — silently, with
+ * no trace in the AST. Collected at parse time for that reason.
+ */
+function v90SwallowedField(ast: TopologyAST): ValidationResult[] {
+  return (
+    (ast as TopologyASTWithParseErrors)._blockFieldMisuseWarnings ?? []
+  ).filter((r) => r.rule === "V90");
 }
 
 /** V26: `action.kind` must be one of the allowed values. */
@@ -3106,6 +3121,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v23DuplicateSections(ast),
     ...v24UnknownMemorySubBlocks(ast),
     ...v89BlockFieldMisuse(ast),
+    ...v90SwallowedField(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

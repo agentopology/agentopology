@@ -85,6 +85,50 @@ export type * from "./ast.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * V90: detect a field value that swallowed the next field.
+ *
+ * `parseFields` is line-based, and the grammar never says so. Writing two
+ * fields on one line — `agent a { model: sonnet retry: 3 }` — makes the first
+ * key take the whole rest of the line as its value (`"sonnet retry: 3"`), and
+ * nothing catches it. The value is then silently wrong: a model name that does
+ * not exist, a version string carrying a description, an action `kind` that
+ * fails its enum for a confusing reason.
+ *
+ * Detection: an UNQUOTED value containing whitespace followed by
+ * `identifier:` is almost certainly a swallowed field. Quoted values are
+ * exempt (a description may legitimately contain a colon), and a leading
+ * scheme like `https://` is not matched because it has no preceding
+ * whitespace.
+ */
+function detectSwallowedFields(
+  fields: Record<string, string>,
+  nodeId: string,
+  out: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): void {
+  for (const [key, raw] of Object.entries(fields)) {
+    if (typeof raw !== "string") continue;
+    const value = raw.trim();
+    // A WELL-FORMED quoted string is exempt — a description may contain a
+    // colon. `"1.0.0" description: "x"` is NOT well-formed: it is one quoted
+    // token followed by more content, i.e. a swallowed field.
+    if (/^"(?:[^"\\]|\\.)*"$/.test(value)) continue;
+    const search = value.startsWith('"')
+      ? value.replace(/^"(?:[^"\\]|\\.)*"/, "")
+      : value;
+    const m = /\s*\s([a-zA-Z][a-zA-Z0-9_-]*):\s/.exec(search.startsWith(" ") ? search : " " + search);
+    if (!m) continue;
+    out.push({
+      rule: "V90",
+      level: "error",
+      message:
+        `"${nodeId}" field \`${key}\` has the value \`${value}\`, which looks like it swallowed the ` +
+        `field \`${m[1]}\` — fields must be one per line`,
+      node: nodeId,
+    });
+  }
+}
+
 /** Convert a kebab-case or snake_case identifier to a Title Case label. */
 function toLabel(id: string): string {
   return id
@@ -330,8 +374,15 @@ export function parseRoles(body: string): Record<string, string> {
 /**
  * Parse an `action <id> { ... }` block into an {@link ActionNode}.
  */
-export function parseAction(id: string, body: string): ActionNode {
+export function parseAction(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): ActionNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const commands = parseMultilineList(body, "commands");
 
   const node: ActionNode = {
@@ -397,6 +448,10 @@ export function parseAgent(
       node: id,
     });
   }
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
+
   const promptBlock = extractBlock(body, "prompt");
   if (promptBlock) {
     node.prompt = dedentBlock(promptBlock.body);
@@ -626,8 +681,15 @@ export function parseAgent(
 /**
  * Parse a `gate <id> { ... }` block into a {@link GateNode}.
  */
-export function parseGate(id: string, body: string): GateNode {
+export function parseGate(
+  id: string,
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): GateNode {
   const fields = parseFields(body);
+  if (_blockFieldMisuseWarnings) {
+    detectSwallowedFields(fields, id, _blockFieldMisuseWarnings);
+  }
   const checks = parseMultilineList(body, "checks");
 
   const node: GateNode = {
@@ -2172,7 +2234,7 @@ export function parse(source: string): TopologyAST {
   const actionBlocks = extractAllBlocks(topBody, "action");
   for (const block of actionBlocks) {
     if (block.id) {
-      nodes.push(parseAction(block.id, block.body));
+      nodes.push(parseAction(block.id, block.body, blockFieldMisuseWarnings));
     }
   }
 
@@ -2190,7 +2252,7 @@ export function parse(source: string): TopologyAST {
     const gateBlocks = extractAllBlocks(gatesBlock.body, "gate");
     for (const block of gateBlocks) {
       if (block.id) {
-        nodes.push(parseGate(block.id, block.body));
+        nodes.push(parseGate(block.id, block.body, blockFieldMisuseWarnings));
       }
     }
   }

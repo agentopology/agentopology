@@ -665,8 +665,8 @@ agent researcher {
 
 ## Summary Table
 
-All 89 rules, generated from `src/parser/validator.ts` so the spec cannot drift
-from the implementation. Rules V8, V12, V23, V24 and V89 are collected at
+All 90 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
 
@@ -762,7 +762,8 @@ through the validator like any other rule.
 | V86 | error | Every ID in AgentNode.memory must match a store ID in ast.stores |
 | V87 | error/warning | `orchestrator.delegation` must be "subagent" or "inline" |
 | V88 | error/warning | Every store in an agent's `custodian-of` must reference a declared store |
-| V89 | error/warning | A field the grammar defines as a block must not be written as a |
+| V89 | error | `agent.prompt` must be a `prompt { }` block, not a `prompt: "path"` key-value pair (the string form belongs to `skill`) |
+| V90 | error | A field value must not swallow the next field — fields are one per line (`spec/grammar.md` §2) |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

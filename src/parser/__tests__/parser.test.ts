@@ -7788,7 +7788,12 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
           }
         }
       }
-      agent lib { model: sonnet description: "k" tools: [Read, Write] custodian-of: [brain] }
+      agent lib {
+        model: sonnet
+        description: "k"
+        tools: [Read, Write]
+        custodian-of: [brain]
+      }
       action intake {
         kind: inline
         description: "in"
@@ -7823,7 +7828,12 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
           }
         }
       }
-      agent lib { model: sonnet description: "k" tools: [Read, Write] custodian-of: [brain] }
+      agent lib {
+        model: sonnet
+        description: "k"
+        tools: [Read, Write]
+        custodian-of: [brain]
+      }
       action intake {
         kind: inline
         description: "in"
