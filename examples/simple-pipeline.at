@@ -66,7 +66,7 @@ topology simple-pipeline : [pipeline, human-gate] {
     permissions: autonomous
     phase: 2
     tools: [Read, Write, Glob]
-    reads: ["workspace/research.md"]
+    reads: ["workspace/research.md", "workspace/review.md"]
     writes: ["workspace/draft.md"]
     outputs: {
       confidence: high | medium | low

@@ -1068,6 +1068,62 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * the last `]`, yielding a condition string containing brackets — and nothing
  * reported it. Collected at parse time, where the raw line is still visible.
  */
+/**
+ * V93: an edge between two agents that both declare paths should declare a
+ * handoff.
+ *
+ * `writer.writes ∩ reader.reads` is what actually crosses an edge. When it is
+ * empty, the topology draws a dependency it does not describe — the receiving
+ * agent is told to run after the sender and given nothing the sender produced.
+ *
+ * A WARNING, not an error: an edge may legitimately pass its result inline
+ * rather than through a file, and real topologies do. It is a smell worth
+ * surfacing, not a rejection.
+ *
+ * Skipped when either side declares nothing — that is undecidable, not a
+ * violation. This is the same computation `plan` reports as the
+ * `handoff-overlap-empty` pre-flagged ambiguity; having it here makes it work
+ * under `scaffold` too, and for anyone who never runs `plan`.
+ */
+function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const byId = new Map(ast.nodes.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+
+  for (const edge of ast.edges) {
+    if (edge.isError) continue;
+    const key = `${edge.from} ${edge.to}`;
+    if (seen.has(key)) continue;
+
+    const from = byId.get(edge.from);
+    const to = byId.get(edge.to);
+    if (from?.type !== "agent" || to?.type !== "agent") continue;
+
+    const writes = (from as AgentNode).writes ?? [];
+    const reads = (to as AgentNode).reads ?? [];
+    // Undecidable, not a violation.
+    if (writes.length === 0 || reads.length === 0) continue;
+
+    seen.add(key);
+    const readSet = new Set(reads);
+    if (writes.some((w) => readSet.has(w))) continue;
+
+    results.push({
+      rule: "V93",
+      level: "warning",
+      message:
+        `Edge "${edge.from} -> ${edge.to}" declares no handoff — ` +
+        `"${edge.from}" writes [${writes.join(", ")}] and "${edge.to}" reads ` +
+        `[${reads.join(", ")}], which do not overlap. Add a shared path to ` +
+        `"${edge.to}" reads, or the receiver runs after the sender with none of its output`,
+      node: edge.to,
+      line: lookupLine(ast, edge.to),
+    });
+  }
+
+  return results;
+}
+
 function v92EdgeTwoBrackets(ast: TopologyAST): ValidationResult[] {
   return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
     (r) => r.rule === "V92"
@@ -3182,6 +3238,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v90SwallowedField(ast),
     ...v91RequiredFieldPlaceholder(ast),
     ...v92EdgeTwoBrackets(ast),
+    ...v93EdgeHandoffDeclared(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
