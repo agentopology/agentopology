@@ -109,9 +109,19 @@ export interface RoleCard {
   /** Resolved against `root` — what the prompt actually names. */
   readsAbs: string[];
   writesAbs: string[];
-  /** Paths this role writes that its downstream readers must NOT be offered. */
-  withheld: string[];
-  withheldAbs: string[];
+  /**
+   * Paths this role must NOT read, even though an upstream role wrote them and
+   * they are on disk.
+   *
+   * This lives on the READER, not the writer. A writer cannot enforce a
+   * withhold — it has already written the file. The constraint is "the
+   * validator must not see the builder's self-review", which is an instruction
+   * to the validator. Putting it on the writer also produced a real bug: with
+   * two readers each taking a different file, the writer's card unioned both
+   * withholds and told it to withhold everything it was supposed to hand over.
+   */
+  mustNotRead: string[];
+  mustNotReadAbs: string[];
   /** Sibling ids in the same step it must stay blind to. */
   blindTo: string[];
   outputs: Record<string, string[]>;
@@ -250,6 +260,10 @@ function computeBlindPairs(steps: OrderStep[], ast: TopologyAST): BlindPair[] {
   const out: BlindPair[] = [];
   for (const step of steps) {
     if (step.ids.length < 2) continue;
+    // Exclusive branches never co-run, so they cannot leak into each other and
+    // must NOT be dispatched together. Marking them blind told the host to
+    // spawn every branch of a decision in one message.
+    if (step.exclusive) continue;
     for (let i = 0; i < step.ids.length; i++) {
       for (let j = i + 1; j < step.ids.length; j++) {
         const [a, b] = [step.ids[i], step.ids[j]];
@@ -416,10 +430,12 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
   const stepOf = new Map<string, OrderStep>();
   for (const s of steps) for (const id of s.ids) stepOf.set(id, s);
 
-  const withheldByWriter = new Map<string, Set<string>>();
+  // Withholds belong to the RECEIVER: for each inbound edge, the paths its
+  // upstream writer produced but did not offer to this reader.
+  const withheldFromReader = new Map<string, Set<string>>();
   for (const h of handoffs) {
-    if (!withheldByWriter.has(h.from)) withheldByWriter.set(h.from, new Set());
-    for (const w of h.withholds) withheldByWriter.get(h.from)!.add(w);
+    if (!withheldFromReader.has(h.to)) withheldFromReader.set(h.to, new Set());
+    for (const w of h.withholds) withheldFromReader.get(h.to)!.add(w);
   }
 
   const roles: RoleCard[] = agentsOf(ast).map((a) => {
@@ -436,8 +452,8 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
       writes: a.writes ?? [],
       readsAbs: (a.reads ?? []).map((p) => abs(root, p)),
       writesAbs: (a.writes ?? []).map((p) => abs(root, p)),
-      withheld: [...(withheldByWriter.get(a.id) ?? [])],
-      withheldAbs: [...(withheldByWriter.get(a.id) ?? [])].map((p) => abs(root, p)),
+      mustNotRead: [...(withheldFromReader.get(a.id) ?? [])],
+      mustNotReadAbs: [...(withheldFromReader.get(a.id) ?? [])].map((p) => abs(root, p)),
       blindTo,
       outputs: a.outputs ?? {},
       declaredTools: a.tools,

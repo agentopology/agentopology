@@ -96,4 +96,83 @@ describe("resolveOrder", () => {
     const { steps } = resolveOrder(parse(src));
     expect(steps[steps.length - 1].ids).toEqual(["orphan"]);
   });
+
+  const BRANCH = `topology t : [pipeline] {
+    meta {
+      version: "1.0.0"
+      description: "one decision, two exclusive outcomes"
+    }
+    agent judge {
+      model: opus
+      description: "j"
+      outputs: {
+        verdict: pass | fail
+      }
+    }
+    agent onpass {
+      model: sonnet
+      description: "p"
+    }
+    agent onfail {
+      model: sonnet
+      description: "f"
+    }
+    action i {
+      kind: inline
+      description: "in"
+    }
+    flow { i -> judge
+           judge -> onpass [when judge.verdict == pass]
+           judge -> onfail [when judge.verdict == fail] }
+  }`;
+
+  it("marks mutually exclusive branches as exclusive, not parallel", () => {
+    // Regression: two conditional outcomes of ONE decision sat at the same
+    // depth, so they were reported as a parallel fan-out. The brief then marked
+    // them mutually blind and told the host to dispatch BOTH in one message —
+    // running every branch of a decision instead of taking one.
+    const step = resolveOrder(parse(BRANCH)).steps.find((s) => s.ids.length > 1)!;
+    expect(step.exclusive).toBe(true);
+    expect(step.branchOn?.map((b) => b.id).sort()).toEqual(["onfail", "onpass"]);
+    for (const b of step.branchOn!) expect(b.condition).toContain("judge.verdict");
+  });
+
+  it("does not mark a genuine parallel fan-out exclusive", () => {
+    const step = resolveOrder(parse(example("code-review.at"))).steps.find(
+      (s) => s.ids.length > 1
+    )!;
+    expect(step.exclusive).toBe(false);
+  });
+
+  it("does not report a forward edge carrying [max N] as a loop", () => {
+    // A forward edge may legitimately carry a bound. Treating any [max N] as a
+    // back-edge reported straight-line flows as cycles.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+      }
+      agent b {
+        model: sonnet
+        description: "b"
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      flow { i -> a
+             a -> b [max 3] }
+    }`;
+    expect(resolveOrder(parse(src)).loops).toEqual([]);
+  });
+
+  it("still reports a real back-edge as a loop, with its budget", () => {
+    const { loops } = resolveOrder(parse(example("simple-pipeline.at")));
+    expect(loops.length).toBeGreaterThan(0);
+    expect(loops.find((l) => l.from === "reviewer" && l.to === "writer")!.budget).toBe(2);
+  });
 });

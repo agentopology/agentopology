@@ -20,7 +20,6 @@
 
 import type { TopologyAST, EdgeDef, GateNode, NodeDef } from "../parser/ast.js";
 import { computeLayers } from "../analyzer/index.js";
-import { findBackEdges } from "../parser/validator.js";
 
 /** What the host does at one step. */
 export type StepKind = "spawn" | "gate" | "action" | "human" | "group";
@@ -34,6 +33,18 @@ export interface OrderStep {
   ids: string[];
   /** Graph rank, or `null` for a gate (spliced by position, never ranked). */
   depth: number | null;
+  /**
+   * True when the ids are mutually EXCLUSIVE branches, not a parallel fan-out:
+   * every one is reached only by a conditional edge from the same source.
+   * Exactly one runs.
+   *
+   * Without this the renderer called them "parallel" and the brief marked them
+   * mutually blind and told the host to dispatch all of them in one message —
+   * running every branch of a decision instead of taking one.
+   */
+  exclusive: boolean;
+  /** For an exclusive step, the condition that selects each id. */
+  branchOn?: Array<{ id: string; condition: string }>;
 }
 
 /** A back-edge with its iteration budget. */
@@ -52,6 +63,46 @@ export interface ResolvedOrder {
   unreachable: string[];
   /** The orchestrator's id, if declared. It is the host, not a step. */
   orchestrator: string | null;
+}
+
+/**
+ * True back-edges, found by DFS over the FULL edge set.
+ *
+ * `findBackEdges` in the validator cannot be reused here: it strips every edge
+ * carrying `[max N]` first, because its job is to find loops the author has NOT
+ * acknowledged (that is V6). We need the opposite — the acknowledged ones too.
+ *
+ * And `computeLayers` strips them as well, so a plain FORWARD edge that happens
+ * to carry a bound both corrupts the ranking and gets reported as a loop.
+ * Classifying first, then ranking with only the real back-edges removed, fixes
+ * both.
+ */
+function trueBackEdges(edges: EdgeDef[], nodeIds: Set<string>): Set<string> {
+  const out = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.isError) continue;
+    if (!nodeIds.has(e.from) || !nodeIds.has(e.to)) continue;
+    if (!out.has(e.from)) out.set(e.from, []);
+    out.get(e.from)!.push(e.to);
+  }
+
+  const WHITE = 0, GREY = 1, BLACK = 2;
+  const colour = new Map<string, number>([...nodeIds].map((id) => [id, WHITE]));
+  const back = new Set<string>();
+
+  const visit = (id: string): void => {
+    colour.set(id, GREY);
+    for (const to of out.get(id) ?? []) {
+      const c = colour.get(to) ?? WHITE;
+      // An edge into a node still on the DFS stack closes a cycle.
+      if (c === GREY) back.add(`${id} ${to}`);
+      else if (c === WHITE) visit(to);
+    }
+    colour.set(id, BLACK);
+  };
+
+  for (const id of nodeIds) if (colour.get(id) === WHITE) visit(id);
+  return back;
 }
 
 const KIND_BY_TYPE: Record<string, StepKind> = {
@@ -81,7 +132,16 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
     ast.nodes.filter((n) => !gateIds.has(n.id) && n.type !== "orchestrator").map((n) => n.id)
   );
 
-  const layers = computeLayers(ast.edges, flowIds);
+  // Classify first: rank with only the REAL back-edges removed, so a forward
+  // edge carrying `[max N]` still advances the depth of its target.
+  const backKeys = trueBackEdges(ast.edges, flowIds);
+  const forwardEdges = ast.edges.filter((e) => !backKeys.has(`${e.from} ${e.to}`));
+  const layers = computeLayers(
+    // computeLayers strips `maxIterations` itself, so clear it on the edges we
+    // have already established are forward — otherwise they vanish again.
+    forwardEdges.map((e) => (e.maxIterations ? { ...e, maxIterations: null } : e)),
+    flowIds
+  );
 
   // Build the ranked spine, splitting each layer by node kind so a step is
   // never a mix of "spawn three agents" and "run a shell action".
@@ -129,12 +189,28 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
     withGates.splice(at, 0, { kind: "gate", ids: [gate.id], depth: null });
   }
 
-  const steps: OrderStep[] = withGates.map((s, i) => ({ index: i + 1, ...s }));
+  // Classify each multi-node step: parallel fan-out, or exclusive branch?
+  const steps: OrderStep[] = withGates.map((s, i) => {
+    const base = { index: i + 1, ...s, exclusive: false } as OrderStep;
+    if (s.ids.length < 2) return base;
 
-  const backEdges = findBackEdges(ast.edges, flowIds);
-  const backKeys = new Set(backEdges.map((e) => `${e.from} ${e.to}`));
+    const inbound = s.ids.map((id) => ast.edges.filter((e) => e.to === id && !e.isError));
+    // Every id reached ONLY by conditional edges, and every one of those edges
+    // from the same single source → this is one decision, not a fan-out.
+    const allConditional = inbound.every((es) => es.length > 0 && es.every((e) => !!e.condition));
+    const sources = new Set(inbound.flat().map((e) => e.from));
+    if (!allConditional || sources.size !== 1) return base;
+
+    base.exclusive = true;
+    base.branchOn = s.ids.map((id) => ({
+      id,
+      condition: ast.edges.find((e) => e.to === id && e.condition)?.condition ?? "",
+    }));
+    return base;
+  });
+
   const loops: LoopInfo[] = ast.edges
-    .filter((e) => e.maxIterations != null || backKeys.has(`${e.from} ${e.to}`))
+    .filter((e) => backKeys.has(`${e.from} ${e.to}`))
     .map((e) => ({
       from: e.from,
       to: e.to,

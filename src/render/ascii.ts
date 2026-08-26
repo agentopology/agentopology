@@ -62,7 +62,12 @@ function stepAnnotation(step: OrderStep, byId: Map<string, NodeDef>): string {
       .map((id) => (byId.get(id) as AgentNode | undefined)?.model)
       .filter((m): m is string => !!m);
     const uniq = [...new Set(models)];
-    const label = step.ids.length > 1 ? `agent ×${step.ids.length}, parallel` : "agent";
+    const label =
+      step.ids.length === 1
+        ? "agent"
+        : step.exclusive
+          ? `branch ×${step.ids.length}, exactly one runs`
+          : `agent ×${step.ids.length}, parallel`;
     return uniq.length ? `${label} · ${uniq.join(", ")}` : label;
   }
   return step.kind;
@@ -79,13 +84,20 @@ function renderSpine(ast: TopologyAST): string[] {
   }
 
   // Width of the widest node column, so annotations line up.
-  const bodies = steps.map((s) => s.ids.join("  ∥  "));
+  // `∥` is concurrency. An exclusive branch is not concurrent — exactly one of
+  // its ids runs — so it gets a different separator and a different glyph.
+  const bodies = steps.map((s) => s.ids.join(s.exclusive ? "  |  " : "  ∥  "));
   const width = Math.max(...bodies.map((b) => b.length), 20);
 
   steps.forEach((step, i) => {
-    const glyph = GLYPH[step.kind] ?? "▸";
+    const glyph = step.exclusive ? "⑂" : (GLYPH[step.kind] ?? "▸");
     const num = String(step.index).padStart(2, " ");
     out.push(`  ${num}  ${glyph} ${pad(bodies[i], width)}   ${stepAnnotation(step, byId)}`);
+    if (step.exclusive && step.branchOn) {
+      for (const b of step.branchOn) {
+        out.push(`         ├─ ${b.id}  when ${b.condition}`);
+      }
+    }
     if (i < steps.length - 1) out.push(`         │`);
   });
 

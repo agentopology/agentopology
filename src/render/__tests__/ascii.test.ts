@@ -78,4 +78,41 @@ describe("renderAscii", () => {
       expect(() => renderAscii(parse(example(f))), f).not.toThrow();
     }
   });
+
+  it("renders a decision as a branch, not as parallel work", () => {
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent judge {
+        model: opus
+        description: "j"
+        outputs: {
+          verdict: pass | fail
+        }
+      }
+      agent onpass {
+        model: sonnet
+        description: "p"
+      }
+      agent onfail {
+        model: sonnet
+        description: "f"
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      flow { i -> judge
+             judge -> onpass [when judge.verdict == pass]
+             judge -> onfail [when judge.verdict == fail] }
+    }`;
+    const out = renderAscii(parse(src));
+    expect(out).toContain("exactly one runs");
+    expect(out).not.toContain("parallel");
+    // and the condition that selects each branch is shown, not dropped
+    expect(out).toContain("when judge.verdict == pass");
+    expect(out).toContain("when judge.verdict == fail");
+  });
 });

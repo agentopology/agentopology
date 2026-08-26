@@ -52,9 +52,53 @@ describe("buildExecutionBrief", () => {
     expect(h.passes).toEqual(["workspace/notes.md"]);
     expect(h.withholds).toEqual(["workspace/self-review.md"]);
 
-    // And the withhold reaches the writer's card, so its prompt can state it.
+    // The withhold lands on the READER, which is the only role that can honour
+    // it. A writer cannot withhold a file it has already written.
+    const validator = b.roles.find((r) => r.id === "validator")!;
+    expect(validator.mustNotRead).toEqual(["workspace/self-review.md"]);
     const builder = b.roles.find((r) => r.id === "builder")!;
-    expect(builder.withheld).toEqual(["workspace/self-review.md"]);
+    expect(builder.mustNotRead).toEqual([]);
+  });
+
+  it("does not tell a writer to withhold a file it is handing to another reader", () => {
+    // Regression: `withheld` was unioned across ALL of a writer's readers, so a
+    // builder with two consumers taking one file each was told to withhold
+    // both — including the ones it was supposed to hand over.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent builder {
+        model: sonnet
+        description: "b"
+        writes: ["workspace/diff.md", "workspace/notes.md"]
+      }
+      agent reviewer {
+        model: sonnet
+        description: "r"
+        reads: ["workspace/diff.md"]
+      }
+      agent archivist {
+        model: sonnet
+        description: "a"
+        reads: ["workspace/notes.md"]
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      flow { i -> builder -> reviewer
+             builder -> archivist }
+    }`;
+    const b = buildExecutionBrief(parse(src));
+    expect(b.roles.find((r) => r.id === "builder")!.mustNotRead).toEqual([]);
+    expect(b.roles.find((r) => r.id === "reviewer")!.mustNotRead).toEqual([
+      "workspace/notes.md",
+    ]);
+    expect(b.roles.find((r) => r.id === "archivist")!.mustNotRead).toEqual([
+      "workspace/diff.md",
+    ]);
   });
 
   it("marks same-step roles with no edge between them as mutually blind", () => {

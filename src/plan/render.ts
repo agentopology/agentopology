@@ -62,10 +62,14 @@ function rolePrompt(brief: ExecutionBrief, role: RoleCard): string {
     );
   }
 
-  if (role.withheldAbs.length) {
+  if (role.mustNotReadAbs.length) {
     lines.push("");
-    lines.push("WITHHELD — you write these, but downstream roles must not receive them:");
-    for (const w of role.withheldAbs) lines.push(`  ${w}`);
+    lines.push("WITHHELD — an upstream role wrote these and they are on disk. You must");
+    lines.push("not read them, and must not ask for their contents:");
+    for (const w of role.mustNotReadAbs) lines.push(`  ${w}`);
+    lines.push("");
+    lines.push("This is deliberate. If you find yourself wanting one, that is the signal");
+    lines.push("the design is protecting — say so in your reply rather than reading it.");
   }
 
   if (role.declaredTools?.length) {
