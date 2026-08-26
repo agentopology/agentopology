@@ -156,3 +156,100 @@ it arrived from someone using the tool for real on the first day it existed.
 **Ask #7 is the bridge.** It is Phase 2 context work, it needs no grammar change,
 and it is the first place a topology would prove something about a run rather
 than assert something about a plan.
+
+---
+
+# Design decisions — 2026-08-26
+
+Settled with Nadav in a grill round. Two of my own recommendations were wrong
+and he killed them; both retractions are recorded below because the reasoning
+matters more than the conclusion.
+
+## 1. Run state is DERIVED from evidence, not stored
+
+**Rejected: a `team.run.json` sidecar.** I proposed it and Nadav refused it, in
+his words: *"if you're a coding agent you already know where you stand — you're
+committing stuff. Another JSON is another point of failure, another thing to
+back up, another thing to maintain."*
+
+He is right, and the reason is stronger than convenience. A topology **already
+declares what each role writes**. Whether those files exist on disk *is* the run
+state. `plan` already stat()s preconditions; extending that to every declared
+`writes` path gives progress for free.
+
+| Derived from disk | Stored in a sidecar |
+|---|---|
+| no new artifact | another file to back up |
+| cannot disagree with reality | can go stale |
+| works if a human did step 3 | only knows what it was told |
+| delete the file → step is pending again | stamp survives, work doesn't |
+| **evidence** | **testimony** |
+
+The last row decides it. A sidecar records *"I finished"*. The filesystem
+records *"the artifact exists"*. Only one of those survives a crash between
+stamping and writing.
+
+**Measured:** 31 of 44 agents (70%) across 11 real topologies declare `writes`.
+The rest are genuinely undecidable, and `plan` must say so rather than guess.
+
+**Also rejected: `status:` fields in the `.at`.** They make the file mutate every
+run, fill git diffs with run noise, force `scaffold` to ignore a region of the
+language, and make the same team produce different files. The invariant holds:
+**a `.at` never contains a fact about a specific run.**
+
+**Shape:** `plan` reports per step — outputs present, outputs missing, or
+undecidable — and stops. No `--resume`, no mode. The agent reads that beside
+`git log` and decides where to start, which is what it would do anyway. This
+also dissolves ask #4: there is no run-history artifact, because there is no run
+artifact.
+
+## 2. The dataflow check is on `reads`/`writes`, not schemas
+
+**Retracted: my "edge schema compatibility is Phase 2's first honest step".**
+Measured across 12 real topologies: **0 of 43 agent-to-agent edges have schemas
+on both ends**, and **0 of 10 examples declare a schema at all**. The rule would
+never have fired.
+
+`reads`/`writes` appear on nearly every agent and are validated by nothing. A
+rule that flags an edge where the writer's `writes` and the reader's `reads` do
+not overlap fires on real files immediately. `plan` already computes this as a
+pre-flagged ambiguity; promoting it to a validation rule makes it work under
+`scaffold` too.
+
+## 3. One-backend vocabulary is allowed, and must declare itself
+
+`#5` (concurrency class) and `#3` (callback channel) can never be enforced by
+`scaffold`. They are still allowed — but every such field appears in the brief's
+§8 "declared but not enforceable" table on the backend that cannot honour it.
+The precedent exists and works: that table already carries per-agent tool grants.
+
+The language stays expressive. The gap is always visible, never silent.
+
+## 4. Multi-anchor gates: build it
+
+`after: [a, b, c]` means one gate declared once, firing after each named node
+independently — N hook entries from `scaffold`, N splice positions in `plan`.
+
+Explicitly **not** an agent-side capability: the agent sees the same thing either
+way. The value is that their four-step verification ritual, copied across twenty
+lanes, cannot drift — and the whole point of a verification ritual is that it is
+identical everywhere.
+
+## Still open
+
+- **#6 `effort` beside `model`** — small and obviously right, not formally
+  decided. The host's Agent tool accepts it and `.at` exists to declare exactly
+  this kind of routing choice.
+- **#3 callback channel** — allowed by decision 3, but check with the reporter
+  first whether the `at-output` contract and the canary rule already cover the
+  loss they described. Their case reads like a run that predates the brief.
+
+## Build order
+
+1. Derived run state in `plan` (per-step evidence line) — no new vocabulary
+2. `reads`/`writes` edge rule — no new vocabulary
+3. Multi-anchor gates — small grammar change
+4. `effort` field — small grammar change
+5. Concurrency class — needs its scope settled first
+
+The first two need no grammar change at all, which is the right way in.
