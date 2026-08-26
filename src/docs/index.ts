@@ -138,3 +138,95 @@ export function searchTopics(query: string): string {
 
   return lines.join("\n");
 }
+
+/**
+ * The minimum an agent needs to write a valid `.at` from scratch.
+ *
+ * `getAllTopics()` is ~104 KB — loading it to write one topology is the
+ * opposite of context-efficient. This is the compact alternative: the shape,
+ * the handful of rules that actually bite, and where to go for more.
+ *
+ * @returns A few hundred lines, not a hundred kilobytes.
+ */
+export function getAgentGuide(): string {
+  return `# Writing a .at file — the minimum
+
+A topology says WHO works, WHEN they work, and WHAT THEY KNOW when they work.
+
+\`\`\`
+topology my-team : [pipeline] {
+
+  meta {
+    version: "1.0.0"          # required
+    description: "..."        # required
+  }
+
+  agent researcher {
+    model: sonnet             # required
+    description: "..."
+    reads:  ["workspace/task.md"]
+    writes: ["workspace/findings.md"]
+    prompt {
+      Instructions go in a BLOCK, never as a string.
+    }
+  }
+
+  agent reviewer {
+    model: opus
+    description: "..."
+    reads: ["workspace/findings.md"]   # <- the handoff
+    outputs: {
+      verdict: approve | revise
+    }
+  }
+
+  action intake {
+    kind: inline              # external | git | decision | inline | report
+    description: "..."
+  }
+
+  action ship {
+    kind: report
+    description: "..."
+  }
+
+  gates {
+    gate tests-green {
+      after: reviewer         # or a list: [a, b, c]
+      run: "npm test"
+      on-fail: bounce-back
+    }
+  }
+
+  flow {
+    intake -> researcher -> reviewer
+    reviewer -> ship       [when reviewer.verdict == approve]
+    reviewer -> researcher [when reviewer.verdict == revise, max 2]
+  }
+}
+\`\`\`
+
+## The five that actually bite
+
+1. **One field per line.** \`{ model: sonnet retry: 3 }\` makes \`model\` the
+   string "sonnet retry: 3". Nothing else will tell you.
+2. **A prompt is a block**, not \`prompt: "path.md"\`. The string form belongs
+   to \`skill\`, and on an agent it parses to nothing.
+3. **Every back-edge needs \`[max N]\`.** An unbounded loop between two agents
+   is a bill, not a design.
+4. **Conditional edges must cover every enum value.** If \`verdict\` can be
+   \`revise\`, some edge must handle \`revise\`.
+5. **An edge should declare what crosses it.** The reader's \`reads\` should
+   overlap the writer's \`writes\`, or the receiver runs after the sender with
+   none of its output.
+
+## Then
+
+    agentopology validate my-team.at    # it will teach you what it rejects
+    agentopology plan my-team.at        # run it now, nothing written to disk
+    agentopology scaffold my-team.at --target claude-code
+
+Deeper on any block: \`agentopology docs <topic>\`
+Topics: \`agentopology docs\`
+`;
+}
