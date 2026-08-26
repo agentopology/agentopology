@@ -151,6 +151,13 @@ function buildAgentOpts(
   fields.push(`label: ${sq(extraLabel ?? agent.id)}`);
   if (agent.model) fields.push(`model: ${sq(agent.model)}`);
   if (agent.isolation) fields.push(`isolation: ${sq(agent.isolation)}`);
+  // `thinking` is the topology's reasoning-effort field, and the Workflow tool's
+  // agent() accepts exactly this as `effort`. This binding emitted nothing for
+  // it and never read `agent.thinking` at all, so a declared reasoning level was
+  // silently dropped on the one target that could honour it natively.
+  if (agent.thinking && agent.thinking !== "off") {
+    fields.push(`effort: ${sq(agent.thinking)}`);
+  }
   if (agent.outputs && Object.keys(agent.outputs).length > 0) {
     fields.push(`schema: ${buildSchemaLiteral(agent.outputs)}`);
   }

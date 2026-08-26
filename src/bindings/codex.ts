@@ -430,8 +430,12 @@ function mapReasoningEffort(thinking: string): string | null {
       return "medium";
     case "high":
       return "high";
+    case "xhigh":
+      return "xhigh";
     case "max":
-      return "high";
+      // Was collapsed onto "high", which left `max` and `xhigh` with no
+      // distinct Codex value at all.
+      return "max";
     default:
       return null;
   }

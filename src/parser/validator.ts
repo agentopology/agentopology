@@ -1477,7 +1477,11 @@ function v34TemperatureRange(ast: TopologyAST): ValidationResult[] {
 /** V35: Validate `thinking` is one of: off, low, medium, high, max. */
 function v35ThinkingEnum(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  const VALID_THINKING = new Set(["off", "low", "medium", "high", "max"]);
+  // `xhigh` sits between high and max, matching the effort tiers modern routing
+  // exposes. Added in 0.5.0 — `thinking` IS the reasoning-effort field, and a
+  // separate `effort` was deliberately NOT added rather than have two words for
+  // one concept.
+  const VALID_THINKING = new Set(["off", "low", "medium", "high", "xhigh", "max"]);
 
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
