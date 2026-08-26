@@ -55,7 +55,7 @@ Is `.at` actually a good language, or just a config format with opinions?
 |---|---|---|---|---|
 | L1.1 | **Every shipped example validates clean** | `for f in examples/*.at; do agentopology validate $f; done` | ✅ 10/10 | stays 10/10, enforced in CI |
 | L1.2 | **Zero silent drops** — a construct the parser ignores must produce an error | V89 + V90, plus `V90: every shipped example is free of swallowed fields` | ✅ **0 known.** V90 closed the last one: fields are one per line, now documented in `spec/grammar.md` §2 and enforced across `meta` and every node block, with prose fields exempted so a colon in a description is not a false positive. | 0 known |
-| L1.3 | **Spec matches implementation** | `src/parser/__tests__/spec-sync.test.ts` — compares the spec table against the `validate()` registry | ✅ **91 / 91**, contiguous V1-V91, guarded by 4 tests | stays equal |
+| L1.3 | **Spec matches implementation** | `src/parser/__tests__/spec-sync.test.ts` — compares the spec table against the `validate()` registry | ✅ **92 / 92**, contiguous V1-V92, guarded by 4 tests | stays equal |
 | L1.4 | **Bindings agree on defaults** | `src/bindings/__tests__/defaults-agreement.test.ts` | ✅ **0 disagreements.** Was 1 — codex defaulted to `supervised` → Codex `untrusted`, the most restrictive policy, for an omitted field the spec says means `autonomous`. openclaw's literal `"auto"` was a false alarm: it *maps* to `autonomous`. | stays 0 |
 | L1.5 | **Round-trip fidelity** | parse → serialize → parse, deep-equal | ✅ covered by `src/import/__tests__` | stays green |
 | L1.6 | **Time to a first valid topology, by a stranger** | dogfood run artefacts | ✅ a stranger wrote a valid 4-role topology with genuinely blind auditors, unaided | < 10 min, ≤ 2 rejections |
@@ -73,11 +73,11 @@ V89 closed that instance. The class is still open.
 | # | KPI | Instrument | Baseline | Target |
 |---|---|---|---|---|
 | L2.1 | Type-clean | `npx tsc --noEmit`, exit code | ✅ 0 | 0 |
-| L2.2 | Test count and pass rate | `npx vitest run` | ✅ **1463 / 1463** | 100%, count grows with surface |
+| L2.2 | Test count and pass rate | `npx vitest run` | ✅ **1467 / 1467** | 100%, count grows with surface |
 | L2.3 | **Regression tests actually regress** | revert the fix, confirm the test fails | ✅ verified twice — settings merge (3 fail without it) and codex defaults (1 fails without it) | every bugfix test proven this way |
 | L2.4 | Compile path stability | `git diff src/bindings/` after any non-binding change | ✅ empty | empty unless bindings are the subject |
 | L2.5 | CLI has tests | `npx vitest run src/cli` | ✅ **17 tests** — real subprocess runs, so exit codes and arg guards are covered | ≥ 1 per command; grows with the surface |
-| L2.6 | Docs drift | `CLAUDE.md` claims vs measured | ✅ refreshed: **1463 tests / 91 rules / 10 examples / 5 exporters**. Was 1141 / 82 / 5 / 2. | refreshed at each release |
+| L2.6 | Docs drift | `CLAUDE.md` claims vs measured | ✅ refreshed: **1467 tests / 92 rules / 10 examples / 5 exporters**. Was 1141 / 82 / 5 / 2. | refreshed at each release |
 
 ---
 

@@ -292,7 +292,7 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   L.push("");
   if (brief.routes.length) {
     for (const r of brief.routes) {
-      L.push(`**On \`${r.from}.${r.key}\`:**`);
+      L.push(`**On \`${r.subject}.${r.key}\`:**`);
       L.push("");
       L.push("| condition | go to | budget |");
       L.push("|---|---|---|");

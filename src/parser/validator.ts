@@ -652,7 +652,9 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
 function v12EdgeAttributeOrder(ast: TopologyAST): ValidationResult[] {
   // Errors are collected during parsing and attached to the AST.
   // See parseFlow() in src/parser/index.ts.
-  return (ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? [];
+  return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
+    (r) => r.rule === "V12"
+  );
 }
 
 /** Extended AST type that may carry parse-time errors/warnings. */
@@ -1057,6 +1059,19 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
   }
 
   return results;
+}
+
+/**
+ * V92: An edge's attributes belong in ONE bracket, comma-separated.
+ *
+ * `[when ...] [max N]` made the annotation matcher span from the first `[` to
+ * the last `]`, yielding a condition string containing brackets — and nothing
+ * reported it. Collected at parse time, where the raw line is still visible.
+ */
+function v92EdgeTwoBrackets(ast: TopologyAST): ValidationResult[] {
+  return ((ast as TopologyASTWithParseErrors)._edgeAttributeErrors ?? []).filter(
+    (r) => r.rule === "V92"
+  );
 }
 
 function v90SwallowedField(ast: TopologyAST): ValidationResult[] {
@@ -3166,6 +3181,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v89BlockFieldMisuse(ast),
     ...v90SwallowedField(ast),
     ...v91RequiredFieldPlaceholder(ast),
+    ...v92EdgeTwoBrackets(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

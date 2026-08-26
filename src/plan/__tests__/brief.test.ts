@@ -355,6 +355,41 @@ describe("buildExecutionBrief", () => {
       expect(exclusive).not.toContain(p.b);
     }
   });
+
+  it("heads a routing table with the node the condition TESTS, not the edge source", () => {
+    // Regression: `worker -> judge [when judge.verdict == fail]` produced a
+    // heading of `worker.verdict` — a node/output pair that does not exist,
+    // since `worker` declares no outputs at all.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent worker {
+        model: sonnet
+        description: "w"
+      }
+      agent judge {
+        model: opus
+        description: "j"
+        outputs: {
+          verdict: pass | fail
+        }
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      flow { i -> worker
+             worker -> judge [when judge.verdict == fail] }
+    }`;
+    const b = buildExecutionBrief(parse(src));
+    expect(b.routes[0].subject).toBe("judge");
+    expect(b.routes[0].from).toBe("worker");
+    const md = renderBriefMarkdown(b);
+    expect(md).toContain("**On `judge.verdict`:**");
+    expect(md).not.toContain("worker.verdict");
+  });
 });
 
 describe("renderBriefMarkdown", () => {

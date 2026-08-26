@@ -833,6 +833,26 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     const bracketMatch = trimmed.match(
       /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?)\]\s*$/
     );
+    // V92: two bracket groups on one edge. The grammar defines ONE annotation
+    // with comma-separated attributes (`[when ..., max N]`). Written as
+    // `[when ...] [max N]`, the matcher below spans from the first `[` to the
+    // last `]` and produces a corrupt condition — literally
+    // `a.verdict == fail] [max 3` — with no error at all.
+    // Count only ANNOTATION brackets. A fan-out list is also bracketed —
+    // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
+    // `] [` alone flagged valid topologies.
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection)\b/g;
+    const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
+    if (annotationBrackets > 1 && _edgeAttributeErrors) {
+      _edgeAttributeErrors.push({
+        rule: "V92",
+        level: "error",
+        message:
+          "Edge has two bracket groups — attributes go in ONE bracket, " +
+          `comma-separated: [when ..., max N] (line: ${trimmed})`,
+      });
+    }
+
     if (bracketMatch) {
       flowPart = trimmed.slice(0, bracketMatch.index!).trim();
       const annotation = bracketMatch[1];

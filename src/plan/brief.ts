@@ -161,7 +161,10 @@ export interface ExecutionBrief {
    * row underneath it looked like it tested that output.
    */
   routes: Array<{
+    /** The edge's source node. */
     from: string;
+    /** The node whose output the condition tests — NOT always `from`. */
+    subject: string;
     key: string;
     edges: EdgeDef[];
     /** Unconditional out-edges from the same source: the default path. */
@@ -308,16 +311,26 @@ function computePreconditions(
     });
 }
 
-/** The output name a condition tests: the part after the dot in `x.y == v`. */
-function conditionKey(condition: string | null): string {
+/**
+ * The node and output a condition tests, from `x.y == v`.
+ *
+ * The SUBJECT is `x`, which is not necessarily the edge's source. In
+ * `worker -> judge [when judge.verdict == fail]` the edge leaves `worker` but
+ * the condition tests `judge`. Heading the table with the edge source produced
+ * `worker.verdict` — a node/output pair that does not exist.
+ */
+function conditionSubject(condition: string | null): { node: string; key: string } {
   const m = /([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)/.exec(condition ?? "");
-  return m?.[2] ?? "?";
+  return { node: m?.[1] ?? "?", key: m?.[2] ?? "?" };
 }
 
 function computeRoutes(ast: TopologyAST): ExecutionBrief["routes"] {
   // Group by (source, output key). A node may route on more than one output,
   // and each is a separate decision with its own exhaustiveness.
-  const groups = new Map<string, { from: string; key: string; edges: EdgeDef[] }>();
+  const groups = new Map<
+    string,
+    { from: string; subject: string; key: string; edges: EdgeDef[] }
+  >();
   const fallbacksByFrom = new Map<string, EdgeDef[]>();
 
   for (const e of ast.edges) {
@@ -330,9 +343,11 @@ function computeRoutes(ast: TopologyAST): ExecutionBrief["routes"] {
       fallbacksByFrom.get(e.from)!.push(e);
       continue;
     }
-    const key = conditionKey(e.condition);
-    const id = `${e.from}\u0000${key}`;
-    if (!groups.has(id)) groups.set(id, { from: e.from, key, edges: [] });
+    const { node: subject, key } = conditionSubject(e.condition);
+    // Group by the DECISION — the node and output actually tested — not by the
+    // edge's source.
+    const id = `${subject}\u0000${key}`;
+    if (!groups.has(id)) groups.set(id, { from: e.from, subject, key, edges: [] });
     groups.get(id)!.edges.push(e);
   }
 

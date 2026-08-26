@@ -8812,6 +8812,108 @@ describe("Company brain — pattern, brain store type, custody primitive", () =>
     expect(v90[0].node).toBe("orchestrator");
   });
 
+  it("V92: two bracket groups on an edge are rejected, not silently mangled", () => {
+    // The annotation matcher spanned from the first `[` to the last `]`, so
+    // `[when a.verdict == fail] [max 3]` produced the condition string
+    // `a.verdict == fail] [max 3` — brackets and all — with no error.
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "    outputs: {",
+      "      verdict: pass | fail",
+      "    }",
+      "  }",
+      "  agent b {",
+      "    model: sonnet",
+      '    description: "b"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a",
+      "         a -> b [when a.verdict == fail] [max 3] }",
+      "}",
+    ].join("\n");
+    const v92 = validate(parse(src)).filter((r) => r.rule === "V92");
+    expect(v92).toHaveLength(1);
+    expect(v92[0].message).toContain("ONE bracket");
+  });
+
+  it("V92: a fan-out list plus an annotation is legal, not two annotations", () => {
+    // `analyzer -> [reporter, alerter] [when ...]` ships in
+    // examples/scheduled-monitor.at. Testing for `] [` alone flagged it.
+    const src = [
+      "topology t : [pipeline, fan-out] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "    outputs: {",
+      "      verdict: pass | fail",
+      "    }",
+      "  }",
+      "  agent b {",
+      "    model: sonnet",
+      '    description: "b"',
+      "  }",
+      "  agent c {",
+      "    model: sonnet",
+      '    description: "c"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a",
+      "         a -> [b, c] [when a.verdict == fail] }",
+      "}",
+    ].join("\n");
+    expect(validate(parse(src)).filter((r) => r.rule === "V92")).toHaveLength(0);
+  });
+
+  it("V92: the legal single-bracket form is unaffected", () => {
+    const src = [
+      "topology t : [pipeline] {",
+      "  meta {",
+      '    version: "1.0.0"',
+      '    description: "x"',
+      "  }",
+      "  agent a {",
+      "    model: sonnet",
+      '    description: "a"',
+      "    outputs: {",
+      "      verdict: pass | fail",
+      "    }",
+      "  }",
+      "  agent b {",
+      "    model: sonnet",
+      '    description: "b"',
+      "  }",
+      "  action i {",
+      "    kind: inline",
+      '    description: "in"',
+      "  }",
+      "  flow { i -> a",
+      "         a -> b [when a.verdict == fail, max 3] }",
+      "}",
+    ].join("\n");
+    const ast = parse(src);
+    expect(validate(ast).filter((r) => r.rule === "V92")).toHaveLength(0);
+    const e = ast.edges.find((x) => x.from === "a" && x.to === "b")!;
+    expect(e.condition).toBe("a.verdict == fail");
+    expect(e.maxIterations).toBe(3);
+  });
+
   it("V91: a required field satisfied by an injected placeholder is still missing", () => {
     // The parser substitutes a sentinel because the AST types are non-optional,
     // and every downstream "is it present?" check then passed. V7 (model
