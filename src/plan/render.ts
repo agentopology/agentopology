@@ -11,6 +11,7 @@
  */
 
 import type { ExecutionBrief, GateTier, RoleCard } from "./brief.js";
+import { gateAnchors } from "../parser/ast.js";
 
 const TIER_NOTE: Record<GateTier, string> = {
   preventive: "tool allowlist — needs a file, unavailable here",
@@ -371,8 +372,8 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
       // A gate may anchor by `after`, by `before`, or both. Rendering only
       // `after` made a before-only gate read as anchored to nothing.
       const anchor = [
-        g.after ? `after \`${g.after}\`` : "",
-        g.before ? `before \`${g.before}\`` : "",
+        g.after ? `after \`${gateAnchors(g, "after").join(", ")}\`` : "",
+        g.before ? `before \`${gateAnchors(g, "before").join(", ")}\`` : "",
       ]
         .filter(Boolean)
         .join(", ");

@@ -27,6 +27,7 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { byPhase } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1132,8 +1133,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
-      if (gate.after) sections.push(`- **After:** ${gate.after}`);
-      if (gate.before) sections.push(`- **Before:** ${gate.before}`);
+      if (gate.after) sections.push(`- **After:** ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`- **Before:** ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`- **Script:** ${gate.run}`);
       if (gate.onFail) sections.push(`- **On failure:** ${gate.onFail}`);
       sections.push(`- **Behavior:** ${gate.behavior ?? "blocking"}`);
@@ -1500,7 +1501,7 @@ function generateBootstrapMd(ast: TopologyAST): GeneratedFile {
   // Pre-flight gates (gates before the first flow node)
   const firstEdge = ast.edges.length > 0 ? ast.edges[0] : null;
   const preFlightGates = gates.filter(
-    (g) => firstEdge && g.before === firstEdge.from,
+    (g) => !!firstEdge && gateAnchors(g, "before").includes(firstEdge.from),
   );
   if (preFlightGates.length > 0) {
     sections.push("## Pre-Flight Gates");

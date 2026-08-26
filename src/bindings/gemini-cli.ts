@@ -34,6 +34,7 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { byPhase } from "../resolve/phase.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -409,8 +410,8 @@ function generateGeminiMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
-      if (gate.after) sections.push(`- After: ${gate.after}`);
-      if (gate.before) sections.push(`- Before: ${gate.before}`);
+      if (gate.after) sections.push(`- After: ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`- Before: ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`- Run: ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`- Checks: ${gate.checks.join(", ")}`);

@@ -34,6 +34,7 @@ import type {
   NodeDef,
   EdgeDef,
 } from "../parser/ast.js";
+import { gateAnchors } from "../parser/ast.js";
 import { resolveDefaults, type ResolvedDefault } from "../resolve/defaults.js";
 import { resolveOrder, type OrderStep, type LoopInfo } from "../resolve/order.js";
 
@@ -81,8 +82,9 @@ export interface BlindPair {
 
 export interface GatePlan {
   id: string;
-  after?: string;
-  before?: string;
+  /** Always a list, normalised through `gateAnchors` — never the raw union. */
+  after: string[];
+  before: string[];
   tier: GateTier;
   /** The command, when the tier can run one. */
   run?: string;
@@ -573,8 +575,8 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
       .filter((n): n is GateNode => n.type === "gate")
       .map((g) => ({
         id: g.id,
-        after: g.after,
-        before: g.before,
+        after: gateAnchors(g, "after"),
+        before: gateAnchors(g, "before"),
         tier: gateTier(g),
         run: g.run,
         blocking: g.behavior !== "advisory",

@@ -36,6 +36,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -930,8 +931,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     for (const gate of gates) {
       sections.push(`### ${gate.label || toTitle(gate.id)}`);
       sections.push("");
-      if (gate.after) sections.push(`- **After:** ${gate.after}`);
-      if (gate.before) sections.push(`- **Before:** ${gate.before}`);
+      if (gate.after) sections.push(`- **After:** ${gateAnchors(gate, "after").join(", ")}`);
+      if (gate.before) sections.push(`- **Before:** ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`- **Run:** ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`- **Checks:** ${gate.checks.join(", ")}`);

@@ -20,6 +20,7 @@
  */
 
 import { MISSING } from "./index.js";
+import { gateAnchors } from "./ast.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -674,20 +675,22 @@ function v13GatePlacement(ast: TopologyAST): ValidationResult[] {
 
   for (const node of ast.nodes) {
     if (!isGate(node)) continue;
-    if (node.after && !ids.has(node.after)) {
+    for (const anchor of gateAnchors(node, "after")) {
+      if (ids.has(anchor)) continue;
       results.push({
         rule: "V13",
         level: "error",
-        message: `Gate "${node.id}" references undeclared node "${node.after}" in "after"`,
+        message: `Gate "${node.id}" references undeclared node "${anchor}" in "after"`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
     }
-    if (node.before && !ids.has(node.before)) {
+    for (const anchor of gateAnchors(node, "before")) {
+      if (ids.has(anchor)) continue;
       results.push({
         rule: "V13",
         level: "error",
-        message: `Gate "${node.id}" references undeclared node "${node.before}" in "before"`,
+        message: `Gate "${node.id}" references undeclared node "${anchor}" in "before"`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
@@ -1230,11 +1233,12 @@ function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (gate.onFail !== "bounce-back") continue;
-    if (gate.after && registeredIds.has(gate.after)) {
+    if (gate.after && gateAnchors(gate, "after").every((a) => registeredIds.has(a))) {
       // Agent/group target — enforceable on claude-code via SubagentStop. No warning.
       continue;
     }
-    const target = gate.after ? `non-agent target "${gate.after}"` : "no after: target";
+    const _anchors = gateAnchors(gate, "after");
+    const target = _anchors.length ? `non-agent target "${_anchors.join('", "')}"` : "no after: target";
     results.push({
       rule: "V25",
       level: "warning",

@@ -7,6 +7,7 @@
  * @module
  */
 
+import { gateAnchors } from "../parser/ast.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -294,8 +295,8 @@ function serializeAction(node: ActionNode): string {
 function serializeGate(node: GateNode): string {
   const lines: string[] = [];
   lines.push(`    gate ${node.id} {`);
-  if (node.after) lines.push(`      after: ${node.after}`);
-  if (node.before) lines.push(`      before: ${node.before}`);
+  if (node.after) lines.push(`      after: ${fmtAnchors(node, "after")}`);
+  if (node.before) lines.push(`      before: ${fmtAnchors(node, "before")}`);
   if (node.run) lines.push(`      run: "${node.run}"`);
   if (node.checks?.length) lines.push(`      checks: ${inlineList(node.checks)}`);
   if (node.onFail) lines.push(`      on-fail: ${node.onFail}`);
@@ -795,6 +796,15 @@ function serializeParams(params: ParamDef[]): string | null {
 // ---------------------------------------------------------------------------
 // Main serializer
 // ---------------------------------------------------------------------------
+
+/**
+ * Anchors, in the form they will re-parse as. A bare `after: a,b` would come
+ * back as the single id "a,b" — silent round-trip corruption.
+ */
+function fmtAnchors(gate: GateNode, which: "after" | "before"): string {
+  const a = gateAnchors(gate, which);
+  return a.length > 1 ? `[${a.join(", ")}]` : (a[0] ?? "");
+}
 
 export function serializeAST(ast: TopologyAST): string {
   const sections: string[] = [];

@@ -733,8 +733,16 @@ export function parseGate(
     label: toLabel(id),
   };
 
-  if (fields.after) node.after = fields.after;
-  if (fields.before) node.before = fields.before;
+  // `after: [a, b, c]` or `after: a`. parseMultilineList returns [] for the
+  // scalar form, so fall back to the field — the same pattern `checks` uses
+  // above, extended to accept both shapes.
+  const afterList = parseMultilineList(body, "after");
+  if (afterList.length) node.after = afterList;
+  else if (fields.after) node.after = fields.after;
+
+  const beforeList = parseMultilineList(body, "before");
+  if (beforeList.length) node.before = beforeList;
+  else if (fields.before) node.before = fields.before;
   if (fields.run) node.run = unquote(fields.run);
   if (checks.length) node.checks = checks;
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
