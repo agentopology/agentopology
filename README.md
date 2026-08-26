@@ -116,7 +116,14 @@ npm install -g agentopology
 agentopology validate my-team.at
 ```
 
-**Scaffold** — generate platform configs:
+**Run it** — enact the topology now, with nothing written to disk:
+```bash
+agentopology plan my-team.at --task "Add rate limiting to the API"
+```
+Prints the flow, then a brief your coding agent follows to run the team with its
+own subagents. Nothing is scaffolded. See below.
+
+**Scaffold** — generate platform configs, when the team should outlive the session:
 ```bash
 agentopology scaffold my-team.at --target claude-code
 ```
@@ -129,6 +136,46 @@ agentopology visualize my-team.at
 **List targets** — see all supported platforms:
 ```bash
 agentopology targets
+```
+
+---
+
+## Two Lifecycles: Compile It, or Just Run It
+
+A `.at` file has always compiled to a persisted harness. It can also be **enacted
+directly** by the coding agent already in your session.
+
+| | `scaffold` | `plan` |
+|---|---|---|
+| Who executes | the platform, later | this session's agent, now |
+| On disk | `.claude/`, `.codex/`, … | nothing |
+| Lifetime | outlives the session | dies with it |
+| Portable | 8 targets | wherever the host agent runs |
+| Gates | real hooks, mechanically enforced | evidence contract |
+| Cost to change | regenerate and reconcile | free |
+
+Not a strategy choice — a **lifetime** choice. A team that should exist next week
+scaffolds. A delegation plan for the task in front of you runs.
+
+**Why this works:** the host coding agent is already the runtime. It plans, spawns
+subagents, runs them in parallel and re-plans. It does not need generated agent
+files to do any of that — it needs to know *who works, when they work, and what
+they know when they work*. That is what a topology says.
+
+`plan` cannot spawn agents itself, so it does not pretend to. It **validates**
+(the agent that wrote the file can write an illegal one), applies the spec's
+defaults, resolves execution order, and emits a brief that resolves what the host
+would otherwise guess: what crosses each handoff, what each reader must **not**
+read, which roles are mutually blind, and every declaration that cannot be
+enforced at runtime.
+
+Five features are platform *registrations* rather than steps — `triggers`,
+`schedules`, `mcp-servers`, `hooks`, and per-agent `tools`/`permissions`. They
+cannot work fileless on any vendor, and `plan` names them instead of silently
+skipping them.
+
+```bash
+agentopology docs interpreted-mode
 ```
 
 ---
@@ -533,16 +580,17 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 ## CLI Reference
 
 ```
-agentopology validate <file>              Validate an .at file (82 rules)
+agentopology validate <file>              Validate an .at file (92 rules)
+agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at
 agentopology import --target <t> --dir <d>       Reverse-engineer platform files to .at
 agentopology visualize <file>             Interactive topology graph (+ cross-links any brains)
 agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-style graph (no Obsidian)
-agentopology export <file> --format <fmt> Export as markdown, mermaid, or json
+agentopology export <file> --format <fmt> Export as markdown, mermaid, json, ascii, or brief
 agentopology info <file>                  Topology analysis and suggestions
 agentopology targets                      List supported platforms
-agentopology docs [topic]                 Language reference (42 topics)
+agentopology docs [topic]                 Language reference (43 topics)
 ```
 
 ---
