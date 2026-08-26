@@ -543,3 +543,6 @@ export function buildExecutionBrief(rawAst: TopologyAST, opts: BriefOptions = {}
     orchestrator,
   };
 }
+
+// Re-exported so `agentopology/plan` is one import for both halves.
+export { renderBriefMarkdown } from "./render.js";

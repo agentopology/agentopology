@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Harness as code.</strong> The Terraform for AI agents.<br/>
-  Define your agent team — and its memory — once. Deploy to any platform.
+  Define your agent team — and its memory — once. <strong>Run it now, or deploy it anywhere.</strong>
 </p>
 
 <p align="center">
@@ -13,6 +13,11 @@
 
 <p align="center">
   <strong>Claude Code</strong> · <strong>Claude Workflow</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
+</p>
+
+<p align="center">
+  <em>New in 0.4:</em> <code>agentopology plan</code> — enact a topology with your coding agent's own
+  sub-agents.<br/><em>No files generated. Nothing to maintain.</em>
 </p>
 
 <p align="center">
@@ -84,24 +89,35 @@ The hybrid is opt-in — a topology with no `execution: workflow` marker compile
 
 ## What It Does
 
-AgenTopology is a **declarative language** (`.at` files) and a **CLI compiler** that transforms agent definitions into platform-native configuration files.
+AgenTopology is a **declarative language** (`.at` files) for describing a team of agents —
+who works, when they work, and what they know when they work. One file, two ways to use it.
 
 ```
-┌──────────────┐      ┌────────────┐      ┌─────────────────────┐
-│  .at file    │ ───▶ │  Parser &  │ ───▶ │  Platform configs   │
-│  (you write) │      │  Validator │      │  (auto-generated)   │
-└──────────────┘      └────────────┘      └─────────────────────┘
-                                            ├── .claude/agents/
-                                            ├── <topology>.workflow.js
-                                            ├── .openclaw/
-                                            ├── .codex/
-                                            ├── .cursor/rules/
-                                            ├── .github/agents/
-                                            ├── .kiro/agents/
-                                            └── ...
+                        ┌────────────┐
+      ┌──────────────┐  │  Parser &  │   scaffold ──▶ Platform configs
+      │   .at file   │─▶│  Validator │──┤                ├── .claude/agents/
+      │  (you write) │  │  92 rules  │  │                ├── <topology>.workflow.js
+      └──────────────┘  └────────────┘  │                ├── .codex/  .cursor/rules/
+                                        │                ├── .openclaw/  .github/agents/
+                                        │                └── .kiro/  …
+                                        │
+                                        └── plan ──────▶ Execution brief
+                                                          │
+                                                          ▼
+                                                  your coding agent runs it
+                                                  with its own sub-agents
+                                                  — nothing written to disk
 ```
 
-You stop hand-maintaining config files. Your topology becomes the single source of truth.
+**`scaffold`** generates platform-native config. You stop hand-maintaining files, and the
+topology becomes the single source of truth.
+
+**`plan`** skips generation entirely. The coding agent already in your session *is* the
+runtime — it plans, spawns sub-agents, runs them in parallel and re-plans. It does not need
+generated files to do that; it needs to know the shape of the work. `plan` validates the
+topology, resolves the execution order, and hands it a brief.
+
+Same declaration. A **lifetime** choice, not a strategy one.
 
 ---
 
@@ -449,6 +465,47 @@ Plus: **memory stores** (semantic, graph, episodic — 11 backends), **retrieval
 
 ---
 
+## Interpreted Execution — Run It Without Building It
+
+```bash
+agentopology plan review.at --task "Review PR 412" --mode plan
+```
+
+```
+  review v1.0.0  ·  pipeline, fan-out
+
+  1  ▪ intake                          action
+     │
+  2  ▸ analyzer  ∥  security-scanner   agent ×2, parallel · sonnet
+     │
+  3  ▸ reviewer                        agent · opus
+     │
+  4  ◆ human-approval                  gate · blocking · on-fail: halt
+     │
+  5  ▸ reporter                        agent · haiku
+
+  ⚠  4 role(s) declare tool restrictions that cannot be set inline — running unrestricted
+  ⛔  2 triggers, 1 hook declared — these need `agentopology scaffold`
+```
+
+Then a brief your coding agent follows. It resolves what the agent would otherwise
+have to guess:
+
+| The brief answers | Because |
+|---|---|
+| What crosses each handoff | computed as `writes ∩ reads`, not left to interpretation |
+| What each reader must **not** read | a validator that reads the builder's self-review is not independent |
+| Which same-step roles are mutually blind | two researchers who see each other's work are one opinion, paid for twice |
+| Which declarations can't be enforced at runtime | a sub-agent's tool grant cannot be set inline on any platform — so it says so |
+
+Three autonomy notches — `plan` shows it and waits, `execute` runs and announces
+material changes, `auto` runs and reports at the end.
+
+Every guess the agent has to make is logged with a concrete `.at` edit that would
+remove it. The log is a patch queue for your topology, not a diary.
+
+---
+
 ## Group Chats — Agents That Talk to Each Other
 
 Groups aren't fan-out. They're real conversations. Each agent reads what others wrote and responds:
@@ -509,11 +566,20 @@ import { parse, validate, bindings } from "agentopology";
 // Parse
 const ast = parse(atSource);
 
-// Validate (29 built-in rules)
+// Validate (92 built-in rules, V1-V92)
 const issues = validate(ast);
 
-// Scaffold
+// Scaffold — generate platform files
 const files = bindings["claude-code"].scaffold(ast);
+
+// Plan — resolve for interpreted execution, generate nothing
+import { buildExecutionBrief, renderBriefMarkdown } from "agentopology/plan";
+const brief = buildExecutionBrief(ast, { task: "Add rate limiting", autonomy: "execute" });
+const markdown = renderBriefMarkdown(brief);
+
+// Render the flow as a terminal graph
+import { renderAscii } from "agentopology/render";
+console.log(renderAscii(ast));
 
 // Visualize
 import { generateVisualization } from "agentopology";
@@ -558,7 +624,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |
 | **See the architecture** | Read YAML, JSON, TOML, Markdown across 6 dirs | One `.at` file. Or `visualize` it. |
-| **Validate** | Hope for the best | 29 built-in rules catch errors before deploy |
+| **Validate** | Hope for the best | 92 built-in rules catch errors before deploy |
 | **Onboard someone** | "Read these 15 files and figure it out" | "Read this `.at` file" |
 | **Version control** | Diff 47 generated files | Diff one `.at` file |
 | **Move to a new tool** | Start over | `--target new-tool` |
