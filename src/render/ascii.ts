@@ -78,22 +78,41 @@ function renderSpine(ast: TopologyAST): string[] {
   const { steps, loops, unreachable, orchestrator } = resolveOrder(ast);
   const out: string[] = [];
 
-  if (steps.length === 0) {
+  // Nodes with no edge at all are not a parallel step — they are declared and
+  // never wired in. Kahn ranks them all at depth 0, so they used to render as
+  // one big "agent ×N, parallel" line that read like real concurrent work.
+  const wired = new Set(ast.edges.flatMap((e) => [e.from, e.to]));
+  const orphans = ast.nodes
+    .filter((n) => n.type !== "orchestrator" && !wired.has(n.id))
+    .map((n) => n.id);
+  const orphanSet = new Set(orphans);
+
+  const spineSteps = steps
+    .map((s) => ({ ...s, ids: s.ids.filter((id) => !orphanSet.has(id)) }))
+    .filter((s) => s.ids.length > 0)
+    // Renumber: dropping an unwired step must not leave a gap in the column.
+    .map((s, i) => ({ ...s, index: i + 1 }));
+
+  if (spineSteps.length === 0) {
     out.push("  (no flow declared)");
+    if (orphans.length) {
+      out.push("");
+      out.push(`  declared but not in the flow: ${orphans.join(", ")}`);
+    }
     return out;
   }
 
   // Width of the widest node column, so annotations line up.
   // `∥` is concurrency. An exclusive branch is not concurrent — exactly one of
   // its ids runs — so it gets a different separator and a different glyph.
-  const bodies = steps.map((s) => s.ids.join(s.exclusive ? "  |  " : "  ∥  "));
+  const bodies = spineSteps.map((s) => s.ids.join(s.exclusive ? "  |  " : "  ∥  "));
   const width = Math.max(...bodies.map((b) => b.length), 20);
 
   // Pad the step number to the widest index, not a fixed 2 — at step 100 the
   // column shifted and the whole spine lost alignment.
-  const numWidth = String(steps.length).length;
+  const numWidth = String(spineSteps.length).length;
 
-  steps.forEach((step, i) => {
+  spineSteps.forEach((step, i) => {
     const glyph = step.exclusive ? "⑂" : (GLYPH[step.kind] ?? "▸");
     const num = String(step.index).padStart(numWidth, " ");
     out.push(`  ${num}  ${glyph} ${pad(bodies[i], width)}   ${stepAnnotation(step, byId)}`);
@@ -102,7 +121,7 @@ function renderSpine(ast: TopologyAST): string[] {
         out.push(`  ${" ".repeat(numWidth)}  ├─ ${b.id}  when ${b.condition}`);
       }
     }
-    if (i < steps.length - 1) out.push(`  ${" ".repeat(numWidth)}  │`);
+    if (i < spineSteps.length - 1) out.push(`  ${" ".repeat(numWidth)}  │`);
   });
 
   if (loops.length) {
@@ -112,6 +131,11 @@ function renderSpine(ast: TopologyAST): string[] {
       const label = edge ? edgeLabel(edge) : "";
       out.push(`  ↩  ${l.from} → ${l.to}${label ? `   ${label}` : ""}`);
     }
+  }
+
+  if (orphans.length) {
+    out.push("");
+    out.push(`  ⚠  declared but not in the flow: ${orphans.join(", ")}`);
   }
 
   if (unreachable.length) {

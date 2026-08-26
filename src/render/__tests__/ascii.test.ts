@@ -47,9 +47,11 @@ describe("renderAscii", () => {
     expect(out).toMatch(/researcher\s+sonnet/);
   });
 
-  it("survives a topology with no flow edges", () => {
-    // NB: fields are newline-separated. parseFields is line-based, so putting
-    // them on one line makes `model` swallow the rest as its value.
+  it("does not render unwired nodes as a parallel step", () => {
+    // Regression: nodes with no edges all rank at Kahn depth 0, so they came
+    // out as one "agent ×N, parallel" line that read like real concurrent work
+    // — and `(no flow declared)` was unreachable. An earlier version of THIS
+    // test asserted the buggy behaviour.
     const src = `topology t : [pipeline] {
       meta {
         version: "1.0.0"
@@ -60,10 +62,43 @@ describe("renderAscii", () => {
         description: "a"
         invocation: manual
       }
+      agent b {
+        model: sonnet
+        description: "b"
+        invocation: manual
+      }
     }`;
     const out = renderAscii(parse(src));
-    expect(out).toContain("a");
-    expect(out).toMatch(/1\s+▸ a/);
+    expect(out).toContain("(no flow declared)");
+    expect(out).toContain("declared but not in the flow: a, b");
+    expect(out).not.toContain("parallel");
+  });
+
+  it("keeps unwired nodes out of the spine but still names them", () => {
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent wired {
+        model: sonnet
+        description: "w"
+      }
+      agent lonely {
+        model: sonnet
+        description: "l"
+        invocation: manual
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      flow { i -> wired }
+    }`;
+    const out = renderAscii(parse(src));
+    expect(out).toMatch(/1\s+▪ i/);
+    expect(out).toMatch(/2\s+▸ wired/); // renumbered, no gap
+    expect(out).toContain("declared but not in the flow: lonely");
   });
 
   it("renders every shipped example without throwing", () => {

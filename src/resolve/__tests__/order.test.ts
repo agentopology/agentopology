@@ -213,4 +213,44 @@ describe("resolveOrder", () => {
       .map((s) => s.ids[0]);
     expect(gateSteps).toEqual(["first", "second"]);
   });
+
+  it("places a gate anchored to another gate after it, whatever the declaration order", () => {
+    // Regression: gates spliced in declaration order, so a gate whose anchor
+    // was declared LATER found nothing, fell through to "runs last", and
+    // silently skipped past the step it was meant to guard.
+    const src = `topology t : [pipeline] {
+      meta {
+        version: "1.0.0"
+        description: "x"
+      }
+      agent a {
+        model: sonnet
+        description: "a"
+      }
+      agent b {
+        model: sonnet
+        description: "b"
+      }
+      action i {
+        kind: inline
+        description: "in"
+      }
+      gates {
+        gate second {
+          after: first
+          run: "true"
+        }
+        gate first {
+          after: a
+          run: "true"
+        }
+      }
+      flow { i -> a -> b }
+    }`;
+    const steps = resolveOrder(parse(src)).steps;
+    const idx = (id: string) => steps.findIndex((s) => s.ids.includes(id));
+    expect(idx("first")).toBeGreaterThan(idx("a"));
+    expect(idx("second")).toBe(idx("first") + 1);
+    expect(idx("second")).toBeLessThan(idx("b"));
+  });
 });

@@ -179,7 +179,34 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
   // reverse declaration order.
   const placedPerAnchor = new Map<string, number>();
 
-  for (const gate of gates) {
+  // A gate may anchor to ANOTHER gate. Splicing in declaration order meant a
+  // gate whose anchor was declared later found nothing, fell through to "runs
+  // last", and silently skipped past the step it was meant to guard. Order the
+  // gates so every anchor is already placed: repeat until no progress, then
+  // append whatever still cannot resolve.
+  const placedIds = new Set<string>();
+  const pending = [...gates];
+  const ordered: GateNode[] = [];
+  for (let pass = 0; pass < gates.length + 1 && pending.length; pass++) {
+    let moved = false;
+    for (let i = 0; i < pending.length; ) {
+      const g = pending[i];
+      const anchors = [g.after, g.before].filter((a): a is string => !!a);
+      const waitingOnGate = anchors.some((a) => gateIds.has(a) && !placedIds.has(a));
+      if (waitingOnGate) {
+        i++;
+        continue;
+      }
+      ordered.push(g);
+      placedIds.add(g.id);
+      pending.splice(i, 1);
+      moved = true;
+    }
+    if (!moved) break; // a cycle among gate anchors — append them as-is
+  }
+  ordered.push(...pending);
+
+  for (const gate of ordered) {
     let at = -1;
     if (gate.after) {
       const i = withGates.findIndex((s) => s.ids.includes(gate.after!));
