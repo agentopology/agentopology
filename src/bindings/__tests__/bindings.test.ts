@@ -9,6 +9,7 @@ import {
   openClawBinding,
   kiroBinding,
   cursorBinding,
+  antigravityBinding,
 } from "../index.js";
 import type { GeneratedFile } from "../types.js";
 import { isStubContent, STUB_MARKER } from "../lib/stub.js";
@@ -177,8 +178,8 @@ function assertStructuralInvariants(files: GeneratedFile[]) {
 // ---------------------------------------------------------------------------
 
 describe("Binding registry", () => {
-  it("contains all 8 bindings", () => {
-    expect(Object.keys(bindings)).toHaveLength(8);
+  it("contains all 9 bindings", () => {
+    expect(Object.keys(bindings)).toHaveLength(9);
   });
 
   it("all bindings have a name and description", () => {
@@ -2684,6 +2685,100 @@ topology debate-test : [fan-out, debate, pipeline] {
 });
 
 // ---------------------------------------------------------------------------
+// antigravity — single flat markdown workflow, no runtime enforcement
+//
+// Antigravity's config is one `.agents/workflows/<name>-autopilot.md` file: a
+// Core Directives list, numbered Phase blocks, and role-assumption prose. No
+// hooks, no gate-as-event enforcement, no MCP, no compiled branching — an LLM
+// reads the file at inference time. Conditional/loop edges and gates must
+// therefore render as plain language, never as `if (...)` or shell scripts.
+// ---------------------------------------------------------------------------
+
+describe("antigravity binding", () => {
+  const files = scaffoldBinding("antigravity");
+
+  assertStructuralInvariants(files);
+
+  it("produces exactly one file under .agents/workflows/", () => {
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toMatch(/^\.agents\/workflows\/.*-autopilot\.md$/);
+  });
+
+  it("uses the confirmed frontmatter shape", () => {
+    const md = files[0].content;
+    expect(md.startsWith("---\n")).toBe(true);
+    expect(md).toContain("description:");
+  });
+
+  it("contains the fixed Core Directives", () => {
+    const md = files[0].content;
+    expect(md).toContain("## Core Directives");
+    expect(md).toContain("Never Skip Phases");
+    expect(md).toContain("Fail Fast");
+    expect(md).toContain("No Direct Main Branch Commits");
+  });
+
+  it("groups agents into Phase blocks by agent.phase", () => {
+    const md = files[0].content;
+    expect(md).toMatch(/### Phase \d+:.*Expand/i);
+    expect(md).toMatch(/### Phase \d+:.*Architect/i);
+    // planner is phase 1, builder is phase 2 in TOPOLOGY_SOURCE -> distinct
+    // Execute phase blocks, each naming its own agent.
+    expect(md).toContain("`planner`");
+    expect(md).toContain("`builder`");
+  });
+
+  it("renders the conditional edge as prose, not a compiled branch", () => {
+    const md = files[0].content;
+    expect(md).toContain("planner.status == ready");
+    expect(md).not.toMatch(/if\s*\(/);
+  });
+
+  it("renders gates as a Validate / Self-Healing phase, no runtime enforcement claim", () => {
+    const md = files[0].content;
+    expect(md).toContain("Self-Healing Loop");
+    expect(md).toContain("quality-check");
+    expect(md).toContain("lint");
+    expect(md).toContain("security-auditor");
+  });
+
+  it("never emits files outside .agents/workflows/", () => {
+    for (const f of files) {
+      expect(f.path).toMatch(/^\.agents\/workflows\//);
+    }
+  });
+
+  it("does not leak MCP/hook runtime config into the markdown", () => {
+    const md = files[0].content;
+    expect(md).not.toContain(".mcp.json");
+    expect(md).not.toContain('"mcpServers"');
+  });
+
+  describe("examples sweep — scaffolds all example .at files", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const examplesDir = path.resolve(__dirname, "../../../examples");
+    const atFiles: string[] = fs.readdirSync(examplesDir).filter((f: string) => f.endsWith(".at"));
+
+    it("finds at least 5 example .at files", () => {
+      expect(atFiles.length).toBeGreaterThanOrEqual(5);
+    });
+
+    for (const atFile of atFiles) {
+      it(`scaffolds ${atFile} to a single .agents/workflows/*.md file without throwing`, () => {
+        const src = fs.readFileSync(path.join(examplesDir, atFile), "utf-8");
+        const exAst = parse(src);
+        const exFiles = antigravityBinding.scaffold(exAst);
+        expect(exFiles).toHaveLength(1);
+        expect(exFiles[0].path).toMatch(/^\.agents\/workflows\/.*-autopilot\.md$/);
+        expect(exFiles[0].path).not.toMatch(/^\.(claude|github|kiro|codex|cursor)\//);
+        expect(exFiles[0].content.length).toBeGreaterThan(0);
+      });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // claude-code — Inline orchestrator delegation mode (#7)
 //
 // When orchestrator { delegation: inline } is declared, no subagent is ever
@@ -2885,6 +2980,14 @@ describe("Stub marker uniformity across bindings (#4)", () => {
     // in their respective lanes. If this fails, copilot-cli probably
     // grew a gate-script path and needs the same marker treatment.
     const files = scaffoldBinding("copilot-cli");
+    const stubs = files.filter((f) => isStubContent(f.content));
+    expect(stubs).toEqual([]);
+  });
+
+  it("antigravity produces NO stubs (single markdown file, no scripts)", () => {
+    // Antigravity's config is one flat instruction file — gates render as
+    // inline Phase prose, never as referenced shell-script stubs.
+    const files = scaffoldBinding("antigravity");
     const stubs = files.filter((f) => isStubContent(f.content));
     expect(stubs).toEqual([]);
   });

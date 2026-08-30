@@ -4038,6 +4038,12 @@ AgenTopology compiles to multiple target platforms via bindings. Each binding re
 **Generates:** \`.kiro/\` configuration directory with specs
 **Description:** Generates Kiro project configuration. Maps agents to Kiro specs with steering prompts and tool configurations.
 
+### antigravity
+
+**Target:** Google Antigravity IDE
+**Generates:** A single \`.agents/workflows/<name>-autopilot.md\` file
+**Description:** Generates a flat markdown autopilot workflow — a Core Directives list, numbered Phase blocks grouped by \`agent.phase\`, and role-assumption prose ("Assume the \`qa-engineer\` role"). Antigravity has no hooks, gate, or MCP runtime; conditional/loop edges and gates render as plain-language steps instead of compiled control flow or scripts.
+
 ## Usage
 
 \`\`\`bash

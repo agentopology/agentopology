@@ -15,6 +15,7 @@ import { copilotCliBinding } from "./copilot-cli.js";
 import { openClawBinding } from "./openclaw.js";
 import { kiroBinding } from "./kiro.js";
 import { cursorBinding } from "./cursor.js";
+import { antigravityBinding } from "./antigravity.js";
 
 export type { GeneratedFile, BindingTarget } from "./types.js";
 export { deduplicateFiles } from "./types.js";
@@ -26,6 +27,7 @@ export { copilotCliBinding } from "./copilot-cli.js";
 export { openClawBinding } from "./openclaw.js";
 export { kiroBinding } from "./kiro.js";
 export { cursorBinding } from "./cursor.js";
+export { antigravityBinding } from "./antigravity.js";
 
 /** All available binding targets, keyed by name. */
 export const bindings: Record<string, BindingTarget> = {
@@ -37,4 +39,5 @@ export const bindings: Record<string, BindingTarget> = {
   "openclaw": openClawBinding,
   "kiro": kiroBinding,
   "cursor": cursorBinding,
+  "antigravity": antigravityBinding,
 };
