@@ -65,22 +65,36 @@ export function syncFromPlatform(
  * - Look for `## Instructions` section
  * - Extract everything until a known structural heading or end of file
  */
+/** Strip YAML frontmatter, returning the remaining markdown body. */
+function stripFrontmatter(content: string): string {
+  if (!content.startsWith("---")) return content;
+  const endIdx = content.indexOf("\n---", 3);
+  if (endIdx === -1) return content;
+  return content.slice(endIdx + 4);
+}
+
 function extractClaudeCodePrompts(files: PlatformFile[]): ExtractedPrompt[] {
   const prompts: ExtractedPrompt[] = [];
 
+  // Two layouts: agents/<id>/AGENT.md (what our scaffold emits) and the flat
+  // agents/<id>.md that hand-authored Claude Code configs use.
+  const AGENT_PATH =
+    /(?:^|[\\/])agents[\\/](?:([^\\/]+)[\\/]AGENT\.md|([^\\/]+)\.md)$/i;
+
   for (const file of files) {
-    // Match .claude/agents/<id>/AGENT.md (path is relative from --dir)
-    const match = file.path.match(
-      /(?:^|[\\/])agents[\\/]([^\\/]+)[\\/]AGENT\.md$/,
-    );
+    const match = file.path.match(AGENT_PATH);
     if (!match) continue;
 
-    const agentId = match[1];
-    const content = extractSectionUntilKnownHeading(
-      file.content,
-      "## Instructions",
-      CLAUDE_CODE_STRUCTURAL_HEADINGS,
-    );
+    const agentId = match[1] ?? match[2];
+    // Scaffolded files carry an explicit `## Instructions` section. Hand-authored
+    // ones do not — there the entire body is the prompt, so fall back to it
+    // rather than silently syncing nothing.
+    const content =
+      extractSectionUntilKnownHeading(
+        file.content,
+        "## Instructions",
+        CLAUDE_CODE_STRUCTURAL_HEADINGS,
+      ) ?? stripFrontmatter(file.content).trim();
     if (content) {
       prompts.push({ agentId, content });
     }

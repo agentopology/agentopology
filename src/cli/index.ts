@@ -503,13 +503,32 @@ function readDirRecursive(dirPath: string): PlatformFile[] {
   }
 
   const files: PlatformFile[] = [];
+  const seen = new Set<string>();
   function walk(dir: string, prefix: string): void {
+    // Guard against symlink cycles — a linked skill dir may point back into the tree.
+    const real = fs.realpathSync(dir);
+    if (seen.has(real)) return;
+    seen.add(real);
+
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const rel = path.join(prefix, entry.name);
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      // Dirent uses lstat semantics, so a symlinked directory reports as neither
+      // file nor directory. Follow it with stat before deciding how to read it.
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const st = fs.statSync(full);
+          isDir = st.isDirectory();
+          isFile = st.isFile();
+        } catch {
+          continue; // broken symlink
+        }
+      }
+      if (isDir) {
         walk(full, rel);
-      } else {
+      } else if (isFile) {
         files.push({ path: rel, content: fs.readFileSync(full, "utf-8") });
       }
     }

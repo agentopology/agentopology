@@ -812,10 +812,18 @@ export function importClaudeCode(
   const roles: Record<string, string> = {};
 
   // 1. Parse AGENT.md files
+  //
+  // Two layouts are accepted:
+  //   agents/<name>/AGENT.md  — what our own claude-code scaffold emits
+  //   agents/<name>.md        — the flat layout hand-authored Claude Code configs use
+  // Without the second, importing a config we did not generate silently yields
+  // zero agents.
+  const AGENT_PATH =
+    /(?:^|[\\/])agents[\\/](?:([^\\/]+)[\\/]AGENT\.md|([^\\/]+)\.md)$/i;
   for (const file of files) {
-    const match = file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)[\\/]AGENT\.md$/);
+    const match = file.path.match(AGENT_PATH);
     if (!match) continue;
-    const agentId = match[1];
+    const agentId = match[1] ?? match[2];
     const node = parseAgentMd(agentId, file.content);
     if (node) {
       // Extract role description into roles map and set agent.role to the key

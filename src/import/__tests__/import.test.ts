@@ -617,6 +617,51 @@ Do work.
     expect((worker as any).model).toBe("sonnet");
   });
 
+  it("imports the flat agents/<name>.md layout used by hand-authored configs", () => {
+    const files: PlatformFile[] = [
+      {
+        path: "agents/worker.md",
+        content: `---
+name: worker
+model: sonnet
+tools:
+  - Read
+  - Write
+---
+
+## Instructions
+Do work.
+`,
+      },
+    ];
+
+    const ast = importClaudeCode(files, "test-import");
+    const worker = ast.nodes.find((n) => n.id === "worker");
+    expect(worker).toBeDefined();
+    expect(worker!.type).toBe("agent");
+    expect((worker as any).model).toBe("sonnet");
+  });
+
+  it("imports both agent layouts present in the same project", () => {
+    const files: PlatformFile[] = [
+      { path: "agents/nested/AGENT.md", content: `---\nname: nested\nmodel: sonnet\n---\n` },
+      { path: "agents/flat.md", content: `---\nname: flat\nmodel: opus\n---\n` },
+    ];
+
+    const ast = importClaudeCode(files, "test-import");
+    expect(ast.nodes.find((n) => n.id === "nested")).toBeDefined();
+    expect(ast.nodes.find((n) => n.id === "flat")).toBeDefined();
+  });
+
+  it("does not match a flat file outside the agents/ directory", () => {
+    const files: PlatformFile[] = [
+      { path: "skills/worker.md", content: `---\nname: worker\nmodel: sonnet\n---\n` },
+    ];
+
+    const ast = importClaudeCode(files, "test-import");
+    expect(ast.nodes.find((n) => n.id === "worker")).toBeUndefined();
+  });
+
   it("imports with SKILL.md topology metadata", () => {
     const files: PlatformFile[] = [
       {

@@ -10,6 +10,7 @@ import {
   stripComments,
   extractBlock,
   extractAllBlocks,
+  findMatchingBrace,
   parseKV,
   parseFields,
   parseList,
@@ -2222,6 +2223,116 @@ describe("Lexer", () => {
       const src = `tools: [Read, Write]  # core`;
       const result = stripComments(src);
       expect(result).toBe(`tools: [Read, Write]`);
+    });
+  });
+
+  describe("findMatchingBrace — fence and inline-code awareness", () => {
+    it("matches a simple unnested block", () => {
+      const src = `{ a b c }`;
+      // startIdx points just past the opening brace.
+      expect(findMatchingBrace(src, 1)).toBe(src.length);
+    });
+
+    it("ignores a brace inside a fenced code block", () => {
+      const src = ["{", "```", "{ not a real close", "```", "}"].join("\n");
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+
+    it("ignores a brace inside a tilde-fenced code block", () => {
+      const src = ["{", "~~~", "{ also not real", "~~~", "}"].join("\n");
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+
+    it("requires a closing fence of at least the same length", () => {
+      // A 4-backtick fence is not closed by a shorter 3-backtick line — that
+      // line, and the brace after it, stay hidden inside the fence. Only the
+      // matching 4-backtick close ends it, after which the real brace counts.
+      const src = [
+        "{",
+        "````",
+        "{ still hidden",
+        "```",
+        "still fenced too",
+        "````",
+        "}",
+      ].join("\n");
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+
+    it("a too-short closing fence leaves the block unterminated", () => {
+      // Without a 4-backtick close, the trailing "}" is still inside the
+      // fence and cannot end the block.
+      const src = ["{", "````", "{ still hidden", "```", "}"].join("\n");
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(-1);
+    });
+
+    it("ignores a brace inside an inline code span", () => {
+      const src = "{ see `{}` for details }";
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+
+    it("treats an unclosed inline code span as plain text, not a hidden region", () => {
+      // A single stray backtick with no closing partner on the same line is not
+      // a code span — the brace immediately after it must still close the block.
+      const src = "{ a ` stray backtick }";
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+
+    it("returns -1 when the block is never closed", () => {
+      const src = "{ a b c";
+      expect(findMatchingBrace(src, 1)).toBe(-1);
+    });
+
+    it("handles real nested braces alongside a fenced block", () => {
+      const src = ["{", "  inner { x }", "```", "{ fenced, ignored }", "```", "}"].join("\n");
+      const end = findMatchingBrace(src, 1);
+      expect(end).toBe(src.length);
+    });
+  });
+
+  describe("stripComments — prompt blocks containing fenced code with braces", () => {
+    it("does not close the prompt early on a brace inside a fenced JSON example", () => {
+      const src = [
+        "agent worker {",
+        "  prompt {",
+        "    Return JSON shaped like:",
+        "    ```json",
+        '    { "status": "ok" }',
+        "    ```",
+        "  }",
+        "  model: sonnet",
+        "}",
+      ].join("\n");
+
+      const body = extractBlock(src, "agent");
+      expect(body).not.toBeNull();
+      expect(body!.id).toBe("worker");
+      // A stray-brace-driven early close would truncate the body before
+      // reaching the fields that follow the prompt.
+      expect(body!.body).toContain('"status": "ok"');
+      expect(body!.body).toContain("model: sonnet");
+    });
+
+    it("does not close the prompt early on a brace inside inline code", () => {
+      const src = [
+        "agent worker {",
+        "  prompt {",
+        "    Use the `{{variable}}` syntax for templates.",
+        "  }",
+        "  model: sonnet",
+        "}",
+      ].join("\n");
+
+      const body = extractBlock(src, "agent");
+      expect(body).not.toBeNull();
+      expect(body!.body).toContain("{{variable}}");
+      expect(body!.body).toContain("model: sonnet");
     });
   });
 });
