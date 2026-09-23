@@ -806,17 +806,32 @@ function layoutNodes(nodes, edges) {
   });
   window.__dagreEdgePoints = edgePoints;
 
+  // Gates on the same (after, before) pair would land on one point, so each
+  // takes a slot in declaration order and the group is centred side by side.
+  var GATE_STACK_GAP = 16;
+  var pairCount = {}, pairSlot = {};
+  gateNodes.forEach(function(gate) {
+    if (!gate.after || !gate.before) return;
+    var key = gate.after + '|' + gate.before;
+    pairSlot[gate.id] = pairCount[key] || 0;
+    pairCount[key] = pairSlot[gate.id] + 1;
+  });
+  function pairOffset(gate, w) {
+    var n = pairCount[gate.after + '|' + gate.before] || 1;
+    return (pairSlot[gate.id] - (n - 1) / 2) * (w + GATE_STACK_GAP);
+  }
+
   // Position gates between their after/before nodes (same logic as before)
   gateNodes.forEach(function(gate) {
     if (gate.after && gate.before && gate.after === gate.before && positions[gate.after]) {
       var refPos = positions[gate.after];
       var sz = nodeSize(gate);
-      positions[gate.id] = { x: refPos.x, y: refPos.y + refPos.h + ROW_GAP / 2, w: sz.w, h: sz.h };
+      positions[gate.id] = { x: refPos.x + pairOffset(gate, sz.w), y: refPos.y + refPos.h + ROW_GAP / 2, w: sz.w, h: sz.h };
     } else if (gate.after && gate.before && positions[gate.after] && positions[gate.before]) {
       var afterPos = positions[gate.after], beforePos = positions[gate.before];
       var sz = nodeSize(gate);
       positions[gate.id] = {
-        x: (afterPos.x + beforePos.x) / 2,
+        x: (afterPos.x + beforePos.x) / 2 + pairOffset(gate, sz.w),
         y: afterPos.y + afterPos.h + (beforePos.y - afterPos.y - afterPos.h) / 2 - sz.h / 2,
         w: sz.w, h: sz.h
       };
@@ -1114,6 +1129,26 @@ function renderGraph() {
     s += '<g class="edge-group" data-from="' + gate.after + '" data-to="' + gate.id + '">';
     s += '<path d="M' + fX + ',' + fY + ' L' + tX + ',' + tY + '" class="edge-path conditional" stroke-dasharray="3 3" marker-end="url(#arrow-cond)" opacity="0.3"/>';
     s += '</g>';
+  });
+
+  // Gate path connectors: a gate with both anchors sits ON the path it guards,
+  // so draw after -> gate and gate -> before (every anchor when there are several)
+  data.nodes.filter(n => n.type === 'gate' && n.after && n.before).forEach(gate => {
+    const gatePos = nodePositions[gate.id];
+    if (!gatePos) return;
+    const gateLink = (from, to, fX, fY, tX, tY) => {
+      s += '<g class="edge-group" data-from="' + from + '" data-to="' + to + '">';
+      s += '<path d="M' + fX + ',' + fY + ' L' + tX + ',' + tY + '" class="edge-path conditional" stroke-dasharray="3 3" marker-end="url(#arrow-cond)" opacity="0.5"/>';
+      s += '</g>';
+    };
+    (gate.afterAll || [gate.after]).forEach(a => {
+      const p = nodePositions[a];
+      if (p) gateLink(a, gate.id, p.x, p.y + p.h, gatePos.x, gatePos.y);
+    });
+    (gate.beforeAll || [gate.before]).forEach(b => {
+      const p = nodePositions[b];
+      if (p) gateLink(gate.id, b, gatePos.x, gatePos.y + gatePos.h, p.x, p.y);
+    });
   });
 
   // --- Trigger badge (compact, not inline) ---
@@ -1459,8 +1494,10 @@ function highlightConnected(nodeId) {
   const connectedNodes = new Set([nodeId]);
   data.edges.forEach(e => { if (e.from === nodeId || e.to === nodeId) { connectedNodes.add(e.from); connectedNodes.add(e.to); } });
   data.nodes.filter(n => n.type === 'gate').forEach(g => {
-    if (g.after === nodeId) connectedNodes.add(g.id);
-    if (g.id === nodeId && g.after) connectedNodes.add(g.after);
+    const afters = g.afterAll || (g.after ? [g.after] : []);
+    const befores = g.beforeAll || (g.before ? [g.before] : []);
+    if (afters.includes(nodeId) || befores.includes(nodeId)) connectedNodes.add(g.id);
+    if (g.id === nodeId) afters.concat(befores).forEach(id => connectedNodes.add(id));
   });
   document.querySelectorAll('.node-group').forEach(g => {
     const id = g.dataset.id;
