@@ -1914,18 +1914,37 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
  * A Mod is a TypeScript module loaded INSIDE the engine; settings.json cannot
  * carry it. The engine loads ONE module per plugin (hooks.json `modules`,
  * measured on 2.1.283), so the plugin's single entry is a generated
- * `hooks/register.ts` that imports each declared Mod's `register(on)` and
- * calls it — behind the Mod's `flag:` when one is declared. The launch script
+ * `hooks/at-register.ts` that imports each declared Mod's `register(on)` and
+ * calls it. A `flag:` is the Mod's OWN switch: the Mod reads it per event with
+ * `$.env.get`, and the launch script sets it. The entry cannot gate it: a
+ * module has no `process`, and the engine refuses an `on` that is wrapped or
+ * kept (measured 2.1.283: "on is always on(\"<event>\", hook)"). The launch script
  * sets CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 (without it the module never
  * loads), each flag, and `--plugin-dir`.
  *
- * The Mods' own modules are the user's code: nothing is written at a `run:`
- * path. A topology without Mods gets no plugin.
+ * The plugin root is the folder that HOLDS the Mods' modules, because the
+ * engine refuses a hooks module that imports outside its plugin folder
+ * (measured 2.1.283: "cannot import … it is outside the plugin's folder").
+ * The entry has its own name so it never overwrites a hand-written
+ * `hooks/register.ts`. The Mods' own modules are the user's code: nothing is
+ * written at a `run:` path. A topology without Mods gets no plugin.
  */
 export const MOD_PLUGIN_ENV = "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS";
+export const MOD_ENTRY = "at-register.ts";
 
-export function modPluginDir(ast: TopologyAST): string {
-  return `.claude/plugins/${ast.topology.name}`;
+/**
+ * The plugin root: the deepest folder shared by every Mod's `run:` path, less
+ * a trailing `hooks` (the plugin's own hooks/ folder). "" is the project root.
+ * null when a `run:` is absolute: it cannot be placed inside the project.
+ */
+export function modPluginDir(ast: TopologyAST): string | null {
+  const runs = ast.hooks.filter((h) => h.type === "mod" && h.run).map((h) => h.run);
+  if (runs.length === 0 || runs.some((r) => r.startsWith("/"))) return null;
+  const dirs = runs.map((r) => r.split("/").filter((p) => p && p !== ".").slice(0, -1));
+  const shared: string[] = [];
+  for (let i = 0; dirs.every((d) => i < d.length && d[i] === dirs[0][i]); i++) shared.push(dirs[0][i]);
+  if (shared[shared.length - 1] === "hooks") shared.pop();
+  return shared.join("/");
 }
 
 function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
@@ -1934,7 +1953,15 @@ function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
 
   const name = ast.topology.name;
   const dir = modPluginDir(ast);
-  const hooksDir = `${dir}/hooks`;
+  if (dir === null) {
+    console.warn(
+      `[claude-code] Mods ${mods.map((m) => m.name).join(", ")}: a run: path is absolute, so no plugin folder ` +
+        `can hold the modules (the engine refuses imports outside it). Use project-relative run: paths. Skipped.`,
+    );
+    return [];
+  }
+  const at = (p: string) => (dir ? `${dir}/${p}` : p);
+  const hooksDir = at("hooks");
 
   // `run:` is project-relative (or absolute); the import is relative to hooks/.
   // Bindings stay free of node: imports, so the relative path is computed here.
@@ -1962,9 +1989,9 @@ function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
   };
   const hooksJson = {
     description:
-      `The engine loads ONE module per plugin: register.ts registers every Mod ` +
+      `The engine loads ONE module per plugin: ${MOD_ENTRY} registers every Mod ` +
       `declared in ${name}.at. Off unless ${MOD_PLUGIN_ENV}=1.`,
-    modules: ["./register.ts"],
+    modules: [`./${MOD_ENTRY}`],
   };
 
   const register = [
@@ -1977,9 +2004,7 @@ function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
     "",
     "export function register(on: On) {",
     ...mods.map((m) =>
-      m.flag
-        ? `  // ${m.name} · on ${m.on} · off unless ${m.flag}=1\n  if (process.env.${m.flag} === '1') ${ident(m.name)}(on)`
-        : `  // ${m.name} · on ${m.on}\n  ${ident(m.name)}(on)`,
+      `  // ${m.name} · on ${m.on}${m.flag ? ` · the Mod reads its own switch, ${m.flag}` : ""}\n  ${ident(m.name)}(on)`,
     ),
     "}",
     "",
@@ -2003,10 +2028,10 @@ function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
   ].join("\n");
 
   return [
-    { path: `${dir}/.claude-plugin/plugin.json`, content: JSON.stringify(pluginJson, null, 2) + "\n" },
+    { path: at(".claude-plugin/plugin.json"), content: JSON.stringify(pluginJson, null, 2) + "\n" },
     { path: `${hooksDir}/hooks.json`, content: JSON.stringify(hooksJson, null, 2) + "\n" },
-    { path: `${hooksDir}/register.ts`, content: register },
-    { path: `${dir}/launch.sh`, content: launch, executable: true },
+    { path: `${hooksDir}/${MOD_ENTRY}`, content: register },
+    { path: at("launch-mods.sh"), content: launch, executable: true },
   ];
 }
 

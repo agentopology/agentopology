@@ -1602,11 +1602,13 @@ hooks {
 \`\`\`
 
 On the claude-code target, Mods are not written to settings.json. The
-scaffold emits a plugin: \`.claude-plugin/plugin.json\`, \`hooks/hooks.json\`
+scaffold emits a plugin in the folder that holds the Mods' modules (the engine
+refuses a module that imports outside its plugin folder; a trailing \`hooks/\`
+is the plugin's own): \`.claude-plugin/plugin.json\`, \`hooks/hooks.json\`
 naming ONE entry module (the engine loads one module per plugin), a generated
-\`hooks/register.ts\` that registers every declared Mod, and a launch script
-that sets \`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1\`, each Mod's flag and
-\`--plugin-dir\`.
+\`hooks/at-register.ts\` that registers every declared Mod, and
+\`launch-mods.sh\`, which sets \`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1\`, each
+Mod's flag and \`--plugin-dir\`.
 
 ## Example
 
