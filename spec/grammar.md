@@ -1117,9 +1117,12 @@ triggers {
 hooks           = 'hooks' '{' hook-decl* '}'
 hook-decl       = 'hook' identifier '{' hook-fields '}'
 hook-fields     = ('on' ':' hook-event | 'matcher' ':' string | 'run' ':' string
-                  | 'type' ':' hook-type | 'timeout' ':' number)*
-hook-event      = <universal-event> | <platform-event>
-hook-type       = 'command' | 'prompt'
+                  | 'type' ':' hook-type | 'flag' ':' env-name | 'timeout' ':' number)*
+hook-event      = <universal-event> | <platform-event> | <engine-event>
+hook-type       = 'command' | 'prompt' | 'mod'
+engine-event    = 'tool.call' | 'prompt.submit' | 'prompt.context' | 'session.start'
+                | 'session.end' | 'model.complete' | 'message.received'
+
 ```
 
 **Universal hook events** -- these are defined by the spec and must be supported by all bindings:
@@ -1170,7 +1173,13 @@ hooks {
 | `matcher` | string | no | -- |
 | `run` | string | yes | -- |
 | `type` | hook-type | no | `command` |
+| `flag` | env-name | no (mod only) | -- |
 | `timeout` | number | no | `600` |
+
+A `type: mod` hook is a TypeScript module loaded inside the engine (Claude
+Code function hooks). Its `on:` is an `engine-event` (V95); a command or
+prompt hook takes a PascalCase event. `flag:` names the env variable that
+switches the Mod on. Fields are one per line (V90).
 
 ---
 

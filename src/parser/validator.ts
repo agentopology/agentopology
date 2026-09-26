@@ -22,6 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
 import type {
+  HookDef,
   TopologyAST,
   NodeDef,
   AgentNode,
@@ -3216,6 +3217,141 @@ function v88CustodyRefsValid(ast: TopologyAST): ValidationResult[] {
  * @param ast - The parsed topology AST.
  * @returns An array of validation results. An empty array means no issues found.
  */
+/**
+ * Engine events a `type: mod` hook may subscribe to (Claude Code function
+ * hooks, early access, CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1).
+ *
+ * PROVEN: a Mod was loaded and fired on these (Claude Code 2.1.283).
+ * SEEN: the name is in the 2.1.283 binary but no Mod has been observed on it,
+ * so V95 accepts it with a warning rather than an error.
+ */
+export const MOD_EVENTS_PROVEN = ["tool.call", "prompt.submit"] as const;
+export const MOD_EVENTS_SEEN = [
+  "prompt.context", "session.start", "session.end", "model.complete", "message.received",
+] as const;
+
+/** Hook types the grammar defines (`spec/grammar.md` §4.16). */
+export const HOOK_TYPES = ["command", "prompt", "mod"] as const;
+
+/** Every hook in the topology — global first, then per-agent — with its owner. */
+function allHooks(ast: TopologyAST): Array<{ hook: HookDef; where: string; agent?: string }> {
+  const out: Array<{ hook: HookDef; where: string; agent?: string }> = ast.hooks.map((hook) => ({ hook, where: hook.name }));
+  for (const n of ast.nodes) {
+    if (n.type !== "agent" || !(n as AgentNode).hooks) continue;
+    for (const hook of (n as AgentNode).hooks!) out.push({ hook, where: `${n.id}.${hook.name}`, agent: n.id });
+  }
+  return out;
+}
+
+/**
+ * V94: a hook's `type` must be one the grammar defines.
+ *
+ * `type: mod` passed silently before the grammar knew it, and the claude-code
+ * binding wrote it into settings.json as a bash command. A misspelt type
+ * (`type: comand`) did the same.
+ */
+function v94HookTypeKnown(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const { hook, where, agent } of allHooks(ast)) {
+    const type = hook.type ?? "command";
+    if (!(HOOK_TYPES as readonly string[]).includes(type)) {
+      results.push({
+        rule: "V94",
+        level: "error",
+        message:
+          `Hook "${where}" has type "${type}" — a hook is one of: ${HOOK_TYPES.join(", ")}. ` +
+          `Use "mod" for a TypeScript module that runs inside the engine.`,
+        node: where,
+      });
+      continue;
+    }
+    if (type === "mod" && agent) {
+      results.push({
+        rule: "V94",
+        level: "error",
+        message: `Hook "${where}" is a mod inside an agent — a Mod runs in the engine for the whole session; declare it in the topology's hooks block.`,
+        node: where,
+      });
+    }
+    if (hook.flag !== undefined && type !== "mod") {
+      results.push({
+        rule: "V94",
+        level: "error",
+        message: `Hook "${where}" sets flag: but is type "${type}" — flag: is the env switch of a type: mod hook.`,
+        node: where,
+      });
+    } else if (hook.flag !== undefined && !/^[A-Z_][A-Z0-9_]*$/.test(hook.flag)) {
+      results.push({
+        rule: "V94",
+        level: "error",
+        message: `Hook "${where}" has flag "${hook.flag}" — a flag is an env variable name (e.g. MY_MOD_ON).`,
+        node: where,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * V95: a hook's `on:` must be an event its type can subscribe to.
+ *
+ * A mod subscribes to a dotted engine event (`tool.call`); a command or prompt
+ * hook to a PascalCase lifecycle event (`PreToolUse`, spec §4.16: "any
+ * identifier in PascalCase"). Mixing them is a hook that never fires. A value
+ * with whitespace is left to V90 (a swallowed field), not reported twice.
+ */
+function v95HookEventKnown(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const proven = MOD_EVENTS_PROVEN as readonly string[];
+  const seen = MOD_EVENTS_SEEN as readonly string[];
+  for (const { hook, where } of allHooks(ast)) {
+    const type = hook.type ?? "command";
+    const on = hook.on.trim();
+    if (/\s/.test(on)) continue; // V90
+    if (!on) {
+      results.push({ rule: "V95", level: "error", message: `Hook "${where}" has no on: — name the event it fires on.`, node: where });
+      continue;
+    }
+    if (type === "mod") {
+      if (!hook.run) {
+        results.push({ rule: "V95", level: "error", message: `Mod "${where}" has no run: — name its module (e.g. run: "hooks/redact.ts").`, node: where });
+      }
+      if (proven.includes(on)) continue;
+      if (seen.includes(on)) {
+        results.push({
+          rule: "V95",
+          level: "warning",
+          message: `Mod "${where}" subscribes to "${on}" — the engine names this event, but no Mod has been observed firing on it. Proven: ${proven.join(", ")}.`,
+          node: where,
+        });
+        continue;
+      }
+      const hint = /^[A-Z]/.test(on)
+        ? ` "${on}" is a command-hook event; a mod subscribes to an engine event.`
+        : "";
+      results.push({
+        rule: "V95",
+        level: "error",
+        message: `Mod "${where}" subscribes to unknown engine event "${on}".${hint} Engine events: ${[...proven, ...seen].join(", ")}.`,
+        node: where,
+      });
+      continue;
+    }
+    if (!/^[A-Z][A-Za-z0-9]*$/.test(on)) {
+      const hint = proven.includes(on) || seen.includes(on)
+        ? ` "${on}" is an engine event — set type: mod to subscribe a module to it.`
+        : "";
+      results.push({
+        rule: "V95",
+        level: "error",
+        message: `Hook "${where}" (type ${type}) fires on "${on}" — a ${type} hook takes a PascalCase event (e.g. PreToolUse, AgentStop).${hint}`,
+        node: where,
+      });
+    }
+  }
+  return results;
+}
+
 export function validate(ast: TopologyAST): ValidationResult[] {
   return [
     ...v1UniqueNames(ast),
@@ -3247,6 +3383,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v91RequiredFieldPlaceholder(ast),
     ...v92EdgeTwoBrackets(ast),
     ...v93EdgeHandoffDeclared(ast),
+    ...v94HookTypeKnown(ast),
+    ...v95HookEventKnown(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

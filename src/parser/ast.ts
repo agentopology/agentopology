@@ -68,8 +68,14 @@ export interface HookDef {
   matcher: string;
   /** Command or script to run when the hook fires. */
   run: string;
-  /** Hook type (e.g. "command", "prompt"). */
+  /**
+   * Hook type: "command" (a shell command), "prompt" (text injected into the
+   * agent's context) or "mod" (a TypeScript module loaded INSIDE the engine,
+   * subscribing to an engine event such as `tool.call`; see V95).
+   */
   type?: string;
+  /** Env switch that turns a `mod` hook on (e.g. "CONGREAT_MOD_REDACT"). */
+  flag?: string;
   /** Timeout in milliseconds. */
   timeout?: number;
   /** Platform-specific extension fields, keyed by binding name. */
