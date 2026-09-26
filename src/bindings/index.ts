@@ -7,6 +7,7 @@
  */
 
 import type { BindingTarget } from "./types.js";
+import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "./claude-code.js";
 import { claudeWorkflowBinding } from "./claude-workflow.js";
 import { codexBinding } from "./codex.js";
@@ -27,14 +28,35 @@ export { openClawBinding } from "./openclaw.js";
 export { kiroBinding } from "./kiro.js";
 export { cursorBinding } from "./cursor.js";
 
+/**
+ * `type: mod` hooks run inside the Claude Code engine; only the claude-code
+ * binding can emit them (as a plugin). Every other target would write them
+ * out as a shell command that runs a .ts file, so they are dropped with a
+ * warning instead.
+ */
+export function withoutMods(binding: BindingTarget): BindingTarget {
+  return {
+    ...binding,
+    scaffold(ast: TopologyAST) {
+      const mods = ast.hooks.filter((h) => h.type === "mod");
+      if (mods.length === 0) return binding.scaffold(ast);
+      console.warn(
+        `[${binding.name}] Mods run inside the Claude Code engine; ${binding.name} cannot host them. ` +
+          `Skipped: ${mods.map((m) => m.name).join(", ")}.`,
+      );
+      return binding.scaffold({ ...ast, hooks: ast.hooks.filter((h) => h.type !== "mod") });
+    },
+  };
+}
+
 /** All available binding targets, keyed by name. */
 export const bindings: Record<string, BindingTarget> = {
   "claude-code": claudeCodeBinding,
-  "claude-workflow": claudeWorkflowBinding,
-  "codex": codexBinding,
-  "gemini-cli": geminiCliBinding,
-  "copilot-cli": copilotCliBinding,
-  "openclaw": openClawBinding,
-  "kiro": kiroBinding,
-  "cursor": cursorBinding,
+  "claude-workflow": withoutMods(claudeWorkflowBinding),
+  "codex": withoutMods(codexBinding),
+  "gemini-cli": withoutMods(geminiCliBinding),
+  "copilot-cli": withoutMods(copilotCliBinding),
+  "openclaw": withoutMods(openClawBinding),
+  "kiro": withoutMods(kiroBinding),
+  "cursor": withoutMods(cursorBinding),
 };

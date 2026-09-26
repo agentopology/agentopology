@@ -3234,11 +3234,11 @@ export const MOD_EVENTS_SEEN = [
 export const HOOK_TYPES = ["command", "prompt", "mod"] as const;
 
 /** Every hook in the topology — global first, then per-agent — with its owner. */
-function allHooks(ast: TopologyAST): Array<{ hook: HookDef; where: string }> {
-  const out = ast.hooks.map((hook) => ({ hook, where: hook.name }));
+function allHooks(ast: TopologyAST): Array<{ hook: HookDef; where: string; agent?: string }> {
+  const out: Array<{ hook: HookDef; where: string; agent?: string }> = ast.hooks.map((hook) => ({ hook, where: hook.name }));
   for (const n of ast.nodes) {
     if (n.type !== "agent" || !(n as AgentNode).hooks) continue;
-    for (const hook of (n as AgentNode).hooks!) out.push({ hook, where: `${n.id}.${hook.name}` });
+    for (const hook of (n as AgentNode).hooks!) out.push({ hook, where: `${n.id}.${hook.name}`, agent: n.id });
   }
   return out;
 }
@@ -3252,7 +3252,7 @@ function allHooks(ast: TopologyAST): Array<{ hook: HookDef; where: string }> {
  */
 function v94HookTypeKnown(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  for (const { hook, where } of allHooks(ast)) {
+  for (const { hook, where, agent } of allHooks(ast)) {
     const type = hook.type ?? "command";
     if (!(HOOK_TYPES as readonly string[]).includes(type)) {
       results.push({
@@ -3264,6 +3264,14 @@ function v94HookTypeKnown(ast: TopologyAST): ValidationResult[] {
         node: where,
       });
       continue;
+    }
+    if (type === "mod" && agent) {
+      results.push({
+        rule: "V94",
+        level: "error",
+        message: `Hook "${where}" is a mod inside an agent — a Mod runs in the engine for the whole session; declare it in the topology's hooks block.`,
+        node: where,
+      });
     }
     if (hook.flag !== undefined && type !== "mod") {
       results.push({
