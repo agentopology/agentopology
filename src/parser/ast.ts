@@ -76,7 +76,7 @@ export interface HookDef {
   type?: string;
   /** Env switch that turns a `mod` hook on (e.g. "CONGREAT_MOD_REDACT"). */
   flag?: string;
-  /** Timeout in milliseconds. */
+  /** Timeout, passed through as written (the Claude Code binding writes it to settings.json, which reads SECONDS). */
   timeout?: number;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
