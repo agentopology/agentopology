@@ -2052,7 +2052,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // Otherwise scope the stub into this topology's skill scripts directory.
     const filePath =
       runPath.startsWith(".") || runPath.startsWith("/")
-        ? runPath
+        ? runPath.replace(/\s.*$/, "")
         : `.claude/skills/${name}/scripts/${runPath.replace(/^.*\//, "").replace(/\s.*$/, "")}`;
 
     files.push({
@@ -2099,17 +2099,38 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
 }
 
 /**
- * Generate hook configuration in .claude/settings.json.
+ * The shell command for a command hook's `run:`.
  *
- * Hooks are grouped by event name as an object:
- *   { "hooks": { "PostToolUse": [ { hooks: [...], matcher? } ], ... } }
+ * A `run:` that starts with "." or "/" names the user's own script. A
+ * project-relative one runs through `$CLAUDE_PROJECT_DIR` (a hook's cwd is the
+ * session's, which moves); an absolute one is kept as written. Either runs by
+ * the interpreter its extension names (`.py` → python3, anything else → bash),
+ * with its arguments kept.
+ *
+ * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
-function generateSettings(ast: TopologyAST): GeneratedFile | null {
-  const settings: Record<string, unknown> = {};
+export function hookCommand(run: string, topologyName: string): string {
+  const [first = "", ...rest] = run.trim().split(/\s+/);
+  if (!first.startsWith(".") && !first.startsWith("/")) {
+    return `bash .claude/skills/${topologyName}/scripts/${first.replace(/^.*\//, "")}`;
+  }
+  const interpreter = first.endsWith(".py") ? "python3" : "bash";
+  const where = first.startsWith("/")
+    ? first
+    : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
+  return [interpreter, where, ...rest].join(" ");
+}
+
+/**
+ * The settings.json `hooks` entries of the topology's own `hooks {}` block
+ * (command hooks only; a Mod is a plugin, see generateModPlugin), grouped by
+ * event. Gate wiring is added by generateSettings, not here: a caller that
+ * wants the reflexes alone (e.g. a drift check against a live settings file)
+ * reads this.
+ */
+export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
   const topologyName = ast.topology.name;
   const isInline = getDelegationMode(ast) === "inline";
-
-  // Hooks section — grouped by event name
   const hooksByEvent: Record<string, unknown[]> = {};
 
   for (const hook of ast.hooks) {
@@ -2133,23 +2154,11 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       hooksByEvent[eventName] = [];
     }
 
-    // Build the script command.
-    // If hook.run starts with '.' or '/' it is already a project-relative or
-    // absolute path — use it verbatim so observability hooks like
-    // ".claude/scripts/log-subagent.sh" land at the correct location.
-    // Otherwise treat it as a bare filename scoped to this topology's skill
-    // scripts directory.
-    const runPath = hook.run;
-    const command =
-      runPath.startsWith(".") || runPath.startsWith("/")
-        ? `bash ${runPath}`
-        : `bash .claude/skills/${topologyName}/scripts/${runPath.replace(/^.*\//, "").replace(/\s.*$/, "")}`;
-
     const hookEntry: Record<string, unknown> = {
       hooks: [
         {
           type: hook.type ?? "command",
-          command,
+          command: hookCommand(hook.run, topologyName),
           ...(hook.timeout ? { timeout: hook.timeout } : {}),
         },
       ],
@@ -2162,6 +2171,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
 
     hooksByEvent[eventName].push(hookEntry);
   }
+  return hooksByEvent;
+}
+
+/**
+ * Generate hook configuration in .claude/settings.json.
+ *
+ * Hooks are grouped by event name as an object:
+ *   { "hooks": { "PostToolUse": [ { hooks: [...], matcher? } ], ... } }
+ */
+function generateSettings(ast: TopologyAST): GeneratedFile | null {
+  const settings: Record<string, unknown> = {};
+  const topologyName = ast.topology.name;
+
+  // Hooks section — grouped by event name
+  const hooksByEvent = settingsHooksOf(ast);
 
   // Per-agent hooks are now rendered in AGENT.md frontmatter (not in settings.json).
   // This is the Claude Code native approach: hooks in the agent file are scoped
