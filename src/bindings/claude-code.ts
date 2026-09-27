@@ -2050,10 +2050,10 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // If the run path starts with '.' or '/' it is already project-relative —
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
-    const filePath =
-      runPath.startsWith(".") || runPath.startsWith("/")
-        ? runPath.replace(/\s.*$/, "")
-        : `.claude/skills/${name}/scripts/${runPath.replace(/^.*\//, "").replace(/\s.*$/, "")}`;
+    const { script } = hookRun(runPath);
+    const filePath = isHookPath(script)
+      ? script
+      : `.claude/skills/${name}/scripts/${script.replace(/^.*\//, "")}`;
 
     files.push({
       path: filePath,
@@ -2098,23 +2098,35 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
+const isHookPath = (w = "") => w.startsWith(".") || w.startsWith("/");
+
+/** A hook's `run:` split: the interpreter it names (if any), its script, its arguments. */
+function hookRun(run: string): { interpreter?: string; script: string; args: string[] } {
+  const words = run.trim().split(/\s+/);
+  const named = words.length > 1 && !/\.(py|sh|ts|mjs|js)$/.test(words[0]) && isHookPath(words[1]);
+  const [script = "", ...args] = named ? words.slice(1) : words;
+  return { ...(named ? { interpreter: words[0] } : {}), script, args };
+}
+
 /**
  * The shell command for a command hook's `run:`.
  *
- * A `run:` that starts with "." or "/" names the user's own script. A
- * project-relative one runs through `$CLAUDE_PROJECT_DIR` (a hook's cwd is the
- * session's, which moves); an absolute one is kept as written. Either runs by
- * the interpreter its extension names (`.py` → python3, anything else → bash),
- * with its arguments kept.
+ * A `run:` whose script (its first word, or its second when the first names
+ * the interpreter, e.g. `/opt/homebrew/bin/python3 ./x/y.py`) starts with "."
+ * or "/" names the user's own script. A project-relative one runs through
+ * `$CLAUDE_PROJECT_DIR` (a hook's cwd is the session's, which moves); an
+ * absolute one is kept as written. It runs by the interpreter the `run:`
+ * names, else the one its extension names (`.py` → python3, anything else →
+ * bash), with its arguments kept.
  *
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
 export function hookCommand(run: string, topologyName: string): string {
-  const [first = "", ...rest] = run.trim().split(/\s+/);
-  if (!first.startsWith(".") && !first.startsWith("/")) {
+  const { interpreter: named, script: first, args: rest } = hookRun(run);
+  if (!isHookPath(first)) {
     return `bash .claude/skills/${topologyName}/scripts/${first.replace(/^.*\//, "")}`;
   }
-  const interpreter = first.endsWith(".py") ? "python3" : "bash";
+  const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
   const where = first.startsWith("/")
     ? first
     : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;

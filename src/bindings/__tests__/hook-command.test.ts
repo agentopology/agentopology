@@ -23,6 +23,13 @@ describe("hookCommand", () => {
     expect(hookCommand("./scripts/x.sh", "t")).toBe('bash "$CLAUDE_PROJECT_DIR/scripts/x.sh"');
   });
 
+  it("runs by the interpreter the run: names, kept as written", () => {
+    expect(hookCommand("/opt/homebrew/bin/python3 ./harness-plugin/hooks/router.py --pane", "t")).toBe(
+      '/opt/homebrew/bin/python3 "$CLAUDE_PROJECT_DIR/harness-plugin/hooks/router.py" --pane',
+    );
+    expect(hookCommand("sh .claude/x.sh", "t")).toBe('sh "$CLAUDE_PROJECT_DIR/.claude/x.sh"');
+  });
+
   it("keeps an absolute path as written", () => {
     expect(hookCommand("/opt/x/y.py -q", "t")).toBe("python3 /opt/x/y.py -q");
   });
@@ -59,7 +66,7 @@ describe("settingsHooksOf", () => {
       "    }",
       "    hook stop {",
       "      on: Stop",
-      '      run: ".claude/hooks/end_check.py"',
+      '      run: "/opt/homebrew/bin/python3 .claude/hooks/end_check.py"',
       "      type: command",
       "    }",
       "    hook redact {",
@@ -81,7 +88,7 @@ describe("settingsHooksOf", () => {
           hooks: [{ type: "command", command: 'python3 "$CLAUDE_PROJECT_DIR/harness-plugin/hooks/router.py" --pane', timeout: 3 }],
         },
       ],
-      Stop: [{ hooks: [{ type: "command", command: 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/end_check.py"' }] }],
+      Stop: [{ hooks: [{ type: "command", command: '/opt/homebrew/bin/python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/end_check.py"' }] }],
     });
   });
 
@@ -89,5 +96,7 @@ describe("settingsHooksOf", () => {
     const paths = bindings["claude-code"].scaffold(ast).map((f) => f.path);
     expect(paths).toContain("./harness-plugin/hooks/router.py");
     expect(paths.some((p) => p.includes("--pane"))).toBe(false);
+    expect(paths).toContain(".claude/hooks/end_check.py");
+    expect(paths.some((p) => p.includes("homebrew")), "never a stub at the interpreter").toBe(false);
   });
 });
