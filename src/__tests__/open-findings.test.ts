@@ -18,7 +18,6 @@ describe("open findings (spec/testing.md)", () => {
   it.todo("[N16] Model ids are not checked per target");
   it.todo("[N18] No reference checks for `skills:`, `mcp-servers:`, skill `agent:`");
   it.todo("[C1] `scaffold --dry-run` says settings.json and .mcp.json would be \"config merged\" but does not show the diff (content session, 2026-10-29)");
-  it.todo("[C2] Scaffold adds `.claude/CLAUDE.md`, which competes with a project's root CLAUDE.md (content session, 2026-10-29)");
   it.todo("[N21] A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes");
   it.todo("[B5] An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide");
   it.todo("[F1] Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell");

@@ -62,7 +62,7 @@ describe("claude-code binding — HYBRID awareness (matchmat-ship)", () => {
 
   // (d) CLAUDE.md carries the hybrid run-order block referencing the workflow.js.
   it("emits a Hybrid run order block in CLAUDE.md referencing the workflow.js", () => {
-    const ctx = files.find((f) => f.path === ".claude/CLAUDE.md");
+    const ctx = files.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path));
     expect(ctx).toBeDefined();
     expect(ctx!.content).toContain("## Hybrid run order");
     expect(ctx!.content).toContain("matchmat-ship.workflow.js");
@@ -126,7 +126,7 @@ describe("claude-code binding — non-hybrid topologies are unaffected", () => {
   });
 
   it("emits no Hybrid run order block", () => {
-    const ctx = plainFiles.find((f) => f.path === ".claude/CLAUDE.md");
+    const ctx = plainFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path));
     if (ctx) expect(ctx.content).not.toContain("## Hybrid run order");
   });
 
@@ -149,13 +149,13 @@ describe("claude-code + claude-workflow — the two bindings AGREE on the seam",
   it("both reference the same workflow.js filename", () => {
     const wf = wfFiles.find((f) => f.path.endsWith(".workflow.js"))!;
     expect(wf.path).toBe("matchmat-ship.workflow.js");
-    const ctx = hostFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
+    const ctx = hostFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
     expect(ctx.content).toContain("matchmat-ship.workflow.js");
   });
 
   it("both reference the same Blackboard workspace root and SEAM doc", () => {
     const seam = wfFiles.find((f) => f.path.endsWith("-SEAM.md"))!;
-    const ctx = hostFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
+    const ctx = hostFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
     // workspace root
     expect(seam.content).toContain("`workspace/`");
     expect(ctx.content).toContain("`workspace/`");
@@ -166,7 +166,7 @@ describe("claude-code + claude-workflow — the two bindings AGREE on the seam",
 
   it("both use the same 'Host launches ... LIVE' run-order phrasing", () => {
     const seam = wfFiles.find((f) => f.path.endsWith("-SEAM.md"))!;
-    const ctx = hostFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
+    const ctx = hostFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
     expect(seam.content).toContain("Host launches");
     expect(ctx.content).toContain("Host launches");
     expect(seam.content).toContain("observe those writes LIVE");

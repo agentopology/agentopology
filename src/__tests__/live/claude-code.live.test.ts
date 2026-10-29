@@ -199,3 +199,19 @@ describe.skipIf(!LIVE)("[L4] Claude Code enforces a gate and an approval step be
     }
   }, 200_000);
 });
+
+describe.skipIf(!LIVE)("[L5] Claude Code loads the topology context from .claude/rules", () => {
+  it("compile.at: a line in .claude/rules/compile.md reaches the session", () => {
+    const project = fs.mkdtempSync(join(os.tmpdir(), "at-live-rules-"));
+    try {
+      execFileSync(process.execPath, [CLI, "scaffold", resolve(here, "../e2e/fixtures/compile.at"), "--target", "claude-code", "--output", project], {
+        stdio: "ignore",
+      });
+      fs.appendFileSync(join(project, ".claude/rules/compile.md"), "\nThe project codeword is TEAPOT-7731.\n");
+      const run = runClaude(project, "Without using any tools: what is the project codeword? Reply with just the codeword, or NONE.");
+      expect(run.result.result ?? JSON.stringify(run.events)).toContain("TEAPOT-7731");
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  }, 200_000);
+});

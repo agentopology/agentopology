@@ -241,8 +241,8 @@ describe("claude-code binding", () => {
     expect(mcp.mcpServers.filesystem).toBeDefined();
   });
 
-  it("produces a context file (.claude/CLAUDE.md, never root CLAUDE.md)", () => {
-    const contextFile = files.find((f) => f.path === ".claude/CLAUDE.md");
+  it("produces a context file (.claude/rules/<topology>.md, never a CLAUDE.md)", () => {
+    const contextFile = files.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path));
     expect(contextFile).toBeDefined();
     // Must never generate root-level CLAUDE.md
     const rootClaudeMd = files.find((f) => f.path === "CLAUDE.md");
@@ -904,7 +904,7 @@ topology debate-test : [fan-out, debate, pipeline] {
     });
 
     it("artifacts documented in CLAUDE.md", () => {
-      const ctx = exoticFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
+      const ctx = exoticFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
       expect(ctx.content).toContain("transcript");
     });
 

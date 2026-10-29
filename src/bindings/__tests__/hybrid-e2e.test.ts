@@ -65,7 +65,7 @@ describe("hybrid e2e: matchmat-ship.at → claude-code + claude-workflow", () =>
     expect(wfPaths).toContain(seamDoc);
     expect(wfPaths).toContain(seamFiles.lossyDoc(name));
     // host references the same workflow filename + seam doc in its CLAUDE.md
-    const claudeMd = hostFiles.find((f) => f.path === ".claude/CLAUDE.md")!.content;
+    const claudeMd = hostFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!.content;
     expect(claudeMd).toContain(wfFile);
     expect(claudeMd).toContain(seamDoc);
   });

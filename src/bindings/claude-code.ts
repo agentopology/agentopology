@@ -2908,7 +2908,11 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
  * destroy their content.
  */
 function generateContextFile(ast: TopologyAST): GeneratedFile {
-  const DEFAULT_PATH = ".claude/CLAUDE.md";
+  // A rules file, one per topology: Claude Code loads .claude/rules/*.md like
+  // CLAUDE.md, so the context still reaches every session, but it never
+  // competes with the project's own CLAUDE.md or .claude/CLAUDE.md (it used to
+  // be written to .claude/CLAUDE.md, a conflict in any project that had one).
+  const DEFAULT_PATH = `.claude/rules/${ast.topology.name}.md`;
   let fileName = ast.context.file ?? DEFAULT_PATH;
 
   // Safety: never overwrite the user's root-level CLAUDE.md
@@ -3100,7 +3104,7 @@ function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
 
 /**
  * HYBRID: build the "Hybrid run order" markdown block appended to the generated
- * context file (.claude/CLAUDE.md) and the topology SKILL.md. It states the
+ * context file (.claude/rules/<topology>.md) and the topology SKILL.md. It states the
  * host's interleaving with the embedded workflow rung, in the SAME run-order
  * vocabulary the claude-workflow binding's SEAM.md uses, so the two bindings
  * stay in sync. Returns null when the topology is not a hybrid.

@@ -140,3 +140,10 @@ describe("gates and human steps are enforced before the agent they guard", () =>
     expect(read(".claude/skills/compile/SKILL.md")).toMatch(/## Approval steps[\s\S]*### Approve\nThe editor approves/);
   });
 });
+
+describe("the topology's context does not compete with the project's own", () => {
+  it("[C2] context goes to .claude/rules/<topology>.md, never a CLAUDE.md", () => {
+    expect([...files.keys()].filter((p) => /(^|\/)CLAUDE\.md$/.test(p))).toEqual([]);
+    expect(read(".claude/rules/compile.md")).toMatch(/^# Compile\n/);
+  });
+});

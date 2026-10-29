@@ -57,6 +57,8 @@ Run the live suite before every release, and after any change to a binding.
 | C4 | A gate after an action or a human runs before its next agent launches (PreToolUse on the Agent tool; exit 2 blocks) | e2e/compile.test.ts |
 | H1 | A human node compiles to an approval step: Claude Code asks before launching the next agent, and the playbook says to ask; no ignored AGENT.md | e2e/compile.test.ts |
 | L4 | Real Claude Code blocks launching an agent when its gate fails, and stops at its approval step when the gate passes | live/claude-code.live.test.ts |
+| C2 | The topology context is written to `.claude/rules/<topology>.md`, never a CLAUDE.md, so it never competes with the project's own | e2e/compile.test.ts |
+| L5 | Real Claude Code loads the topology context from `.claude/rules/<topology>.md` | live/claude-code.live.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
@@ -77,7 +79,6 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | N16 | Model ids are not checked per target | 3 |
 | N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
 | C1 | `scaffold --dry-run` says settings.json and .mcp.json would be "config merged" but does not show the diff (content session, 2026-10-29) | 3 |
-| C2 | Scaffold adds `.claude/CLAUDE.md`, which competes with a project's root CLAUDE.md (content session, 2026-10-29) | 3 |
 | N21 | A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes | 3 |
 | B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
 | F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
