@@ -186,3 +186,25 @@ describe("actions, tools and schedules run what they declare", () => {
     expect(cron).toContain("# every: 7m bash scripts/schedule-odd.sh");
   });
 });
+
+describe("nothing written in the .at is dropped without a message", () => {
+  it("[N21] a gate (or hook, tool, job) outside its container block is a V98 error, not silently ignored", () => {
+    const src = fs.readFileSync(resolve(here, "fixtures/compile.at"), "utf-8").replace(
+      "  flow {",
+      '  gate stray {\n    after: drafter\n    run: "scripts/stray.sh"\n  }\n\n  job lost {\n    cron: "0 * * * *"\n    agent: drafter\n  }\n\n  flow {',
+    );
+    const v98 = validate(parse(src)).filter((r) => r.rule === "V98");
+    expect(v98.map((r) => r.message)).toEqual([
+      '"gate stray" is outside a "gates { }" block, so it is ignored — move it inside "gates { ... }"',
+      '"job lost" is outside a "schedule { }" block, so it is ignored — move it inside "schedule { ... }"',
+    ]);
+    expect(v98.every((r) => r.level === "error")).toBe(true);
+  });
+
+  it("[N21] no shipped example trips V98", () => {
+    const dir = resolve(here, "../../../examples");
+    const hits = fs.readdirSync(dir).filter((f) => f.endsWith(".at"))
+      .filter((f) => validate(parse(fs.readFileSync(resolve(dir, f), "utf-8"))).some((r) => r.rule === "V98"));
+    expect(hits).toEqual([]);
+  });
+});

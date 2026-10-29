@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 97 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 98 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -771,6 +771,7 @@ through the validator like any other rule.
 | V95 | error | A hook's `on:` must fit its type — a mod takes a known engine event (`tool.call`, `prompt.submit`; five more seen in the engine warn as unproven), a command/prompt hook a PascalCase event |
 | V96 | error | A gate or hook `run` must be a command, not prose — a sentence there compiled to junk script files (`E;`, `fail:`) and crashed scaffold with EISDIR; the explanation belongs in `description` |
 | V97 | error | A node, skill or command `file:` must be a project-relative path (no `..`, not absolute, safe names) — it marks hand-written internals scaffold never writes, so it must be a path scaffold can honour |
+| V98 | error | A `gate`, `hook`, `tool`, `job`, `command` or `level` block must sit inside its container (`gates`, `hooks`, `tools`, `schedule`, `triggers`, `depth`) — written beside it, it was dropped with no message and validate passed |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

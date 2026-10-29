@@ -674,6 +674,7 @@ function v12EdgeAttributeOrder(ast: TopologyAST): ValidationResult[] {
 interface TopologyASTWithParseErrors extends TopologyAST {
   _edgeAttributeErrors?: ValidationResult[];
   _duplicateSectionWarnings?: ValidationResult[];
+  _misplacedBlockErrors?: ValidationResult[];
   _unknownMemorySubBlockWarnings?: ValidationResult[];
   _blockFieldMisuseWarnings?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
@@ -1163,6 +1164,16 @@ function v97FileIsProjectPath(ast: TopologyAST): ValidationResult[] {
   for (const skill of ast.skills ?? []) check(`Skill "${skill.id}"`, skill.file);
   for (const trigger of ast.triggers ?? []) check(`Command "${trigger.name}"`, trigger.file);
   return results;
+}
+
+/**
+ * V98: a block that belongs inside a container is not written beside it.
+ *
+ * `gate x { }` outside `gates { }` (likewise hook, tool, job, command, level)
+ * was dropped by the parser with no message. Collected at parse time.
+ */
+function v98BlockInsideItsContainer(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._misplacedBlockErrors ?? [];
 }
 
 function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
@@ -3463,6 +3474,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v95HookEventKnown(ast),
     ...v96RunIsCommand(ast),
     ...v97FileIsProjectPath(ast),
+    ...v98BlockInsideItsContainer(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

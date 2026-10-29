@@ -2565,10 +2565,28 @@ export function parse(source: string): TopologyAST {
     }
   }
 
+  // --- Blocks outside their container ---
+  // `gate x { }` written beside `gates { }` instead of inside it was dropped
+  // with no message, and validate passed (N21). Only keywords that never stand
+  // at the top level are checked, so no valid section can be flagged.
+  const CONTAINER_OF: Record<string, string> = {
+    gate: "gates", hook: "hooks", tool: "tools", job: "schedule", command: "triggers", level: "depth",
+  };
+  const misplacedBlockErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  for (const m of depthZeroText(topBody).matchAll(/^[ \t]*(gate|hook|tool|job|command|level)\s+([\w-]+)[^\n{]*\{/gm)) {
+    const container = CONTAINER_OF[m[1]];
+    misplacedBlockErrors.push({
+      rule: "V98",
+      level: "error",
+      message: `"${m[1]} ${m[2]}" is outside a "${container} { }" block, so it is ignored — move it inside "${container} { ... }"`,
+    });
+  }
+
   // --- Assemble AST ---
   const ast: TopologyAST & {
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
+    _misplacedBlockErrors?: typeof misplacedBlockErrors;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
     _blockFieldMisuseWarnings?: typeof blockFieldMisuseWarnings;
     _sourceMap?: Record<string, number>;
@@ -2624,6 +2642,9 @@ export function parse(source: string): TopologyAST {
   }
 
   // Attach V89 block-vs-KV field misuse errors for the validator to consume.
+  if (misplacedBlockErrors.length > 0) {
+    ast._misplacedBlockErrors = misplacedBlockErrors;
+  }
   if (blockFieldMisuseWarnings.length > 0) {
     ast._blockFieldMisuseWarnings = blockFieldMisuseWarnings;
   }
