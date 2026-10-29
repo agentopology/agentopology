@@ -208,3 +208,20 @@ describe("nothing written in the .at is dropped without a message", () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe("references resolve", () => {
+  it("[N18] an undeclared skill, MCP server or skill agent is a V99 warning", () => {
+    const src = fs.readFileSync(resolve(here, "fixtures/compile.at"), "utf-8")
+      .replace('    permissions: bypass\n', '    permissions: bypass\n    skills: [tone, toen]\n    mcp-servers: [search, serch]\n')
+      .replace('    description: "Write a brief"\n', '    description: "Write a brief"\n    agent: draftr\n');
+    const v99 = validate(parse(src)).filter((r) => r.rule === "V99");
+    expect(v99.map((r) => r.message.split(",")[0])).toEqual([
+      'Agent "auditor" uses skill "toen"',
+      'Agent "auditor" uses MCP server "serch"',
+      'Skill "brief" runs in agent "draftr"',
+    ]);
+    expect(v99.every((r) => r.level === "warning")).toBe(true);
+    // declared names and built-in agents pass
+    expect(validate(ast).filter((r) => r.rule === "V99")).toEqual([]);
+  });
+});

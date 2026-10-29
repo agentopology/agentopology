@@ -1176,6 +1176,46 @@ function v98BlockInsideItsContainer(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._misplacedBlockErrors ?? [];
 }
 
+/**
+ * V99: an agent's `skills:` and `mcp-servers:`, and a skill's `agent:`, name
+ * something this topology declares.
+ *
+ * A misspelled name compiled to a reference Claude Code could not resolve,
+ * with no message. A warning, not an error: the name may be real outside the
+ * topology (a skill on disk, a user-level MCP server, a built-in agent).
+ */
+const BUILT_IN_AGENTS = new Set(["general-purpose", "Explore", "Plan"]);
+
+function v99ReferencesDeclared(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const skills = new Set([ast.topology.name, ...(ast.skills ?? []).map((s) => s.id)]);
+  const servers = new Set([...Object.keys(ast.mcpServers ?? {}), ...(ast.stores ?? []).map((s) => s.id)]);
+  const agents = new Set(ast.nodes.filter((n) => n.type === "agent" || n.type === "group").map((n) => n.id));
+  const warn = (message: string, nodeId?: string) =>
+    results.push({ rule: "V99", level: "warning", message, ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}) });
+
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    for (const skill of agent.skills ?? []) {
+      if (!skills.has(skill)) {
+        warn(`Agent "${agent.id}" uses skill "${skill}", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill ${skill} { file: ".claude/skills/${skill}/SKILL.md" }; otherwise check the name`, agent.id);
+      }
+    }
+    for (const server of agent.mcpServers ?? []) {
+      if (!servers.has(server)) {
+        warn(`Agent "${agent.id}" uses MCP server "${server}", which mcp-servers { } does not declare — it resolves only if configured outside this project`, agent.id);
+      }
+    }
+  }
+  for (const skill of ast.skills ?? []) {
+    if (skill.agent && !agents.has(skill.agent) && !BUILT_IN_AGENTS.has(skill.agent)) {
+      warn(`Skill "${skill.id}" runs in agent "${skill.agent}", which is not an agent in this topology or a built-in one (${[...BUILT_IN_AGENTS].join(", ")})`);
+    }
+  }
+  return results;
+}
+
 function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const byId = new Map(ast.nodes.map((n) => [n.id, n]));
@@ -3475,6 +3515,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v96RunIsCommand(ast),
     ...v97FileIsProjectPath(ast),
     ...v98BlockInsideItsContainer(ast),
+    ...v99ReferencesDeclared(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

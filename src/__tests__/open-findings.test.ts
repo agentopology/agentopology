@@ -12,7 +12,6 @@ import { describe, it } from "vitest";
 describe("open findings (spec/testing.md)", () => {
   it.todo("[N11] sync pulls generated prose back into the .at, so the prompt grows each cycle");
   it.todo("[N16] Model ids are not checked per target");
-  it.todo("[N18] No reference checks for `skills:`, `mcp-servers:`, skill `agent:`");
   it.todo("[B5] An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide");
   it.todo("[F1] Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell");
   it.todo("[F2] Hooks as a typed union (http, mcp_tool, agent; once, async, if)");
