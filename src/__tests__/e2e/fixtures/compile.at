@@ -1,0 +1,145 @@
+# compile.at: regression fixture for "what scaffold writes, Claude Code reads
+# as meant" (phase 3). Each construct here once compiled to config Claude Code
+# skipped, misread or never fired. Used by src/__tests__/e2e/compile.test.ts.
+
+topology compile : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "Constructs that once compiled wrong"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [intake, fetch, digest]
+  }
+
+  action intake {
+    kind: inline
+    description: "Take the request"
+  }
+
+  action fetch {
+    kind: external
+    source: "https://feeds.example.com/brief"
+    commands: ["curl -fsS https://feeds.example.com/brief -o brief.json"]
+  }
+
+  action digest {
+    kind: report
+    description: "Summarise the week"
+  }
+
+  human approve {
+    description: "The editor approves the brief before drafting"
+  }
+
+  agent drafter {
+    model: sonnet
+    description: "yes"
+    permissions: confirm
+    tools: [Read, mcp.notes, mcp.search.*, mcp.search.find.all]
+    hooks {
+      hook lint {
+        on: PostToolUse
+        matcher: "Edit|Write\.md$"
+        run: "scripts/lint.sh"
+      }
+      hook judge {
+        on: AgentStop
+        type: prompt
+        run: "Did the draft cite a source? Answer ok: false if not."
+      }
+    }
+  }
+
+  agent auditor {
+    model: sonnet
+    description: "Audits a draft on request"
+    invocation: manual
+    permissions: bypass
+  }
+
+  tools {
+    tool render {
+      script: "tools/render.py"
+      lang: python
+      description: "Render a draft"
+    }
+    tool count {
+      script: "scripts/count.sh"
+      description: "Count words"
+    }
+  }
+
+  schedule {
+    job nightly {
+      every: 15m
+      agent: drafter
+    }
+    job weekly-digest {
+      every: 1w
+      action: digest
+    }
+    job odd {
+      every: 7m
+      action: fetch
+    }
+  }
+
+  skill brief {
+    description: "Write a brief"
+    prompt: "prompts/brief.md"
+  }
+
+  skill tone {
+    description: "Keep the house tone"
+    prompt {
+      ## Tone
+      Short sentences. No jargon.
+    }
+  }
+
+  gates {
+    gate brief-check {
+      after: intake
+      before: drafter
+      run: "scripts/brief-check.sh"
+      on-fail: halt
+    }
+    gate copy-check {
+      after: drafter
+      run: "python3 docs/tools/check.py check-dir docs/show/SLUG --out OUT/frames-critic.json"
+      on-fail: halt
+    }
+  }
+
+  flow {
+    intake -> approve -> drafter
+  }
+
+  hooks {
+    hook finished {
+      on: AgentStop
+      matcher: "drafter"
+      run: "scripts/finished.sh"
+    }
+    hook review {
+      on: Stop
+      type: prompt
+      run: "Check the session ended with a summary: reply ok true or false."
+    }
+  }
+
+  mcp-servers {
+    search {
+      url: "https://search.example.com/mcp"
+    }
+  }
+
+  settings {
+    allow: ["Read", "mcp.search"]
+    ask: ["Bash(git push:*)"]
+    deny: ["mcp.notes.delete"]
+  }
+}

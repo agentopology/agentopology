@@ -16,14 +16,52 @@ const EXECUTABLE = /^(?:\.{1,2}\/|~\/|\/)?[A-Za-z0-9_.][A-Za-z0-9_.\/@+-]*$/;
 /** A file name a binding may write under its scripts/ directory. */
 const SCRIPT_FILE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 
+/** Words that run the script named after them. */
+const INTERPRETER = /^(?:python[0-9.]*|bash|sh|zsh|node|bun|deno|ruby|perl|tsx)$/;
+const SCRIPT_EXT = /\.(?:py|sh|ts|mjs|js)$/;
+
+/**
+ * A `run:` split into the interpreter it names (if any), its script, and the
+ * script's arguments. The script is the first word, or the second when the
+ * first is an interpreter (`python3 x.py`, `/opt/homebrew/bin/python3 ./y.py`).
+ *
+ * The script name used to be the text after the LAST slash of the whole line,
+ * so an argument became the script: `python3 tool.py check show/SLUG` planned
+ * a stub named `SLUG`, and `pxframes.py gate OUT/frames-critic.json` one named
+ * `frames-critic.json`.
+ */
+export function runParts(run: string): { interpreter?: string; script: string; args: string[] } {
+  const words = run.trim().split(/\s+/);
+  const first = words[0] ?? "";
+  const named =
+    words.length > 1 &&
+    !words[1].startsWith("-") && // `bash -c '...'` runs no script file
+    !SCRIPT_EXT.test(first) &&
+    (INTERPRETER.test(first.replace(/^.*\//, "")) || isProjectPath(words[1]));
+  const [script = "", ...args] = named ? words.slice(1) : words;
+  return { ...(named ? { interpreter: first } : {}), script, args };
+}
+
+/**
+ * Whether a script word names a file in the project (run where it is) rather
+ * than one in the topology skill's scripts/ folder (scaffolded by basename).
+ * `./x`, `/x` and any path with a folder count, except the historical
+ * `scripts/x.sh`, which has always meant the skill's own scripts folder.
+ */
+export function isProjectPath(script = ""): boolean {
+  if (script.startsWith(".") || script.startsWith("/")) return true;
+  return script.includes("/") && !script.startsWith("scripts/");
+}
+
 /**
  * The script file name a binding writes for `run`, or null when `run` does not
- * name one. Keeps the historical derivation (basename of the last path, first
- * word) so every valid topology compiles exactly as before.
+ * name one: the basename of the script word (see runParts).
  */
 export function scriptNameFromRun(run: string | undefined): string | null {
   if (!run) return null;
-  const name = run.trim().replace(/^.*\//, "").replace(/\s.*$/, "");
+  // A slash standing alone is prose ("0.0 / 0.5 / 3.0 s"), never a path.
+  if (/\s\/\s/.test(run)) return null;
+  const name = runParts(run).script.replace(/^.*\//, "");
   return SCRIPT_FILE.test(name) ? name : null;
 }
 

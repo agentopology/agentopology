@@ -794,8 +794,8 @@ export function parseHuman(
 
   if (fields.file) node.file = unquote(fields.file);
   if (fields.description) node.description = unquote(fields.description);
-  if (fields.timeout) node.timeout = fields.timeout;
-  if (fields["on-timeout"]) node.onTimeout = fields["on-timeout"];
+  if (fields.timeout) node.timeout = unquote(fields.timeout);
+  if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
 
   return node;
 }
@@ -1611,7 +1611,10 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
     if (scripts.length) sd.scripts = scripts;
     if (domains.length) sd.domains = domains;
     if (references.length) sd.references = references;
-    if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
+    // `prompt { ... }` holds the skill's instructions; `prompt: "path"` names a file holding them.
+    const sPromptBlock = extractBlock(block.body, "prompt");
+    if (sPromptBlock) sd.prompt = dedentBlock(sPromptBlock.body);
+    else if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
     if (sFields.file) sd.file = unquote(sFields.file);
 
     // New skill fields
@@ -2562,10 +2565,28 @@ export function parse(source: string): TopologyAST {
     }
   }
 
+  // --- Blocks outside their container ---
+  // `gate x { }` written beside `gates { }` instead of inside it was dropped
+  // with no message, and validate passed (N21). Only keywords that never stand
+  // at the top level are checked, so no valid section can be flagged.
+  const CONTAINER_OF: Record<string, string> = {
+    gate: "gates", hook: "hooks", tool: "tools", job: "schedule", command: "triggers", level: "depth",
+  };
+  const misplacedBlockErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  for (const m of depthZeroText(topBody).matchAll(/^[ \t]*(gate|hook|tool|job|command|level)\s+([\w-]+)[^\n{]*\{/gm)) {
+    const container = CONTAINER_OF[m[1]];
+    misplacedBlockErrors.push({
+      rule: "V98",
+      level: "error",
+      message: `"${m[1]} ${m[2]}" is outside a "${container} { }" block, so it is ignored — move it inside "${container} { ... }"`,
+    });
+  }
+
   // --- Assemble AST ---
   const ast: TopologyAST & {
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
+    _misplacedBlockErrors?: typeof misplacedBlockErrors;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
     _blockFieldMisuseWarnings?: typeof blockFieldMisuseWarnings;
     _sourceMap?: Record<string, number>;
@@ -2621,6 +2642,9 @@ export function parse(source: string): TopologyAST {
   }
 
   // Attach V89 block-vs-KV field misuse errors for the validator to consume.
+  if (misplacedBlockErrors.length > 0) {
+    ast._misplacedBlockErrors = misplacedBlockErrors;
+  }
   if (blockFieldMisuseWarnings.length > 0) {
     ast._blockFieldMisuseWarnings = blockFieldMisuseWarnings;
   }

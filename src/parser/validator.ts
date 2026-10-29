@@ -674,6 +674,7 @@ function v12EdgeAttributeOrder(ast: TopologyAST): ValidationResult[] {
 interface TopologyASTWithParseErrors extends TopologyAST {
   _edgeAttributeErrors?: ValidationResult[];
   _duplicateSectionWarnings?: ValidationResult[];
+  _misplacedBlockErrors?: ValidationResult[];
   _unknownMemorySubBlockWarnings?: ValidationResult[];
   _blockFieldMisuseWarnings?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
@@ -1124,15 +1125,17 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
     });
   };
 
+  // A prompt hook's run: is the prompt itself, so prose is what it should be.
+  const isCommand = (hook: HookDef) => hook.type !== "prompt";
   for (const node of ast.nodes) {
     if (isGate(node)) check(`Gate "${node.id}"`, node.run, node.id);
     if (node.type === "agent") {
-      for (const hook of (node as AgentNode).hooks ?? []) {
+      for (const hook of ((node as AgentNode).hooks ?? []).filter(isCommand)) {
         check(`Hook "${hook.name}" on agent "${node.id}"`, hook.run, node.id);
       }
     }
   }
-  for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, hook.run);
+  for (const hook of (ast.hooks ?? []).filter(isCommand)) check(`Hook "${hook.name}"`, hook.run);
 
   return results;
 }
@@ -1160,6 +1163,56 @@ function v97FileIsProjectPath(ast: TopologyAST): ValidationResult[] {
   for (const node of ast.nodes) check(`Node "${node.id}"`, node.file, node.id);
   for (const skill of ast.skills ?? []) check(`Skill "${skill.id}"`, skill.file);
   for (const trigger of ast.triggers ?? []) check(`Command "${trigger.name}"`, trigger.file);
+  return results;
+}
+
+/**
+ * V98: a block that belongs inside a container is not written beside it.
+ *
+ * `gate x { }` outside `gates { }` (likewise hook, tool, job, command, level)
+ * was dropped by the parser with no message. Collected at parse time.
+ */
+function v98BlockInsideItsContainer(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._misplacedBlockErrors ?? [];
+}
+
+/**
+ * V99: an agent's `skills:` and `mcp-servers:`, and a skill's `agent:`, name
+ * something this topology declares.
+ *
+ * A misspelled name compiled to a reference Claude Code could not resolve,
+ * with no message. A warning, not an error: the name may be real outside the
+ * topology (a skill on disk, a user-level MCP server, a built-in agent).
+ */
+const BUILT_IN_AGENTS = new Set(["general-purpose", "Explore", "Plan"]);
+
+function v99ReferencesDeclared(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const skills = new Set([ast.topology.name, ...(ast.skills ?? []).map((s) => s.id)]);
+  const servers = new Set([...Object.keys(ast.mcpServers ?? {}), ...(ast.stores ?? []).map((s) => s.id)]);
+  const agents = new Set(ast.nodes.filter((n) => n.type === "agent" || n.type === "group").map((n) => n.id));
+  const warn = (message: string, nodeId?: string) =>
+    results.push({ rule: "V99", level: "warning", message, ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}) });
+
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    for (const skill of agent.skills ?? []) {
+      if (!skills.has(skill)) {
+        warn(`Agent "${agent.id}" uses skill "${skill}", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill ${skill} { file: ".claude/skills/${skill}/SKILL.md" }; otherwise check the name`, agent.id);
+      }
+    }
+    for (const server of agent.mcpServers ?? []) {
+      if (!servers.has(server)) {
+        warn(`Agent "${agent.id}" uses MCP server "${server}", which mcp-servers { } does not declare — it resolves only if configured outside this project`, agent.id);
+      }
+    }
+  }
+  for (const skill of ast.skills ?? []) {
+    if (skill.agent && !agents.has(skill.agent) && !BUILT_IN_AGENTS.has(skill.agent)) {
+      warn(`Skill "${skill.id}" runs in agent "${skill.agent}", which is not an agent in this topology or a built-in one (${[...BUILT_IN_AGENTS].join(", ")})`);
+    }
+  }
   return results;
 }
 
@@ -3461,6 +3514,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v95HookEventKnown(ast),
     ...v96RunIsCommand(ast),
     ...v97FileIsProjectPath(ast),
+    ...v98BlockInsideItsContainer(ast),
+    ...v99ReferencesDeclared(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

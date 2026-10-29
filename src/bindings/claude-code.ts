@@ -30,10 +30,11 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub, STUB_MARKER } from "./lib/stub.js";
+import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
-import { proseInRun, scriptNameFromRun } from "../parser/run.js";
+import { isProjectPath, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,13 +46,46 @@ import { proseInRun, scriptNameFromRun } from "../parser/run.js";
  */
 function convertMcpToolName(tool: string): string {
   if (!tool.startsWith("mcp.")) return tool;
-  // mcp.server-name.method_name → mcp__server-name__method_name
-  // Only replace the first two dots (mcp + server separator)
-  const parts = tool.split(".");
-  if (parts.length >= 3) {
-    return `mcp__${parts[1]}__${parts.slice(2).join(".")}`;
+  // mcp.server → mcp__server (every tool on it); mcp.server.* → mcp__server__*;
+  // mcp.server.method_name → mcp__server__method_name. Only the first dot after
+  // the server separates; a dotted method name keeps its own dots.
+  const rest = tool.slice(4);
+  const dot = rest.indexOf(".");
+  if (dot === -1) return `mcp__${rest}`;
+  return `mcp__${rest.slice(0, dot)}__${rest.slice(dot + 1)}`;
+}
+
+/**
+ * Whether Claude Code accepts `model` as written: an alias (optionally with a
+ * context suffix such as [1m]), inherit, or a full claude-* model id. Any other
+ * value (gpt-4o, gemini-2.5-pro) was written to the agent file unchecked.
+ */
+function isClaudeCodeModel(model: string): boolean {
+  return /^(?:sonnet|opus|haiku|fable)(?:\[[0-9a-z]+\])?$|^inherit$|^claude-[a-z0-9.-]+(?:\[[0-9a-z]+\])?$/.test(model);
+}
+
+/**
+ * Claude Code hook events for the language's universal names. A hook on a
+ * name Claude Code does not know never fires, so AgentStop used to be dead.
+ */
+const UNIVERSAL_EVENTS: Record<string, string> = {
+  AgentStart: "SubagentStart",
+  AgentStop: "SubagentStop",
+  ToolUse: "PostToolUse",
+  Error: "PostToolUseFailure",
+};
+
+function claudeEvent(on: string): string {
+  return UNIVERSAL_EVENTS[on] ?? on;
+}
+
+/** A settings.json hook handler for a command or prompt hook. */
+function hookHandler(hook: HookDef, command: () => string): Record<string, unknown> {
+  // A prompt hook asks a model to judge the event; its run: is the prompt.
+  if (hook.type === "prompt") {
+    return { type: "prompt", prompt: hook.run, ...(hook.timeout ? { timeout: hook.timeout } : {}) };
   }
-  return tool;
+  return { type: "command", command: command(), ...(hook.timeout ? { timeout: hook.timeout } : {}) };
 }
 
 /**
@@ -82,7 +116,10 @@ function toTitle(id: string): string {
 /** Characters that require quoting in YAML scalar values. */
 const YAML_SPECIAL = /[:#\[\]{}&*!|>'"%@`]/;
 
-function frontmatter(fields: Record<string, string | boolean | string[]>): string {
+/** Plain scalars YAML reads as something other than a string (yes → true, 1.0 → a number). */
+const YAML_NOT_STRING = /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL|~|[-+]?(?:\d[\d_]*)?\.?\d+(?:[eE][-+]?\d+)?|0x[0-9a-fA-F]+|0o[0-7]+|\.inf|\.nan)$/;
+
+function frontmatter(fields: Record<string, string | number | boolean | string[]>): string {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null) continue;
@@ -92,12 +129,12 @@ function frontmatter(fields: Record<string, string | boolean | string[]>): strin
       for (const item of value) {
         lines.push(`  - ${item}`);
       }
-    } else if (typeof value === "boolean") {
+    } else if (typeof value === "boolean" || typeof value === "number") {
       lines.push(`${key}: ${value}`);
     } else {
       // Auto-quote strings containing YAML-special characters
       const str = String(value);
-      const needsQuotes = YAML_SPECIAL.test(str) || str.trim() !== str;
+      const needsQuotes = YAML_SPECIAL.test(str) || str.trim() !== str || str === "" || YAML_NOT_STRING.test(str);
       lines.push(`${key}: ${needsQuotes ? `"${str.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : str}`);
     }
   }
@@ -134,6 +171,113 @@ function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
 }
 
 /** Generate an empty directory marker (a .gitkeep file). */
+/**
+ * How a gate is enforced in Claude Code.
+ *
+ * - `subagent-stop`: every `after:` is an agent; a SubagentStop hook on each
+ *   runs the gate when it finishes (exit 2 keeps it working).
+ * - `before-agent`: an `after:` is an action or a human, but `before:` names
+ *   agents; a PreToolUse hook on the Agent tool runs the gate before Claude
+ *   Code launches one of them (exit 2 blocks the launch). Such gates used to
+ *   compile to no hook at all.
+ * - `none`: nothing in Claude Code marks the moment (inline delegation, or no
+ *   agent on either side); the playbook runs the gate script.
+ */
+type GateWiring =
+  | { kind: "subagent-stop"; anchors: string[] }
+  | { kind: "before-agent"; agents: string[] }
+  | { kind: "none" };
+
+function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
+  if (getDelegationMode(ast) === "inline") return { kind: "none" };
+  const afters = gateAnchors(gate, "after");
+  if (afters.length > 0 && afters.every((a) => isRegisteredSubagentType(ast, a))) {
+    return { kind: "subagent-stop", anchors: afters };
+  }
+  const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b));
+  return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
+}
+
+/** Agents a human approval step stands before: its direct flow successors. */
+function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
+  if (getDelegationMode(ast) === "inline") return [];
+  const out = ast.edges.filter((e) => e.from === human.id && !e.isError).map((e) => e.to);
+  return [...new Set(out)].filter((id) => isRegisteredSubagentType(ast, id));
+}
+
+/** The settings.json command for the topology's before-agent hook. */
+function beforeAgentCommand(ast: TopologyAST): string {
+  return `bash "$CLAUDE_PROJECT_DIR/.claude/skills/${ast.topology.name}/scripts/before-agent.sh"`;
+}
+
+/**
+ * One PreToolUse hook on the Agent tool for the whole topology: before Claude
+ * Code launches a subagent it runs that agent's gates (from actions or
+ * humans), then asks the user to approve when a human step stands before it.
+ * Null when nothing needs it.
+ */
+function generateBeforeAgentScript(ast: TopologyAST): GeneratedFile | null {
+  const name = ast.topology.name;
+  const steps = new Map<string, string[]>();
+  const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
+
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.run || gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) continue;
+    const wiring = gateWiring(ast, gate);
+    if (wiring.kind !== "before-agent") continue;
+    for (const agent of wiring.agents) {
+      add(agent, [
+        `    # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`,
+        `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
+      ]);
+    }
+  }
+  for (const node of ast.nodes) {
+    if (node.type !== "human") continue;
+    const human = node as HumanNode;
+    const reason = `Approval step "${human.id}"${human.description ? `: ${human.description}` : ""}`;
+    for (const agent of approvalTargets(ast, human)) {
+      add(agent, [`    # approval step ${human.id}`, `    ask ${shellQuote(reason)}`]);
+    }
+  }
+  if (steps.size === 0) return null;
+
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Before Claude Code launches a subagent of topology "${name}".`,
+    "# Auto-generated by agentopology scaffold. Wired in .claude/settings.json as a",
+    "# PreToolUse hook on the Agent tool. Exit 2 blocks the launch and shows the",
+    "# reason to Claude; an \"ask\" decision makes Claude Code ask the user first.",
+    "set -euo pipefail",
+    'cd "$CLAUDE_PROJECT_DIR"',
+    `DIR=".claude/skills/${name}/scripts"`,
+    'AGENT=$(jq -r \'.tool_input.subagent_type // ""\')',
+    "",
+    "ask() {",
+    "  jq -n --arg r \"$1\" '{hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"ask\", permissionDecisionReason: $r}}'",
+    "}",
+    "",
+    'case "$AGENT" in',
+  ];
+  for (const [agent, body] of steps) {
+    lines.push(`  ${agent})`, ...body, "    ;;");
+  }
+  lines.push("esac", "exit 0", "");
+  return {
+    path: `.claude/skills/${name}/scripts/before-agent.sh`,
+    content: lines.join("\n"),
+    category: "script",
+    executable: true,
+  };
+}
+
+/** Single-quote a string for bash. */
+function shellQuote(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
 function gitkeep(dirPath: string): GeneratedFile {
   return { path: `${dirPath}/.gitkeep`, content: "", category: "machine" };
 }
@@ -300,7 +444,7 @@ function workflowRunLabel(ast: TopologyAST, run: number[]): string {
  */
 function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
-  const nativeValues = ["plan", "default", "acceptEdits", "dontAsk", "bypassPermissions"];
+  const nativeValues = ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
   if (nativeValues.includes(perm)) {
     // "default" is the default, omit it
     if (perm === "default") return undefined;
@@ -313,14 +457,16 @@ function mapPermissionMode(perm: string): string | undefined {
       return "plan";
     case "autonomous":
       return undefined; // default, omit
-    case "auto":
-      return undefined; // default, omit
+    case "confirm":
+      return undefined; // asks before each action: Claude Code's default
     case "interactive":
       return "acceptEdits";
     case "unrestricted":
+    case "bypass":
       return "bypassPermissions";
     default:
-      return perm; // unknown — pass through as-is
+      // Claude Code rejects an unknown permissionMode; V27 already warned.
+      return undefined;
   }
 }
 
@@ -381,43 +527,21 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
       lines.push(`# Join semantics: ${action.join}`);
     }
 
-    switch (action.kind) {
-      case "external":
-        lines.push(`# External source: ${action.source ?? "unknown"}`);
-        lines.push("");
-        lines.push(`echo "TODO: implement external action — fetch from ${action.source ?? "source"}"`);
-        break;
-      case "inline":
-        if (action.commands && action.commands.length > 0) {
-          lines.push("");
-          for (const cmd of action.commands) {
-            lines.push(cmd);
-          }
-        } else {
-          lines.push("");
-          lines.push('echo "TODO: implement inline action"');
-        }
-        break;
-      case "git":
-        lines.push("");
-        lines.push("# Git operation");
-        if (action.commands && action.commands.length > 0) {
-          for (const cmd of action.commands) {
-            lines.push(cmd);
-          }
-        } else {
-          lines.push('echo "TODO: implement git action"');
-        }
-        break;
-      case "report":
-        lines.push("");
-        lines.push("# Report generation");
-        lines.push('echo "TODO: implement report action"');
-        break;
-      default:
-        lines.push("");
-        lines.push(`echo "TODO: implement ${action.kind ?? "unknown"} action"`);
-        break;
+    if (action.kind === "external") lines.push(`# External source: ${action.source ?? "unknown"}`);
+    lines.push("");
+    // The action's own commands, whatever its kind: an external or report
+    // action used to drop them for a TODO line.
+    if (action.commands && action.commands.length > 0) {
+      lines.push(...action.commands);
+    } else if (!action.kind || action.kind === "inline") {
+      // Done by the orchestrator in conversation (the playbook says how).
+      lines.push(`# Performed by the orchestrator in conversation; nothing to run.`);
+    } else {
+      // A placeholder that reports itself as one (agentopology stubs), never a
+      // silent success.
+      lines.splice(3, 0, STUB_MARKER);
+      lines.push(`echo "TODO: implement ${action.kind ?? "this"} action ${action.id}" >&2`);
+      lines.push("exit 1");
     }
 
     lines.push("");
@@ -448,20 +572,29 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (isWorkflowSeamAgent(agent)) continue;
 
     // Build frontmatter fields
-    const fm: Record<string, string | boolean | string[]> = {};
+    const fm: Record<string, string | number | boolean | string[]> = {};
     fm.name = agent.id;
 
     // Description: prefer agent.description, then role description from roles block.
-    // For manual agents, omit description to prevent Claude Code auto-delegation.
-    if (agent.invocation !== "manual") {
-      const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
-      if (desc) {
-        fm.description = desc;
+    // Claude Code skips an agent without one, so a manual agent keeps it and
+    // says it runs only when asked (there is no frontmatter field for that).
+    const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role ?? toTitle(agent.id);
+    fm.description = agent.invocation === "manual"
+      ? `${desc.replace(/[.\s]*$/, "")}. Use only when the user asks for this agent by name; never delegate to it on your own.`
+      : desc;
+
+    if (agent.model) {
+      if (isClaudeCodeModel(agent.model)) {
+        fm.model = agent.model;
+      } else {
+        console.warn(
+          `[claude-code] Agent "${agent.id}" model "${agent.model}" is not a Claude Code model ` +
+            `(sonnet, opus, haiku, fable, inherit, or a claude-* id); omitted, so the agent ` +
+            `runs on the session's model.`,
+        );
       }
     }
-
-    if (agent.model) fm.model = agent.model;
-    if (agent.maxTurns != null) fm.maxTurns = String(agent.maxTurns);
+    if (agent.maxTurns != null) fm.maxTurns = agent.maxTurns;
     if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName).join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName).join(", ");
     if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
@@ -484,8 +617,6 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       fm["fallback-chain"] = agent.fallbackChain.join(", ");
     }
 
-    // invocation: manual — Claude Code doesn't parse this field. Instead, omit
-    // description to prevent auto-delegation for manual agents.
     if (agent.skills && agent.skills.length > 0) fm.skills = agent.skills;
     // scale is NOT a Claude Code frontmatter field — rendered only in body as prompt text
 
@@ -507,8 +638,10 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       const hooksByEvent: Record<string, HookDef[]> = {};
       for (const hook of agent.hooks) {
         if (hook.type === "mod") continue; // engine-wide only (V94)
-        if (!hooksByEvent[hook.on]) hooksByEvent[hook.on] = [];
-        hooksByEvent[hook.on].push(hook);
+        // In an agent's frontmatter Claude Code turns Stop into SubagentStop itself.
+        const event = hook.on === "AgentStop" ? "Stop" : claudeEvent(hook.on);
+        if (!hooksByEvent[event]) hooksByEvent[event] = [];
+        hooksByEvent[event].push(hook);
       }
 
       const hookLines: string[] = ["hooks:"];
@@ -516,19 +649,15 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
           const scriptName = scriptNameFromRun(hook.run);
-          if (!scriptName) continue; // V96: prose in run names no script
-          const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
-          if (hook.matcher) {
-            hookLines.push(`    - matcher: "${hook.matcher}"`);
-          } else {
-            hookLines.push(`    -`);
-          }
+          if (hook.type !== "prompt" && !scriptName) continue; // V96: prose in run names no script
+          const handler = hookHandler(hook, () => `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`);
+          // JSON strings are valid YAML double-quoted scalars, so a regex
+          // matcher or a prompt with quotes or colons can never break the file.
+          hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
           hookLines.push(`      hooks:`);
-          hookLines.push(`        - type: ${hook.type ?? "command"}`);
-          hookLines.push(`          command: "${command}"`);
-          if (hook.timeout) {
-            hookLines.push(`          timeout: ${hook.timeout}`);
-          }
+          const [first, ...rest] = Object.entries(handler);
+          hookLines.push(`        - ${first[0]}: ${JSON.stringify(first[1])}`);
+          for (const [k, v] of rest) hookLines.push(`          ${k}: ${JSON.stringify(v)}`);
         }
       }
       // Insert hooks before the closing ---
@@ -549,6 +678,9 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     sections.push("## Instructions");
     sections.push("");
+    // Only the text between the markers is the prompt: sync and re-scaffold
+    // read it there, so generated sections below never leak into the .at.
+    sections.push(PROMPT_FENCE_OPEN);
     if (agent.prompt) {
       sections.push(downshiftHeadings(agent.prompt));
     } else if (agent.description) {
@@ -559,6 +691,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     } else {
       sections.push("Complete the assigned task.");
     }
+    sections.push(PROMPT_FENCE_CLOSE);
     sections.push("");
 
     // Reads section
@@ -867,39 +1000,6 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       path: `.claude/agents/${agent.id}/AGENT.md`,
       content: sections.join("\n") + "\n",
       category: "agent",
-    });
-  }
-
-  return files;
-}
-
-/** Generate AGENT.md files for each human node. */
-function generateHumanNodes(ast: TopologyAST): GeneratedFile[] {
-  const files: GeneratedFile[] = [];
-
-  for (const node of ast.nodes) {
-    if (node.type !== "human") continue;
-    const human = node as HumanNode;
-
-    const sections: string[] = [];
-    sections.push(`# ${toTitle(human.id)} (Human-in-the-Loop)`);
-    sections.push("");
-    if (human.description) {
-      sections.push(human.description);
-      sections.push("");
-    }
-    if (human.timeout) {
-      sections.push(`Timeout: ${human.timeout}`);
-    }
-    if (human.onTimeout) {
-      sections.push(`On timeout: ${human.onTimeout}`);
-    }
-    sections.push("");
-
-    files.push({
-      path: `.claude/agents/${human.id}/AGENT.md`,
-      content: sections.join("\n") + "\n",
-      category: "machine",
     });
   }
 
@@ -1346,6 +1446,27 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
   }
 
+  // Approval steps: a human node is a point where the user decides. It used to
+  // compile to an AGENT.md without frontmatter, which Claude Code ignores.
+  const humans = ast.nodes.filter((n): n is HumanNode => n.type === "human");
+  if (humans.length > 0) {
+    sections.push("## Approval steps");
+    sections.push("");
+    sections.push("At each step below, stop and ask the user (AskUserQuestion), then continue only on their approval.");
+    sections.push("");
+    for (const human of humans) {
+      sections.push(`### ${toTitle(human.id)}`);
+      if (human.description) sections.push(human.description);
+      const before = approvalTargets(ast, human);
+      if (before.length > 0) {
+        sections.push(`Before: ${before.join(", ")} (Claude Code also asks the user before launching ${before.length > 1 ? "them" : "it"})`);
+      }
+      if (human.timeout) sections.push(`Timeout: ${human.timeout}`);
+      if (human.onTimeout) sections.push(`On timeout: ${human.onTimeout}`);
+      sections.push("");
+    }
+  }
+
   // Schedules section
   if (ast.schedules.length > 0) {
     sections.push("## Schedules");
@@ -1544,9 +1665,18 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    // The instructions themselves, or a file that holds them. "See: path" was
+    // written before: Claude Code loads a skill's other files only when the
+    // skill tells it to, so the instructions never reached the model.
     if (skill.prompt) {
-      sections.push("## Prompt");
-      sections.push(`See: ${skill.prompt}`);
+      sections.push("## Instructions");
+      sections.push("");
+      const path = skill.prompt.trim();
+      if (!/\s/.test(path) && /\.(md|txt)$/.test(path)) {
+        sections.push(`Read \`${path}\` before anything else and follow it: it holds this skill's instructions.`);
+      } else {
+        sections.push(downshiftHeadings(skill.prompt));
+      }
       sections.push("");
     }
 
@@ -1755,13 +1885,19 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     const scriptName = scriptNameFromRun(gate.run);
-    if (scriptName) {
-      files.push({
-        path: `.claude/skills/${name}/scripts/${scriptName}`,
-        content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
-        category: "script",
-      });
-    }
+    if (!scriptName) continue;
+    const { script } = runParts(gate.run!);
+    // The user's own script, outside the project: never stubbed.
+    if (script.startsWith("/")) continue;
+    // A project path names the user's script: a stub only fills the gap until
+    // it exists, and is never written over it.
+    const project = isProjectPath(script);
+    files.push({
+      path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
+      content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+      category: "script",
+      ...(project ? { createOnly: true } : {}),
+    });
   }
 
   return files;
@@ -1778,21 +1914,21 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run) continue;
     if (gate.behavior === "advisory") continue;
 
-    const gateScriptName = scriptNameFromRun(gate.run);
-    if (!gateScriptName) continue; // V96: prose in run names no script
+    if (!scriptNameFromRun(gate.run)) continue; // V96: prose in run names no script
+    const gateCommand = hookCommand(gate.run, name);
     const onFailExit = gate.onFail === "halt"
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
 
     const inlineMode = getDelegationMode(ast) === "inline";
-    const gateAfters = gateAnchors(gate, "after");
-    const wiredAsHook =
-      !inlineMode &&
-      gateAfters.length > 0 &&
-      gateAfters.every((a) => isRegisteredSubagentType(ast, a));
+    const wiring = gateWiring(ast, gate);
+    const wiredAsHook = wiring.kind === "subagent-stop";
     let enforcementNote: string;
     let enforcementNote2: string;
-    if (inlineMode) {
+    if (wiring.kind === "before-agent") {
+      enforcementNote = `# Enforcement: PreToolUse hook (before-agent.sh) before Claude Code launches "${wiring.agents.join('", "')}".`;
+      enforcementNote2 = `#              Exit 2 blocks the launch and surfaces stderr to Claude.`;
+    } else if (inlineMode) {
       enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (orchestrator.delegation is "inline").`;
       enforcementNote2 = `#              Invoke this script from your /${ast.topology.name} playbook at the right step.`;
     } else if (wiredAsHook) {
@@ -1829,9 +1965,9 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       contentLines.push("while [ $ATTEMPT -le $MAX_RETRIES ] && [ $GATE_RESULT -ne 0 ]; do");
       contentLines.push("  ATTEMPT=$((ATTEMPT + 1))");
       if (gate.timeout) {
-        contentLines.push(`  timeout ${gate.timeout} bash .claude/skills/${name}/scripts/${gateScriptName} && GATE_RESULT=0 || GATE_RESULT=$?`);
+        contentLines.push(`  timeout ${gate.timeout} ${gateCommand} && GATE_RESULT=0 || GATE_RESULT=$?`);
       } else {
-        contentLines.push(`  bash .claude/skills/${name}/scripts/${gateScriptName} && GATE_RESULT=0 || GATE_RESULT=$?`);
+        contentLines.push(`  ${gateCommand} && GATE_RESULT=0 || GATE_RESULT=$?`);
       }
       contentLines.push('  if [ $GATE_RESULT -ne 0 ] && [ $ATTEMPT -le $MAX_RETRIES ]; then');
       contentLines.push(`    echo "Gate '${gate.id}' attempt $ATTEMPT failed, retrying..."`);
@@ -1843,9 +1979,9 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       contentLines.push("# Run the gate check script");
       contentLines.push(`GATE_RESULT=0`);
       if (gate.timeout) {
-        contentLines.push(`timeout ${gate.timeout} bash .claude/skills/${name}/scripts/${gateScriptName} || GATE_RESULT=$?`);
+        contentLines.push(`timeout ${gate.timeout} ${gateCommand} || GATE_RESULT=$?`);
       } else {
-        contentLines.push(`bash .claude/skills/${name}/scripts/${gateScriptName} || GATE_RESULT=$?`);
+        contentLines.push(`${gateCommand} || GATE_RESULT=$?`);
       }
     }
 
@@ -1880,7 +2016,7 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
   if (isFinishEvent) {
     return [
       "#!/usr/bin/env bash",
-      `# Auto-generated by agentopology scaffold on ${new Date().toISOString().slice(0, 10)}`,
+      `# Auto-generated by agentopology scaffold`,
       `# Hook: ${hookName} · Event: ${eventName} · Matcher: ${matcherHint || "*"}`,
       "# Replace this stub with your implementation.",
       "# Stdin JSON payload from Claude Code is available on FD 0.",
@@ -1896,7 +2032,7 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
   }
   return [
     "#!/usr/bin/env bash",
-    `# Auto-generated by agentopology scaffold on ${new Date().toISOString().slice(0, 10)}`,
+    `# Auto-generated by agentopology scaffold`,
     `# Hook: ${hookName} · Event: ${eventName} · Matcher: ${matcherHint || "*"}`,
     "# Replace this stub with your implementation.",
     "# Stdin JSON payload from Claude Code is available on FD 0.",
@@ -2046,18 +2182,18 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!hook.run) continue;
     // A Mod's run: is the user's TypeScript module — never overwrite it with a
     // bash stub. generateModPlugin imports it instead.
-    if (hook.type === "mod") continue;
+    if (hook.type === "mod" || hook.type === "prompt") continue;
     const runPath = hook.run;
 
     // If the run path starts with '.' or '/' it is already project-relative —
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
     if (proseInRun(runPath)) continue; // V96: prose in run names no script
-    const { script } = hookRun(runPath);
+    const { script } = runParts(runPath);
     // An absolute script is the user's own, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     const scoped = scriptNameFromRun(script);
-    const filePath = isHookPath(script)
+    const filePath = isProjectPath(script)
       ? script
       : scoped
         ? `.claude/skills/${name}/scripts/${scoped}`
@@ -2071,7 +2207,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
       executable: true,
       // A run that names its own path names the user's script: a stub only
       // fills the gap until it exists. --force used to overwrite it.
-      ...(isHookPath(script) ? { createOnly: true } : {}),
+      ...(isProjectPath(script) ? { createOnly: true } : {}),
     });
   }
 
@@ -2089,7 +2225,7 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!agent.hooks || agent.hooks.length === 0) continue;
 
     for (const hook of agent.hooks) {
-      if (!hook.run || hook.type === "mod") continue;
+      if (!hook.run || hook.type === "mod" || hook.type === "prompt") continue;
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
       files.push({
@@ -2111,33 +2247,22 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
-const isHookPath = (w = "") => w.startsWith(".") || w.startsWith("/");
-
-/** A hook's `run:` split: the interpreter it names (if any), its script, its arguments. */
-function hookRun(run: string): { interpreter?: string; script: string; args: string[] } {
-  const words = run.trim().split(/\s+/);
-  const named = words.length > 1 && !/\.(py|sh|ts|mjs|js)$/.test(words[0]) && isHookPath(words[1]);
-  const [script = "", ...args] = named ? words.slice(1) : words;
-  return { ...(named ? { interpreter: words[0] } : {}), script, args };
-}
-
 /**
- * The shell command for a command hook's `run:`.
+ * The shell command for a command hook's or gate's `run:`.
  *
- * A `run:` whose script (its first word, or its second when the first names
- * the interpreter, e.g. `/opt/homebrew/bin/python3 ./x/y.py`) starts with "."
- * or "/" names the user's own script. A project-relative one runs through
- * `$CLAUDE_PROJECT_DIR` (a hook's cwd is the session's, which moves); an
- * absolute one is kept as written. It runs by the interpreter the `run:`
- * names, else the one its extension names (`.py` → python3, anything else →
- * bash), with its arguments kept.
+ * A `run:` whose script (see runParts) is a project path names the user's own
+ * script. A project-relative one runs through `$CLAUDE_PROJECT_DIR` (a hook's
+ * cwd is the session's, which moves); an absolute one is kept as written. It
+ * runs by the interpreter the `run:` names, else the one its extension names
+ * (`.py` → python3, anything else → bash). Arguments are kept.
  *
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
 export function hookCommand(run: string, topologyName: string): string {
-  const { interpreter: named, script: first, args: rest } = hookRun(run);
-  if (!isHookPath(first)) {
-    return `bash .claude/skills/${topologyName}/scripts/${first.replace(/^.*\//, "")}`;
+  const { interpreter: named, script: first, args: rest } = runParts(run);
+  if (!isProjectPath(first)) {
+    const base = first.replace(/^.*\//, "");
+    return [named ?? "bash", `.claude/skills/${topologyName}/scripts/${base}`, ...rest].join(" ");
   }
   const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
   const where = first.startsWith("/")
@@ -2162,7 +2287,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
     // A Mod is a module inside the engine, not a settings.json command: it is
     // emitted as a plugin (generateModPlugin).
     if (hook.type === "mod") continue;
-    const eventName = hook.on;
+    const eventName = claudeEvent(hook.on);
     // Inline orchestrator mode never spawns subagents, so SubagentStop /
     // SubagentStart hooks would never fire. Warn the user and skip emission
     // — keeping them in settings.json would be a maintenance trap.
@@ -2175,19 +2300,13 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
       );
       continue;
     }
-    if (proseInRun(hook.run)) continue; // V96: prose in run names no script
+    if (hook.type !== "prompt" && proseInRun(hook.run)) continue; // V96: prose in run names no script
     if (!hooksByEvent[eventName]) {
       hooksByEvent[eventName] = [];
     }
 
     const hookEntry: Record<string, unknown> = {
-      hooks: [
-        {
-          type: hook.type ?? "command",
-          command: hookCommand(hook.run, topologyName),
-          ...(hook.timeout ? { timeout: hook.timeout } : {}),
-        },
-      ],
+      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName))],
     };
 
     // Only add matcher when it has a value
@@ -2258,11 +2377,14 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       continue;
     }
 
-    // SubagentStop matcher must be a registered subagent_type. If the gate
-    // doesn't target an agent node, we cannot wire it as a hook — warn and
-    // skip so we don't ship dead config that never fires.
+    // SubagentStop matcher must be a registered subagent_type. A gate after an
+    // action or a human runs before its next agent instead (before-agent.sh,
+    // wired below); with no agent on either side, warn and skip so we don't
+    // ship dead config that never fires.
     const anchors = gateAnchors(gate, "after");
-    if (anchors.length === 0 || !anchors.every((a) => isRegisteredSubagentType(ast, a))) {
+    const wiring = gateWiring(ast, gate);
+    if (wiring.kind === "before-agent") continue;
+    if (wiring.kind !== "subagent-stop") {
       const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
       const targetDesc = anchors.length
         ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
@@ -2306,6 +2428,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Blackboard implies a host-side observer that watches the workflow rung's
   // Write tool-calls LIVE. This is the host's piece of the hybrid's concurrent
   // observability (the deterministic workflow rung cannot express it).
+  if (generateBeforeAgentScript(ast)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      // Agent is the subagent tool; Task is its earlier name.
+      matcher: "Agent|Task",
+      hooks: [{ type: "command", command: beforeAgentCommand(ast) }],
+    });
+  }
+
   const observeHook = buildHybridObserveHook(ast, topologyName);
   if (observeHook) {
     if (!hooksByEvent[observeHook.event]) hooksByEvent[observeHook.event] = [];
@@ -2326,11 +2457,11 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Permissions section from settings block — nested under "permissions" key
   const perms = ast.settings;
   if (perms) {
-    const allow = perms.allow as string[] | undefined;
-    const deny = perms.deny as string[] | undefined;
     const permObj: Record<string, string[]> = {};
-    if (allow && allow.length > 0) permObj.allow = allow;
-    if (deny && deny.length > 0) permObj.deny = deny;
+    for (const key of ["allow", "ask", "deny"] as const) {
+      const rules = perms[key] as string[] | undefined;
+      if (rules && rules.length > 0) permObj[key] = rules.map(convertMcpToolName);
+    }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
   }
 
@@ -2389,8 +2520,10 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   for (const [name, config] of Object.entries(ast.mcpServers)) {
     const entry: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(config)) {
-      if (key === "command" || key === "url") {
+      if (key === "command" || key === "url" || key === "type") {
         entry[key] = value;
+      } else if (key === "headers" && typeof value === "object" && value !== null) {
+        entry.headers = value;
       } else if (key === "args" && Array.isArray(value)) {
         entry.args = value;
       } else if (key === "env" && typeof value === "object" && value !== null) {
@@ -2400,8 +2533,10 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
     }
     // Only include servers that have a command or url (filter parser artifacts)
     if (!("command" in entry) && !("url" in entry)) continue;
-    // Always include env field for Claude Code .mcp.json
-    if (!("env" in entry)) {
+    // Claude Code reads a url entry without type as stdio and skips it.
+    if ("url" in entry && !("type" in entry)) entry.type = "http";
+    // Always include env field for a stdio server in .mcp.json
+    if (!("url" in entry) && !("env" in entry)) {
       entry.env = {};
     }
     servers[name] = entry;
@@ -2493,6 +2628,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       shebang,
       `# Tool: ${tool.id} — ${tool.description}`,
       "# Auto-generated by agentopology scaffold — edit as needed.",
+      tool.lang === "node" ? `// ${STUB_MARKER}` : STUB_MARKER,
       "",
     ];
 
@@ -2515,14 +2651,44 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     }
     lines.push("");
 
+    // The stub goes where the tool's script: says, not to a copy beside it: a
+    // project path is the user's script (create-only); an absolute one is never
+    // touched; a bare name lives in the skill's scripts folder.
+    const script = tool.script ? runParts(tool.script).script : "";
+    if (script.startsWith("/")) continue;
+    const project = isProjectPath(script);
+    const base = script.replace(/^.*\//, "");
     files.push({
-      path: `.claude/skills/${name}/scripts/${tool.id}.${ext}`,
+      path: project
+        ? script.replace(/^\.\//, "")
+        : `.claude/skills/${name}/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
+      ...(project ? { createOnly: true } : {}),
     });
   }
 
   return files;
+}
+
+/**
+ * A cron expression for an `every:` duration, or null when cron cannot say
+ * it. Only "1h", "daily" and a few words converted before; anything else
+ * became a commented-out crontab line that never ran.
+ */
+function everyToCron(every: string): string | null {
+  const text = every.trim().toLowerCase();
+  const words: Record<string, string> = { hourly: "0 * * * *", daily: "0 0 * * *", weekly: "0 0 * * 0" };
+  if (words[text]) return words[text];
+  const m = text.match(/^(\d+)\s*(m|min|mins|minutes?|h|hours?|d|days?|w|weeks?)$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2][0];
+  if (n <= 0) return null;
+  if (unit === "m") return n < 60 && 60 % n === 0 ? (n === 1 ? "* * * * *" : `*/${n} * * * *`) : null;
+  if (unit === "h") return n < 24 && 24 % n === 0 ? (n === 1 ? "0 * * * *" : `0 */${n} * * *`) : null;
+  if (unit === "d") return n === 1 ? "0 0 * * *" : null;
+  return n === 1 ? "0 0 * * 0" : null;
 }
 
 /** Generate schema documentation files. */
@@ -2575,14 +2741,17 @@ function generateScheduleScripts(ast: TopologyAST): GeneratedFile[] {
       `# Schedule: ${job.id} — invokes ${target}`,
       "# Auto-generated by agentopology scaffold — edit as needed.",
       'set -euo pipefail',
+      "# cron starts in $HOME: run from the project root (this script is in scripts/).",
+      'cd "$(dirname "$0")/.."',
       "",
     ];
     if (job.agent) {
+      // Headless: cron has no terminal, so an interactive session never ran.
       lines.push(`# Invoke agent: ${job.agent}`);
-      lines.push(`claude --agent ${job.agent}`);
+      lines.push(`claude -p "Run your scheduled task (${job.id})." --agent ${job.agent}`);
     } else if (job.action) {
       lines.push(`# Invoke action: ${job.action}`);
-      lines.push(`bash scripts/action-${job.action}.sh`);
+      lines.push(`bash .claude/skills/${ast.topology.name}/scripts/action-${job.action}.sh`);
     }
     if (job.enabled === false) {
       lines.unshift("# DISABLED — this schedule is not enabled");
@@ -2594,18 +2763,14 @@ function generateScheduleScripts(ast: TopologyAST): GeneratedFile[] {
     // Add crontab entry
     let cronExpr = job.cron ?? "# every: " + (job.every ?? "unknown");
     if (!job.cron && job.every) {
-      // Convert common "every" expressions to cron
-      const everyMap: Record<string, string> = {
-        "1h": "0 * * * *",
-        "1 hour": "0 * * * *",
-        "hourly": "0 * * * *",
-        "1d": "0 0 * * *",
-        "1 day": "0 0 * * *",
-        "daily": "0 0 * * *",
-        "1w": "0 0 * * 0",
-        "weekly": "0 0 * * 0",
-      };
-      cronExpr = everyMap[job.every.toLowerCase()] ?? `# every: ${job.every}`;
+      const converted = everyToCron(job.every);
+      if (!converted) {
+        console.warn(
+          `[claude-code] Schedule "${job.id}" every: ${job.every} has no cron form; ` +
+            `its crontab line is commented out. Use cron: instead.`,
+        );
+      }
+      cronExpr = converted ?? `# every: ${job.every}`;
     }
     const enabledPrefix = job.enabled === false ? "# DISABLED: " : "";
     cronLines.push(`${enabledPrefix}${cronExpr} bash ${scriptPath}  # ${job.id}`);
@@ -2784,7 +2949,11 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
  * destroy their content.
  */
 function generateContextFile(ast: TopologyAST): GeneratedFile {
-  const DEFAULT_PATH = ".claude/CLAUDE.md";
+  // A rules file, one per topology: Claude Code loads .claude/rules/*.md like
+  // CLAUDE.md, so the context still reaches every session, but it never
+  // competes with the project's own CLAUDE.md or .claude/CLAUDE.md (it used to
+  // be written to .claude/CLAUDE.md, a conflict in any project that had one).
+  const DEFAULT_PATH = `.claude/rules/${ast.topology.name}.md`;
   let fileName = ast.context.file ?? DEFAULT_PATH;
 
   // Safety: never overwrite the user's root-level CLAUDE.md
@@ -2976,7 +3145,7 @@ function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
 
 /**
  * HYBRID: build the "Hybrid run order" markdown block appended to the generated
- * context file (.claude/CLAUDE.md) and the topology SKILL.md. It states the
+ * context file (.claude/rules/<topology>.md) and the topology SKILL.md. It states the
  * host's interleaving with the embedded workflow rung, in the SAME run-order
  * vocabulary the claude-workflow binding's SEAM.md uses, so the two bindings
  * stay in sync. Returns null when the topology is not a hybrid.
@@ -3255,7 +3424,6 @@ export const claudeCodeBinding: BindingTarget = {
     files.push(...generateAgents(ast));
 
     // Human nodes
-    files.push(...generateHumanNodes(ast));
 
     // Main topology skill (with frontmatter)
     const skillFiles = generateTopologySkill(ast);
@@ -3280,6 +3448,8 @@ export const claudeCodeBinding: BindingTarget = {
     // Gate scripts
     files.push(...generateGateScripts(ast));
     files.push(...generateGateWrapperScripts(ast));
+    const beforeAgent = generateBeforeAgentScript(ast);
+    if (beforeAgent) files.push(beforeAgent);
 
     // Hook scripts (global)
     files.push(...generateHookScripts(ast));

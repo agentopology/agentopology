@@ -5,6 +5,16 @@
  */
 
 import { escapeRegex } from "../parser/lexer.js";
+import { parse } from "../parser/index.js";
+import { claudeCodeBinding } from "../bindings/claude-code.js";
+
+export { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE, fencedPrompt } from "../bindings/lib/prompt-fence.js";
+import { fencedPrompt } from "../bindings/lib/prompt-fence.js";
+
+/** Undo the binding's heading downshift (### → ##), so a prompt round-trips unchanged. */
+function upshiftHeadings(text: string): string {
+  return text.replace(/^#(#{2,6})(\s)/gm, "$1$2");
+}
 
 /** A platform file with its path and content. */
 export interface PlatformFile {
@@ -35,7 +45,7 @@ export function syncFromPlatform(
 
   switch (binding) {
     case "claude-code":
-      prompts = extractClaudeCodePrompts(files);
+      prompts = withoutUnchanged(atSource, extractClaudeCodePrompts(files), files);
       break;
     case "codex":
       prompts = extractCodexPrompts(files);
@@ -51,6 +61,35 @@ export function syncFromPlatform(
   }
 
   return insertPromptBlocks(atSource, prompts);
+}
+
+/**
+ * Drop prompts whose fenced text is exactly what scaffold would write from the
+ * .at as it stands: sync brings back edits, never the generator's own output
+ * (a description-only agent would otherwise gain a prompt block on every sync).
+ */
+function withoutUnchanged(atSource: string, prompts: ExtractedPrompt[], files: PlatformFile[]): ExtractedPrompt[] {
+  let generated: Map<string, string | null>;
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    generated = new Map(
+      claudeCodeBinding.scaffold(parse(atSource))
+        .map((f) => [f.path.match(/agents\/([^/]+)\/AGENT\.md$/)?.[1] ?? "", fencedPrompt(f.content)] as const)
+        .filter(([id]) => id !== ""),
+    );
+  } catch {
+    return prompts;
+  } finally {
+    console.warn = warn;
+  }
+  const onDisk = new Map(
+    files.map((f) => [f.path.match(/agents[\\/]([^\\/]+)[\\/]AGENT\.md$/)?.[1] ?? "", fencedPrompt(f.content)] as const),
+  );
+  return prompts.filter((p) => {
+    const disk = onDisk.get(p.agentId);
+    return disk === null || disk === undefined || disk !== generated.get(p.agentId);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -76,11 +115,11 @@ function extractClaudeCodePrompts(files: PlatformFile[]): ExtractedPrompt[] {
     if (!match) continue;
 
     const agentId = match[1];
-    const content = extractSectionUntilKnownHeading(
-      file.content,
-      "## Instructions",
-      CLAUDE_CODE_STRUCTURAL_HEADINGS,
-    );
+    const fenced = fencedPrompt(file.content);
+    // Files scaffolded before the markers: the old heuristic.
+    const content = fenced !== null
+      ? upshiftHeadings(fenced)
+      : extractSectionUntilKnownHeading(file.content, "## Instructions", CLAUDE_CODE_STRUCTURAL_HEADINGS);
     if (content) {
       prompts.push({ agentId, content });
     }

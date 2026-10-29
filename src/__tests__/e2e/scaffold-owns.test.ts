@@ -94,6 +94,16 @@ describe("scaffold only changes what it owns (e2e)", () => {
     expect(settings.permissions.allow).toContain("Read");
   });
 
+  it("[C1] --dry-run shows what a config merge would change in settings.json", () => {
+    const { out } = scaffold("--dry-run");
+    const block = out.slice(out.indexOf(".claude/settings.json"));
+    // the topology's own allow rules, added beside the user's
+    expect(block).toMatch(/\+ permissions\.allow: \[/);
+    // and nothing of the user's is removed
+    expect(block).not.toMatch(/^\s+- /m);
+    expect(read(".claude/settings.json")).toBe(JSON.stringify(USER_SETTINGS, null, 2));
+  });
+
   it("[G4] a second run changes nothing", () => {
     scaffold();
     const { out } = scaffold();
@@ -120,10 +130,10 @@ describe("scaffold only changes what it owns (e2e)", () => {
 
   it("[G7] an edited file scaffold owns is kept on the next run", () => {
     scaffold();
-    put(".claude/CLAUDE.md", read(".claude/CLAUDE.md") + "my own note\n");
+    put(".claude/rules/hazards.md", read(".claude/rules/hazards.md") + "my own note\n");
     const { out } = scaffold();
-    expect(read(".claude/CLAUDE.md")).toContain("my own note");
-    expect(out).toContain(".claude/CLAUDE.md (user edited — kept)");
+    expect(read(".claude/rules/hazards.md")).toContain("my own note");
+    expect(out).toContain(".claude/rules/hazards.md (user edited — kept)");
   });
 
   it("[G8] --prune removes untouched leftovers and keeps edited ones", () => {

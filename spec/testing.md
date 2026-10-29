@@ -29,6 +29,7 @@ Run the live suite before every release, and after any change to a binding.
 | G8 | `--prune` removes untouched leftovers and keeps edited ones | e2e/scaffold-owns.test.ts |
 | G9 | Two topologies in one project keep separate manifests | e2e/scaffold-owns.test.ts |
 | G10 | No `${…}` reference or `#`-key reaches settings `env` (Claude Code applies env literally) | e2e/scaffold-owns.test.ts |
+| C1 | `scaffold --dry-run` lists, key by key, what a config merge would add or change in settings.json and .mcp.json | e2e/scaffold-owns.test.ts |
 | G11 | An unsafe generated path aborts the run before any file is written | scaffold/__tests__/safety.test.ts |
 | G12 | A second scaffold of an imported project changes nothing | e2e/roundtrip.test.ts |
 | G13 | An agent's `extensions` never leak into project-wide settings (only a topology-level `extensions` block is top-level) | e2e/roundtrip.test.ts |
@@ -43,7 +44,32 @@ Run the live suite before every release, and after any change to a binding.
 | A4 | Agents, groups, skills and commands found on disk are imported with `file:` and never generated | e2e/roundtrip.test.ts |
 | F3 | `--allow-invalid` compiles despite validation errors; `--force` only overwrites kept files | e2e/roundtrip.test.ts |
 | C5 | A hook's own script is created only when missing: never overwritten (even with `--force`), reported or claimed | e2e/roundtrip.test.ts |
+| N4 | A url MCP server gets `type: http` (Claude Code skipped it) | e2e/compile.test.ts |
+| N5 | A `type: prompt` hook compiles to a prompt handler, in settings and in agent frontmatter | e2e/compile.test.ts |
+| N6 | Universal hook events map to Claude Code events (AgentStop → SubagentStop; Stop inside an agent) | e2e/compile.test.ts |
+| N7 | MCP names convert in whole-server, wildcard and dotted forms, in tools and in permission rules | e2e/compile.test.ts |
+| N8 | `permissions: confirm` and `bypass` compile to real `permissionMode` values; an unknown value is never emitted | e2e/compile.test.ts |
+| N9 | A regex hook matcher stays a valid YAML string in agent frontmatter | e2e/compile.test.ts |
+| N10 | A manual agent keeps its description (Claude Code skips an agent without one) | e2e/compile.test.ts |
+| N14 | `settings.ask` rules are emitted | e2e/compile.test.ts |
+| N17 | A scalar YAML would read as another type (`yes`, `1.0`) is quoted | e2e/compile.test.ts |
+| N19 | Scaffold output is byte-stable: no date in any generated file | e2e/compile.test.ts |
+| C3 | A `run:` line's script is the word after its interpreter, never an argument; a project script runs in place, from the project root | e2e/compile.test.ts |
+| C4 | A gate after an action or a human runs before its next agent launches (PreToolUse on the Agent tool; exit 2 blocks) | e2e/compile.test.ts |
+| H1 | A human node compiles to an approval step: Claude Code asks before launching the next agent, and the playbook says to ask; no ignored AGENT.md | e2e/compile.test.ts |
+| L4 | Real Claude Code blocks launching an agent when its gate fails, and stops at its approval step when the gate passes | live/claude-code.live.test.ts |
+| C2 | The topology context is written to `.claude/rules/<topology>.md`, never a CLAUDE.md, so it never competes with the project's own | e2e/compile.test.ts |
+| L5 | Real Claude Code loads the topology context from `.claude/rules/<topology>.md` | live/claude-code.live.test.ts |
+| N12 | A skill's instructions reach the model: a `prompt { }` block is the SKILL.md body; `prompt: "path"` tells Claude to read and follow the file | e2e/compile.test.ts |
+| A3 | An action's `commands:` are emitted whatever its kind; a non-inline action without commands is a marked stub that fails | e2e/compile.test.ts |
+| A3b | A tool's stub goes where its `script:` points (create-only for a project path), never a copy beside it | e2e/compile.test.ts |
+| B4 | A schedule runs headless from the project root, calls the real action path, and `every:` converts to cron (or warns) | e2e/compile.test.ts |
+| N21 | A `gate`, `hook`, `tool`, `job`, `command` or `level` outside its container block is a V98 error, never dropped silently | e2e/compile.test.ts |
+| N18 | An agent's `skills:`/`mcp-servers:` or a skill's `agent:` naming nothing declared is a V99 warning | e2e/compile.test.ts |
+| N16 | A model id Claude Code does not have is omitted with a warning; aliases, `inherit` and `claude-*` ids pass | e2e/compile.test.ts |
+| N11 | scaffold → sync is a fixed point: no edits leave the .at byte-identical; an edit between the prompt markers comes back once; re-scaffold keeps it | e2e/sync-cycle.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
+| L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
 
 ## Open findings (not yet guaranteed)
@@ -54,28 +80,6 @@ real test and the row moves to Guarantees. Source: the compile audit,
 
 | Id | Finding | Phase |
 |---|---|---|
-| N11 | sync pulls generated prose back into the .at, so the prompt grows each cycle | 2 |
-| N12 | A skill `prompt: "path"` emits `See: path`; the instructions never reach Claude | 2 |
-| A3 | `kind: external` actions ignore `commands:` and emit a TODO stub | 3 |
-| A3b | Tools with a real `script:` get stub copies | 3 |
-| B4 | Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line | 3 |
-| H1 | Human nodes compile to frontmatter-less AGENT.md files that Claude Code ignores; they should be an approval step | 3 |
-| N4 | `.mcp.json` drops `type`, so a url server is skipped | 3 |
-| N5 | `type: prompt` hooks are emitted as commands | 3 |
-| N6 | Universal events (AgentStop, ToolUse, Error) are emitted unmapped, so the hook never fires | 3 |
-| N7 | MCP tool names: whole-server and dotted names mis-converted; permissions not converted | 3 |
-| N8 | V27 accepts `confirm` and `bypass`, emitted as invalid `permissionMode` | 3 |
-| N9 | A hook matcher with a regex breaks the agent file's YAML | 3 |
-| N10 | `invocation: manual` drops the description, so the agent is not registered | 3 |
-| N14 | `settings.ask` is parsed but never emitted | 3 |
-| N16 | Model ids are not checked per target | 3 |
-| N17 | Unquoted YAML scalars change type (`yes` becomes `true`) | 3 |
-| N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
-| N19 | Hook stubs carry the date, so output is not byte-stable | 3 |
-| C1 | `scaffold --dry-run` says settings.json and .mcp.json would be "config merged" but does not show the diff (content session, 2026-10-29) | 3 |
-| C2 | Scaffold adds `.claude/CLAUDE.md`, which competes with a project's root CLAUDE.md (content session, 2026-10-29) | 3 |
-| C3 | Run-line parsing takes placeholders and file arguments as scripts (`SLUG`, `frames-critic.json`) and plans stubs for them (content session, 2026-10-29) | 3 |
-| C4 | A gate whose `after:` is an action or a human compiles to no enforceable hook (10 gates in content-harness) | 3 |
 | B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
 | F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
 | F2 | Hooks as a typed union (http, mcp_tool, agent; once, async, if) | 4 |

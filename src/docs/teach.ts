@@ -207,6 +207,16 @@ agent reviewer {
   model: sonnet
 }`,
   },
+  V98: {
+    topic: "gate",
+    snippet: `# A gate lives inside gates { }; beside it, it is ignored:
+gates {
+  gate review {
+    after: writer
+    run: "scripts/review.sh"
+  }
+}`,
+  },
 };
 
 /**

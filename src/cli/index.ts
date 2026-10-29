@@ -36,6 +36,7 @@ import { lessonsFor } from "../docs/teach.js";
 import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
@@ -477,7 +478,14 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   if (dryRun) {
     console.log(c.cyan("  Dry run — nothing is written:"));
     console.log("");
-    for (const action of actions) printAction(action, true);
+    for (const action of actions) {
+      printAction(action, true);
+      // A merged config file is the one to review before a write: show what changes.
+      if (action.type === "update" && action.detail === "config merged") {
+        const onDisk = fs.readFileSync(path.join(basePath, action.path), "utf-8");
+        for (const line of jsonChanges(onDisk, action.content)) console.log(`      ${c.dim(line)}`);
+      }
+    }
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
   } else {

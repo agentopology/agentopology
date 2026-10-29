@@ -241,8 +241,8 @@ describe("claude-code binding", () => {
     expect(mcp.mcpServers.filesystem).toBeDefined();
   });
 
-  it("produces a context file (.claude/CLAUDE.md, never root CLAUDE.md)", () => {
-    const contextFile = files.find((f) => f.path === ".claude/CLAUDE.md");
+  it("produces a context file (.claude/rules/<topology>.md, never a CLAUDE.md)", () => {
+    const contextFile = files.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path));
     expect(contextFile).toBeDefined();
     // Must never generate root-level CLAUDE.md
     const rootClaudeMd = files.find((f) => f.path === "CLAUDE.md");
@@ -409,12 +409,11 @@ topology gate-target-test : [pipeline] {
     expect(humanHook).toBeUndefined();
   });
 
-  it("warns at scaffold time when a blocking gate targets a non-agent node", () => {
-    const humanWarning = warnings.find((w) =>
-      w.includes("gate-on-human") && w.includes("approver"),
-    );
-    expect(humanWarning).toBeDefined();
-    expect(humanWarning).toContain("non-agent");
+  it("wires a gate after a human node before its next agent launches (PreToolUse), without a warning", () => {
+    expect(warnings.find((w) => w.includes("gate-on-human"))).toBeUndefined();
+    expect(JSON.stringify(settings.hooks.PreToolUse)).toContain("before-agent.sh");
+    const script = files.find((f) => f.path.endsWith("/scripts/before-agent.sh"))!;
+    expect(script.content).toMatch(/publisher\)\n[\s\S]*gate-gate-on-human\.sh/);
   });
 
   it("still generates the gate wrapper script for non-agent-targeted gate", () => {
@@ -424,10 +423,9 @@ topology gate-target-test : [pipeline] {
     expect(wrapper).toBeDefined();
   });
 
-  it("wrapper script for non-agent-targeted gate documents the limitation", () => {
+  it("wrapper script for a gate after a human documents its PreToolUse enforcement", () => {
     const wrapper = files.find((f) => f.path.endsWith("/scripts/gate-gate-on-human.sh"))!;
-    expect(wrapper.content).toContain("NOT wired as a SubagentStop hook");
-    expect(wrapper.content).toContain("orchestrator playbook");
+    expect(wrapper.content).toContain('PreToolUse hook (before-agent.sh) before Claude Code launches "publisher"');
   });
 
   it("wrapper script for agent-targeted gate documents SubagentStop enforcement", () => {
@@ -558,11 +556,10 @@ topology youtube-flywheel : [pipeline, fan-out, human-gate] {
     expect(matchers).not.toContain("approve-brief");
   });
 
-  it("warns at scaffold time about the platform-credentials gate", () => {
-    const w = warnings.find((m) =>
-      m.includes("platform-credentials") && m.includes("approve-brief"),
-    );
-    expect(w).toBeDefined();
+  it("runs the platform-credentials gate (after the human approve-brief) before renderer launches", () => {
+    expect(warnings.find((m) => m.includes("platform-credentials"))).toBeUndefined();
+    const script = files.find((f) => f.path.endsWith("/scripts/before-agent.sh"))!;
+    expect(script.content).toMatch(/renderer\)\n[\s\S]*gate-platform-credentials\.sh/);
   });
 });
 
@@ -803,13 +800,11 @@ topology debate-test : [fan-out, debate, pipeline] {
     });
   });
 
-  describe("human node → AGENT.md", () => {
-    const humanAgent = exoticFiles.find((f) => f.path === ".claude/agents/moderator/AGENT.md");
-
-    it("generates AGENT.md with timeout and on-timeout", () => {
-      expect(humanAgent).toBeDefined();
-      expect(humanAgent!.content).toContain("1h");
-      expect(humanAgent!.content).toContain("skip");
+  describe("human node → approval step", () => {
+    it("is an approval step in the playbook, with timeout and on-timeout, and no AGENT.md", () => {
+      expect(exoticFiles.find((f) => f.path === ".claude/agents/moderator/AGENT.md")).toBeUndefined();
+      const playbook = exoticFiles.find((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f.path) && f.content.includes("## Approval steps"))!;
+      expect(playbook.content).toMatch(/### Moderator[\s\S]*Timeout: 1h\nOn timeout: skip/);
     });
   });
 
@@ -909,7 +904,7 @@ topology debate-test : [fan-out, debate, pipeline] {
     });
 
     it("artifacts documented in CLAUDE.md", () => {
-      const ctx = exoticFiles.find((f) => f.path === ".claude/CLAUDE.md")!;
+      const ctx = exoticFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
       expect(ctx.content).toContain("transcript");
     });
 
