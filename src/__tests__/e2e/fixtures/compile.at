@@ -1,0 +1,84 @@
+# compile.at: regression fixture for "what scaffold writes, Claude Code reads
+# as meant" (phase 3). Each construct here once compiled to config Claude Code
+# skipped, misread or never fired. Used by src/__tests__/e2e/compile.test.ts.
+
+topology compile : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "Constructs that once compiled wrong"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [intake]
+  }
+
+  action intake {
+    kind: inline
+    description: "Take the request"
+  }
+
+  agent drafter {
+    model: sonnet
+    description: "yes"
+    permissions: confirm
+    tools: [Read, mcp.notes, mcp.search.*, mcp.search.find.all]
+    hooks {
+      hook lint {
+        on: PostToolUse
+        matcher: "Edit|Write\.md$"
+        run: "scripts/lint.sh"
+      }
+      hook judge {
+        on: AgentStop
+        type: prompt
+        run: "Did the draft cite a source? Answer ok: false if not."
+      }
+    }
+  }
+
+  agent auditor {
+    model: sonnet
+    description: "Audits a draft on request"
+    invocation: manual
+    permissions: bypass
+  }
+
+  gates {
+    gate copy-check {
+      after: drafter
+      run: "python3 docs/tools/check.py check-dir docs/show/SLUG --out OUT/frames-critic.json"
+      on-fail: halt
+    }
+  }
+
+  flow {
+    intake -> drafter
+  }
+
+  hooks {
+    hook finished {
+      on: AgentStop
+      matcher: "drafter"
+      run: "scripts/finished.sh"
+    }
+    hook review {
+      on: Stop
+      type: prompt
+      run: "Check the session ended with a summary: reply ok true or false."
+    }
+  }
+
+  mcp-servers {
+    search {
+      url: "https://search.example.com/mcp"
+    }
+  }
+
+  settings {
+    allow: ["Read", "mcp.search"]
+    ask: ["Bash(git push:*)"]
+    deny: ["mcp.notes.delete"]
+  }
+}

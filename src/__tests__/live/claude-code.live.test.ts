@@ -55,6 +55,7 @@ interface LiveRun {
   init: InitReport;
   result: { is_error: boolean; result: string };
   stderr: string;
+  events: Array<Record<string, unknown>>;
 }
 
 function runClaude(cwd: string): LiveRun {
@@ -80,7 +81,7 @@ function runClaude(cwd: string): LiveRun {
   if (!init || !result) {
     throw new Error(`claude produced no init/result (exit ${proc.status}): ${proc.stderr}`);
   }
-  return { init, result, stderr: proc.stderr ?? "" };
+  return { init, result, stderr: proc.stderr ?? "", events };
 }
 
 /**
@@ -148,6 +149,29 @@ describe.skipIf(!LIVE)("[L2] Claude Code loads a hand-built project after import
       expect(run.init.slash_commands).toContain("ship");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 200_000);
+});
+
+describe.skipIf(!LIVE)("[L3] Claude Code reads the phase-3 constructs as meant", () => {
+  it("compile.at: a manual agent registers, and a prompt hook fires", () => {
+    const project = fs.mkdtempSync(join(os.tmpdir(), "at-live-compile-"));
+    try {
+      execFileSync(process.execPath, [CLI, "scaffold", resolve(here, "../e2e/fixtures/compile.at"), "--target", "claude-code", "--output", project], {
+        stdio: "ignore",
+      });
+      const run = runClaude(project);
+      // drafter carries a regex matcher and a prompt hook in its frontmatter: a
+      // YAML error there would drop it. auditor is manual: without a
+      // description Claude Code skipped it.
+      expect(run.init.agents).toEqual(expect.arrayContaining(["drafter", "auditor"]));
+      // The fixture's Stop prompt hook asks for a summary; "OK" is not one, so
+      // Claude Code feeds the hook's verdict back: proof the prompt handler ran
+      // (as a command it would have failed to execute).
+      const fed = run.events.some((e) => e.type === "user" && JSON.stringify(e).includes("Stop hook feedback"));
+      expect(fed, "the Stop prompt hook did not run").toBe(true);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
     }
   }, 200_000);
 });

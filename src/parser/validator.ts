@@ -1124,15 +1124,17 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
     });
   };
 
+  // A prompt hook's run: is the prompt itself, so prose is what it should be.
+  const isCommand = (hook: HookDef) => hook.type !== "prompt";
   for (const node of ast.nodes) {
     if (isGate(node)) check(`Gate "${node.id}"`, node.run, node.id);
     if (node.type === "agent") {
-      for (const hook of (node as AgentNode).hooks ?? []) {
+      for (const hook of ((node as AgentNode).hooks ?? []).filter(isCommand)) {
         check(`Hook "${hook.name}" on agent "${node.id}"`, hook.run, node.id);
       }
     }
   }
-  for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, hook.run);
+  for (const hook of (ast.hooks ?? []).filter(isCommand)) check(`Hook "${hook.name}"`, hook.run);
 
   return results;
 }

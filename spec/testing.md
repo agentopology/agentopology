@@ -43,7 +43,19 @@ Run the live suite before every release, and after any change to a binding.
 | A4 | Agents, groups, skills and commands found on disk are imported with `file:` and never generated | e2e/roundtrip.test.ts |
 | F3 | `--allow-invalid` compiles despite validation errors; `--force` only overwrites kept files | e2e/roundtrip.test.ts |
 | C5 | A hook's own script is created only when missing: never overwritten (even with `--force`), reported or claimed | e2e/roundtrip.test.ts |
+| N4 | A url MCP server gets `type: http` (Claude Code skipped it) | e2e/compile.test.ts |
+| N5 | A `type: prompt` hook compiles to a prompt handler, in settings and in agent frontmatter | e2e/compile.test.ts |
+| N6 | Universal hook events map to Claude Code events (AgentStop → SubagentStop; Stop inside an agent) | e2e/compile.test.ts |
+| N7 | MCP names convert in whole-server, wildcard and dotted forms, in tools and in permission rules | e2e/compile.test.ts |
+| N8 | `permissions: confirm` and `bypass` compile to real `permissionMode` values; an unknown value is never emitted | e2e/compile.test.ts |
+| N9 | A regex hook matcher stays a valid YAML string in agent frontmatter | e2e/compile.test.ts |
+| N10 | A manual agent keeps its description (Claude Code skips an agent without one) | e2e/compile.test.ts |
+| N14 | `settings.ask` rules are emitted | e2e/compile.test.ts |
+| N17 | A scalar YAML would read as another type (`yes`, `1.0`) is quoted | e2e/compile.test.ts |
+| N19 | Scaffold output is byte-stable: no date in any generated file | e2e/compile.test.ts |
+| C3 | A `run:` line's script is the word after its interpreter, never an argument; a project script runs in place, from the project root | e2e/compile.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
+| L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
 
 ## Open findings (not yet guaranteed)
@@ -60,21 +72,11 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | A3b | Tools with a real `script:` get stub copies | 3 |
 | B4 | Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line | 3 |
 | H1 | Human nodes compile to frontmatter-less AGENT.md files that Claude Code ignores; they should be an approval step | 3 |
-| N4 | `.mcp.json` drops `type`, so a url server is skipped | 3 |
-| N5 | `type: prompt` hooks are emitted as commands | 3 |
-| N6 | Universal events (AgentStop, ToolUse, Error) are emitted unmapped, so the hook never fires | 3 |
-| N7 | MCP tool names: whole-server and dotted names mis-converted; permissions not converted | 3 |
-| N8 | V27 accepts `confirm` and `bypass`, emitted as invalid `permissionMode` | 3 |
-| N9 | A hook matcher with a regex breaks the agent file's YAML | 3 |
-| N10 | `invocation: manual` drops the description, so the agent is not registered | 3 |
-| N14 | `settings.ask` is parsed but never emitted | 3 |
 | N16 | Model ids are not checked per target | 3 |
-| N17 | Unquoted YAML scalars change type (`yes` becomes `true`) | 3 |
 | N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
-| N19 | Hook stubs carry the date, so output is not byte-stable | 3 |
 | C1 | `scaffold --dry-run` says settings.json and .mcp.json would be "config merged" but does not show the diff (content session, 2026-10-29) | 3 |
 | C2 | Scaffold adds `.claude/CLAUDE.md`, which competes with a project's root CLAUDE.md (content session, 2026-10-29) | 3 |
-| C3 | Run-line parsing takes placeholders and file arguments as scripts (`SLUG`, `frames-critic.json`) and plans stubs for them (content session, 2026-10-29) | 3 |
+| N21 | A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes | 3 |
 | C4 | A gate whose `after:` is an action or a human compiles to no enforceable hook (10 gates in content-harness) | 3 |
 | B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
 | F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
