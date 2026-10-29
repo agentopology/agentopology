@@ -14,6 +14,7 @@ import {
   COPILOT_STRUCTURAL_HEADINGS,
 } from "../sync/index.js";
 import { hashContent } from "./manifest.js";
+import { fenceSpan } from "../bindings/lib/prompt-fence.js";
 
 /**
  * Return the list of known structural headings for a binding.
@@ -49,6 +50,19 @@ export function mergeAgentFile(
   generated: string,
   binding: string,
 ): string {
+  // Files with prompt markers: keep the user's text between them, take
+  // everything else from the generated file.
+  const mine = fenceSpan(existing);
+  const theirs = fenceSpan(generated);
+  if (mine && theirs) {
+    return generated.slice(0, theirs.start) + existing.slice(mine.start, mine.end) + generated.slice(theirs.end);
+  }
+  // A file from before the markers: its instructions move inside them once.
+  if (theirs) {
+    const legacy = extractSectionUntilKnownHeading(existing, "## Instructions", getStructuralHeadings(binding));
+    if (legacy !== null) return generated.slice(0, theirs.start) + "\n" + legacy + "\n" + generated.slice(theirs.end);
+  }
+
   const structuralHeadings = getStructuralHeadings(binding);
 
   // Extract the HUMAN zone from the existing file

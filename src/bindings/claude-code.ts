@@ -30,6 +30,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub, STUB_MARKER } from "./lib/stub.js";
+import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
@@ -677,6 +678,9 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     sections.push("## Instructions");
     sections.push("");
+    // Only the text between the markers is the prompt: sync and re-scaffold
+    // read it there, so generated sections below never leak into the .at.
+    sections.push(PROMPT_FENCE_OPEN);
     if (agent.prompt) {
       sections.push(downshiftHeadings(agent.prompt));
     } else if (agent.description) {
@@ -687,6 +691,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     } else {
       sections.push("Complete the assigned task.");
     }
+    sections.push(PROMPT_FENCE_CLOSE);
     sections.push("");
 
     // Reads section
