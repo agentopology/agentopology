@@ -58,17 +58,17 @@ interface LiveRun {
   events: Array<Record<string, unknown>>;
 }
 
-function runClaude(cwd: string): LiveRun {
+function runClaude(cwd: string, prompt = "Reply with the single word OK.", maxTurns = 1): LiveRun {
   const proc = spawnSync(
     claudeBin(),
     [
       "-p",
-      "Reply with the single word OK.",
+      prompt,
       "--setting-sources", "project,local",
       "--strict-mcp-config",
       "--no-session-persistence",
       "--model", "haiku",
-      "--max-turns", "1",
+      "--max-turns", String(maxTurns),
       "--output-format", "stream-json",
       "--verbose",
     ],
@@ -170,6 +170,30 @@ describe.skipIf(!LIVE)("[L3] Claude Code reads the phase-3 constructs as meant",
       // (as a command it would have failed to execute).
       const fed = run.events.some((e) => e.type === "user" && JSON.stringify(e).includes("Stop hook feedback"));
       expect(fed, "the Stop prompt hook did not run").toBe(true);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  }, 200_000);
+});
+
+describe.skipIf(!LIVE)("[L4] Claude Code enforces a gate and an approval step before launching an agent", () => {
+  const launch = "Launch the drafter subagent with the task: write one line about tea. Do nothing else.";
+  const toolResults = (run: LiveRun) => JSON.stringify(run.events.filter((e) => e.type === "user"));
+
+  it.each([
+    ["a failing gate blocks the launch", "#!/usr/bin/env bash\necho 'brief missing' >&2\nexit 1\n", "Gate 'brief-check' FAILED"],
+    ["a passing gate reaches the approval step, which asks (headless: denies with its reason)", "#!/usr/bin/env bash\nexit 0\n", 'Approval step \\"approve\\"'],
+  ])("%s", (_name, gateScript, expected) => {
+    const project = fs.mkdtempSync(join(os.tmpdir(), "at-live-before-"));
+    try {
+      execFileSync(process.execPath, [CLI, "scaffold", resolve(here, "../e2e/fixtures/compile.at"), "--target", "claude-code", "--output", project], {
+        stdio: "ignore",
+      });
+      fs.writeFileSync(join(project, ".claude/skills/compile/scripts/brief-check.sh"), gateScript);
+      const run = runClaude(project, launch, 2);
+      const launched = run.events.some((e) => e.type === "assistant" && JSON.stringify(e).includes('"subagent_type":"drafter"'));
+      expect(launched, "the model never tried to launch drafter").toBe(true);
+      expect(toolResults(run)).toContain(expected);
     } finally {
       fs.rmSync(project, { recursive: true, force: true });
     }

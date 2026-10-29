@@ -794,8 +794,8 @@ export function parseHuman(
 
   if (fields.file) node.file = unquote(fields.file);
   if (fields.description) node.description = unquote(fields.description);
-  if (fields.timeout) node.timeout = fields.timeout;
-  if (fields["on-timeout"]) node.onTimeout = fields["on-timeout"];
+  if (fields.timeout) node.timeout = unquote(fields.timeout);
+  if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
 
   return node;
 }

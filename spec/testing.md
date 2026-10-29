@@ -54,6 +54,9 @@ Run the live suite before every release, and after any change to a binding.
 | N17 | A scalar YAML would read as another type (`yes`, `1.0`) is quoted | e2e/compile.test.ts |
 | N19 | Scaffold output is byte-stable: no date in any generated file | e2e/compile.test.ts |
 | C3 | A `run:` line's script is the word after its interpreter, never an argument; a project script runs in place, from the project root | e2e/compile.test.ts |
+| C4 | A gate after an action or a human runs before its next agent launches (PreToolUse on the Agent tool; exit 2 blocks) | e2e/compile.test.ts |
+| H1 | A human node compiles to an approval step: Claude Code asks before launching the next agent, and the playbook says to ask; no ignored AGENT.md | e2e/compile.test.ts |
+| L4 | Real Claude Code blocks launching an agent when its gate fails, and stops at its approval step when the gate passes | live/claude-code.live.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
@@ -71,13 +74,11 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | A3 | `kind: external` actions ignore `commands:` and emit a TODO stub | 3 |
 | A3b | Tools with a real `script:` get stub copies | 3 |
 | B4 | Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line | 3 |
-| H1 | Human nodes compile to frontmatter-less AGENT.md files that Claude Code ignores; they should be an approval step | 3 |
 | N16 | Model ids are not checked per target | 3 |
 | N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
 | C1 | `scaffold --dry-run` says settings.json and .mcp.json would be "config merged" but does not show the diff (content session, 2026-10-29) | 3 |
 | C2 | Scaffold adds `.claude/CLAUDE.md`, which competes with a project's root CLAUDE.md (content session, 2026-10-29) | 3 |
 | N21 | A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes | 3 |
-| C4 | A gate whose `after:` is an action or a human compiles to no enforceable hook (10 gates in content-harness) | 3 |
 | B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
 | F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
 | F2 | Hooks as a typed union (http, mcp_tool, agent; once, async, if) | 4 |

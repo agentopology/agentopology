@@ -19,6 +19,10 @@ topology compile : [pipeline] {
     description: "Take the request"
   }
 
+  human approve {
+    description: "The editor approves the brief before drafting"
+  }
+
   agent drafter {
     model: sonnet
     description: "yes"
@@ -46,6 +50,12 @@ topology compile : [pipeline] {
   }
 
   gates {
+    gate brief-check {
+      after: intake
+      before: drafter
+      run: "scripts/brief-check.sh"
+      on-fail: halt
+    }
     gate copy-check {
       after: drafter
       run: "python3 docs/tools/check.py check-dir docs/show/SLUG --out OUT/frames-critic.json"
@@ -54,7 +64,7 @@ topology compile : [pipeline] {
   }
 
   flow {
-    intake -> drafter
+    intake -> approve -> drafter
   }
 
   hooks {

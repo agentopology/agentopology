@@ -118,3 +118,25 @@ describe("a run: line is a command with arguments", () => {
     expect([...files.values()].filter((f) => f.content.includes(today)).map((f) => f.path)).toEqual([]);
   });
 });
+
+describe("gates and human steps are enforced before the agent they guard", () => {
+  const script = read(".claude/skills/compile/scripts/before-agent.sh");
+
+  it("[C4] a gate after an action runs before its next agent launches (PreToolUse on the Agent tool)", () => {
+    expect(settings.hooks.PreToolUse).toContainEqual({
+      matcher: "Agent|Task",
+      hooks: [{ type: "command", command: 'bash "$CLAUDE_PROJECT_DIR/.claude/skills/compile/scripts/before-agent.sh"' }],
+    });
+    expect(script).toMatch(/drafter\)\n[\s\S]*bash "\$DIR\/gate-brief-check\.sh" >&2 \|\| exit 2/);
+    // not also a SubagentStop hook on a node Claude Code never registers
+    const matchers = settings.hooks.SubagentStop.map((e: { matcher?: string }) => e.matcher);
+    expect(matchers).not.toContain("intake");
+  });
+
+  it("[H1] a human node is an approval step: Claude Code asks before launching the next agent; no AGENT.md", () => {
+    expect([...files.keys()]).not.toContain(".claude/agents/approve/AGENT.md");
+    expect(script).toContain(`ask 'Approval step "approve": The editor approves the brief before drafting'`);
+    expect(script).toContain(`permissionDecision: "ask"`);
+    expect(read(".claude/skills/compile/SKILL.md")).toMatch(/## Approval steps[\s\S]*### Approve\nThe editor approves/);
+  });
+});
