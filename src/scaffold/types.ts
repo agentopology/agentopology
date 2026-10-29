@@ -35,4 +35,10 @@ export type FileAction =
   | { type: "update"; path: string; content: string; detail: string; executable?: boolean }
   | { type: "delete"; path: string }
   | { type: "unchanged"; path: string }
-  | { type: "conflict"; path: string; content: string; detail: string };
+  | { type: "conflict"; path: string; content: string; detail: string }
+  /**
+   * Never written or deleted, even with --force. `unsafe` marks a path that
+   * must abort the whole run before anything is written (an empty or
+   * malformed file name — the EISDIR class).
+   */
+  | { type: "blocked"; path: string; detail: string; unsafe?: boolean };

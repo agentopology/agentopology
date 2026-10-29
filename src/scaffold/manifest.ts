@@ -42,33 +42,58 @@ export function getManifestPath(target: string): string {
 }
 
 /**
- * Read an existing scaffold manifest from disk.
- * Returns `null` if the manifest does not exist or cannot be parsed.
+ * Where one topology's manifest lives when the shared one belongs to another
+ * topology: `.scaffold-manifest.<source>.json` beside it.
  */
-export function readManifest(
-  basePath: string,
-  target: string,
-): ScaffoldManifest | null {
-  const manifestPath = join(basePath, getManifestPath(target));
-  if (!existsSync(manifestPath)) return null;
+function perSourcePath(target: string, source: string): string {
+  return getManifestPath(target).replace(/\.json$/, `.${source.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
+}
 
+function readJson(path: string): ScaffoldManifest | null {
+  if (!existsSync(path)) return null;
   try {
-    const raw = readFileSync(manifestPath, "utf-8");
-    return JSON.parse(raw) as ScaffoldManifest;
+    return JSON.parse(readFileSync(path, "utf-8")) as ScaffoldManifest;
   } catch {
     return null;
   }
 }
 
 /**
+ * Read an existing scaffold manifest from disk.
+ * Returns `null` if the manifest does not exist or cannot be parsed.
+ *
+ * With `source` (the .at file name), returns only that topology's manifest:
+ * two topologies scaffolded into one project used to share one manifest, so
+ * the second treated the first one's files as its own — overwriting its
+ * crontab and, with --prune, deleting its scripts.
+ */
+export function readManifest(
+  basePath: string,
+  target: string,
+  source?: string,
+): ScaffoldManifest | null {
+  const shared = readJson(join(basePath, getManifestPath(target)));
+  if (!source) return shared;
+  const own = readJson(join(basePath, perSourcePath(target, source)));
+  if (own) return own;
+  return shared && shared.source === source ? shared : null;
+}
+
+/**
  * Write a scaffold manifest to disk, creating parent directories as needed.
+ * Never replaces another topology's manifest: when the shared file belongs to
+ * a different source, this one goes beside it.
  */
 export function writeManifest(
   basePath: string,
   target: string,
   manifest: ScaffoldManifest,
 ): void {
-  const manifestPath = join(basePath, getManifestPath(target));
+  const sharedPath = join(basePath, getManifestPath(target));
+  const shared = readJson(sharedPath);
+  const ownPath = join(basePath, perSourcePath(target, manifest.source));
+  const manifestPath =
+    existsSync(ownPath) || (shared && shared.source !== manifest.source) ? ownPath : sharedPath;
   const dir = dirname(manifestPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });

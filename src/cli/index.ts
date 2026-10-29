@@ -35,8 +35,8 @@ import { listTopics, getTopic, getAllTopics, searchTopics, getAgentGuide } from 
 import { lessonsFor } from "../docs/teach.js";
 import { importFromPlatform } from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions } from "../scaffold/incremental.js";
-import type { ScaffoldManifest } from "../scaffold/types.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
@@ -107,7 +107,7 @@ ${c.bold("Options:")}
   --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
-  --force           Overwrite all files, ignoring manifest and conflicts.
+  --force           Overwrite files scaffold did not create or that were edited (never symlinks).
   --prune           Delete files that were previously scaffolded but are no longer generated.
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
   --brief           Emit the machine brief only, without the terminal render.
@@ -390,6 +390,21 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     process.exit(1);
   }
 
+  // Never compile what does not validate: fields the validator rejects can
+  // vanish silently in the output. --force compiles anyway.
+  const errors = validate(ast).filter((r) => r.level === "error");
+  if (errors.length > 0) {
+    const say = force ? console.log : console.error;
+    say(c[force ? "yellow" : "red"](`  ${errors.length} validation error(s)${force ? " — scaffolding anyway (--force)" : ". Nothing was written."}`));
+    for (const e of errors.slice(0, 5)) say(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
+    if (errors.length > 5) say(c.dim(`  … and ${errors.length - 5} more`));
+    if (!force) {
+      console.error(c.dim(`  Run: agentopology validate ${path.basename(filePath)}`));
+      process.exit(1);
+    }
+    say("");
+  }
+
   console.log(
     c.bold(`Scaffolding ${ast.topology.name} for ${binding.description}`)
   );
@@ -404,73 +419,76 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 
   const basePath = outputDir ? path.resolve(outputDir) : process.cwd();
 
-  if (dryRun) {
-    console.log(c.cyan("  Dry run — files that would be generated:"));
-    console.log("");
+  // One plan for every run — the first one too. The first scaffold used to
+  // skip it and write everything, overwriting real files (and, through a
+  // symlink, files in another repository) before crashing half way.
+  const manifest = readManifest(basePath, targetName, path.basename(filePath));
+  const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
 
-    const manifest = readManifest(basePath, targetName);
-    if (manifest && !force) {
-      const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
-      for (const action of actions) {
-        switch (action.type) {
-          case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
-          case "update": console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`); break;
-          case "delete": console.log(`  ${c.red("-")} ${action.path}`); break;
-          case "unchanged": console.log(`  ${c.dim("=")} ${action.path}`); break;
-          case "conflict": console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`); break;
-        }
-      }
-    } else {
-      for (const file of files) {
-        console.log(`  ${c.green("+")} ${file.path} (${file.content.length} bytes)`);
-      }
+  const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
+  if (unsafe.length > 0) {
+    console.error(c.red(`  Refusing to write: ${unsafe.length} generated path(s) are not safe file names. Nothing was written.`));
+    for (const a of unsafe) {
+      if (a.type === "blocked") console.error(`  ${c.red("✗")} ${JSON.stringify(a.path)} — ${a.detail}`);
     }
+    console.error(c.dim(`  Usually prose in a gate or hook "run". Run: agentopology validate ${path.basename(filePath)}`));
+    process.exit(1);
+  }
+
+  const printAction = (action: FileAction, preview: boolean): void => {
+    switch (action.type) {
+      case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
+      case "update": console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`); break;
+      case "delete":
+        if (preview || prune) console.log(`  ${c.red("-")} ${action.path}${prune ? "" : " (needs --prune)"}`);
+        break;
+      case "unchanged": if (preview) console.log(`  ${c.dim("=")} ${action.path}`); break;
+      case "conflict":
+        console.log(`  ${c.bold("!")} ${action.path} (${action.detail} — ${force ? "overwritten (--force)" : "kept"})`);
+        break;
+      case "blocked": console.log(`  ${c.red("⊘")} ${action.path} (${action.detail})`); break;
+    }
+  };
+
+  if (dryRun) {
+    console.log(c.cyan("  Dry run — nothing is written:"));
+    console.log("");
+    for (const action of actions) printAction(action, true);
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
   } else {
-    const manifest = readManifest(basePath, targetName);
+    const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
-    if (manifest && !force) {
-      // INCREMENTAL MODE
-      const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
-      const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
-
-      for (const action of actions) {
-        switch (action.type) {
-          case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
-          case "update": console.log(`  ${c.yellow("~")} ${action.path}`); break;
-          case "delete": if (prune) console.log(`  ${c.red("-")} ${action.path}`); break;
-          case "unchanged": break;
-          case "conflict": console.log(`  ${c.bold("!")} ${action.path} (preserved — user edited)`); break;
-        }
-      }
-      console.log("");
-      console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${result.conflicts} conflicts${prune ? `, ${result.deleted} deleted` : ""}`);
-    } else {
-      // FIRST RUN or --force — write everything
-      for (const file of files) {
-        writeFile(basePath, file.path, file.content, file.executable);
-        console.log(`  ${c.green("+")} ${file.path}`);
-      }
-      console.log("");
-      console.log(`  ${c.bold(`${files.length}`)} file(s) written to ${basePath}`);
+    for (const action of actions) printAction(action, false);
+    console.log("");
+    console.log(
+      `  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ` +
+        `${result.conflicts} conflicts${result.blocked ? `, ${result.blocked} blocked` : ""}` +
+        `${prune ? `, ${result.removed.length} deleted` : ""}`,
+    );
+    if (result.conflicts > 0 && !force) {
+      console.log(
+        c.yellow(`  ${result.conflicts} existing file(s) were kept as they are. Review them; --force overwrites them.`),
+      );
     }
 
-    // Always write manifest after successful scaffold
+    // The manifest always matches the disk, even after a failed write, so the
+    // next run knows exactly what scaffold owns.
     const newManifest: ScaffoldManifest = {
       source: path.basename(filePath),
       sourceHash: hashContent(source),
       target: targetName,
       generatedAt: new Date().toISOString(),
-      files: {},
+      files: nextManifestFiles(basePath, actions, files, manifest, result),
     };
-    for (const file of files) {
-      newManifest.files[file.path] = {
-        hash: hashContent(file.content),
-        category: file.category || "machine",
-      };
-    }
     writeManifest(basePath, targetName, newManifest);
+
+    if (result.failures.length > 0) {
+      console.error("");
+      console.error(c.red(`  ${result.failures.length} file(s) could not be written:`));
+      for (const f of result.failures) console.error(`  ${c.red("✗")} ${f.path} — ${f.error}`);
+      process.exit(1);
+    }
   }
 
   // Stub summary: count and list any generated files that are unimplemented

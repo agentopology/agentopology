@@ -21,6 +21,7 @@
 
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
+import { proseInRun } from "./run.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -1088,6 +1089,43 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * `handoff-overlap-empty` pre-flagged ambiguity; having it here makes it work
  * under `scaffold` too, and for anyone who never runs `plan`.
  */
+/**
+ * V94: a `run:` value is a command, not a sentence.
+ *
+ * Gates and hooks compile to scripts named after their `run`. Prose there
+ * passed validation, then scaffold wrote junk files named `E;` and `fail:`
+ * and crashed with EISDIR on a " / " — after it had already written other
+ * files. The explanation belongs in `description`; `run` keeps the command.
+ */
+function v94RunIsCommand(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (owner: string, run: string | undefined, nodeId?: string) => {
+    if (run === undefined) return;
+    const why = proseInRun(run);
+    if (!why) return;
+    results.push({
+      rule: "V94",
+      level: "error",
+      message:
+        `${owner} "run" is not a command — ${why}. Keep only the command in ` +
+        `"run" (e.g. run: "scripts/check.sh") and move the explanation into "description"`,
+      ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
+    });
+  };
+
+  for (const node of ast.nodes) {
+    if (isGate(node)) check(`Gate "${node.id}"`, node.run, node.id);
+    if (node.type === "agent") {
+      for (const hook of (node as AgentNode).hooks ?? []) {
+        check(`Hook "${hook.name}" on agent "${node.id}"`, hook.run, node.id);
+      }
+    }
+  }
+  for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, hook.run);
+
+  return results;
+}
+
 function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const byId = new Map(ast.nodes.map((n) => [n.id, n]));
@@ -3247,6 +3285,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v91RequiredFieldPlaceholder(ast),
     ...v92EdgeTwoBrackets(ast),
     ...v93EdgeHandoffDeclared(ast),
+    ...v94RunIsCommand(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

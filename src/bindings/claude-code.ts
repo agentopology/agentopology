@@ -33,6 +33,23 @@ import { shellStub, STUB_MARKER } from "./lib/stub.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
+import { scriptNameFromRun } from "../parser/run.js";
+
+/**
+ * Where a global hook's stub lives, or null when `run` names no file.
+ * A project-relative run (`./x.sh --flag`, `.claude/scripts/log.sh`) keeps its
+ * own path, minus arguments; a bare name is scoped under `scopedDir`.
+ */
+function hookStubPath(run: string, scopedDir: string): string | null {
+  if (run.startsWith(".") || run.startsWith("/")) {
+    const first = run.trim().split(/\s+/)[0].replace(/^\.\//, "");
+    return /^\/?[A-Za-z0-9_.][A-Za-z0-9_.\/-]*[A-Za-z0-9_]$/.test(first) && !first.includes("..")
+      ? first
+      : null;
+  }
+  const name = scriptNameFromRun(run);
+  return name ? `${scopedDir}${name}` : null;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -513,7 +530,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
-          const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+          const scriptName = scriptNameFromRun(hook.run);
+          if (!scriptName) continue; // V94: prose in run names no script
           const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
           if (hook.matcher) {
             hookLines.push(`    - matcher: "${hook.matcher}"`);
@@ -1751,9 +1769,8 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    if (gate.run) {
-      // Extract script name from the run command
-      const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const scriptName = scriptNameFromRun(gate.run);
+    if (scriptName) {
       files.push({
         path: `.claude/skills/${name}/scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
@@ -1776,7 +1793,8 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run) continue;
     if (gate.behavior === "advisory") continue;
 
-    const gateScriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const gateScriptName = scriptNameFromRun(gate.run);
+    if (!gateScriptName) continue; // V94: prose in run names no script
     const onFailExit = gate.onFail === "halt"
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
@@ -1919,10 +1937,8 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // If the run path starts with '.' or '/' it is already project-relative —
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
-    const filePath =
-      runPath.startsWith(".") || runPath.startsWith("/")
-        ? runPath
-        : `.claude/skills/${name}/scripts/${runPath.replace(/^.*\//, "").replace(/\s.*$/, "")}`;
+    const filePath = hookStubPath(runPath, `.claude/skills/${name}/scripts/`);
+    if (!filePath) continue; // V94: prose in run names no script
 
     files.push({
       path: filePath,
@@ -1946,8 +1962,8 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!agent.hooks || agent.hooks.length === 0) continue;
 
     for (const hook of agent.hooks) {
-      if (!hook.run) continue;
-      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+      const scriptName = scriptNameFromRun(hook.run);
+      if (!scriptName) continue; // V94: prose in run names no script
       files.push({
         path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
         content: [
@@ -2006,10 +2022,11 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     // Otherwise treat it as a bare filename scoped to this topology's skill
     // scripts directory.
     const runPath = hook.run;
+    if (!hookStubPath(runPath, "")) continue; // V94: prose in run names no script
     const command =
       runPath.startsWith(".") || runPath.startsWith("/")
         ? `bash ${runPath}`
-        : `bash .claude/skills/${topologyName}/scripts/${runPath.replace(/^.*\//, "").replace(/\s.*$/, "")}`;
+        : `bash .claude/skills/${topologyName}/scripts/${scriptNameFromRun(runPath)}`;
 
     const hookEntry: Record<string, unknown> = {
       hooks: [
@@ -2061,7 +2078,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
-    if (!gate.run) continue;
+    if (!scriptNameFromRun(gate.run)) continue; // no run, or V94 prose
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
 
     if (delegationMode === "inline") {

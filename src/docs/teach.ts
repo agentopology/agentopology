@@ -171,6 +171,15 @@ agent reviewer {
   reads: ["workspace/diff.md"]   # ← the handoff
 }`,
   },
+  V94: {
+    topic: "gate",
+    snippet: `# run is the command; the explanation goes in description:
+gate review {
+  after: writer
+  run: "scripts/review.sh"
+  description: "median of 3 reads, fail under 75"
+}`,
+  },
 };
 
 /**
