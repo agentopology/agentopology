@@ -1379,6 +1379,7 @@ skill-fields    = ('description' ':' string
                   | 'domains' ':' path-list
                   | 'references' ':' path-list
                   | 'prompt' ':' string
+                  | 'prompt' '{' text '}'
                   | 'disable-model-invocation' ':' boolean
                   | 'user-invocable' ':' boolean
                   | 'context' ':' identifier
@@ -1414,13 +1415,15 @@ skill classification {
 | `scripts` | name-list | no | `[]` |
 | `domains` | path-list | no | `[]` |
 | `references` | path-list | no | `[]` |
-| `prompt` | string | no | -- |
+| `prompt` | string or block | no | -- |
 | `disable-model-invocation` | boolean | no | -- |
 | `user-invocable` | boolean | no | -- |
 | `context` | identifier | no | -- |
 | `agent` | identifier | no | -- |
 | `allowed-tools` | tool-list | no | `[]` |
 | `extensions` | skill-extensions | no | -- |
+
+A skill's `prompt { }` block is its SKILL.md instructions; `prompt: "path"` names a file holding them, and the SKILL.md tells Claude to read and follow it.
 
 **`disable-model-invocation`** -- When `true`, prevents the skill from automatically invoking the model. Useful for skills that only run scripts.
 

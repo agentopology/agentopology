@@ -1611,7 +1611,10 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
     if (scripts.length) sd.scripts = scripts;
     if (domains.length) sd.domains = domains;
     if (references.length) sd.references = references;
-    if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
+    // `prompt { ... }` holds the skill's instructions; `prompt: "path"` names a file holding them.
+    const sPromptBlock = extractBlock(block.body, "prompt");
+    if (sPromptBlock) sd.prompt = dedentBlock(sPromptBlock.body);
+    else if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
     if (sFields.file) sd.file = unquote(sFields.file);
 
     // New skill fields

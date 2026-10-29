@@ -60,6 +60,10 @@ Run the live suite before every release, and after any change to a binding.
 | L4 | Real Claude Code blocks launching an agent when its gate fails, and stops at its approval step when the gate passes | live/claude-code.live.test.ts |
 | C2 | The topology context is written to `.claude/rules/<topology>.md`, never a CLAUDE.md, so it never competes with the project's own | e2e/compile.test.ts |
 | L5 | Real Claude Code loads the topology context from `.claude/rules/<topology>.md` | live/claude-code.live.test.ts |
+| N12 | A skill's instructions reach the model: a `prompt { }` block is the SKILL.md body; `prompt: "path"` tells Claude to read and follow the file | e2e/compile.test.ts |
+| A3 | An action's `commands:` are emitted whatever its kind; a non-inline action without commands is a marked stub that fails | e2e/compile.test.ts |
+| A3b | A tool's stub goes where its `script:` points (create-only for a project path), never a copy beside it | e2e/compile.test.ts |
+| B4 | A schedule runs headless from the project root, calls the real action path, and `every:` converts to cron (or warns) | e2e/compile.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
@@ -73,10 +77,6 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | Id | Finding | Phase |
 |---|---|---|
 | N11 | sync pulls generated prose back into the .at, so the prompt grows each cycle | 2 |
-| N12 | A skill `prompt: "path"` emits `See: path`; the instructions never reach Claude | 2 |
-| A3 | `kind: external` actions ignore `commands:` and emit a TODO stub | 3 |
-| A3b | Tools with a real `script:` get stub copies | 3 |
-| B4 | Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line | 3 |
 | N16 | Model ids are not checked per target | 3 |
 | N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
 | N21 | A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes | 3 |

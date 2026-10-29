@@ -11,12 +11,23 @@ topology compile : [pipeline] {
 
   orchestrator {
     model: sonnet
-    handles: [intake]
+    handles: [intake, fetch, digest]
   }
 
   action intake {
     kind: inline
     description: "Take the request"
+  }
+
+  action fetch {
+    kind: external
+    source: "https://feeds.example.com/brief"
+    commands: ["curl -fsS https://feeds.example.com/brief -o brief.json"]
+  }
+
+  action digest {
+    kind: report
+    description: "Summarise the week"
   }
 
   human approve {
@@ -47,6 +58,46 @@ topology compile : [pipeline] {
     description: "Audits a draft on request"
     invocation: manual
     permissions: bypass
+  }
+
+  tools {
+    tool render {
+      script: "tools/render.py"
+      lang: python
+      description: "Render a draft"
+    }
+    tool count {
+      script: "scripts/count.sh"
+      description: "Count words"
+    }
+  }
+
+  schedule {
+    job nightly {
+      every: 15m
+      agent: drafter
+    }
+    job weekly-digest {
+      every: 1w
+      action: digest
+    }
+    job odd {
+      every: 7m
+      action: fetch
+    }
+  }
+
+  skill brief {
+    description: "Write a brief"
+    prompt: "prompts/brief.md"
+  }
+
+  skill tone {
+    description: "Keep the house tone"
+    prompt {
+      ## Tone
+      Short sentences. No jargon.
+    }
   }
 
   gates {

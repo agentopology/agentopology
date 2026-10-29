@@ -17,6 +17,7 @@ import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { scriptNameFromRun, runParts } from "../../parser/run.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
+import { STUB_MARKER } from "../../bindings/lib/stub.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ast = parse(fs.readFileSync(resolve(here, "fixtures/compile.at"), "utf-8"));
@@ -145,5 +146,43 @@ describe("the topology's context does not compete with the project's own", () =>
   it("[C2] context goes to .claude/rules/<topology>.md, never a CLAUDE.md", () => {
     expect([...files.keys()].filter((p) => /(^|\/)CLAUDE\.md$/.test(p))).toEqual([]);
     expect(read(".claude/rules/compile.md")).toMatch(/^# Compile\n/);
+  });
+});
+
+describe("a skill's instructions reach the model", () => {
+  it("[N12] prompt: path tells Claude to read and follow the file; a prompt block is the body", () => {
+    const brief = read(".claude/skills/brief/SKILL.md");
+    expect(brief).not.toContain("See:");
+    expect(brief).toContain("Read `prompts/brief.md` before anything else and follow it");
+    expect(read(".claude/skills/tone/SKILL.md")).toMatch(/## Instructions\n\n### Tone\nShort sentences\. No jargon\./);
+  });
+});
+
+describe("actions, tools and schedules run what they declare", () => {
+  it("[A3] an action's commands are emitted whatever its kind; one without commands is a marked stub that fails", () => {
+    expect(read(".claude/skills/compile/scripts/action-fetch.sh")).toContain("curl -fsS https://feeds.example.com/brief -o brief.json");
+    const digest = read(".claude/skills/compile/scripts/action-digest.sh");
+    expect(digest).toContain(STUB_MARKER);
+    expect(digest).toMatch(/exit 1\n$/);
+    // an inline action is done in conversation: not a stub
+    expect(read(".claude/skills/compile/scripts/action-intake.sh")).not.toContain(STUB_MARKER);
+  });
+
+  it("[A3b] a tool's stub goes where its script: points, never a copy beside it", () => {
+    expect(files.get("tools/render.py")?.createOnly).toBe(true);
+    expect(files.has(".claude/skills/compile/scripts/render.py")).toBe(false);
+    expect(read(".claude/skills/compile/scripts/count.sh")).toContain(STUB_MARKER);
+  });
+
+  it("[B4] schedules run headless from the project root, call the real action path, and every: becomes cron", () => {
+    const nightly = read("scripts/schedule-nightly.sh");
+    expect(nightly).toContain('cd "$(dirname "$0")/.."');
+    expect(nightly).toContain('claude -p "Run your scheduled task (nightly)." --agent drafter');
+    expect(read("scripts/schedule-weekly-digest.sh")).toContain("bash .claude/skills/compile/scripts/action-digest.sh");
+    const cron = read("crontab.fragment");
+    expect(cron).toContain("*/15 * * * * bash scripts/schedule-nightly.sh");
+    expect(cron).toContain("0 0 * * 0 bash scripts/schedule-weekly-digest.sh");
+    // 7 minutes has no cron form: left commented, and scaffold warns
+    expect(cron).toContain("# every: 7m bash scripts/schedule-odd.sh");
   });
 });

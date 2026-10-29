@@ -11,10 +11,6 @@ import { describe, it } from "vitest";
 
 describe("open findings (spec/testing.md)", () => {
   it.todo("[N11] sync pulls generated prose back into the .at, so the prompt grows each cycle");
-  it.todo("[N12] A skill `prompt: \"path\"` emits `See: path`; the instructions never reach Claude");
-  it.todo("[A3] `kind: external` actions ignore `commands:` and emit a TODO stub");
-  it.todo("[A3b] Tools with a real `script:` get stub copies");
-  it.todo("[B4] Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line");
   it.todo("[N16] Model ids are not checked per target");
   it.todo("[N18] No reference checks for `skills:`, `mcp-servers:`, skill `agent:`");
   it.todo("[N21] A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes");
