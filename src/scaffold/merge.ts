@@ -138,6 +138,8 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
   }
 
   const merged = mergeObjects(existing, generated);
+  // Nothing to add: keep the user's bytes, formatting included.
+  if (JSON.stringify(merged) === JSON.stringify(existing)) return existingRaw;
   return JSON.stringify(merged, null, 2) + "\n";
 }
 
@@ -247,11 +249,30 @@ export function deepMergeSettingsJson(
     }
   }
 
+  // Nothing to add: keep the user's bytes, formatting included.
+  if (JSON.stringify(merged) === JSON.stringify(existing)) return existingRaw;
   return JSON.stringify(merged, null, 2) + "\n";
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Identity of a hook group for deduplication: matcher plus each command with
+ * the project-dir prefix, quotes and "./" removed. An imported hook written
+ * as `bash .claude/hooks/x.sh` and the same hook compiled as
+ * `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"` are one hook, not two that
+ * both fire.
+ */
+function hookGroupKey(group: unknown): string {
+  if (!isPlainObject(group) || !Array.isArray(group.hooks)) return JSON.stringify(group);
+  const commands = group.hooks.map((h) =>
+    isPlainObject(h) && typeof h.command === "string"
+      ? h.command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim()
+      : JSON.stringify(h),
+  );
+  return JSON.stringify([group.matcher ?? "", commands]);
 }
 
 /** Whether a hook group runs a script this topology owns. */
@@ -285,14 +306,14 @@ function mergeHooks(
   for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
     // A group generated again stays where it is, so reruns (and two
     // topologies taking turns) do not reorder the file.
-    const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map((g) => JSON.stringify(g)));
+    const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map(hookGroupKey));
     const kept = (Array.isArray(ex[event]) ? ex[event] : []).filter(
-      (g) => regenerated.has(JSON.stringify(g)) || !isOwnedHookGroup(g, scripts),
+      (g) => regenerated.has(hookGroupKey(g)) || !isOwnedHookGroup(g, scripts),
     );
     const seen = new Set<string>();
     const groups: unknown[] = [];
     for (const g of [...kept, ...(Array.isArray(gen[event]) ? gen[event] : [])]) {
-      const key = JSON.stringify(g);
+      const key = hookGroupKey(g);
       if (seen.has(key)) continue;
       seen.add(key);
       groups.push(g);

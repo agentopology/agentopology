@@ -2069,6 +2069,9 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
       content: observabilityStub(hook.name, hook.on, hook.matcher ?? ""),
       category: "script",
       executable: true,
+      // A run that names its own path names the user's script: a stub only
+      // fills the gap until it exists. --force used to overwrite it.
+      ...(isHookPath(script) ? { createOnly: true } : {}),
     });
   }
 
@@ -3156,6 +3159,74 @@ function generateTriggers(ast: TopologyAST): string {
 // ---------------------------------------------------------------------------
 
 /** Claude Code binding — the reference binding implementation. */
+/**
+ * Drop every generated file that belongs to a hand-written node (`file:`).
+ *
+ * An authored node keeps its file (a group also its skill and runtime
+ * folder); an authored skill keeps its whole folder
+ * (SKILL.md, scripts, references); an authored command keeps its file. The
+ * topology still describes them — gates still wire to an authored agent by
+ * name — but the binding never writes inside them. Without this, importing a
+ * hand-built .claude and scaffolding it back replaced 37 of 72 files and cut
+ * the rest down (a 404-line SKILL.md came back as 9 lines).
+ */
+function withoutAuthored(ast: TopologyAST, files: GeneratedFile[]): GeneratedFile[] {
+  const exact = new Set<string>();
+  const folders: string[] = [];
+  for (const node of ast.nodes) {
+    if (!node.file) continue;
+    // Everything the binding would write for this node: its agent file, and
+    // for a group its skill and its runtime folder.
+    exact.add(`.claude/agents/${node.id}/AGENT.md`);
+    exact.add(`.claude/agents/${node.id}.md`);
+    exact.add(normalizeRel(node.file));
+    if (node.type === "group") {
+      folders.push(`.claude/skills/${node.id}/`, `.claude/groups/${node.id}/`);
+    }
+  }
+  for (const skill of ast.skills ?? []) {
+    if (!skill.file) continue;
+    folders.push(`.claude/skills/${skill.id}/`);
+    exact.add(normalizeRel(skill.file));
+  }
+  for (const trigger of ast.triggers ?? []) {
+    if (!trigger.file) continue;
+    exact.add(`.claude/commands/${trigger.name}.md`);
+    exact.add(normalizeRel(trigger.file));
+  }
+  if (exact.size === 0 && folders.length === 0) return files;
+  const isAuthored = (path: string) => {
+    const p = normalizeRel(path);
+    return exact.has(p) || folders.some((dir) => p.startsWith(dir));
+  };
+  const dropped = files.filter((f) => isAuthored(f.path)).map((f) => normalizeRel(f.path));
+  return files
+    .filter((f) => !isAuthored(f.path))
+    .map((f) => (/(^|\/)\.claude\/settings\.json$/.test(f.path) ? withoutHooksRunning(f, dropped) : f));
+}
+
+/**
+ * settings.json without the hook groups that run a script this scaffold no
+ * longer writes. A gate whose wrapper sits in an authored skill folder would
+ * otherwise be wired to a file that does not exist, and fire on every stop.
+ */
+function withoutHooksRunning(file: GeneratedFile, dropped: string[]): GeneratedFile {
+  if (dropped.length === 0) return file;
+  const settings = JSON.parse(file.content) as { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> };
+  if (!settings.hooks) return file;
+  for (const [event, groups] of Object.entries(settings.hooks)) {
+    const kept = groups.filter((g) => !(g.hooks ?? []).some((h) => dropped.some((p) => (h.command ?? "").includes(p))));
+    if (kept.length > 0) settings.hooks[event] = kept;
+    else delete settings.hooks[event];
+  }
+  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+  return { ...file, content: JSON.stringify(settings, null, 2) + "\n" };
+}
+
+function normalizeRel(p: string): string {
+  return p.replace(/^\.\//, "");
+}
+
 export const claudeCodeBinding: BindingTarget = {
   name: "claude-code",
   description:
@@ -3169,7 +3240,7 @@ export const claudeCodeBinding: BindingTarget = {
       files.push(...generateTopologySkill(ast));
       files.push(...generateAgents(ast));
       files.push(...generateSchemas(ast));
-      return deduplicateFiles(files);
+      return withoutAuthored(ast, deduplicateFiles(files));
     }
 
     const files: GeneratedFile[] = [];
@@ -3255,6 +3326,6 @@ export const claudeCodeBinding: BindingTarget = {
     // Context file (.claude/CONTEXT.md or custom — never root CLAUDE.md)
     files.push(generateContextFile(ast));
 
-    return deduplicateFiles(files);
+    return withoutAuthored(ast, deduplicateFiles(files));
   },
 };

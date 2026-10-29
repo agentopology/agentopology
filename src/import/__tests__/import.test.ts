@@ -477,15 +477,25 @@ description: "A helper"
 // ---------------------------------------------------------------------------
 
 describe("parseSettingsJson", () => {
-  it("extracts allow/deny/ask", () => {
+  it("extracts allow/deny/ask from permissions, where Claude Code reads them", () => {
     const { settings } = parseSettingsJson(JSON.stringify({
-      allow: ["Read", "Grep"],
-      deny: ["Bash(rm -rf *)"],
-      ask: ["Write"],
+      permissions: {
+        allow: ["Read", "Grep"],
+        deny: ["Bash(rm -rf *)"],
+        ask: ["Write"],
+      },
     }));
     expect((settings as any).allow).toContain("Read");
     expect((settings as any).deny).toContain("Bash(rm -rf *)");
     expect((settings as any).ask).toContain("Write");
+  });
+
+  it("ignores top-level allow/deny/ask, which Claude Code ignores too", () => {
+    // Importing them promoted rules the author never had in effect into
+    // effect on the next scaffold.
+    const { settings } = parseSettingsJson(JSON.stringify({ allow: ["Read"], deny: ["Bash"] }));
+    expect((settings as any).allow).toBeUndefined();
+    expect((settings as any).deny).toBeUndefined();
   });
 
   it("extracts hooks", () => {
@@ -654,7 +664,7 @@ model: sonnet
       },
       {
         path: ".claude/settings.json",
-        content: JSON.stringify({ allow: ["Read"], deny: ["Bash"] }),
+        content: JSON.stringify({ permissions: { allow: ["Read"], deny: ["Bash"] } }),
       },
     ];
 
@@ -682,7 +692,7 @@ model: sonnet
     expect(ast.mcpServers.db).toBeDefined();
   });
 
-  it("generates linear flow when no SKILL.md", () => {
+  it("imports flowless agents as on demand, not as an invented chain", () => {
     const files: PlatformFile[] = [
       {
         path: "agents/alpha/AGENT.md",
@@ -703,9 +713,12 @@ model: sonnet
     ];
 
     const ast = importClaudeCode(files, "test");
-    expect(ast.edges.length).toBe(1);
-    expect(ast.edges[0].from).toBe("alpha");
-    expect(ast.edges[0].to).toBe("beta");
+    // A hand-built project has no flow: its subagents run on demand. Import
+    // used to chain them in file order, a flow the author never wrote.
+    expect(ast.edges).toEqual([]);
+    for (const id of ["alpha", "beta"]) {
+      expect((ast.nodes.find((n) => n.id === id) as any).invocation).toBe("manual");
+    }
   });
 
   it("handles human and group nodes", () => {

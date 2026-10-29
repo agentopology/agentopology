@@ -22,6 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
 import { proseInRun } from "./run.js";
+import { unsafePathReason } from "./paths.js";
 import type {
   HookDef,
   TopologyAST,
@@ -558,7 +559,7 @@ function v10PromptsExist(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V11: If agent A writes X and agent B reads X, a path A -> B must exist in flow. */
+/** V11: If agent A writes X and agent B reads X, a path A -> B must exist in flow (unless either runs on demand). */
 function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
 
@@ -620,7 +621,16 @@ function v11ReadWriteConsistency(ast: TopologyAST): ValidationResult[] {
     for (const key of node.reads) {
       const keyWriters = writers.get(key);
       if (!keyWriters) continue; // no writer = could be external, skip
-      const hasPath = keyWriters.some((writerId) =>
+      // An on-demand agent (invocation: manual) sits outside the flow by
+      // definition (V4), so no flow path can exist to or from it — the order
+      // is the user's. Demanding one made every hand-built project, whose
+      // subagents are all on demand, fail on import.
+      const manual = (id: string) => {
+        const n = ast.nodes.find((x) => x.id === id);
+        return !!n && isAgent(n) && n.invocation === "manual";
+      };
+      const hasPath = manual(node.id) || keyWriters.some((writerId) =>
+        manual(writerId) ||
         isReachable(writerId, node.id) ||
         (coGroupMembers.get(node.id)?.has(writerId) ?? false)
       );
@@ -1124,6 +1134,32 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
   }
   for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, hook.run);
 
+  return results;
+}
+
+/**
+ * V97: a `file:` is a safe project-relative path.
+ *
+ * `file:` marks a node's internals as hand-written at that path; scaffold
+ * never writes it. A path outside the project ('..', absolute) or with an
+ * unsafe name could not be honoured, so it is refused here, not at scaffold.
+ */
+function v97FileIsProjectPath(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (owner: string, file: string | undefined, nodeId?: string) => {
+    if (file === undefined) return;
+    const why = unsafePathReason(file.replace(/^\.\//, ""));
+    if (!why) return;
+    results.push({
+      rule: "V97",
+      level: "error",
+      message: `${owner} "file" is not a project-relative path — ${why}. Name the file from the project root, e.g. file: ".claude/agents/reviewer.md"`,
+      ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
+    });
+  };
+  for (const node of ast.nodes) check(`Node "${node.id}"`, node.file, node.id);
+  for (const skill of ast.skills ?? []) check(`Skill "${skill.id}"`, skill.file);
+  for (const trigger of ast.triggers ?? []) check(`Command "${trigger.name}"`, trigger.file);
   return results;
 }
 
@@ -3424,6 +3460,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v94HookTypeKnown(ast),
     ...v95HookEventKnown(ast),
     ...v96RunIsCommand(ast),
+    ...v97FileIsProjectPath(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

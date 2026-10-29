@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 96 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 97 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -684,7 +684,7 @@ through the validator like any other rule.
 | V8 | error/warning | Import references should resolve (warning only -- we cannot check the filesystem) |
 | V9 | error/warning | Every action referenced in flow must appear in orchestrator.handles |
 | V10 | error/warning | Prompt content should not be empty if a prompt block is declared |
-| V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow |
+| V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
 | V12 | error | Edge attribute order must be [when, max, per] |
 | V13 | error | Gate `after` and `before` must reference declared nodes |
 | V14 | error | `tools` and `disallowed-tools` cannot both appear on the same agent |
@@ -770,6 +770,7 @@ through the validator like any other rule.
 | V94 | error | A hook's `type` is `command`, `prompt` or `mod`; `flag:` belongs only to a mod and is an env variable name — `type: mod` passed silently and was scaffolded as a bash command |
 | V95 | error | A hook's `on:` must fit its type — a mod takes a known engine event (`tool.call`, `prompt.submit`; five more seen in the engine warn as unproven), a command/prompt hook a PascalCase event |
 | V96 | error | A gate or hook `run` must be a command, not prose — a sentence there compiled to junk script files (`E;`, `fail:`) and crashed scaffold with EISDIR; the explanation belongs in `description` |
+| V97 | error | A node, skill or command `file:` must be a project-relative path (no `..`, not absolute, safe names) — it marks hand-written internals scaffold never writes, so it must be a path scaffold can honour |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

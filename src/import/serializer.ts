@@ -151,6 +151,7 @@ function serializeAgent(node: AgentNode): string {
   const lines: string[] = [];
   lines.push(`  agent ${node.id} {`);
 
+  if (node.file) lines.push(`    file: ${q(node.file)}`);
   if (node.role) lines.push(`    role: ${node.role}`);
   if (node.model) lines.push(`    model: ${node.model}`);
   if (node.permissions) lines.push(`    permissions: ${node.permissions}`);
@@ -310,6 +311,7 @@ function serializeGate(node: GateNode): string {
 function serializeHuman(node: HumanNode): string {
   const lines: string[] = [];
   lines.push(`  human ${node.id} {`);
+  if (node.file) lines.push(`    file: ${q(node.file)}`);
   if (node.description) lines.push(`    description: "${node.description}"`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
@@ -320,6 +322,7 @@ function serializeHuman(node: HumanNode): string {
 function serializeGroup(node: GroupNode): string {
   const lines: string[] = [];
   lines.push(`  group ${node.id} {`);
+  if (node.file) lines.push(`    file: ${q(node.file)}`);
   if (node.members?.length) lines.push(`    members: ${inlineList(node.members)}`);
   if (node.speakerSelection) lines.push(`    speaker-selection: ${q(node.speakerSelection)}`);
   if (node.maxRounds) lines.push(`    max-rounds: ${node.maxRounds}`);
@@ -437,13 +440,14 @@ function serializeMcpServers(servers: Record<string, Record<string, unknown>>): 
   return lines.join("\n");
 }
 
-function serializeTriggers(triggers: { name: string; pattern: string; argument?: string }[]): string | null {
+function serializeTriggers(triggers: { name: string; pattern: string; argument?: string; file?: string }[]): string | null {
   if (triggers.length === 0) return null;
   const lines: string[] = ["  triggers {"];
   for (const t of triggers) {
     lines.push(`    command ${t.name} {`);
     lines.push(`      pattern: "${t.pattern}"`);
     if (t.argument) lines.push(`      argument: ${t.argument}`);
+    if (t.file) lines.push(`      file: ${q(t.file)}`);
     lines.push("    }");
   }
   lines.push("  }");
@@ -609,6 +613,7 @@ function serializeSkills(skills: SkillDef[]): string | null {
   const lines: string[] = ["  skills {"];
   for (const skill of skills) {
     lines.push(`    skill ${skill.id} {`);
+    if (skill.file) lines.push(`      file: ${q(skill.file)}`);
     if (skill.description) lines.push(`      description: "${skill.description}"`);
     if (skill.scripts?.length) lines.push(`      scripts: ${inlineList(skill.scripts)}`);
     if (skill.domains?.length) lines.push(`      domains: ${inlineList(skill.domains)}`);

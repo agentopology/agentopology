@@ -52,6 +52,13 @@ export interface DepthDef {
 export interface TriggerDef {
   /** Trigger name (the command identifier). */
   name: string;
+  /**
+   * The hand-written file that holds this node's internals, project-relative
+   * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
+   * file is the author's. Bindings never generate or overwrite it — this is
+   * how a system built by hand comes into .at without losing what is inside.
+   */
+  file?: string;
   /** Regex or glob pattern that activates this trigger. */
   pattern: string;
   /** Optional argument template variable. */
@@ -86,6 +93,13 @@ export interface HookDef {
 export interface SkillDef {
   /** Skill identifier. */
   id: string;
+  /**
+   * The hand-written file that holds this node's internals, project-relative
+   * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
+   * file is the author's. Bindings never generate or overwrite it — this is
+   * how a system built by hand comes into .at without losing what is inside.
+   */
+  file?: string;
   /** Human-readable description. */
   description: string;
   /** Script file names belonging to this skill. */
@@ -453,6 +467,13 @@ export interface BaseNode {
   id: string;
   /** Human-readable display label. */
   label: string;
+  /**
+   * The hand-written file that holds this node's internals, project-relative
+   * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
+   * file is the author's. Bindings never generate or overwrite it — this is
+   * how a system built by hand comes into .at without losing what is inside.
+   */
+  file?: string;
 }
 
 /** An orchestrator node. */

@@ -167,6 +167,28 @@ function toLabel(id: string): string {
 }
 
 /**
+ * `src` with the inside of every block blanked out: what remains is the text
+ * at depth 0 plus each block's own braces. A keyword found in it is a
+ * top-level one, at the same position as in `src`.
+ */
+function depthZeroText(src: string): string {
+  let depth = 0;
+  let out = "";
+  for (const ch of src) {
+    if (ch === "{") {
+      depth++;
+      out += depth === 1 ? ch : " ";
+    } else if (ch === "}") {
+      out += depth === 1 ? ch : " ";
+      depth--;
+    } else {
+      out += depth >= 1 && ch !== "\n" ? " " : ch;
+    }
+  }
+  return out;
+}
+
+/**
  * Parse an `extensions { binding-name { key: value } }` sub-block.
  *
  * Each named sub-block inside `extensions` becomes a key in the returned
@@ -463,6 +485,7 @@ export function parseAgent(
     label: toLabel(id),
   };
 
+  if (fields.file) node.file = unquote(fields.file);
   if (fields.phase) node.phase = parseFloat(fields.phase);
   if (fields.model) node.model = fields.model;
   if (fields.permissions) node.permissions = fields.permissions;
@@ -769,6 +792,7 @@ export function parseHuman(
     label: toLabel(id),
   };
 
+  if (fields.file) node.file = unquote(fields.file);
   if (fields.description) node.description = unquote(fields.description);
   if (fields.timeout) node.timeout = fields.timeout;
   if (fields["on-timeout"]) node.onTimeout = fields["on-timeout"];
@@ -796,6 +820,7 @@ export function parseGroup(
     label: toLabel(id),
     members,
   };
+  if (fields.file) node.file = unquote(fields.file);
 
   if (fields["speaker-selection"]) node.speakerSelection = fields["speaker-selection"];
   if (fields["max-rounds"]) node.maxRounds = parseInt(fields["max-rounds"], 10);
@@ -1418,6 +1443,7 @@ export function parseTriggers(body: string): TriggerDef[] {
       pattern: fields.pattern ? unquote(fields.pattern) : "",
     };
     if (fields.argument) trigger.argument = fields.argument;
+    if (fields.file) trigger.file = unquote(fields.file);
     triggers.push(trigger);
   }
   return triggers;
@@ -1586,6 +1612,7 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
     if (domains.length) sd.domains = domains;
     if (references.length) sd.references = references;
     if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
+    if (sFields.file) sd.file = unquote(sFields.file);
 
     // New skill fields
     if (sFields["disable-model-invocation"]) {
@@ -2494,7 +2521,11 @@ export function parse(source: string): TopologyAST {
   const artifacts = parseArtifacts(topBody);
 
   // --- Top-level Extensions ---
-  const topLevelExtensions = parseExtensionsBlock(topBody);
+  // Only an `extensions` block at the topology's own level. The first one
+  // anywhere used to win, so an agent's extensions (effort, color, ...) were
+  // read as topology-wide and written into settings.json.
+  const topExtAt = depthZeroText(topBody).search(/(?:^|\n)\s*extensions\s*\{/);
+  const topLevelExtensions = topExtAt === -1 ? undefined : parseExtensionsBlock(topBody.slice(topExtAt));
 
   // --- Params ---
   const paramsBlock = extractBlock(topBody, "params");

@@ -198,6 +198,15 @@ gate review {
   description: "median of 3 reads, fail under 75"
 }`,
   },
+  V97: {
+    topic: "agent",
+    snippet: `# file: names the hand-written file, from the project root.
+# Scaffold references it and never writes it:
+agent reviewer {
+  file: ".claude/agents/reviewer.md"
+  model: sonnet
+}`,
+  },
 };
 
 /**
