@@ -2,6 +2,47 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.7.0] — 2026-10-30
+
+### [fix] What scaffold writes, Claude Code reads as meant
+
+Each of these compiled to config Claude Code skipped, misread or never fired. Proven by
+`src/__tests__/e2e/compile.test.ts` (each test fails on 0.6.0) and live tests L3 to L5 in
+real Claude Code.
+
+- **Gates after an action or a human are enforced.** They compiled to no hook. When `before:`
+  names an agent, the gate now runs in a PreToolUse hook on the Agent tool: a failing gate
+  blocks the launch and shows its reason.
+- **A human node is an approval step.** It compiled to an agent file Claude Code ignores. Now
+  Claude Code asks the user before launching the next agent, and the playbook says to ask.
+- **Hooks fire.** `type: prompt` hooks compile to prompt handlers (were commands); `AgentStop`,
+  `AgentStart`, `ToolUse` and `Error` map to Claude Code events; a regex matcher no longer
+  breaks the agent file's YAML.
+- **Agents register.** A manual agent keeps its description (Claude Code skips one without);
+  `confirm` and `bypass` map to real permission modes; `yes`-like values are quoted; a model
+  Claude Code does not have is omitted with a warning.
+- **MCP and permissions.** A url server gets `type: http`; MCP names convert in whole-server,
+  wildcard and dotted forms, permission rules included; `ask` rules are emitted.
+- **Run lines.** The script is the word after the interpreter, never an argument; a project
+  script runs in place from the project root with its arguments.
+- **Skills, actions, tools, schedules.** A skill's `prompt:` reaches the model (and a skill may
+  hold a `prompt { }` block); an action's `commands:` are emitted for every kind; a tool's stub
+  goes where its `script:` points; schedules run headless from the project root and `every:`
+  converts to cron.
+- **The topology context** goes to `.claude/rules/<topology>.md`, so it never competes with the
+  project's own CLAUDE.md.
+- **Sync is a fixed point.** The prompt is marked in the agent file; scaffold then sync no longer
+  grows the prompt, and an edit comes back once.
+- `scaffold --dry-run` shows what a settings.json or .mcp.json merge would change, key by key.
+- Output is byte-stable (no date in stubs).
+
+### [feat] Two new rules
+
+- **V98** (error): a `gate`, `hook`, `tool`, `job`, `command` or `level` written outside its
+  container block was dropped with no message.
+- **V99** (warning): an agent's `skills:` / `mcp-servers:` or a skill's `agent:` names nothing
+  the topology declares.
+
 ## [0.6.0] — 2026-10-30
 
 ### [fix] Scaffold only changes what it owns (#22)
