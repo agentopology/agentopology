@@ -29,6 +29,7 @@ Run the live suite before every release, and after any change to a binding.
 | G8 | `--prune` removes untouched leftovers and keeps edited ones | e2e/scaffold-owns.test.ts |
 | G9 | Two topologies in one project keep separate manifests | e2e/scaffold-owns.test.ts |
 | G10 | No `${…}` reference or `#`-key reaches settings `env` (Claude Code applies env literally) | e2e/scaffold-owns.test.ts |
+| C1 | `scaffold --dry-run` lists, key by key, what a config merge would add or change in settings.json and .mcp.json | e2e/scaffold-owns.test.ts |
 | G11 | An unsafe generated path aborts the run before any file is written | scaffold/__tests__/safety.test.ts |
 | G12 | A second scaffold of an imported project changes nothing | e2e/roundtrip.test.ts |
 | G13 | An agent's `extensions` never leak into project-wide settings (only a topology-level `extensions` block is top-level) | e2e/roundtrip.test.ts |
@@ -78,7 +79,6 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | B4 | Schedule scripts call the wrong action path; `every:` becomes a commented-out cron line | 3 |
 | N16 | Model ids are not checked per target | 3 |
 | N18 | No reference checks for `skills:`, `mcp-servers:`, skill `agent:` | 3 |
-| C1 | `scaffold --dry-run` says settings.json and .mcp.json would be "config merged" but does not show the diff (content session, 2026-10-29) | 3 |
 | N21 | A `gate` written outside a `gates {}` block is dropped without a warning, and validate passes | 3 |
 | B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
 | F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
