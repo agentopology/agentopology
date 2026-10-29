@@ -55,6 +55,15 @@ function convertMcpToolName(tool: string): string {
 }
 
 /**
+ * Whether Claude Code accepts `model` as written: an alias (optionally with a
+ * context suffix such as [1m]), inherit, or a full claude-* model id. Any other
+ * value (gpt-4o, gemini-2.5-pro) was written to the agent file unchecked.
+ */
+function isClaudeCodeModel(model: string): boolean {
+  return /^(?:sonnet|opus|haiku|fable)(?:\[[0-9a-z]+\])?$|^inherit$|^claude-[a-z0-9.-]+(?:\[[0-9a-z]+\])?$/.test(model);
+}
+
+/**
  * Claude Code hook events for the language's universal names. A hook on a
  * name Claude Code does not know never fires, so AgentStop used to be dead.
  */
@@ -573,7 +582,17 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       ? `${desc.replace(/[.\s]*$/, "")}. Use only when the user asks for this agent by name; never delegate to it on your own.`
       : desc;
 
-    if (agent.model) fm.model = agent.model;
+    if (agent.model) {
+      if (isClaudeCodeModel(agent.model)) {
+        fm.model = agent.model;
+      } else {
+        console.warn(
+          `[claude-code] Agent "${agent.id}" model "${agent.model}" is not a Claude Code model ` +
+            `(sonnet, opus, haiku, fable, inherit, or a claude-* id); omitted, so the agent ` +
+            `runs on the session's model.`,
+        );
+      }
+    }
     if (agent.maxTurns != null) fm.maxTurns = agent.maxTurns;
     if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName).join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName).join(", ");

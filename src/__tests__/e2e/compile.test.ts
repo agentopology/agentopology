@@ -225,3 +225,23 @@ describe("references resolve", () => {
     expect(validate(ast).filter((r) => r.rule === "V99")).toEqual([]);
   });
 });
+
+describe("model ids are checked for the target", () => {
+  it("[N16] a model Claude Code does not have is omitted with a warning; aliases and claude-* ids pass", () => {
+    const src = fs.readFileSync(resolve(here, "fixtures/compile.at"), "utf-8")
+      .replace("  agent auditor {\n    model: sonnet", "  agent auditor {\n    model: gpt-4o")
+      .replace("  agent drafter {\n    model: sonnet", "  agent drafter {\n    model: claude-opus-5-5");
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+    let out: Map<string, string>;
+    try {
+      out = new Map(claudeCodeBinding.scaffold(parse(src)).map((f) => [f.path, f.content]));
+    } finally {
+      console.warn = warn;
+    }
+    expect(out.get(".claude/agents/auditor/AGENT.md")).not.toMatch(/^model:/m);
+    expect(warnings.some((w) => w.includes('model "gpt-4o" is not a Claude Code model'))).toBe(true);
+    expect(out.get(".claude/agents/drafter/AGENT.md")).toMatch(/^model: claude-opus-5-5$/m);
+  });
+});
