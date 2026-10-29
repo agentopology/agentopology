@@ -283,8 +283,11 @@ function mergeHooks(
   const out: Record<string, unknown[]> = {};
 
   for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
+    // A group generated again stays where it is, so reruns (and two
+    // topologies taking turns) do not reorder the file.
+    const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map((g) => JSON.stringify(g)));
     const kept = (Array.isArray(ex[event]) ? ex[event] : []).filter(
-      (g) => !isOwnedHookGroup(g, scripts),
+      (g) => regenerated.has(JSON.stringify(g)) || !isOwnedHookGroup(g, scripts),
     );
     const seen = new Set<string>();
     const groups: unknown[] = [];

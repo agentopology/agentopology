@@ -2945,46 +2945,28 @@ function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null
 /**
  * Merge `ast.env` into the settings.json output under an `env` key.
  *
- * When `ast.providers` includes an "anthropic" provider with an api-key,
- * that env var is included automatically (enabling API-key mode instead
- * of subscription mode).
+ * Claude Code applies settings `env` values exactly as written — no shell
+ * expands them — and they override the variable exported in the shell. So a
+ * reference such as `${ANTHROPIC_API_KEY}` must never be emitted: it replaced
+ * the real key with that literal text, and every session in the project failed
+ * with "Invalid API key" (6 of the 10 examples did this). Only literal values
+ * are written; references, secrets and encrypted values stay with the shell.
+ * The anthropic provider's api-key is the same kind of reference and is not
+ * emitted either.
  *
  * Returns the env record if non-empty, otherwise null.
  */
 function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null {
   const env: Record<string, string> = {};
   for (const [key, val] of Object.entries(ast.env)) {
-    if (typeof val === "string") {
-      env[key] = val;
-    } else {
-      const sv = val as SensitiveValue;
-      if (sv.secretRef) {
-        // Secret reference — emit placeholder with comment-style URI
-        env[key] = `\${${key}}`; // placeholder
-        env[`# ${key}_SECRET`] = sv.secretRef.uri;
-      } else if (sv.sensitive) {
-        // Sensitive value — never emit the actual value
-        env[key] = `\${${key}}`;
-      } else if (sv.encrypted) {
-        // Encrypted value — emit placeholder with warning
-        env[key] = `\${${key}}`;
-        env[`# ${key}_ENCRYPTED`] = "WARNING: value is SOPS-encrypted, decrypt before use";
-      } else {
-        env[key] = sv.value;
-      }
-    }
-  }
-
-  // If an anthropic provider exists, scaffold the API key env var
-  if (ast.providers && ast.providers.length > 0) {
-    const anthropicProvider = ast.providers.find((p) => p.name === "anthropic");
-    if (anthropicProvider?.apiKey) {
-      // Extract env var name from ${ENV_VAR} format
-      const envVarMatch = anthropicProvider.apiKey.match(/^\$\{(.+)\}$/);
-      if (envVarMatch) {
-        env[envVarMatch[1]] = anthropicProvider.apiKey;
-      }
-    }
+    const literal =
+      typeof val === "string"
+        ? val
+        : (val as SensitiveValue).secretRef || (val as SensitiveValue).sensitive || (val as SensitiveValue).encrypted
+          ? undefined
+          : (val as SensitiveValue).value;
+    if (literal === undefined || literal.includes("${")) continue;
+    env[key] = literal;
   }
 
   if (Object.keys(env).length === 0) return null;

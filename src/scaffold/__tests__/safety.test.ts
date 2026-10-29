@@ -102,7 +102,7 @@ describe("an unsafe path aborts the run before anything is written", () => {
     expect(unsafePathReason(p)).toContain(why);
   });
 
-  it("writes none of the good files when one path is bad", () => {
+  it("[G11] writes none of the good files when one path is bad", () => {
     const files: GeneratedFile[] = [
       { path: "good.md", content: "x", category: "machine" },
       { path: ".claude/skills/t/scripts/", content: "x", category: "script" },
