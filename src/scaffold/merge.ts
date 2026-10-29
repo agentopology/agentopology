@@ -144,19 +144,34 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
 /**
  * Merge settings.json files with domain-aware logic for Claude Code settings.
  *
+ * The user's file is the base; scaffold only adds or replaces what it owns.
+ *
  * Rules:
- *   - permissions.allow: union-merge (deduplicated)
- *   - permissions.deny: union-merge (deduplicated)
+ *   - permissions: every existing key is kept (ask, defaultMode,
+ *     additionalDirectories, ...); allow, deny and ask arrays are
+ *     union-merged; a generated scalar is added only where none exists
  *   - env: shallow-merge (generated wins on key conflict)
- *   - hooks: rewritten entirely from generated (topology owns hooks)
+ *   - hooks: a hook group is the topology's when one of its commands names a
+ *     path in `ownedPaths`; those are replaced by the generated hooks, and
+ *     every other group — the user's — is kept. Without `ownedPaths`, nothing
+ *     existing is treated as owned, so nothing is removed
  *   - All other top-level keys: existing wins (user-only keys preserved)
+ *
+ * This used to rebuild permissions from allow/deny alone and replace hooks
+ * wholesale, so a re-scaffold deleted the user's own hooks, ask rules and
+ * defaultMode, and two topologies in one repo deleted each other's hooks.
  *
  * @param existingRaw - Current settings.json content on disk (JSON string, or empty string)
  * @param generatedRaw - Freshly generated settings.json content (JSON string)
+ * @param ownedPaths - Paths this topology writes or wrote (generated + manifest)
  * @returns Merged JSON string
  * @throws {Error} if existingRaw is non-empty and is invalid JSON
  */
-export function deepMergeSettingsJson(existingRaw: string, generatedRaw: string): string {
+export function deepMergeSettingsJson(
+  existingRaw: string,
+  generatedRaw: string,
+  ownedPaths: string[] = [],
+): string {
   // Empty existing means first scaffold — return generated unchanged
   if (existingRaw.trim() === "") {
     return generatedRaw;
@@ -180,22 +195,32 @@ export function deepMergeSettingsJson(existingRaw: string, generatedRaw: string)
   // Start with existing (preserves all user-only top-level keys)
   const merged: Record<string, unknown> = { ...existing };
 
-  // --- permissions: union-merge allow and deny arrays ---
-  const existingPerms = (existing.permissions ?? {}) as Record<string, string[]>;
-  const generatedPerms = (generated.permissions ?? {}) as Record<string, string[]>;
-
-  if (generated.permissions !== undefined || existing.permissions !== undefined) {
-    const mergedPerms: Record<string, string[]> = {};
-    for (const key of ["allow", "deny"] as const) {
-      const ex = Array.isArray(existingPerms[key]) ? existingPerms[key] : [];
-      const gen = Array.isArray(generatedPerms[key]) ? generatedPerms[key] : [];
-      const union = Array.from(new Set([...ex, ...gen]));
-      if (union.length > 0) {
+  // --- permissions: keep every existing key; union the rule arrays ---
+  if (isPlainObject(generated.permissions) || isPlainObject(existing.permissions)) {
+    const ex = isPlainObject(existing.permissions) ? existing.permissions : {};
+    const gen = isPlainObject(generated.permissions) ? generated.permissions : {};
+    const mergedPerms: Record<string, unknown> = { ...ex };
+    for (const [key, value] of Object.entries(gen)) {
+      const current = mergedPerms[key];
+      if (Array.isArray(value) || Array.isArray(current)) {
+        const union = Array.from(new Set([
+          ...(Array.isArray(current) ? current : []),
+          ...(Array.isArray(value) ? value : []),
+        ]));
         mergedPerms[key] = union;
+      } else if (current === undefined) {
+        mergedPerms[key] = value;
+      }
+    }
+    for (const key of Object.keys(mergedPerms)) {
+      if (Array.isArray(mergedPerms[key]) && (mergedPerms[key] as unknown[]).length === 0) {
+        delete mergedPerms[key];
       }
     }
     if (Object.keys(mergedPerms).length > 0) {
       merged.permissions = mergedPerms;
+    } else {
+      delete merged.permissions;
     }
   }
 
@@ -206,11 +231,11 @@ export function deepMergeSettingsJson(existingRaw: string, generatedRaw: string)
     merged.env = { ...existingEnv, ...generatedEnv };
   }
 
-  // --- hooks: rewritten entirely from generated (topology owns hooks) ---
-  if (generated.hooks !== undefined) {
-    merged.hooks = generated.hooks;
+  // --- hooks: replace the topology's own groups, keep the user's ---
+  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths);
+  if (mergedHooks) {
+    merged.hooks = mergedHooks;
   } else {
-    // No hooks in generated — remove the hooks key (topology no longer declares any)
     delete merged.hooks;
   }
 
@@ -223,6 +248,59 @@ export function deepMergeSettingsJson(existingRaw: string, generatedRaw: string)
   }
 
   return JSON.stringify(merged, null, 2) + "\n";
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Whether a hook group runs a script this topology owns. */
+function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
+  if (!isPlainObject(group) || !Array.isArray(group.hooks)) return false;
+  return group.hooks.some((h) => {
+    if (!isPlainObject(h) || typeof h.command !== "string") return false;
+    const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
+    return tokens.some((t) => scripts.includes(t));
+  });
+}
+
+/**
+ * Per event: the user's groups first, then the generated ones, deduplicated.
+ * Returns undefined when no event keeps any group.
+ */
+function mergeHooks(
+  existingHooks: unknown,
+  generatedHooks: unknown,
+  ownedPaths: string[],
+): Record<string, unknown[]> | undefined {
+  // Config files are never hook scripts; matching them would claim a user hook
+  // that merely mentions CLAUDE.md.
+  const scripts = ownedPaths
+    .filter((p) => !/\.(md|json)$/.test(p))
+    .map((p) => p.replace(/^\.\//, ""));
+  const ex = isPlainObject(existingHooks) ? existingHooks : {};
+  const gen = isPlainObject(generatedHooks) ? generatedHooks : {};
+  const out: Record<string, unknown[]> = {};
+
+  for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
+    // A group generated again stays where it is, so reruns (and two
+    // topologies taking turns) do not reorder the file.
+    const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map((g) => JSON.stringify(g)));
+    const kept = (Array.isArray(ex[event]) ? ex[event] : []).filter(
+      (g) => regenerated.has(JSON.stringify(g)) || !isOwnedHookGroup(g, scripts),
+    );
+    const seen = new Set<string>();
+    const groups: unknown[] = [];
+    for (const g of [...kept, ...(Array.isArray(gen[event]) ? gen[event] : [])]) {
+      const key = JSON.stringify(g);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groups.push(g);
+    }
+    if (groups.length > 0) out[event] = groups;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function mergeObjects(

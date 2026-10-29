@@ -278,12 +278,13 @@ describe("computeIncrementalPlan", () => {
       source: "t.at", sourceHash: "x", target: "claude-code",
       generatedAt: "", files: {
         "keep.md": { hash: "abc", category: "machine" },
-        "removed.md": { hash: "def", category: "machine" },
+        "removed.md": { hash: hashContent("old output"), category: "machine" },
       },
     };
 
     const content = "kept";
     fs.writeFileSync(path.join(tmpDir, "keep.md"), content, "utf-8");
+    fs.writeFileSync(path.join(tmpDir, "removed.md"), "old output", "utf-8");
 
     const files: GeneratedFile[] = [
       { path: "keep.md", content, category: "machine" },

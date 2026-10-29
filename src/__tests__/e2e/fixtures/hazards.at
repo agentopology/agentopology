@@ -1,0 +1,178 @@
+# hazards.at — regression fixture for "scaffold only changes what it owns".
+#
+# Built from examples/simple-pipeline.at plus the hazards a real harness hit on
+# 2026-10-28: skills that already exist on disk (one of them a symlink into
+# another repository), a provider api-key given as an env reference, and a
+# gate whose run is a command. Used by src/__tests__/e2e/*.test.ts.
+
+topology hazards : [pipeline, human-gate] {
+
+  meta {
+    version: "1.0.0"
+    description: "Research, write, and review — a minimal content pipeline"
+  }
+
+  providers {
+    anthropic {
+      api-key: "${ANTHROPIC_API_KEY}"
+      models: [opus, sonnet, haiku]
+      default: true
+    }
+  }
+
+  orchestrator {
+    model: sonnet
+    generates: "commands/create.md"
+    handles: [intake, done]
+    outputs: {
+      topic-type: technical | creative
+    }
+  }
+
+  roles {
+    researcher: "Gather information, find sources, and compile research notes"
+    writer: "Draft content based on research, following style guidelines"
+    reviewer: "Review drafts for accuracy, clarity, and completeness"
+  }
+
+  # --- Actions ---
+
+  action intake {
+    kind: inline
+    description: "Parse user request — extract topic and requirements"
+  }
+
+  # --- Agents ---
+
+  agent researcher {
+    role: researcher
+    model: sonnet
+    permissions: supervised
+    phase: 1
+    tools: [Read, Grep, Glob, WebSearch]
+    writes: ["workspace/research.md"]
+
+    prompt {
+        You are a research specialist focused on gathering comprehensive information.
+
+        ## Guidelines
+        - Search broadly for relevant sources
+        - Compile findings into structured research notes
+        - Include citations and source URLs
+        - Prioritize recent and authoritative sources
+    }
+  }
+
+  agent writer {
+    role: writer
+    model: sonnet
+    permissions: autonomous
+    phase: 2
+    tools: [Read, Write, Glob]
+    reads: ["workspace/research.md", "workspace/review.md"]
+    writes: ["workspace/draft.md"]
+    outputs: {
+      confidence: high | medium | low
+    }
+
+    prompt {
+        You are a content writer who transforms research into polished drafts.
+
+        ## Guidelines
+        - Follow the style guide and tone requirements
+        - Structure content with clear headings and sections
+        - Incorporate all key findings from the research
+        - Write for the target audience specified in the brief
+    }
+  }
+
+  agent reviewer {
+    role: reviewer
+    model: opus
+    permissions: supervised
+    phase: 3
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/draft.md", "workspace/research.md"]
+    writes: ["workspace/review.md"]
+    outputs: {
+      verdict: approve | revise | reject
+    }
+
+    prompt {
+        You are a content reviewer ensuring quality and accuracy.
+
+        ## Guidelines
+        - Verify all claims against the research sources
+        - Check for clarity, grammar, and logical flow
+        - Assess completeness against the original requirements
+        - Provide actionable feedback for revisions if needed
+    }
+  }
+
+  # --- Flow ---
+
+  flow {
+    intake -> researcher
+    researcher -> writer
+    writer -> reviewer
+    reviewer -> writer     [when reviewer.verdict == revise, max 2]
+    reviewer -> researcher [when reviewer.verdict == reject, max 1]
+    reviewer -> done       [when reviewer.verdict == approve]
+  }
+
+  # --- Gates ---
+
+  gates {
+    gate quality-check {
+      after: writer
+      before: reviewer
+      run: "scripts/check-quality.sh"
+      checks: [grammar, formatting]
+      on-fail: bounce-back
+    }
+  }
+
+  # --- Action to finish ---
+
+  action done {
+    kind: report
+    description: "Deliver final content to the user"
+  }
+
+  # --- Memory ---
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [research, drafts, reviews]
+    }
+  }
+
+  # --- Triggers ---
+
+  triggers {
+    command create {
+      pattern: "/create <TOPIC>"
+      argument: TOPIC
+    }
+  }
+
+  # --- Skills that already exist in the project ---
+
+  skills {
+    skill story {
+      description: "Hand-written in the project; scaffold must keep it"
+      user-invocable: true
+    }
+    skill the-book {
+      description: "A symlink into another repository; scaffold must never write through it"
+    }
+  }
+
+  # --- Settings ---
+
+  settings {
+    allow: ["Read", "Grep", "Glob", "WebSearch"]
+    deny: ["Bash(rm -rf *)"]
+  }
+}

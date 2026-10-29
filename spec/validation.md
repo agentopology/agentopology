@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 95 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 96 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -769,6 +769,7 @@ through the validator like any other rule.
 | V93 | warning | An edge between two agents that both declare paths should declare a handoff — `writer.writes \| reader.reads` empty means the receiver runs after the sender with none of its output |
 | V94 | error | A hook's `type` is `command`, `prompt` or `mod`; `flag:` belongs only to a mod and is an env variable name — `type: mod` passed silently and was scaffolded as a bash command |
 | V95 | error | A hook's `on:` must fit its type — a mod takes a known engine event (`tool.call`, `prompt.submit`; five more seen in the engine warn as unproven), a command/prompt hook a PascalCase event |
+| V96 | error | A gate or hook `run` must be a command, not prose — a sentence there compiled to junk script files (`E;`, `fail:`) and crashed scaffold with EISDIR; the explanation belongs in `description` |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

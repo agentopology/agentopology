@@ -33,6 +33,7 @@ import { shellStub, STUB_MARKER } from "./lib/stub.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
+import { proseInRun, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -514,7 +515,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
-          const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+          const scriptName = scriptNameFromRun(hook.run);
+          if (!scriptName) continue; // V96: prose in run names no script
           const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
           if (hook.matcher) {
             hookLines.push(`    - matcher: "${hook.matcher}"`);
@@ -1752,9 +1754,8 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    if (gate.run) {
-      // Extract script name from the run command
-      const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const scriptName = scriptNameFromRun(gate.run);
+    if (scriptName) {
       files.push({
         path: `.claude/skills/${name}/scripts/${scriptName}`,
         content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
@@ -1777,7 +1778,8 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run) continue;
     if (gate.behavior === "advisory") continue;
 
-    const gateScriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+    const gateScriptName = scriptNameFromRun(gate.run);
+    if (!gateScriptName) continue; // V96: prose in run names no script
     const onFailExit = gate.onFail === "halt"
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
@@ -2050,10 +2052,17 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // If the run path starts with '.' or '/' it is already project-relative —
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
+    if (proseInRun(runPath)) continue; // V96: prose in run names no script
     const { script } = hookRun(runPath);
+    // An absolute script is the user's own, outside the project: never stubbed.
+    if (script.startsWith("/")) continue;
+    const scoped = scriptNameFromRun(script);
     const filePath = isHookPath(script)
       ? script
-      : `.claude/skills/${name}/scripts/${script.replace(/^.*\//, "")}`;
+      : scoped
+        ? `.claude/skills/${name}/scripts/${scoped}`
+        : null;
+    if (!filePath) continue;
 
     files.push({
       path: filePath,
@@ -2078,7 +2087,8 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
 
     for (const hook of agent.hooks) {
       if (!hook.run || hook.type === "mod") continue;
-      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
+      const scriptName = scriptNameFromRun(hook.run);
+      if (!scriptName) continue; // V96: prose in run names no script
       files.push({
         path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
         content: [
@@ -2162,6 +2172,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
       );
       continue;
     }
+    if (proseInRun(hook.run)) continue; // V96: prose in run names no script
     if (!hooksByEvent[eventName]) {
       hooksByEvent[eventName] = [];
     }
@@ -2231,7 +2242,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
-    if (!gate.run) continue;
+    if (!scriptNameFromRun(gate.run)) continue; // no run, or V96 prose
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
 
     if (delegationMode === "inline") {
@@ -3098,46 +3109,28 @@ function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null
 /**
  * Merge `ast.env` into the settings.json output under an `env` key.
  *
- * When `ast.providers` includes an "anthropic" provider with an api-key,
- * that env var is included automatically (enabling API-key mode instead
- * of subscription mode).
+ * Claude Code applies settings `env` values exactly as written — no shell
+ * expands them — and they override the variable exported in the shell. So a
+ * reference such as `${ANTHROPIC_API_KEY}` must never be emitted: it replaced
+ * the real key with that literal text, and every session in the project failed
+ * with "Invalid API key" (6 of the 10 examples did this). Only literal values
+ * are written; references, secrets and encrypted values stay with the shell.
+ * The anthropic provider's api-key is the same kind of reference and is not
+ * emitted either.
  *
  * Returns the env record if non-empty, otherwise null.
  */
 function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null {
   const env: Record<string, string> = {};
   for (const [key, val] of Object.entries(ast.env)) {
-    if (typeof val === "string") {
-      env[key] = val;
-    } else {
-      const sv = val as SensitiveValue;
-      if (sv.secretRef) {
-        // Secret reference — emit placeholder with comment-style URI
-        env[key] = `\${${key}}`; // placeholder
-        env[`# ${key}_SECRET`] = sv.secretRef.uri;
-      } else if (sv.sensitive) {
-        // Sensitive value — never emit the actual value
-        env[key] = `\${${key}}`;
-      } else if (sv.encrypted) {
-        // Encrypted value — emit placeholder with warning
-        env[key] = `\${${key}}`;
-        env[`# ${key}_ENCRYPTED`] = "WARNING: value is SOPS-encrypted, decrypt before use";
-      } else {
-        env[key] = sv.value;
-      }
-    }
-  }
-
-  // If an anthropic provider exists, scaffold the API key env var
-  if (ast.providers && ast.providers.length > 0) {
-    const anthropicProvider = ast.providers.find((p) => p.name === "anthropic");
-    if (anthropicProvider?.apiKey) {
-      // Extract env var name from ${ENV_VAR} format
-      const envVarMatch = anthropicProvider.apiKey.match(/^\$\{(.+)\}$/);
-      if (envVarMatch) {
-        env[envVarMatch[1]] = anthropicProvider.apiKey;
-      }
-    }
+    const literal =
+      typeof val === "string"
+        ? val
+        : (val as SensitiveValue).secretRef || (val as SensitiveValue).sensitive || (val as SensitiveValue).encrypted
+          ? undefined
+          : (val as SensitiveValue).value;
+    if (literal === undefined || literal.includes("${")) continue;
+    env[key] = literal;
   }
 
   if (Object.keys(env).length === 0) return null;

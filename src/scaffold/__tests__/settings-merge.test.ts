@@ -100,7 +100,7 @@ describe("Change 3 — deepMergeSettingsJson", () => {
     expect(merged.env.BAZ).toBe("added");
   });
 
-  it("hooks are REWRITTEN by generated (topology owns hooks)", () => {
+  it("hooks the topology owns are replaced; the user's are kept", () => {
     const existing = JSON.stringify({
       hooks: {
         PreToolUse: [{ matcher: "old", hooks: [{ type: "command", command: "old.sh" }] }],
@@ -112,11 +112,14 @@ describe("Change 3 — deepMergeSettingsJson", () => {
       },
     });
 
-    const merged = JSON.parse(deepMergeSettingsJson(existing, generated));
-    // Old hooks gone — topology owns hooks
-    expect(merged.hooks.PreToolUse).toBeUndefined();
-    // New hooks present
-    expect(merged.hooks.SubagentStop).toBeDefined();
+    // old.sh is the topology's own script: its hook is replaced.
+    const owned = JSON.parse(deepMergeSettingsJson(existing, generated, ["old.sh"]));
+    expect(owned.hooks.PreToolUse).toBeUndefined();
+    expect(owned.hooks.SubagentStop).toBeDefined();
+    // Nothing claimed: old.sh is the user's hook and survives.
+    const user = JSON.parse(deepMergeSettingsJson(existing, generated));
+    expect(user.hooks.PreToolUse[0].hooks[0].command).toBe("old.sh");
+    expect(user.hooks.SubagentStop).toBeDefined();
   });
 
   it("preserves user-only top-level keys", () => {
@@ -163,7 +166,9 @@ describe("Change 3 — deepMergeSettingsJson", () => {
 describe("settings.json merge is wired into the scaffold pipeline", () => {
   const settings = (obj: unknown) => JSON.stringify(obj, null, 2);
 
-  const plan = (existing: string, generated: string) => {
+  // `owned` lists scripts an earlier scaffold of this topology wrote: hooks
+  // that run them are the topology's; every other hook is the user's.
+  const plan = (existing: string, generated: string, owned: string[] = []) => {
     const dir = mkdtempSync(join(tmpdir(), "at-settings-"));
     const rel = ".claude/settings.json";
     mkdirSync(join(dir, ".claude"), { recursive: true });
@@ -177,7 +182,10 @@ describe("settings.json merge is wired into the scaffold pipeline", () => {
       sourceHash: "x",
       target: "claude-code",
       generatedAt: new Date().toISOString(),
-      files: { [rel]: { hash: hashContent(existing), category: "shared-config" } },
+      files: {
+        [rel]: { hash: hashContent(existing), category: "shared-config" },
+        ...Object.fromEntries(owned.map((p) => [p, { hash: "x", category: "script" }])),
+      },
     };
     const actions = computeIncrementalPlan(dir, "claude-code", generatedFiles, manifest as never);
     rmSync(dir, { recursive: true, force: true });
@@ -210,11 +218,35 @@ describe("settings.json merge is wired into the scaffold pipeline", () => {
       hooks: { SubagentStop: [{ matcher: "gone", hooks: [{ type: "command", command: "x.sh" }] }] },
     });
     const generated = settings({ permissions: { allow: ["Read"] } });
-    const action = plan(existing, generated);
+    const action = plan(existing, generated, ["x.sh"]);
     expect(action.type).toBe("update");
     expect(action.content).not.toContain("x.sh");
     // The user's own permissions must survive the removal.
     expect(action.content).toContain("Read");
+  });
+
+  // A re-scaffold deleted every hook the user added by hand, and rebuilt
+  // permissions from allow/deny alone — ask and defaultMode vanished.
+  it("keeps the user's own hooks, ask rules and defaultMode on re-scaffold", () => {
+    const existing = settings({
+      permissions: { allow: ["Read"], ask: ["Bash(git push:*)"], defaultMode: "acceptEdits", additionalDirectories: ["../docs"] },
+      hooks: {
+        PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "bash ./my-guard.sh" }] }],
+        SubagentStop: [{ matcher: "writer", hooks: [{ type: "command", command: "bash .claude/skills/t/scripts/gate-old.sh" }] }],
+      },
+    });
+    const generated = settings({
+      permissions: { allow: ["Write"] },
+      hooks: { SubagentStop: [{ matcher: "writer", hooks: [{ type: "command", command: "bash .claude/skills/t/scripts/gate-new.sh" }] }] },
+    });
+    const merged = JSON.parse(plan(existing, generated, [".claude/skills/t/scripts/gate-old.sh"]).content);
+    expect(merged.hooks.PreToolUse[0].hooks[0].command).toBe("bash ./my-guard.sh");
+    expect(JSON.stringify(merged.hooks.SubagentStop)).toContain("gate-new.sh");
+    expect(JSON.stringify(merged.hooks.SubagentStop)).not.toContain("gate-old.sh");
+    expect(merged.permissions.ask).toEqual(["Bash(git push:*)"]);
+    expect(merged.permissions.defaultMode).toBe("acceptEdits");
+    expect(merged.permissions.additionalDirectories).toEqual(["../docs"]);
+    expect(merged.permissions.allow).toEqual(["Read", "Write"]);
   });
 
   it("still unions permissions the user added by hand", () => {

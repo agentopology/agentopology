@@ -6,7 +6,7 @@
  * built CLI as a real subprocess, which is the only way to check the thing
  * users actually invoke (exit codes, stdout/stderr split, arg parsing).
  *
- * Requires `npx tsc` to have run. `pretest` builds, so `npm test` is safe.
+ * The build runs first, in vitest.config.ts globalSetup, so dist is never stale.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";

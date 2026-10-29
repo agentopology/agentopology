@@ -189,6 +189,15 @@ hook redact { ... type: mod      on: tool.call }     # ✓
 hook gate   { ... type: command  on: PreToolUse }    # ✓
 hook gate   { ... type: command  on: tool.call }     # ✗ never fires`,
   },
+  V96: {
+    topic: "gate",
+    snippet: `# run is the command; the explanation goes in description:
+gate review {
+  after: writer
+  run: "scripts/review.sh"
+  description: "median of 3 reads, fail under 75"
+}`,
+  },
 };
 
 /**
