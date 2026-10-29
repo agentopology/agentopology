@@ -68,7 +68,7 @@ ${c.bold("agentopology")} — AgenTopology CLI
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
   agentopology validate <file.at>
-  agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--prune] [--output <dir>]
+  agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--allow-invalid] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
   agentopology visualize-brain <vault-folder> [--output <dir>]
@@ -108,6 +108,7 @@ ${c.bold("Options:")}
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite files scaffold did not create or that were edited (never symlinks).
+  --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
   --prune           Delete files that were previously scaffolded but are no longer generated.
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
   --brief           Emit the machine brief only, without the terminal render.
@@ -153,6 +154,7 @@ interface ParsedArgs {
   name: string | undefined;
   dryRun: boolean;
   force: boolean;
+  allowInvalid: boolean;
   prune: boolean;
   all: boolean;
   search: string | undefined;
@@ -177,6 +179,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     name: undefined,
     dryRun: false,
     force: false,
+    allowInvalid: false,
     prune: false,
     all: false,
     search: undefined,
@@ -200,6 +203,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--dry-run") {
       result.dryRun = true;
+      i++;
+      continue;
+    }
+    if (arg === "--allow-invalid") {
+      result.allowInvalid = true;
       i++;
       continue;
     }
@@ -372,7 +380,7 @@ function printLessons(rules: string[]): void {
   }
 }
 
-function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean): void {
+function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
   let ast;
@@ -391,15 +399,16 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   }
 
   // Never compile what does not validate: fields the validator rejects can
-  // vanish silently in the output. --force compiles anyway.
+  // vanish silently in the output. --allow-invalid compiles anyway. It used to
+  // be --force, which also overwrites kept files: one flag, two risks.
   const errors = validate(ast).filter((r) => r.level === "error");
   if (errors.length > 0) {
-    const say = force ? console.log : console.error;
-    say(c[force ? "yellow" : "red"](`  ${errors.length} validation error(s)${force ? " — scaffolding anyway (--force)" : ". Nothing was written."}`));
+    const say = allowInvalid ? console.log : console.error;
+    say(c[allowInvalid ? "yellow" : "red"](`  ${errors.length} validation error(s)${allowInvalid ? " — scaffolding anyway (--allow-invalid)" : ". Nothing was written."}`));
     for (const e of errors.slice(0, 5)) say(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
     if (errors.length > 5) say(c.dim(`  … and ${errors.length - 5} more`));
-    if (!force) {
-      console.error(c.dim(`  Run: agentopology validate ${path.basename(filePath)}`));
+    if (!allowInvalid) {
+      console.error(c.dim(`  Run: agentopology validate ${path.basename(filePath)} (--allow-invalid scaffolds anyway)`));
       process.exit(1);
     }
     say("");
@@ -435,6 +444,20 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     process.exit(1);
   }
 
+  // A hand-written file the topology points at but the project lacks: the
+  // node will not load, and scaffold will not invent it.
+  const authoredFiles = [
+    ...ast.nodes.map((n) => n.file),
+    ...(ast.skills ?? []).map((sk) => sk.file),
+    ...(ast.triggers ?? []).map((t) => t.file),
+  ].filter((f): f is string => !!f);
+  const missing = authoredFiles.filter((f) => !fs.existsSync(path.join(basePath, f)));
+  if (missing.length > 0) {
+    console.log(c.yellow(`  ${missing.length} hand-written file(s) named by file: are not in ${basePath} (scaffold never writes them):`));
+    for (const f of missing) console.log(`  ${c.yellow("?")} ${f}`);
+    console.log("");
+  }
+
   const printAction = (action: FileAction, preview: boolean): void => {
     switch (action.type) {
       case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
@@ -447,6 +470,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         console.log(`  ${c.bold("!")} ${action.path} (${action.detail} — ${force ? "overwritten (--force)" : "kept"})`);
         break;
       case "blocked": console.log(`  ${c.red("⊘")} ${action.path} (${action.detail})`); break;
+      case "kept": if (preview) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`); break;
     }
   };
 
@@ -521,18 +545,25 @@ function readDirRecursive(dirPath: string): PlatformFile[] {
   }
 
   const files: PlatformFile[] = [];
+  // Paths are project-relative (what `file:` records), so a walk started at
+  // the .claude folder itself keeps that prefix.
+  const prefix0 = path.basename(resolved) === ".claude" ? ".claude" : "";
   function walk(dir: string, prefix: string): void {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const rel = path.join(prefix, entry.name);
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      // A symlinked folder (a skill linked from another repo) is read like any
+      // other; reading it used to crash with EISDIR.
+      const isDir = entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(full, { throwIfNoEntry: false })?.isDirectory());
+      if (isDir) {
+        if (entry.name === "node_modules" || entry.name === ".git") continue;
         walk(full, rel);
       } else {
         files.push({ path: rel, content: fs.readFileSync(full, "utf-8") });
       }
     }
   }
-  walk(resolved, "");
+  walk(resolved, prefix0);
   return files;
 }
 
@@ -1164,7 +1195,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdScaffold(args.file, args.target, args.dryRun, args.output || args.dir, args.force, args.prune);
+      cmdScaffold(args.file, args.target, args.dryRun, args.output || args.dir, args.force, args.prune, args.allowInvalid);
       break;
 
     case "sync":

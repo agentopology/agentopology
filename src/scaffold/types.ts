@@ -41,4 +41,6 @@ export type FileAction =
    * must abort the whole run before anything is written (an empty or
    * malformed file name — the EISDIR class).
    */
-  | { type: "blocked"; path: string; detail: string; unsafe?: boolean };
+  | { type: "blocked"; path: string; detail: string; unsafe?: boolean }
+  /** A create-only file already there: the user's. Never written or claimed. */
+  | { type: "kept"; path: string; detail: string };

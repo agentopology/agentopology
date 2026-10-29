@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": ["Read", "Grep", "Bash(python3 .claude/skills/story/scripts/copy_gate.py:*)"],
+    "ask": ["Bash(git push:*)"],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "bash .claude/hooks/guard.sh" }] }
+    ]
+  }
+}

@@ -132,3 +132,22 @@ describe.skipIf(!LIVE)("[L1] Claude Code loads every scaffolded project", () => 
     }
   }, 200_000);
 });
+
+describe.skipIf(!LIVE)("[L2] Claude Code loads a hand-built project after import then scaffold", () => {
+  it("handbuilt fixture", () => {
+    const tmp = fs.mkdtempSync(join(os.tmpdir(), "at-live-rt-"));
+    const project = join(tmp, "project");
+    try {
+      fs.cpSync(resolve(here, "../e2e/fixtures/handbuilt"), project, { recursive: true });
+      execFileSync(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", project, "--name", "handbuilt", "--output", tmp], { stdio: "ignore" });
+      execFileSync(process.execPath, [CLI, "scaffold", join(tmp, "handbuilt.at"), "--target", "claude-code", "--output", project], { stdio: "ignore" });
+      const run = runClaude(project);
+      expect(run.result.is_error, `session failed: ${run.result.result}`).toBe(false);
+      for (const a of ["reviewer", "writer"]) expect(run.init.agents, `agent ${a}`).toContain(a);
+      expect(run.init.skills).toContain("story");
+      expect(run.init.slash_commands).toContain("ship");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 200_000);
+});

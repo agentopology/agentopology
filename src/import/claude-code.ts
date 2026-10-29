@@ -40,6 +40,13 @@ interface FrontmatterResult {
   body: string;
 }
 
+/** A frontmatter list written either as a YAML list or a comma string. */
+function asList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (Array.isArray(value)) return value.map(String);
+  return String(value).split(",").map((v) => v.trim()).filter(Boolean);
+}
+
 function parseFrontmatter(content: string): FrontmatterResult {
   const fields: Record<string, string | boolean | string[]> = {};
   let body = content;
@@ -217,10 +224,11 @@ function extractRetry(body: string): number | RetryConfig | undefined {
     const config: RetryConfig = {
       max: parseInt(structured[1], 10),
       backoff: structured[2] as "none" | "linear" | "exponential",
-      interval: structured[3],
+      // The sentence ends after the interval: "interval 5s." is "5s".
+      interval: structured[3].replace(/[.,;]+$/, ""),
     };
     const maxInt = body.match(/max interval (\S+)/);
-    if (maxInt) config.maxInterval = maxInt[1].replace(/,$/, "");
+    if (maxInt) config.maxInterval = maxInt[1].replace(/[.,;]+$/, "");
     if (/with jitter/.test(body)) config.jitter = true;
     const nonRetryable = body.match(/non-retryable: (.+)/);
     if (nonRetryable) {
@@ -261,7 +269,7 @@ function reversePermissionMode(mode: string | undefined): string | undefined {
 // ---------------------------------------------------------------------------
 
 const KNOWN_FRONTMATTER_KEYS = new Set([
-  "name", "description", "model", "maxTurns", "tools", "disallowed-tools",
+  "name", "description", "model", "maxTurns", "tools", "disallowed-tools", "disallowedTools",
   "mcpServers", "background", "permissionMode", "isolation", "sandbox",
   "fallback-chain", "type", "members",
 ]);
@@ -278,7 +286,7 @@ export function parseAgentMd(
       type: "group",
       id: agentId,
       label: agentId,
-      members: (fields.members as string[]) ?? [],
+      members: asList(fields.members) ?? [],
       description: fields.description as string | undefined,
     };
     // Try to extract group-specific fields from body
@@ -319,9 +327,12 @@ export function parseAgentMd(
   if (fields.model) agent.model = fields.model as string;
   if (fields.description) agent.description = fields.description as string;
   if (fields.maxTurns) agent.maxTurns = parseInt(fields.maxTurns as string, 10);
-  if (fields.tools) agent.tools = fields.tools as string[];
-  if (fields["disallowed-tools"]) agent.disallowedTools = fields["disallowed-tools"] as string[];
-  if (fields.mcpServers) agent.mcpServers = fields.mcpServers as string[];
+  // Claude Code writes these as a comma string ("Read, Grep") or a YAML list;
+  // a string crashed import with "items.map is not a function".
+  if (fields.tools) agent.tools = asList(fields.tools);
+  const disallowed = fields.disallowedTools ?? fields["disallowed-tools"];
+  if (disallowed) agent.disallowedTools = asList(disallowed);
+  if (fields.mcpServers) agent.mcpServers = asList(fields.mcpServers);
   if (fields.background === true) agent.background = true;
   if (fields.permissionMode) agent.permissions = reversePermissionMode(fields.permissionMode as string);
   if (fields.isolation) agent.isolation = fields.isolation as string;
@@ -330,7 +341,7 @@ export function parseAgentMd(
   }
   if (fields["fallback-chain"]) {
     const fc = fields["fallback-chain"];
-    agent.fallbackChain = typeof fc === "string" ? fc.split(/,\s*/) : fc as string[];
+    agent.fallbackChain = asList(fc);
   }
 
   // Extensions: any unknown frontmatter keys
@@ -516,7 +527,7 @@ export function parseSkillMd(content: string): SkillMdResult {
     name: (fields.topology || fields.name) as string,
     version: fields.version as string | undefined,
     description: fields.description as string | undefined,
-    patterns: fields.patterns as string[] | undefined,
+    patterns: asList(fields.patterns),
     edges: [],
     gates: [],
     triggers: [],
@@ -695,9 +706,14 @@ export function parseSettingsJson(content: string): {
   const settings: Record<string, unknown> = {};
   const hooks: HookDef[] = [];
 
-  if (json.allow) settings.allow = json.allow;
-  if (json.deny) settings.deny = json.deny;
-  if (json.ask) settings.ask = json.ask;
+  // Claude Code reads rules from `permissions`. Import used to read only
+  // top-level allow/deny/ask — keys Claude Code ignores — so every normal
+  // project lost its permissions, and a file with stray top-level keys had
+  // them promoted into effect on the next scaffold.
+  const perms = (json.permissions ?? {}) as Record<string, unknown>;
+  if (Array.isArray(perms.allow)) settings.allow = perms.allow;
+  if (Array.isArray(perms.deny)) settings.deny = perms.deny;
+  if (Array.isArray(perms.ask)) settings.ask = perms.ask;
 
   // Parse hooks
   if (json.hooks) {
@@ -811,12 +827,39 @@ export function importClaudeCode(
   const nodes: NodeDef[] = [];
   const roles: Record<string, string> = {};
 
-  // 1. Parse AGENT.md files
+  // Files an earlier scaffold generated are listed in its manifest(s). Every
+  // other file was written by hand: it is imported with `file:`, so the
+  // binding references it and never regenerates it. Without this, import then
+  // scaffold replaced 37 of 72 hand-built files and cut the rest down.
+  const generated = new Set<string>();
   for (const file of files) {
-    const match = file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)[\\/]AGENT\.md$/);
+    if (!/(?:^|[\\/])\.scaffold-manifest(?:\.[^\\/]+)?\.json$/.test(file.path)) continue;
+    try {
+      const manifest = JSON.parse(file.content) as { files?: Record<string, unknown> };
+      for (const p of Object.keys(manifest.files ?? {})) generated.add(p.replace(/^\.\//, ""));
+    } catch {
+      // An unreadable manifest claims nothing: every file stays the author's.
+    }
+  }
+  const authored = (path: string): string | undefined => {
+    const rel = path.replace(/\\/g, "/").replace(/^\.\//, "");
+    return generated.has(rel) ? undefined : rel;
+  };
+
+  // 1. Parse agent files: `.claude/agents/<id>/AGENT.md` and the flat
+  // `.claude/agents/<id>.md` that Claude Code itself documents.
+  for (const file of files) {
+    const match =
+      file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)[\\/]AGENT\.md$/) ??
+      file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)\.md$/);
     if (!match) continue;
     const agentId = match[1];
+    if (nodes.some((n) => n.id === agentId)) continue;
     const node = parseAgentMd(agentId, file.content);
+    if (node) {
+      const file_ = authored(file.path);
+      if (file_) node.file = file_;
+    }
     if (node) {
       // Extract role description into roles map and set agent.role to the key
       if (node.type === "agent" && node.role) {
@@ -829,6 +872,9 @@ export function importClaudeCode(
 
   // 2. Parse SKILL.md files for topology metadata
   let topologyMeta: SkillMdResult | null = null;
+  // Every topology skill found, not just the first: a project often holds
+  // several, and dropping their flows left their agents' reads unconnected.
+  const otherTopologies: SkillMdResult[] = [];
   const additionalSkills: SkillDef[] = [];
 
   for (const file of files) {
@@ -836,19 +882,27 @@ export function importClaudeCode(
     if (!match) continue;
     const skillResult = parseSkillMd(file.content);
 
+    if (skillResult.isTopology) otherTopologies.push(skillResult);
     if (skillResult.isTopology && !topologyMeta) {
       topologyMeta = skillResult;
+      // A hand-written topology skill is the author's too: keep its folder.
+      const topologyFile = authored(file.path);
+      if (topologyFile) {
+        additionalSkills.push({ id: match[1], file: topologyFile, description: skillResult.description ?? "" });
+      }
     } else {
       // Non-topology skill
       const { fields } = parseFrontmatter(file.content);
+      const skillFile = authored(file.path);
       additionalSkills.push({
         id: match[1],
+        ...(skillFile ? { file: skillFile } : {}),
         description: (fields.description as string) ?? "",
         disableModelInvocation: fields["disable-model-invocation"] as boolean | undefined,
         userInvocable: fields["user-invocable"] as boolean | undefined,
         context: fields.context as string | undefined,
         agent: fields.agent as string | undefined,
-        allowedTools: fields["allowed-tools"] as string[] | undefined,
+        allowedTools: asList(fields["allowed-tools"]),
       });
     }
   }
@@ -879,8 +933,24 @@ export function importClaudeCode(
       const match = file.path.match(/(?:^|[\\/])commands[\\/](.+\.md)$/);
       if (!match) continue;
       const trigger = parseCommandMd(match[1], file.content);
-      if (trigger) triggers.push(trigger);
+      if (trigger) {
+        const commandFile = authored(file.path);
+        if (commandFile) trigger.file = commandFile;
+        triggers.push(trigger);
+      }
     }
+  }
+
+  // Commands that exist by hand stay the author's, whichever source named them.
+  for (const trigger of triggers) {
+    if (trigger.file) continue;
+    const want = `commands/${trigger.name}.md`;
+    const commandFile = files.find((f) => {
+      const p = f.path.replace(/\\/g, "/");
+      return p === want || p.endsWith(`/${want}`);
+    });
+    const rel = commandFile ? authored(commandFile.path) : undefined;
+    if (rel) trigger.file = rel;
   }
 
   // 6. Parse action scripts
@@ -902,36 +972,41 @@ export function importClaudeCode(
   }
 
   // 8. Add gates from SKILL.md
-  if (topologyMeta?.gates) {
-    nodes.push(...topologyMeta.gates);
-  }
-
-  // 9. Build edges — from SKILL.md or generate linear flow
-  let edges: EdgeDef[] = topologyMeta?.edges ?? [];
-  if (edges.length === 0) {
-    // Generate linear flow from agent ordering
-    const agentNodes = nodes.filter((n) => n.type === "agent");
-    for (let i = 0; i < agentNodes.length - 1; i++) {
-      edges.push({
-        from: agentNodes[i].id,
-        to: agentNodes[i + 1].id,
-        condition: null,
-        maxIterations: null,
-      });
+  for (const meta of otherTopologies) {
+    for (const gate of meta.gates) {
+      if (!nodes.some((n) => n.id === gate.id)) nodes.push(gate);
     }
   }
 
-  // 10. Add action nodes for orchestrator handles
-  if (topologyMeta?.orchestrator) {
-    for (const handleId of topologyMeta.orchestrator.handles) {
-      if (!nodes.some((n) => n.id === handleId)) {
-        nodes.push({
-          type: "action",
-          id: handleId,
-          label: handleId,
-          kind: "inline",
-        } as ActionNode);
+  // 9. Build edges — from SKILL.md or generate linear flow
+  let edges: EdgeDef[] = [];
+  for (const meta of otherTopologies) {
+    for (const edge of meta.edges) {
+      if (!edges.some((e) => e.from === edge.from && e.to === edge.to && e.condition === edge.condition)) {
+        edges.push(edge);
       }
+    }
+  }
+  // 10. Every node a flow names exists: the handles of each topology's
+  // orchestrator become action nodes.
+  for (const handleId of otherTopologies.flatMap((m) => m.orchestrator?.handles ?? [])) {
+    if (!nodes.some((n) => n.id === handleId)) {
+      nodes.push({
+        type: "action",
+        id: handleId,
+        label: handleId,
+        kind: "inline",
+      } as ActionNode);
+    }
+  }
+
+  // 11. An agent no flow mentions is invoked on demand, which is how a
+  // hand-built Claude Code subagent runs. Import used to invent a linear chain
+  // through every agent in file order, a flow the author never wrote.
+  const inFlow = new Set(edges.flatMap((e) => [e.from, e.to]));
+  for (const node of nodes) {
+    if (node.type === "agent" && !inFlow.has(node.id) && !(node as AgentNode).invocation) {
+      (node as AgentNode).invocation = "manual";
     }
   }
 
@@ -978,7 +1053,11 @@ export function importClaudeCode(
     imports: [],
     includes: [],
     checkpoint: null,
-    artifacts: [],
+    // Every artifact an agent names is declared (V71); the agent file records
+    // only the id, so the type is the generic "file".
+    artifacts: [...new Set(nodes.flatMap((n) =>
+      n.type === "agent" ? [...((n as AgentNode).produces ?? []), ...((n as AgentNode).consumes ?? [])] : [],
+    ))].map((id) => ({ id, type: "file" })),
     stores: [],
     retrievals: [],
   };

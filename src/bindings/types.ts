@@ -22,6 +22,12 @@ export interface GeneratedFile {
    * Used for generated shell script stubs.
    */
   executable?: boolean;
+  /**
+   * Write only when nothing is at this path. For a stub at a path the user
+   * named (a hook's own script): if a file is there it is the user's, and
+   * scaffold never overwrites or claims it — not even with --force.
+   */
+  createOnly?: boolean;
 }
 
 /**

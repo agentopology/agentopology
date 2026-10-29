@@ -368,6 +368,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `file` | string | no | -- | Project-relative path of the hand-written file holding this node's internals. Bindings reference it and never generate or overwrite it (V97). `import` sets it on every file it did not generate, so a hand-built system comes in without losing anything. |
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
@@ -1088,7 +1089,7 @@ Environment blocks have no fixed schema -- fields are identifier/string key-valu
 ```ebnf
 triggers        = 'triggers' '{' command-decl* '}'
 command-decl    = 'command' identifier '{' command-fields '}'
-command-fields  = 'pattern' ':' string ('argument' ':' template-var)?
+command-fields  = 'pattern' ':' string ('argument' ':' template-var)? ('file' ':' string)?
 ```
 
 ```agenttopology
@@ -1108,6 +1109,7 @@ triggers {
 |-------|------|----------|---------|
 | `pattern` | string | yes | -- |
 | `argument` | template-var | no | -- |
+| `file` | string | no | -- |
 
 ---
 
@@ -1360,6 +1362,10 @@ agent processor {
 
 ---
 
+### 4.20a `file:` — hand-written internals
+
+Any node (`agent`, `group`, `human`, ...), any `skill` and any trigger `command` may carry `file: "<project-relative path>"`. It says: the structure is described here, the internals live in that file, and they are the author's. A binding never generates or overwrites a file so marked; for a skill it leaves the whole skill folder alone, for a group its skill and runtime folder too. Gates and hooks still wire to the node by name. `agentopology import` sets `file:` on every file it finds that no scaffold manifest lists as generated, which is what makes import followed by scaffold lossless.
+
 ### 4.21 `skill` (declarations)
 
 Topology-level skill declarations. Each `skill` block declares a self-contained application that bundles executable scripts, domain knowledge, reference docs, and instructions into a coherent capability. Agents load skills via their `skills` field.
@@ -1403,6 +1409,7 @@ skill classification {
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
+| `file` | string | no | -- |
 | `description` | string | no | -- |
 | `scripts` | name-list | no | `[]` |
 | `domains` | path-list | no | `[]` |
