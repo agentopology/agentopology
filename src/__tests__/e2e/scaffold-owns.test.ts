@@ -111,7 +111,7 @@ describe("scaffold only changes what it owns (e2e)", () => {
     fs.writeFileSync(at, fs.readFileSync(at, "utf-8").replace('run: "scripts/check-quality.sh"', `run: "${prose}"`));
     const v = cli(["validate", at]);
     expect(v.code).toBe(1);
-    expect(v.out).toContain("[V94]");
+    expect(v.out).toContain("[V96]");
     const s = scaffold();
     expect(s.code).toBe(1);
     expect(s.out).toContain("Nothing was written");

@@ -33,23 +33,7 @@ import { shellStub, STUB_MARKER } from "./lib/stub.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
-import { scriptNameFromRun } from "../parser/run.js";
-
-/**
- * Where a global hook's stub lives, or null when `run` names no file.
- * A project-relative run (`./x.sh --flag`, `.claude/scripts/log.sh`) keeps its
- * own path, minus arguments; a bare name is scoped under `scopedDir`.
- */
-function hookStubPath(run: string, scopedDir: string): string | null {
-  if (run.startsWith(".") || run.startsWith("/")) {
-    const first = run.trim().split(/\s+/)[0].replace(/^\.\//, "");
-    return /^\/?[A-Za-z0-9_.][A-Za-z0-9_.\/-]*[A-Za-z0-9_]$/.test(first) && !first.includes("..")
-      ? first
-      : null;
-  }
-  const name = scriptNameFromRun(run);
-  return name ? `${scopedDir}${name}` : null;
-}
+import { proseInRun, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -522,6 +506,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       const topologyName = ast.topology.name;
       const hooksByEvent: Record<string, HookDef[]> = {};
       for (const hook of agent.hooks) {
+        if (hook.type === "mod") continue; // engine-wide only (V94)
         if (!hooksByEvent[hook.on]) hooksByEvent[hook.on] = [];
         hooksByEvent[hook.on].push(hook);
       }
@@ -531,7 +516,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
           const scriptName = scriptNameFromRun(hook.run);
-          if (!scriptName) continue; // V94: prose in run names no script
+          if (!scriptName) continue; // V96: prose in run names no script
           const command = `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`;
           if (hook.matcher) {
             hookLines.push(`    - matcher: "${hook.matcher}"`);
@@ -1794,7 +1779,7 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     if (gate.behavior === "advisory") continue;
 
     const gateScriptName = scriptNameFromRun(gate.run);
-    if (!gateScriptName) continue; // V94: prose in run names no script
+    if (!gateScriptName) continue; // V96: prose in run names no script
     const onFailExit = gate.onFail === "halt"
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
@@ -1925,6 +1910,133 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
   ].join("\n");
 }
 
+/**
+ * `type: mod` hooks → a Claude Code plugin (function hooks, early access).
+ *
+ * A Mod is a TypeScript module loaded INSIDE the engine; settings.json cannot
+ * carry it. The engine loads ONE module per plugin (hooks.json `modules`,
+ * measured on 2.1.283), so the plugin's single entry is a generated
+ * `hooks/at-register.ts` that imports each declared Mod's `register(on)` and
+ * calls it. A `flag:` is the Mod's OWN switch: the Mod reads it per event with
+ * `$.env.get`, and the launch script sets it. The entry cannot gate it: a
+ * module has no `process`, and the engine refuses an `on` that is wrapped or
+ * kept (measured 2.1.283: "on is always on(\"<event>\", hook)"). The launch script
+ * sets CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 (without it the module never
+ * loads), each flag, and `--plugin-dir`.
+ *
+ * The plugin root is the folder that HOLDS the Mods' modules, because the
+ * engine refuses a hooks module that imports outside its plugin folder
+ * (measured 2.1.283: "cannot import … it is outside the plugin's folder").
+ * The entry has its own name so it never overwrites a hand-written
+ * `hooks/register.ts`. The Mods' own modules are the user's code: nothing is
+ * written at a `run:` path. A topology without Mods gets no plugin.
+ */
+export const MOD_PLUGIN_ENV = "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS";
+export const MOD_ENTRY = "at-register.ts";
+
+/**
+ * The plugin root: the deepest folder shared by every Mod's `run:` path, less
+ * a trailing `hooks` (the plugin's own hooks/ folder). "" is the project root.
+ * null when a `run:` is absolute: it cannot be placed inside the project.
+ */
+export function modPluginDir(ast: TopologyAST): string | null {
+  const runs = ast.hooks.filter((h) => h.type === "mod" && h.run).map((h) => h.run);
+  if (runs.length === 0 || runs.some((r) => r.startsWith("/"))) return null;
+  const dirs = runs.map((r) => r.split("/").filter((p) => p && p !== ".").slice(0, -1));
+  const shared: string[] = [];
+  for (let i = 0; dirs.every((d) => i < d.length && d[i] === dirs[0][i]); i++) shared.push(dirs[0][i]);
+  if (shared[shared.length - 1] === "hooks") shared.pop();
+  return shared.join("/");
+}
+
+function generateModPlugin(ast: TopologyAST): GeneratedFile[] {
+  const mods = ast.hooks.filter((h) => h.type === "mod" && h.run);
+  if (mods.length === 0) return [];
+
+  const name = ast.topology.name;
+  const dir = modPluginDir(ast);
+  if (dir === null) {
+    console.warn(
+      `[claude-code] Mods ${mods.map((m) => m.name).join(", ")}: a run: path is absolute, so no plugin folder ` +
+        `can hold the modules (the engine refuses imports outside it). Use project-relative run: paths. Skipped.`,
+    );
+    return [];
+  }
+  const at = (p: string) => (dir ? `${dir}/${p}` : p);
+  const hooksDir = at("hooks");
+
+  // `run:` is project-relative (or absolute); the import is relative to hooks/.
+  // Bindings stay free of node: imports, so the relative path is computed here.
+  const importPath = (run: string): string => {
+    const target = run.replace(/\.(ts|js|mjs)$/, "");
+    if (target.startsWith("/")) return target;
+    const to = target.split("/").filter((p) => p && p !== ".");
+    const from = hooksDir.split("/");
+    let common = 0;
+    while (common < from.length && common < to.length - 1 && from[common] === to[common]) common++;
+    const rel = [...from.slice(common).map(() => ".."), ...to.slice(common)].join("/");
+    return rel.startsWith(".") ? rel : `./${rel}`;
+  };
+  const ident = (hookName: string): string =>
+    "mod_" + hookName.replace(/[^A-Za-z0-9_]/g, "_");
+
+  const summary = mods
+    .map((m) => `${m.name} (${m.on}${m.flag ? `, ${m.flag}` : ""})`)
+    .join("; ");
+
+  const pluginJson = {
+    name: `${name}-mods`,
+    version: ast.topology.version || "0.0.0",
+    description: `Mods of the ${name} topology, generated by agentopology: ${summary}.`,
+  };
+  const hooksJson = {
+    description:
+      `The engine loads ONE module per plugin: ${MOD_ENTRY} registers every Mod ` +
+      `declared in ${name}.at. Off unless ${MOD_PLUGIN_ENV}=1.`,
+    modules: [`./${MOD_ENTRY}`],
+  };
+
+  const register = [
+    "// Generated by agentopology scaffold from the topology's `type: mod` hooks.",
+    "// The engine loads ONE module per plugin: this one registers every Mod.",
+    "// Edit the .at file, not this file.",
+    "import type { On } from 'claude-code'",
+    "",
+    ...mods.map((m) => `import { register as ${ident(m.name)} } from '${importPath(m.run)}'`),
+    "",
+    "export function register(on: On) {",
+    ...mods.map((m) =>
+      `  // ${m.name} · on ${m.on}${m.flag ? ` · the Mod reads its own switch, ${m.flag}` : ""}\n  ${ident(m.name)}(on)`,
+    ),
+    "}",
+    "",
+  ].join("\n");
+
+  const flags = [...new Set(mods.map((m) => m.flag).filter((f): f is string => !!f))];
+  const launch = [
+    "#!/usr/bin/env bash",
+    `# Launch Claude Code with the Mods of ${name} (generated by agentopology).`,
+    "# Mods run inside the engine (function hooks, early access).",
+    "# Each flag defaults to on here; set it to 0 before launching to turn a Mod off.",
+    "set -euo pipefail",
+    'PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+    `export ${MOD_PLUGIN_ENV}=1`,
+    ...flags.map((f) => {
+      const users = mods.filter((m) => m.flag === f).map((m) => `${m.name} · ${m.on}`).join(", ");
+      return `export ${f}="\${${f}:-1}"   # ${users}`;
+    }),
+    'exec claude --plugin-dir "$PLUGIN_DIR" "$@"',
+    "",
+  ].join("\n");
+
+  return [
+    { path: at(".claude-plugin/plugin.json"), content: JSON.stringify(pluginJson, null, 2) + "\n" },
+    { path: `${hooksDir}/hooks.json`, content: JSON.stringify(hooksJson, null, 2) + "\n" },
+    { path: `${hooksDir}/${MOD_ENTRY}`, content: register },
+    { path: at("launch-mods.sh"), content: launch, executable: true },
+  ];
+}
+
 /** Generate hook script stubs for every hook's `run` field (Changes 1, 4, 5). */
 function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -1932,13 +2044,25 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
 
   for (const hook of ast.hooks) {
     if (!hook.run) continue;
+    // A Mod's run: is the user's TypeScript module — never overwrite it with a
+    // bash stub. generateModPlugin imports it instead.
+    if (hook.type === "mod") continue;
     const runPath = hook.run;
 
     // If the run path starts with '.' or '/' it is already project-relative —
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
-    const filePath = hookStubPath(runPath, `.claude/skills/${name}/scripts/`);
-    if (!filePath) continue; // V94: prose in run names no script
+    if (proseInRun(runPath)) continue; // V96: prose in run names no script
+    const { script } = hookRun(runPath);
+    // An absolute script is the user's own, outside the project: never stubbed.
+    if (script.startsWith("/")) continue;
+    const scoped = scriptNameFromRun(script);
+    const filePath = isHookPath(script)
+      ? script
+      : scoped
+        ? `.claude/skills/${name}/scripts/${scoped}`
+        : null;
+    if (!filePath) continue;
 
     files.push({
       path: filePath,
@@ -1962,8 +2086,9 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!agent.hooks || agent.hooks.length === 0) continue;
 
     for (const hook of agent.hooks) {
+      if (!hook.run || hook.type === "mod") continue;
       const scriptName = scriptNameFromRun(hook.run);
-      if (!scriptName) continue; // V94: prose in run names no script
+      if (!scriptName) continue; // V96: prose in run names no script
       files.push({
         path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
         content: [
@@ -1983,21 +2108,57 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
   return files;
 }
 
+const isHookPath = (w = "") => w.startsWith(".") || w.startsWith("/");
+
+/** A hook's `run:` split: the interpreter it names (if any), its script, its arguments. */
+function hookRun(run: string): { interpreter?: string; script: string; args: string[] } {
+  const words = run.trim().split(/\s+/);
+  const named = words.length > 1 && !/\.(py|sh|ts|mjs|js)$/.test(words[0]) && isHookPath(words[1]);
+  const [script = "", ...args] = named ? words.slice(1) : words;
+  return { ...(named ? { interpreter: words[0] } : {}), script, args };
+}
+
 /**
- * Generate hook configuration in .claude/settings.json.
+ * The shell command for a command hook's `run:`.
  *
- * Hooks are grouped by event name as an object:
- *   { "hooks": { "PostToolUse": [ { hooks: [...], matcher? } ], ... } }
+ * A `run:` whose script (its first word, or its second when the first names
+ * the interpreter, e.g. `/opt/homebrew/bin/python3 ./x/y.py`) starts with "."
+ * or "/" names the user's own script. A project-relative one runs through
+ * `$CLAUDE_PROJECT_DIR` (a hook's cwd is the session's, which moves); an
+ * absolute one is kept as written. It runs by the interpreter the `run:`
+ * names, else the one its extension names (`.py` → python3, anything else →
+ * bash), with its arguments kept.
+ *
+ * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
-function generateSettings(ast: TopologyAST): GeneratedFile | null {
-  const settings: Record<string, unknown> = {};
+export function hookCommand(run: string, topologyName: string): string {
+  const { interpreter: named, script: first, args: rest } = hookRun(run);
+  if (!isHookPath(first)) {
+    return `bash .claude/skills/${topologyName}/scripts/${first.replace(/^.*\//, "")}`;
+  }
+  const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
+  const where = first.startsWith("/")
+    ? first
+    : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
+  return [interpreter, where, ...rest].join(" ");
+}
+
+/**
+ * The settings.json `hooks` entries of the topology's own `hooks {}` block
+ * (command hooks only; a Mod is a plugin, see generateModPlugin), grouped by
+ * event. Gate wiring is added by generateSettings, not here: a caller that
+ * wants the reflexes alone (e.g. a drift check against a live settings file)
+ * reads this.
+ */
+export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
   const topologyName = ast.topology.name;
   const isInline = getDelegationMode(ast) === "inline";
-
-  // Hooks section — grouped by event name
   const hooksByEvent: Record<string, unknown[]> = {};
 
   for (const hook of ast.hooks) {
+    // A Mod is a module inside the engine, not a settings.json command: it is
+    // emitted as a plugin (generateModPlugin).
+    if (hook.type === "mod") continue;
     const eventName = hook.on;
     // Inline orchestrator mode never spawns subagents, so SubagentStop /
     // SubagentStart hooks would never fire. Warn the user and skip emission
@@ -2011,28 +2172,16 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       );
       continue;
     }
+    if (proseInRun(hook.run)) continue; // V96: prose in run names no script
     if (!hooksByEvent[eventName]) {
       hooksByEvent[eventName] = [];
     }
-
-    // Build the script command.
-    // If hook.run starts with '.' or '/' it is already a project-relative or
-    // absolute path — use it verbatim so observability hooks like
-    // ".claude/scripts/log-subagent.sh" land at the correct location.
-    // Otherwise treat it as a bare filename scoped to this topology's skill
-    // scripts directory.
-    const runPath = hook.run;
-    if (!hookStubPath(runPath, "")) continue; // V94: prose in run names no script
-    const command =
-      runPath.startsWith(".") || runPath.startsWith("/")
-        ? `bash ${runPath}`
-        : `bash .claude/skills/${topologyName}/scripts/${scriptNameFromRun(runPath)}`;
 
     const hookEntry: Record<string, unknown> = {
       hooks: [
         {
           type: hook.type ?? "command",
-          command,
+          command: hookCommand(hook.run, topologyName),
           ...(hook.timeout ? { timeout: hook.timeout } : {}),
         },
       ],
@@ -2045,6 +2194,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
 
     hooksByEvent[eventName].push(hookEntry);
   }
+  return hooksByEvent;
+}
+
+/**
+ * Generate hook configuration in .claude/settings.json.
+ *
+ * Hooks are grouped by event name as an object:
+ *   { "hooks": { "PostToolUse": [ { hooks: [...], matcher? } ], ... } }
+ */
+function generateSettings(ast: TopologyAST): GeneratedFile | null {
+  const settings: Record<string, unknown> = {};
+  const topologyName = ast.topology.name;
+
+  // Hooks section — grouped by event name
+  const hooksByEvent = settingsHooksOf(ast);
 
   // Per-agent hooks are now rendered in AGENT.md frontmatter (not in settings.json).
   // This is the Claude Code native approach: hooks in the agent file are scoped
@@ -2078,7 +2242,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
-    if (!scriptNameFromRun(gate.run)) continue; // no run, or V94 prose
+    if (!scriptNameFromRun(gate.run)) continue; // no run, or V96 prose
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
 
     if (delegationMode === "inline") {
@@ -3051,6 +3215,9 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Hook scripts (per-agent)
     files.push(...generateAgentHookScripts(ast));
+
+    // Mods (type: mod) → a plugin directory; never settings.json
+    files.push(...generateModPlugin(ast));
 
     // HYBRID: host-side launch directives for the embedded workflow rung(s).
     files.push(...generateWorkflowLaunchArtifacts(ast));

@@ -618,16 +618,10 @@ export function parseAgent(
     for (const hBlock of hookBlocks) {
       if (!hBlock.id) continue;
       const hFields = parseFields(hBlock.body);
-      const agentHook: HookDef = {
-        name: hBlock.id,
-        on: hFields.on ?? "",
-        matcher: hFields.matcher ? unquote(hFields.matcher) : "",
-        run: hFields.run ? unquote(hFields.run) : "",
-        ...(hFields.type ? { type: hFields.type } : {}),
-        ...(hFields.timeout
-          ? { timeout: parseInt(hFields.timeout, 10) }
-          : {}),
-      };
+      if (_blockFieldMisuseWarnings) {
+        detectSwallowedFields(hFields, `${id}.${hBlock.id}`, _blockFieldMisuseWarnings);
+      }
+      const agentHook = hookFromFields(hBlock.id, hFields);
 
       // Parse extensions sub-block inside per-agent hook
       const hookExtensions = parseExtensionsBlock(hBlock.body);
@@ -1430,24 +1424,41 @@ export function parseTriggers(body: string): TriggerDef[] {
 }
 
 /**
+ * Build a HookDef from a hook block's parsed fields. Shared by global and
+ * per-agent hooks so the two cannot drift apart.
+ */
+function hookFromFields(name: string, fields: Record<string, string>): HookDef {
+  return {
+    name,
+    on: fields.on ?? "",
+    matcher: fields.matcher ? unquote(fields.matcher) : "",
+    run: fields.run ? unquote(fields.run) : "",
+    ...(fields.type ? { type: fields.type } : {}),
+    ...(fields.flag ? { flag: unquote(fields.flag) } : {}),
+    ...(fields.timeout
+      ? { timeout: parseInt(fields.timeout, 10) }
+      : {}),
+  };
+}
+
+/**
  * Parse the global `hooks { ... }` block.
  */
-export function parseHooks(body: string): HookDef[] {
+export function parseHooks(
+  body: string,
+  _blockFieldMisuseWarnings?: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }>
+): HookDef[] {
   const hooks: HookDef[] = [];
   const hookBlocks = extractAllBlocks(body, "hook");
   for (const block of hookBlocks) {
     if (!block.id) continue;
     const fields = parseFields(block.body);
-    const hook: HookDef = {
-      name: block.id,
-      on: fields.on ?? "",
-      matcher: fields.matcher ? unquote(fields.matcher) : "",
-      run: fields.run ? unquote(fields.run) : "",
-      ...(fields.type ? { type: fields.type } : {}),
-      ...(fields.timeout
-        ? { timeout: parseInt(fields.timeout, 10) }
-        : {}),
-    };
+    // V90: `hook h { on: Stop run: "x" }` makes `on` swallow the whole line
+    // (run and type silently empty). Hooks were the one block V90 skipped.
+    if (_blockFieldMisuseWarnings) {
+      detectSwallowedFields(fields, block.id, _blockFieldMisuseWarnings);
+    }
+    const hook = hookFromFields(block.id, fields);
 
     // Parse extensions sub-block inside hook
     const extensions = parseExtensionsBlock(block.body);
@@ -2405,17 +2416,27 @@ export function parse(source: string): TopologyAST {
   }
   const allHooksBlocks = extractAllBlocks(topBody, "hooks");
   let hooks: HookDef[] = [];
+  let hooksBody: string | undefined;
   for (const hb of allHooksBlocks) {
     const parsed = parseHooks(hb.body);
     const globalOnly = parsed.filter((h) => !perAgentHookNames.has(h.name));
     if (globalOnly.length > 0) {
       hooks = globalOnly;
+      hooksBody = hb.body;
       break;
     }
   }
   if (hooks.length === 0 && allHooksBlocks.length > 1) {
     const lastBlock = allHooksBlocks[allHooksBlocks.length - 1];
     hooks = parseHooks(lastBlock.body);
+    hooksBody = lastBlock.body;
+  }
+  // V90 on the chosen global block, once (the loop above may parse several).
+  if (hooksBody !== undefined) {
+    const globalNames = new Set(hooks.map((h) => h.name));
+    const swallowed: typeof blockFieldMisuseWarnings = [];
+    parseHooks(hooksBody, swallowed);
+    blockFieldMisuseWarnings.push(...swallowed.filter((w) => w.node && globalNames.has(w.node)));
   }
 
   // --- Settings ---

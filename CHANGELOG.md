@@ -2,6 +2,23 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.5.2] — 2026-09-23
+
+### [fix] A gate is drawn on the path it guards
+
+A gate declared with both `after` and `before` was placed at the midpoint between its two
+nodes with no lines at all, so it looked like it floated free of the flow; two gates on the
+same pair were drawn on top of each other. Seen on a real 28-node topology.
+
+Now the visualizer draws `after → gate` and `gate → before` (following `afterAll`/`beforeAll`),
+places gates that share a pair side by side in declaration order, and highlights a gate's
+`before` anchor on hover. The planner was always right (`agentopology plan` splices gates
+correctly); only the drawing was wrong.
+
+Proven by `src/visualizer/__tests__/gate-connectors.test.ts` (runs the page's own script in a
+node vm), with two red controls: connectors off → the path assertion fails; the side-by-side
+offset off → the overlap assertion fails.
+
 ## [0.5.1] — 2026-08-26
 
 ### [feat] The validator teaches the fix, not just the failure

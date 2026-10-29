@@ -4,14 +4,14 @@
  * A gate or hook `run` names something to execute. Bindings derive a script
  * file name from it, so prose there became files named `E;`, `fail:` and
  * `outputs.py)` — and a " / " in a sentence produced an empty name that
- * crashed scaffold with EISDIR. Both the validator (V94) and every binding go
+ * crashed scaffold with EISDIR. Both the validator (V96) and every binding go
  * through these two functions so they cannot disagree.
  *
  * @module
  */
 
-/** One path-ish token: optional ./ ../ ~/ or / prefix, then safe characters. */
-const EXECUTABLE = /^(?:\.{1,2}\/|~\/|\/)?[A-Za-z0-9_][A-Za-z0-9_.\/@+-]*$/;
+/** One path-ish token: optional ./ ../ ~/ or / prefix, then safe characters (dotfolders such as .claude/ included). */
+const EXECUTABLE = /^(?:\.{1,2}\/|~\/|\/)?[A-Za-z0-9_.][A-Za-z0-9_.\/@+-]*$/;
 
 /** A file name a binding may write under its scripts/ directory. */
 const SCRIPT_FILE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;

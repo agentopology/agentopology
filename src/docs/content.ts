@@ -1548,11 +1548,14 @@ agent my-agent {
 | on | string | yes | -- | Event name to listen for |
 | matcher | string | no | -- | Pattern to match against event payload |
 | run | string | yes | -- | Command or script to execute |
-| type | string | no | -- | "command" or "prompt" |
+| type | string | no | command | "command", "prompt" or "mod" (V94) |
+| flag | string | no | -- | mod only: the env switch that turns the Mod on |
 | timeout | number | no | -- | Timeout in milliseconds |
 | extensions | Record | no | -- | Binding-specific fields |
 
-## Events (23 total)
+## Events (23 total, command and prompt hooks)
+
+A command or prompt hook fires on a PascalCase event (V95):
 
 ### Agent Lifecycle
 \`AgentStart\`, \`AgentStop\`, \`SubagentStart\`, \`SubagentStop\`, \`Stop\`
@@ -1574,6 +1577,38 @@ agent my-agent {
 
 ### Memory Events
 \`PreCompact\`
+
+## Mods (type: mod)
+
+A Mod is a TypeScript module loaded INSIDE the engine (Claude Code function
+hooks, early access): no process is spawned per event. It subscribes to a
+dotted engine event (V95):
+
+| Event | Status |
+|-------|--------|
+| \`tool.call\` | proven (a Mod observed firing, Claude Code 2.1.283) |
+| \`prompt.submit\` | proven |
+| \`prompt.context\`, \`session.start\`, \`session.end\`, \`model.complete\`, \`message.received\` | seen in the engine, unproven as Mod events (V95 warns) |
+
+\`\`\`at
+hooks {
+  hook redact {
+    on: tool.call
+    run: "hooks/redact.ts"
+    type: mod
+    flag: MY_MOD_REDACT
+  }
+}
+\`\`\`
+
+On the claude-code target, Mods are not written to settings.json. The
+scaffold emits a plugin in the folder that holds the Mods' modules (the engine
+refuses a module that imports outside its plugin folder; a trailing \`hooks/\`
+is the plugin's own): \`.claude-plugin/plugin.json\`, \`hooks/hooks.json\`
+naming ONE entry module (the engine loads one module per plugin), a generated
+\`hooks/at-register.ts\` that registers every declared Mod, and
+\`launch-mods.sh\`, which sets \`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1\`, each
+Mod's flag and \`--plugin-dir\`.
 
 ## Example
 
@@ -1597,7 +1632,8 @@ hooks {
 
 ## Notes
 
-- \`type: command\` runs a shell command; \`type: prompt\` injects text into the agent's context.
+- \`type: command\` runs a shell command; \`type: prompt\` injects text into the agent's context; \`type: mod\` loads a module inside the engine.
+- Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90).
 - The \`matcher\` field filters events by payload pattern (e.g. tool name for ToolUse events).
 - Global hooks fire for all agents; per-agent hooks fire only for that agent.
 `,

@@ -24,7 +24,7 @@ Run the live suite before every release, and after any change to a binding.
 | G3 | Re-scaffolding keeps the user's hooks, `ask`, `defaultMode` and other permission keys | e2e/scaffold-owns.test.ts |
 | G4 | A second scaffold with no changes writes nothing | e2e/scaffold-owns.test.ts |
 | G5 | `--dry-run` writes nothing | e2e/scaffold-owns.test.ts |
-| G6 | Prose in a gate's `run` fails validate (V94) and scaffold, and nothing is written | e2e/scaffold-owns.test.ts |
+| G6 | Prose in a gate's `run` fails validate (V96) and scaffold, and nothing is written | e2e/scaffold-owns.test.ts |
 | G7 | An edited file that scaffold owns is kept on the next run | e2e/scaffold-owns.test.ts |
 | G8 | `--prune` removes untouched leftovers and keeps edited ones | e2e/scaffold-owns.test.ts |
 | G9 | Two topologies in one project keep separate manifests | e2e/scaffold-owns.test.ts |

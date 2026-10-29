@@ -172,6 +172,24 @@ agent reviewer {
 }`,
   },
   V94: {
+    topic: "hooks",
+    snippet: `# A hook is command, prompt or mod. flag: belongs to a mod:
+hook redact {
+  on: tool.call
+  run: "hooks/redact.ts"
+  type: mod              # ← a module inside the engine
+  flag: MY_MOD_REDACT    # ← the env switch that turns it on
+}`,
+  },
+  V95: {
+    topic: "hooks",
+    snippet: `# A mod subscribes to an engine event; a command hook to a
+# PascalCase lifecycle event:
+hook redact { ... type: mod      on: tool.call }     # ✓
+hook gate   { ... type: command  on: PreToolUse }    # ✓
+hook gate   { ... type: command  on: tool.call }     # ✗ never fires`,
+  },
+  V96: {
     topic: "gate",
     snippet: `# run is the command; the explanation goes in description:
 gate review {

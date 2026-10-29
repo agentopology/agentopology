@@ -145,7 +145,7 @@ describe("--prune deletes only what scaffold left untouched", () => {
   });
 });
 
-describe("prose in run (V94)", () => {
+describe("prose in run (V96)", () => {
   // Real values from content-harness.at.
   const prose = [
     "auto_gates.py: G1 truth, G2 vendor, G3 credit",
@@ -160,6 +160,8 @@ describe("prose in run (V94)", () => {
     "python3 docs/content-os/gift.py run",
     "bash -c 'echo (quoted) ok'",
     "test -f out.json && jq '.ok' out.json",
+    ".claude/scripts/log-subagent.sh",
+    "/opt/homebrew/bin/python3 ./harness-plugin/hooks/router.py --flag",
   ];
 
   it.each(prose)("flags %s", (r) => expect(proseInRun(r)).not.toBeNull());
@@ -178,14 +180,14 @@ describe("prose in run (V94)", () => {
 
   it("validate rejects it, and the binding emits no junk path even when forced", () => {
     const ast = parse(at("pxframes gate mean >= 3.85, no frame < 3; frames 0.0 / 0.5 / 3.0 s"));
-    expect(validate(ast).some((r) => r.rule === "V94" && r.level === "error")).toBe(true);
+    expect(validate(ast).some((r) => r.rule === "V96" && r.level === "error")).toBe(true);
     const files = claudeCodeBinding.scaffold(ast);
     expect(files.filter((f) => unsafePathReason(f.path))).toEqual([]);
   });
 
   it("a real command still compiles to its script and hook", () => {
     const ast = parse(at("scripts/check.sh"));
-    expect(validate(ast).filter((r) => r.rule === "V94")).toEqual([]);
+    expect(validate(ast).filter((r) => r.rule === "V96")).toEqual([]);
     const paths = claudeCodeBinding.scaffold(ast).map((f) => f.path);
     expect(paths).toContain(".claude/skills/simple-pipeline/scripts/check.sh");
     expect(paths).toContain(".claude/skills/simple-pipeline/scripts/gate-quality-check.sh");
