@@ -2,6 +2,41 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.6.0] — 2026-10-30
+
+### [fix] Scaffold only changes what it owns (#22)
+
+Scaffold used to write every file on the first run, so it overwrote hand-written files and,
+through a symlinked skill folder, wrote into a second repository. Now every run goes through
+one plan: a file scaffold did not create is a conflict and is kept (unless `--force`), a
+symlink is never written or deleted through, an unsafe path aborts the whole run, and
+`--prune` deletes only files still exactly as scaffold left them. `settings.json` merges:
+every permission and every hook the user wrote is kept. Each topology keeps its own manifest
+(`.scaffold-manifest.<source>.json`). Settings `env` no longer carries `${VAR}` text, which
+Claude Code applied literally ("Invalid API key" in 6 of the 10 examples). New rule **V96**:
+a `run:` must be a command, not prose.
+
+### [feat] A hand-built system comes into .at without losing anything (#23)
+
+New field **`file:`** on any agent, human, group, skill or command: the internals live in that
+hand-written file, and scaffold never generates it. `import` sets it on every file no scaffold
+created. On this repo's own `.claude/`, import then scaffold now leaves 73 of 73 files
+byte-identical, also with `--force` (before: 0 of 72 identical, 37 missing). New rule **V97**
+(`file:` is a project-relative path). `--allow-invalid` compiles despite errors; `--force` alone
+no longer does. Import fixes: permissions read from `permissions{}`, `tools: Read, Grep` string
+form, flowless agents imported as `invocation: manual`, and an agent's extensions no longer
+leak into project-wide settings. A hook's own script is never overwritten.
+
+### [feat] Hooks can be Mods; project hooks run by their interpreter (#20, #21)
+
+`type: mod` hooks scaffold as a Claude Code plugin (rules **V94**, **V95**). A project hook
+runs through `$CLAUDE_PROJECT_DIR` by its interpreter, and a `run:` may name one.
+
+### Tests
+
+A regression suite indexed in `spec/testing.md`, and live tests (`AT_LIVE=1`) that start real
+Claude Code on every scaffolded example and on an imported hand-built project: 12 of 12 pass.
+
 ## [0.5.2] — 2026-09-23
 
 ### [fix] A gate is drawn on the path it guards
