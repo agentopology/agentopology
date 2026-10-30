@@ -523,6 +523,11 @@ export function parseAgent(
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
+  if (fields.runs) node.runs = fields.runs;
+  if (fields.independent) node.independent = fields.independent === "true";
+  if (fields.color) node.color = unquote(fields.color);
+  if (fields["initial-prompt"]) node.initialPrompt = unquote(fields["initial-prompt"]);
+  if (fields["omit-claude-md"]) node.omitClaudeMd = fields["omit-claude-md"] === "true";
 
   // Retry: support both simple number and structured block form
   const retryBlock = extractBlock(body, "retry");
@@ -1464,6 +1469,11 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     ...(fields.timeout
       ? { timeout: parseInt(fields.timeout, 10) }
       : {}),
+    ...(fields.url ? { url: unquote(fields.url) } : {}),
+    ...(fields.server ? { server: unquote(fields.server) } : {}),
+    ...(fields.tool ? { tool: unquote(fields.tool) } : {}),
+    ...(fields.async ? { async: fields.async === "true" } : {}),
+    ...(fields.model ? { model: unquote(fields.model) } : {}),
   };
 }
 
@@ -1616,6 +1626,17 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
     if (sPromptBlock) sd.prompt = dedentBlock(sPromptBlock.body);
     else if (sFields.prompt) sd.prompt = unquote(sFields.prompt);
     if (sFields.file) sd.file = unquote(sFields.file);
+    if (sFields["when-to-use"]) sd.whenToUse = unquote(sFields["when-to-use"]);
+    if (sFields["argument-hint"]) sd.argumentHint = unquote(sFields["argument-hint"]);
+    if (sFields.shell) sd.shell = sFields.shell;
+    if (sFields.model) sd.model = sFields.model;
+    if (sFields.thinking) sd.thinking = sFields.thinking;
+    const sArguments = parseMultilineList(block.body, "arguments");
+    if (sArguments.length) sd.arguments = sArguments;
+    const sPaths = parseMultilineList(block.body, "paths");
+    if (sPaths.length) sd.paths = sPaths;
+    const sDisallowed = parseMultilineList(block.body, "disallowed-tools");
+    if (sDisallowed.length) sd.disallowedTools = sDisallowed;
 
     // New skill fields
     if (sFields["disable-model-invocation"]) {

@@ -245,3 +245,78 @@ describe("model ids are checked for the target", () => {
     expect(out.get(".claude/agents/drafter/AGENT.md")).toMatch(/^model: claude-opus-5-5$/m);
   });
 });
+
+describe("phase 4: the language says what Claude Code can do", () => {
+  const scaffoldWarnings = (src: string) => {
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+    try {
+      claudeCodeBinding.scaffold(parse(src));
+    } finally {
+      console.warn = warn;
+    }
+    return warnings;
+  };
+  const fixture = fs.readFileSync(resolve(here, "fixtures/compile.at"), "utf-8");
+  const rule = (src: string, id: string) => validate(parse(src)).filter((r) => r.rule === id);
+
+  it("[F1] agent color, initial-prompt, omit-claude-md and thinking (as effort), and skill fields, are first-class", () => {
+    expect(auditor).toContain("effort: max\ncolor: orange\ninitialPrompt: Start with the newest draft.\nomitClaudeMd: true");
+    const tone = read(".claude/skills/tone/SKILL.md");
+    for (const line of [
+      "disallowed-tools: Bash", "when_to_use: Before any draft is shown to a reader", 'argument-hint: "<draft path>"',
+      "arguments:\n  - draft", "paths:\n  - drafts/**/*.md", "shell: bash", "model: haiku", "effort: low",
+    ]) expect(tone).toContain(line);
+  });
+
+  it("[F2] hooks are a typed union: http, mcp_tool, agent and async command hooks compile to their own shapes", () => {
+    expect(settings.hooks.Notification).toEqual([{ hooks: [{ type: "http", url: "https://hooks.example.com/claude" }] }]);
+    expect(settings.hooks.PostToolUse).toContainEqual({ matcher: "Write", hooks: [{ type: "mcp_tool", server: "notes", tool: "append" }] });
+    expect(settings.hooks.SubagentStop).toContainEqual({
+      hooks: [{ type: "agent", prompt: "Check the subagent's answer cites a source; reply ok false if not." }],
+    });
+    expect(JSON.stringify(settings.hooks.PostToolUse)).toContain('"async":true');
+    // no shell stub for a hook that runs no script
+    expect([...files.keys()].filter((p) => /notify|record|second-look/.test(p))).toEqual([]);
+  });
+
+  it("[F2] V100: each hook type needs its fields, on an event that takes it", () => {
+    const bad = fixture
+      .replace('      url: "https://hooks.example.com/claude"\n', "")
+      .replace('      tool: "append"\n', "")
+      .replace("    hook second-look {\n      on: SubagentStop", "    hook second-look {\n      on: SessionEnd");
+    expect(rule(bad, "V100").map((r) => r.message)).toEqual([
+      'Hook "notify" is type http but has no url: — name the endpoint the event is sent to.',
+      'Hook "record" is type mcp_tool but needs server: and tool:.',
+      'Hook "second-look" is a agent hook on SessionEnd, which Claude Code runs only command, http and mcp_tool hooks for — it would never fire.',
+    ]);
+    expect(rule(fixture, "V100")).toEqual([]);
+  });
+
+  it("[M1] runs: fork and runs: inline compile to skills (context: fork for fork), never to a subagent", () => {
+    expect(files.has(".claude/agents/critic/AGENT.md")).toBe(false);
+    expect(files.has(".claude/agents/tidy/AGENT.md")).toBe(false);
+    expect(read(".claude/skills/critic/SKILL.md")).toMatch(/^context: fork$/m);
+    expect(read(".claude/skills/tidy/SKILL.md")).not.toMatch(/^context:/m);
+    expect(read(".claude/skills/tidy/SKILL.md")).toMatch(/^disable-model-invocation: true$/m);
+    expect(read(".claude/skills/compile/SKILL.md")).toContain("- **tidy**: invoke the `tidy` skill yourself; it runs in your own context.");
+    expect(rule(fixture.replace("runs: inline", "runs: thread"), "V101").map((r) => r.message)).toEqual([
+      'Agent "tidy" has runs: thread — a node runs as subagent, inline, fork.',
+    ]);
+  });
+
+  it("[M2] an independent node is told to judge only its artifacts, the playbook hands it nothing else, and it cannot run inline", () => {
+    expect(read(".claude/skills/critic/SKILL.md")).toContain("## Independence\n\nYou are independent of the author");
+    expect(read(".claude/skills/compile/SKILL.md")).toContain("it is independent: hand it only the artifacts it reads, never your reasoning");
+    expect(rule(fixture.replace("runs: fork", "runs: inline"), "V101").map((r) => r.message)[0]).toContain(
+      'Agent "critic" is independent but runs inline',
+    );
+  });
+
+  it("[B5] an agent asking for a looser permission mode gets a warning: a subagent cannot widen its session", () => {
+    const w = scaffoldWarnings(fixture);
+    expect(w.some((m) => m.includes('Agent "auditor" permissions: bypass compiles to permissionMode bypassPermissions'))).toBe(true);
+    expect(w.some((m) => m.includes('Agent "drafter" permissions'))).toBe(false); // confirm is the default, no warning
+  });
+});

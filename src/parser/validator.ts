@@ -1125,8 +1125,9 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
     });
   };
 
-  // A prompt hook's run: is the prompt itself, so prose is what it should be.
-  const isCommand = (hook: HookDef) => hook.type !== "prompt";
+  // Only a command hook's run: is a command: a prompt or agent hook's run: is
+  // the prompt itself, and http, mcp_tool and mod hooks are checked by V100/V95.
+  const isCommand = (hook: HookDef) => (hook.type ?? "command") === "command";
   for (const node of ast.nodes) {
     if (isGate(node)) check(`Gate "${node.id}"`, node.run, node.id);
     if (node.type === "agent") {
@@ -1163,6 +1164,79 @@ function v97FileIsProjectPath(ast: TopologyAST): ValidationResult[] {
   for (const node of ast.nodes) check(`Node "${node.id}"`, node.file, node.id);
   for (const skill of ast.skills ?? []) check(`Skill "${skill.id}"`, skill.file);
   for (const trigger of ast.triggers ?? []) check(`Command "${trigger.name}"`, trigger.file);
+  return results;
+}
+
+/**
+ * Claude Code events that take only command, http and mcp_tool hooks (no
+ * prompt or agent judge), and the two that take only command and mcp_tool.
+ * From the hooks reference, 2026-10-30.
+ */
+const NO_JUDGE_EVENTS = new Set([
+  "ConfigChange", "CwdChanged", "DirectoryAdded", "Elicitation", "ElicitationResult", "FileChanged",
+  "InstructionsLoaded", "MessageDisplay", "Notification", "PostCompact", "PostModelSwitch", "PreCompact",
+  "PreModelSwitch", "SessionEnd", "StopFailure", "SubagentStart", "WorktreeCreate", "WorktreeRemove",
+  "AgentStart",
+]);
+const COMMAND_OR_MCP_EVENTS = new Set(["SessionStart", "Setup"]);
+
+/**
+ * V100: a hook has what its type needs, on an event that takes that type.
+ *
+ * A command needs run:, a prompt or agent hook needs run: (the prompt), an
+ * http hook url:, an mcp_tool hook server: and tool:. A prompt or agent judge
+ * on an event Claude Code runs only command hooks for never fires.
+ */
+function v100HookTypeFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const { hook, where } of allHooks(ast)) {
+    const type = hook.type ?? "command";
+    if (type === "mod") continue; // V95
+    const err = (message: string) => results.push({ rule: "V100", level: "error", message: `Hook "${where}" ${message}`, node: where });
+    if ((type === "command" || type === "prompt" || type === "agent") && !hook.run) {
+      err(`is type ${type} but has no run: — ${type === "command" ? "name the command" : "write the prompt in run:"}.`);
+    }
+    if (type === "http" && !hook.url) err(`is type http but has no url: — name the endpoint the event is sent to.`);
+    if (type === "mcp_tool" && (!hook.server || !hook.tool)) err(`is type mcp_tool but needs server: and tool:.`);
+    if (type !== "command" && hook.async !== undefined) err(`sets async: but is type ${type} — async: belongs to a command hook.`);
+    const on = hook.on.trim();
+    if ((type === "prompt" || type === "agent") && NO_JUDGE_EVENTS.has(on)) {
+      err(`is a ${type} hook on ${on}, which Claude Code runs only command, http and mcp_tool hooks for — it would never fire.`);
+    } else if ((type === "prompt" || type === "agent" || type === "http") && COMMAND_OR_MCP_EVENTS.has(on)) {
+      err(`is a ${type} hook on ${on}, which takes only command and mcp_tool hooks — it would never fire.`);
+    }
+  }
+  return results;
+}
+
+/**
+ * V101: a node's run-mode is one Claude Code has, and an independent node
+ * does not share its caller's context.
+ *
+ * runs: subagent (own agent), inline (a skill in the caller's context) or
+ * fork (a skill in a fresh forked context). An independent critic running
+ * inline would read the author's reasoning, which is what independent forbids.
+ */
+const RUN_MODES = ["subagent", "inline", "fork"];
+
+function v101RunMode(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (agent.runs !== undefined && !RUN_MODES.includes(agent.runs)) {
+      results.push({
+        rule: "V101", level: "error", node: agent.id, line: lookupLine(ast, agent.id),
+        message: `Agent "${agent.id}" has runs: ${agent.runs} — a node runs as ${RUN_MODES.join(", ")}.`,
+      });
+    }
+    if (agent.independent && agent.runs === "inline") {
+      results.push({
+        rule: "V101", level: "error", node: agent.id, line: lookupLine(ast, agent.id),
+        message: `Agent "${agent.id}" is independent but runs inline, in its caller's context, where it reads the author's reasoning. Use runs: fork or runs: subagent.`,
+      });
+    }
+  }
   return results;
 }
 
@@ -3358,7 +3432,7 @@ export const MOD_EVENTS_SEEN = [
 ] as const;
 
 /** Hook types the grammar defines (`spec/grammar.md` §4.16). */
-export const HOOK_TYPES = ["command", "prompt", "mod"] as const;
+export const HOOK_TYPES = ["command", "prompt", "agent", "http", "mcp_tool", "mod"] as const;
 
 /** Every hook in the topology — global first, then per-agent — with its owner. */
 function allHooks(ast: TopologyAST): Array<{ hook: HookDef; where: string; agent?: string }> {
@@ -3516,6 +3590,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v97FileIsProjectPath(ast),
     ...v98BlockInsideItsContainer(ast),
     ...v99ReferencesDeclared(ast),
+    ...v100HookTypeFields(ast),
+    ...v101RunMode(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

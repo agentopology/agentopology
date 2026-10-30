@@ -271,7 +271,7 @@ function reversePermissionMode(mode: string | undefined): string | undefined {
 const KNOWN_FRONTMATTER_KEYS = new Set([
   "name", "description", "model", "maxTurns", "tools", "disallowed-tools", "disallowedTools",
   "mcpServers", "background", "permissionMode", "isolation", "sandbox",
-  "fallback-chain", "type", "members",
+  "fallback-chain", "type", "members", "effort", "color", "initialPrompt", "omitClaudeMd",
 ]);
 
 export function parseAgentMd(
@@ -336,6 +336,11 @@ export function parseAgentMd(
   if (fields.background === true) agent.background = true;
   if (fields.permissionMode) agent.permissions = reversePermissionMode(fields.permissionMode as string);
   if (fields.isolation) agent.isolation = fields.isolation as string;
+  // Claude Code's effort is the language's thinking (one word for one concept).
+  if (fields.effort) agent.thinking = String(fields.effort);
+  if (fields.color) agent.color = String(fields.color);
+  if (fields.initialPrompt) agent.initialPrompt = String(fields.initialPrompt);
+  if (typeof fields.omitClaudeMd === "boolean") agent.omitClaudeMd = fields.omitClaudeMd;
   if (fields.sandbox !== undefined) {
     agent.sandbox = fields.sandbox as string | boolean;
   }
@@ -719,25 +724,36 @@ export function parseSettingsJson(content: string): {
   if (json.hooks) {
     for (const [event, handlers] of Object.entries(json.hooks)) {
       if (!Array.isArray(handlers)) continue;
-      for (const handler of handlers as Array<{ hooks?: Array<{ command?: string; type?: string; timeout?: number }>; matcher?: string }>) {
+      type Handler = {
+        command?: string; type?: string; timeout?: number; prompt?: string; model?: string;
+        url?: string; server?: string; tool?: string; async?: boolean;
+      };
+      for (const handler of handlers as Array<{ hooks?: Handler[]; matcher?: string }>) {
         const hookList = handler.hooks ?? [];
         const matcher = handler.matcher ?? "";
         for (const hookEntry of hookList) {
-          // Skip gate enforcement hooks (generated, not user-defined)
-          if (hookEntry.command && /gate-[\w-]+\.sh/.test(hookEntry.command)) continue;
+          // Skip gate and before-agent enforcement hooks (generated, not user-defined)
+          if (hookEntry.command && /gate-[\w-]+\.sh|before-agent\.sh/.test(hookEntry.command)) continue;
 
+          const type = hookEntry.type ?? "command";
           const command = hookEntry.command ?? "";
           // Extract script name for hook id
           const nameMatch = command.match(/([^/]+?)(?:\.sh)?$/);
-          const name = nameMatch ? nameMatch[1] : event.toLowerCase();
+          const name = type === "command" && nameMatch ? nameMatch[1] : `${event.toLowerCase()}-${type.replace("_", "-")}-${hooks.length + 1}`;
 
           hooks.push({
             name,
             on: event,
             matcher,
-            run: command,
+            // a prompt or agent judge's run: is its prompt
+            run: type === "prompt" || type === "agent" ? hookEntry.prompt ?? "" : command,
             type: hookEntry.type,
             timeout: hookEntry.timeout,
+            ...(hookEntry.url ? { url: hookEntry.url } : {}),
+            ...(hookEntry.server ? { server: hookEntry.server } : {}),
+            ...(hookEntry.tool ? { tool: hookEntry.tool } : {}),
+            ...(hookEntry.async !== undefined ? { async: hookEntry.async } : {}),
+            ...(hookEntry.model ? { model: hookEntry.model } : {}),
           });
         }
       }

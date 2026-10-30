@@ -76,11 +76,22 @@ export interface HookDef {
   /** Command or script to run when the hook fires. */
   run: string;
   /**
-   * Hook type: "command" (a shell command), "prompt" (text injected into the
-   * agent's context) or "mod" (a TypeScript module loaded INSIDE the engine,
-   * subscribing to an engine event such as `tool.call`; see V95).
+   * Hook type: "command" (a shell command), "prompt" (a model judges the event;
+   * run: is the prompt), "agent" (a subagent judges it; run: is the prompt),
+   * "http" (POST the event to url:), "mcp_tool" (call tool: on server:) or
+   * "mod" (a TypeScript module loaded INSIDE the engine, subscribing to an
+   * engine event such as `tool.call`; see V95). V100 checks each has what it needs.
    */
   type?: string;
+  /** http hooks: the endpoint the event is POSTed to. */
+  url?: string;
+  /** mcp_tool hooks: the MCP server and the tool on it. */
+  server?: string;
+  tool?: string;
+  /** command hooks: run in the background without blocking. */
+  async?: boolean;
+  /** prompt and agent hooks: the model that judges. */
+  model?: string;
   /** Env switch that turns a `mod` hook on (e.g. "CONGREAT_MOD_REDACT"). */
   flag?: string;
   /** Timeout, passed through as written (the Claude Code binding writes it to settings.json, which reads SECONDS). */
@@ -120,6 +131,21 @@ export interface SkillDef {
   agent?: string;
   /** Tools allowed without permission prompt. */
   allowedTools?: string[];
+  /** Tools the skill may not use. */
+  disallowedTools?: string[];
+  /** When Claude should reach for the skill (added to its description for matching). */
+  whenToUse?: string;
+  /** Hint shown for the skill's arguments in the / menu, e.g. "<slug>". */
+  argumentHint?: string;
+  /** Named arguments the skill takes. */
+  arguments?: string[];
+  /** Globs: the skill loads only when working on matching files. */
+  paths?: string[];
+  /** Shell for the skill's inline commands: bash or powershell. */
+  shell?: string;
+  /** Model and reasoning level while the skill runs (thinking is the language's one word for effort). */
+  model?: string;
+  thinking?: string;
   /** Platform-specific extension fields. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -550,6 +576,23 @@ export interface AgentNode extends BaseNode {
   behavior?: string;
   /** Invocation mode (e.g. "manual"). */
   invocation?: string;
+  /**
+   * How the node runs: "subagent" (its own agent, the default), "inline" (a
+   * skill in the caller's own context) or "fork" (a skill in a fresh forked
+   * context). The choice shows on the node instead of hiding in fields.
+   */
+  runs?: string;
+  /**
+   * Must not see the author's reasoning (a critic, a judge): it gets only the
+   * artifacts it reads. Cannot run inline (V101).
+   */
+  independent?: boolean;
+  /** Display color in the agent list. */
+  color?: string;
+  /** First user turn when the agent runs as the main session agent. */
+  initialPrompt?: string;
+  /** Leave the project's CLAUDE.md out of the agent's context. */
+  omitClaudeMd?: boolean;
   /** Retry configuration: simple count or structured block. */
   retry?: number | RetryConfig;
   /** Isolation mode (e.g. "worktree"). */

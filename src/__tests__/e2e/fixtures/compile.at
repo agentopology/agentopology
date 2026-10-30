@@ -53,11 +53,34 @@ topology compile : [pipeline] {
     }
   }
 
+  agent critic {
+    model: sonnet
+    description: "Scores a draft against the rubric"
+    runs: fork
+    independent: true
+    thinking: high
+    tools: [Read, Grep]
+    prompt {
+      Score the draft against the rubric. Report the three weakest lines.
+    }
+  }
+
+  agent tidy {
+    model: haiku
+    description: "Tidies whitespace in the draft"
+    runs: inline
+    invocation: manual
+  }
+
   agent auditor {
     model: sonnet
     description: "Audits a draft on request"
     invocation: manual
     permissions: bypass
+    color: "orange"
+    initial-prompt: "Start with the newest draft."
+    omit-claude-md: true
+    thinking: max
   }
 
   tools {
@@ -94,6 +117,14 @@ topology compile : [pipeline] {
 
   skill tone {
     description: "Keep the house tone"
+    when-to-use: "Before any draft is shown to a reader"
+    argument-hint: "<draft path>"
+    arguments: [draft]
+    paths: ["drafts/**/*.md"]
+    shell: bash
+    model: haiku
+    thinking: low
+    disallowed-tools: [Bash]
     prompt {
       ## Tone
       Short sentences. No jargon.
@@ -115,7 +146,7 @@ topology compile : [pipeline] {
   }
 
   flow {
-    intake -> approve -> drafter
+    intake -> approve -> drafter -> critic
   }
 
   hooks {
@@ -123,6 +154,28 @@ topology compile : [pipeline] {
       on: AgentStop
       matcher: "drafter"
       run: "scripts/finished.sh"
+    }
+    hook notify {
+      on: Notification
+      type: http
+      url: "https://hooks.example.com/claude"
+    }
+    hook record {
+      on: PostToolUse
+      matcher: "Write"
+      type: mcp_tool
+      server: "notes"
+      tool: "append"
+    }
+    hook second-look {
+      on: SubagentStop
+      type: agent
+      run: "Check the subagent's answer cites a source; reply ok false if not."
+    }
+    hook bg-log {
+      on: PostToolUse
+      run: "scripts/bg-log.sh"
+      async: true
     }
     hook review {
       on: Stop

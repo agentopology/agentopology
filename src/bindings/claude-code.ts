@@ -79,13 +79,27 @@ function claudeEvent(on: string): string {
   return UNIVERSAL_EVENTS[on] ?? on;
 }
 
-/** A settings.json hook handler for a command or prompt hook. */
+/** Whether a hook runs a shell command (and so has a script). */
+function isCommandHook(hook: HookDef): boolean {
+  return (hook.type ?? "command") === "command";
+}
+
+/** A settings.json hook handler, in the shape Claude Code reads for its type. */
 function hookHandler(hook: HookDef, command: () => string): Record<string, unknown> {
-  // A prompt hook asks a model to judge the event; its run: is the prompt.
-  if (hook.type === "prompt") {
-    return { type: "prompt", prompt: hook.run, ...(hook.timeout ? { timeout: hook.timeout } : {}) };
+  const timeout = hook.timeout ? { timeout: hook.timeout } : {};
+  switch (hook.type ?? "command") {
+    // A prompt or agent hook asks a model (or a subagent) to judge the event;
+    // its run: is the prompt.
+    case "prompt":
+    case "agent":
+      return { type: hook.type, prompt: hook.run, ...(hook.model ? { model: hook.model } : {}), ...timeout };
+    case "http":
+      return { type: "http", url: hook.url, ...timeout };
+    case "mcp_tool":
+      return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout };
+    default:
+      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout };
   }
-  return { type: "command", command: command(), ...(hook.timeout ? { timeout: hook.timeout } : {}) };
 }
 
 /**
@@ -150,9 +164,19 @@ function frontmatter(fields: Record<string, string | number | boolean | string[]
  * human, and orchestrator nodes are NOT registered and therefore CANNOT be
  * used as SubagentStop matchers.
  */
+/** An agent with runs: inline or fork compiles to a skill, not a subagent. */
+function runsAsSkill(agent: AgentNode): boolean {
+  return agent.runs === "inline" || agent.runs === "fork";
+}
+
+/** Permission modes a subagent may ask for but cannot get beyond its session. */
+const LOOSER_MODES = new Set(["acceptEdits", "auto", "dontAsk", "bypassPermissions"]);
+
 function isRegisteredSubagentType(ast: TopologyAST, name: string | undefined): boolean {
   if (!name) return false;
-  return ast.nodes.some((n) => (n.type === "agent" || n.type === "group") && n.id === name);
+  return ast.nodes.some(
+    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode))) && n.id === name,
+  );
 }
 
 /**
@@ -570,6 +594,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     // workflow rung and observes its Blackboard writes. So do NOT emit a
     // .claude/agents/<name>/AGENT.md for it. See generateWorkflowLaunchArtifacts.
     if (isWorkflowSeamAgent(agent)) continue;
+    // runs: inline or fork compiles to a skill (generateAgentSkills).
+    if (runsAsSkill(agent)) continue;
 
     // Build frontmatter fields
     const fm: Record<string, string | number | boolean | string[]> = {};
@@ -603,7 +629,21 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     if (agent.permissions) {
       const mapped = mapPermissionMode(agent.permissions);
       if (mapped) fm.permissionMode = mapped;
+      // B5: allow rules are session-wide; a subagent can narrow what its
+      // session may do, never widen it.
+      if (mapped && LOOSER_MODES.has(mapped)) {
+        console.warn(
+          `[claude-code] Agent "${agent.id}" permissions: ${agent.permissions} compiles to permissionMode ${mapped}. ` +
+            `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
+            `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
+        );
+      }
     }
+    // thinking is the language's reasoning-effort field; Claude Code calls it effort.
+    if (agent.thinking && agent.thinking !== "off") fm.effort = agent.thinking;
+    if (agent.color) fm.color = agent.color;
+    if (agent.initialPrompt) fm.initialPrompt = agent.initialPrompt;
+    if (agent.omitClaudeMd != null) fm.omitClaudeMd = agent.omitClaudeMd;
 
     if (agent.isolation) fm.isolation = agent.isolation;
 
@@ -649,7 +689,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
           const scriptName = scriptNameFromRun(hook.run);
-          if (hook.type !== "prompt" && !scriptName) continue; // V96: prose in run names no script
+          if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
           const handler = hookHandler(hook, () => `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`);
           // JSON strings are valid YAML double-quoted scalars, so a regex
           // matcher or a prompt with quotes or colons can never break the file.
@@ -693,6 +733,12 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push(PROMPT_FENCE_CLOSE);
     sections.push("");
+    if (agent.independent) {
+      sections.push("## Independence");
+      sections.push("");
+      sections.push(INDEPENDENT_NOTE);
+      sections.push("");
+    }
 
     // Reads section
     if (agent.reads && agent.reads.length > 0) {
@@ -1467,6 +1513,28 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
   }
 
+  // How each node runs, when it is not a plain subagent: the choice is on the
+  // node (runs:, independent), and the playbook says how to call it.
+  const special = ast.nodes.filter(
+    (n): n is AgentNode => n.type === "agent" && (runsAsSkill(n as AgentNode) || !!(n as AgentNode).independent),
+  );
+  if (special.length > 0) {
+    sections.push("## How these nodes run");
+    sections.push("");
+    for (const agent of special) {
+      const how = agent.runs === "inline"
+        ? `invoke the \`${agent.id}\` skill yourself; it runs in your own context`
+        : agent.runs === "fork"
+          ? `invoke the \`${agent.id}\` skill; it runs in a fresh forked context`
+          : `launch the \`${agent.id}\` subagent`;
+      const indep = agent.independent
+        ? "; it is independent: hand it only the artifacts it reads, never your reasoning or the author's"
+        : "";
+      sections.push(`- **${agent.id}**: ${how}${indep}.`);
+    }
+    sections.push("");
+  }
+
   // Schedules section
   if (ast.schedules.length > 0) {
     sections.push("## Schedules");
@@ -1610,6 +1678,49 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
 }
 
 /** Generate skill-level files from the skills block. */
+/** What an independent node is told, wherever it runs. */
+const INDEPENDENT_NOTE =
+  "You are independent of the author: judge only the artifacts you are given to read. " +
+  "If you are handed the author's reasoning, drafts notes or conversation, ignore them.";
+
+/**
+ * An agent with runs: inline or fork compiles to a skill: inline runs in the
+ * caller's own context, fork in a fresh forked one (context: fork). The node
+ * keeps its id, description, model, tools and prompt.
+ */
+function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (!runsAsSkill(agent)) continue;
+    const fm: Record<string, string | number | boolean | string[]> = { name: agent.id };
+    const desc = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    if (desc) fm.description = desc;
+    if (agent.runs === "fork") fm.context = "fork";
+    if (agent.model && isClaudeCodeModel(agent.model)) fm.model = agent.model;
+    if (agent.thinking && agent.thinking !== "off") fm.effort = agent.thinking;
+    if (agent.tools && agent.tools.length > 0) fm["allowed-tools"] = agent.tools.map(convertMcpToolName).join(", ");
+    if (agent.disallowedTools && agent.disallowedTools.length > 0) {
+      fm["disallowed-tools"] = agent.disallowedTools.map(convertMcpToolName).join(", ");
+    }
+    if (agent.invocation === "manual") fm["disable-model-invocation"] = true;
+
+    const sections = [frontmatter(fm), "", `# ${agent.label || toTitle(agent.id)}`, ""];
+    sections.push(
+      agent.runs === "fork"
+        ? "Runs as a skill in a fresh forked context: it sees none of the conversation that invoked it."
+        : "Runs as a skill in the caller's own context: the same agent, no handoff.",
+    );
+    sections.push("", "## Instructions", "", downshiftHeadings(agent.prompt ?? desc ?? "Complete the assigned task."), "");
+    if (agent.reads && agent.reads.length > 0) sections.push("## Reads", ...agent.reads.map((r) => `- ${r}`), "");
+    if (agent.writes && agent.writes.length > 0) sections.push("## Writes", ...agent.writes.map((w) => `- ${w}`), "");
+    if (agent.independent) sections.push("## Independence", "", INDEPENDENT_NOTE, "");
+    files.push({ path: `.claude/skills/${agent.id}/SKILL.md`, content: sections.join("\n"), category: "agent" });
+  }
+  return files;
+}
+
 function generateSkills(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
@@ -1631,6 +1742,16 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     if (skill.allowedTools && skill.allowedTools.length > 0) {
       sfm["allowed-tools"] = skill.allowedTools.map(convertMcpToolName).join(", ");
     }
+    if (skill.disallowedTools && skill.disallowedTools.length > 0) {
+      sfm["disallowed-tools"] = skill.disallowedTools.map(convertMcpToolName).join(", ");
+    }
+    if (skill.whenToUse) sfm.when_to_use = skill.whenToUse;
+    if (skill.argumentHint) sfm["argument-hint"] = skill.argumentHint;
+    if (skill.arguments && skill.arguments.length > 0) sfm.arguments = skill.arguments;
+    if (skill.paths && skill.paths.length > 0) sfm.paths = skill.paths;
+    if (skill.shell) sfm.shell = skill.shell;
+    if (skill.model) sfm.model = skill.model;
+    if (skill.thinking && skill.thinking !== "off") sfm.effort = skill.thinking;
     // Only emit frontmatter if there are fields beyond just the name
     if (Object.keys(sfm).length > 1) {
       sections.push(frontmatter(sfm));
@@ -2182,7 +2303,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!hook.run) continue;
     // A Mod's run: is the user's TypeScript module — never overwrite it with a
     // bash stub. generateModPlugin imports it instead.
-    if (hook.type === "mod" || hook.type === "prompt") continue;
+    if (!isCommandHook(hook)) continue; // a mod's module, or no script at all
     const runPath = hook.run;
 
     // If the run path starts with '.' or '/' it is already project-relative —
@@ -2225,7 +2346,7 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (!agent.hooks || agent.hooks.length === 0) continue;
 
     for (const hook of agent.hooks) {
-      if (!hook.run || hook.type === "mod" || hook.type === "prompt") continue;
+      if (!hook.run || !isCommandHook(hook)) continue;
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
       files.push({
@@ -2300,7 +2421,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
       );
       continue;
     }
-    if (hook.type !== "prompt" && proseInRun(hook.run)) continue; // V96: prose in run names no script
+    if (isCommandHook(hook) && proseInRun(hook.run)) continue; // V96: prose in run names no script
     if (!hooksByEvent[eventName]) {
       hooksByEvent[eventName] = [];
     }
@@ -3435,6 +3556,7 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Named skills
     files.push(...generateSkills(ast));
+    files.push(...generateAgentSkills(ast));
 
     // Schemas
     files.push(...generateSchemas(ast));

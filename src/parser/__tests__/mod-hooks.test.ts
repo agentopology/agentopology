@@ -127,7 +127,7 @@ describe("V94: a hook type the grammar defines", () => {
     const src = topology('    hook g {\n      on: Stop\n      run: "g.sh"\n      type: comand\n    }');
     const v94 = rules(src, "V94");
     expect(v94).toHaveLength(1);
-    expect(v94[0].message).toContain('has type "comand" — a hook is one of: command, prompt, mod');
+    expect(v94[0].message).toContain('has type "comand" — a hook is one of: command, prompt, agent, http, mcp_tool, mod');
   });
 
   it("refuses flag: on a command hook", () => {

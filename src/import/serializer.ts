@@ -175,6 +175,11 @@ function serializeAgent(node: AgentNode): string {
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);
   if (node.invocation) lines.push(`    invocation: ${node.invocation}`);
+  if (node.runs) lines.push(`    runs: ${node.runs}`);
+  if (node.independent) lines.push("    independent: true");
+  if (node.color) lines.push(`    color: ${q(node.color)}`);
+  if (node.initialPrompt) lines.push(`    initial-prompt: ${q(node.initialPrompt)}`);
+  if (node.omitClaudeMd !== undefined) lines.push(`    omit-claude-md: ${node.omitClaudeMd}`);
   if (node.skip) lines.push(`    skip: ${q(node.skip)}`);
   if (node.join) lines.push(`    join: ${node.join}`);
   if (node.compensates) lines.push(`    compensates: ${node.compensates}`);
@@ -383,8 +388,13 @@ function serializeHook(hook: HookDef, pad: string): string[] {
   lines.push(`${pad}hook ${hook.name} {`);
   lines.push(`${pad}  on: ${hook.on}`);
   if (hook.matcher) lines.push(`${pad}  matcher: ${q(hook.matcher)}`);
-  lines.push(`${pad}  run: "${hook.run}"`);
+  if (hook.run) lines.push(`${pad}  run: ${q(hook.run)}`);
   if (hook.type) lines.push(`${pad}  type: ${hook.type}`);
+  if (hook.url) lines.push(`${pad}  url: ${q(hook.url)}`);
+  if (hook.server) lines.push(`${pad}  server: ${q(hook.server)}`);
+  if (hook.tool) lines.push(`${pad}  tool: ${q(hook.tool)}`);
+  if (hook.async !== undefined) lines.push(`${pad}  async: ${hook.async}`);
+  if (hook.model) lines.push(`${pad}  model: ${hook.model}`);
   if (hook.timeout) lines.push(`${pad}  timeout: ${hook.timeout}`);
   lines.push(`${pad}}`);
   return lines;
@@ -618,12 +628,24 @@ function serializeSkills(skills: SkillDef[]): string | null {
     if (skill.scripts?.length) lines.push(`      scripts: ${inlineList(skill.scripts)}`);
     if (skill.domains?.length) lines.push(`      domains: ${inlineList(skill.domains)}`);
     if (skill.references?.length) lines.push(`      references: ${inlineList(skill.references)}`);
-    if (skill.prompt) lines.push(`      prompt: "${skill.prompt}"`);
+    if (skill.prompt?.includes("\n")) {
+      lines.push("      prompt {", ...skill.prompt.split("\n").map((l) => (l ? `        ${l}` : "")), "      }");
+    } else if (skill.prompt) {
+      lines.push(`      prompt: ${q(skill.prompt)}`);
+    }
     if (skill.disableModelInvocation) lines.push("      disable-model-invocation: true");
     if (skill.userInvocable) lines.push("      user-invocable: true");
     if (skill.context) lines.push(`      context: ${skill.context}`);
     if (skill.agent) lines.push(`      agent: ${skill.agent}`);
     if (skill.allowedTools?.length) lines.push(`      allowed-tools: ${inlineList(skill.allowedTools)}`);
+    if (skill.disallowedTools?.length) lines.push(`      disallowed-tools: ${inlineList(skill.disallowedTools)}`);
+    if (skill.whenToUse) lines.push(`      when-to-use: ${q(skill.whenToUse)}`);
+    if (skill.argumentHint) lines.push(`      argument-hint: ${q(skill.argumentHint)}`);
+    if (skill.arguments?.length) lines.push(`      arguments: ${inlineList(skill.arguments)}`);
+    if (skill.paths?.length) lines.push(`      paths: ${inlineList(skill.paths)}`);
+    if (skill.shell) lines.push(`      shell: ${skill.shell}`);
+    if (skill.model) lines.push(`      model: ${skill.model}`);
+    if (skill.thinking) lines.push(`      thinking: ${skill.thinking}`);
     lines.push("    }");
   }
   lines.push("  }");

@@ -10,7 +10,8 @@
 import { describe, it } from "vitest";
 
 describe("open findings (spec/testing.md)", () => {
-  it.todo("[B5] An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide");
-  it.todo("[F1] Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell");
-  it.todo("[F2] Hooks as a typed union (http, mcp_tool, agent; once, async, if)");
+  it.todo("[B3] Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only");
+  it.todo("[B7] The `observability { }` block is ignored by the claude-code binding");
+  it.todo("[N22] Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked");
+  it.todo("[F4] Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word");
 });

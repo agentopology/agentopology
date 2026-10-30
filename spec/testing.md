@@ -68,8 +68,13 @@ Run the live suite before every release, and after any change to a binding.
 | N18 | An agent's `skills:`/`mcp-servers:` or a skill's `agent:` naming nothing declared is a V99 warning | e2e/compile.test.ts |
 | N16 | A model id Claude Code does not have is omitted with a warning; aliases, `inherit` and `claude-*` ids pass | e2e/compile.test.ts |
 | N11 | scaffold → sync is a fixed point: no edits leave the .at byte-identical; an edit between the prompt markers comes back once; re-scaffold keeps it | e2e/sync-cycle.test.ts |
+| F1 | Agent `color`, `initial-prompt`, `omit-claude-md`, `thinking` (as effort) and skill `when-to-use`, `argument-hint`, `arguments`, `paths`, `shell`, `model`, `thinking`, `disallowed-tools` are first-class | e2e/compile.test.ts |
+| F2 | Hooks are a typed union (command, prompt, agent, http, mcp_tool, mod; `async`); V100 checks each type's fields and event | e2e/compile.test.ts |
+| M1 | `runs: inline` and `runs: fork` compile to skills (fork: `context: fork`), never a subagent; V101 checks the mode | e2e/compile.test.ts |
+| M2 | An `independent` node judges only its artifacts, the playbook hands it nothing else, and V101 refuses it inline | e2e/compile.test.ts |
+| B5 | An agent asking for a looser permission mode than a subagent can get is warned at scaffold | e2e/compile.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
-| L3 | Real Claude Code registers a manual agent and an agent with a regex matcher, and runs a prompt hook | live/claude-code.live.test.ts |
+| L3 | Real Claude Code registers a manual agent and an agent with a regex matcher and the phase-4 fields, registers `runs: fork`/`inline` nodes as skills, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
 
 ## Open findings (not yet guaranteed)
@@ -80,6 +85,7 @@ real test and the row moves to Guarantees. Source: the compile audit,
 
 | Id | Finding | Phase |
 |---|---|---|
-| B5 | An agent's permissions read as per-agent grants; Claude Code allow rules are session-wide | 4 |
-| F1 | Missing first-class fields: agent effort, initialPrompt, omitClaudeMd, cache TTL, color; skill when_to_use, arguments, paths, shell | 4 |
-| F2 | Hooks as a typed union (http, mcp_tool, agent; once, async, if) | 4 |
+| B3 | Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only | later |
+| B7 | The `observability { }` block is ignored by the claude-code binding | later |
+| N22 | Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked | later |
+| F4 | Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word | later |
