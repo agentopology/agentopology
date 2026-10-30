@@ -2,6 +2,28 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.8.0] — 2026-10-30
+
+### [feat] The language says what Claude Code can do, out loud
+
+- **How a node runs is on the node.** `runs: subagent | inline | fork`: `inline` and `fork`
+  compile to a skill (fork with `context: fork`, a fresh context), never a subagent, and the
+  playbook says how to call each. `independent: true` marks a critic or judge: it is told to
+  judge only its artifacts, the playbook hands it nothing else, and it cannot run inline.
+  New rule **V101**.
+- **Hooks are a typed union:** `command`, `prompt`, `agent`, `http` (`url:`), `mcp_tool`
+  (`server:`, `tool:`), `mod`, plus `async:` on a command and `model:` on a judge. New rule
+  **V100**: each type has its fields, and a judge sits on an event Claude Code runs judges for.
+- **First-class fields.** Agent: `color`, `initial-prompt`, `omit-claude-md`; `thinking`
+  compiles to Claude Code's `effort` (one word for one concept, as decided in 0.5.0). Skill:
+  `when-to-use`, `argument-hint`, `arguments`, `paths`, `shell`, `model`, `thinking`,
+  `disallowed-tools`. Import reads them first-class.
+- **Permission warning.** An agent asking for `acceptEdits`, `auto`, `dontAsk` or
+  `bypassPermissions` is warned at scaffold: a subagent cannot widen its session's permissions.
+
+Proven by `e2e/compile.test.ts` (every phase-4 test fails on 0.7.0) and live L3 (real Claude Code
+registers `runs: fork`/`inline` nodes as skills, and holds back a skill with `paths:`).
+
 ## [0.7.0] — 2026-10-30
 
 ### [fix] What scaffold writes, Claude Code reads as meant

@@ -112,10 +112,8 @@ describe("import then scaffold loses nothing (e2e)", () => {
     const ast = parse(fs.readFileSync(at, "utf-8"));
     const reviewer = ast.nodes.find((n) => n.id === "reviewer")!;
     expect(reviewer.file).toBe(".claude/agents/reviewer.md");
-    expect((reviewer as { extensions?: Record<string, Record<string, unknown>> }).extensions?.["claude-code"]).toMatchObject({
-      effort: "high",
-      color: "purple",
-    });
+    // effort and color are first-class now (effort is the language's thinking)
+    expect(reviewer).toMatchObject({ thinking: "high", color: "purple" });
     expect((reviewer as { tools?: string[] }).tools).toEqual(["Read", "Grep", "Glob"]);
     expect(ast.settings.allow).toContain("Read");
     expect(ast.settings.ask).toEqual(["Bash(git push:*)"]);

@@ -165,6 +165,13 @@ describe.skipIf(!LIVE)("[L3] Claude Code reads the phase-3 constructs as meant",
       // YAML error there would drop it. auditor is manual: without a
       // description Claude Code skipped it.
       expect(run.init.agents).toEqual(expect.arrayContaining(["drafter", "auditor"]));
+      // runs: fork and runs: inline are skills, not agents (M1); auditor's new
+      // frontmatter (color, initialPrompt, omitClaudeMd, effort) still loads (F1)
+      expect(run.init.skills).toEqual(expect.arrayContaining(["critic", "tidy"]));
+      // tone has paths: ["drafts/**/*.md"]: Claude Code holds a path-scoped
+      // skill back until matching files are in play, so the field is honoured
+      expect(run.init.skills).not.toContain("tone");
+      expect(run.init.agents).not.toContain("critic");
       // The fixture's Stop prompt hook asks for a summary; "OK" is not one, so
       // Claude Code feeds the hook's verdict back: proof the prompt handler ran
       // (as a command it would have failed to execute).

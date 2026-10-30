@@ -383,6 +383,11 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `retry` | number | no | `0` | Max validation rounds |
 | `isolation` | `worktree` | no | -- | Git worktree isolation |
 | `invocation` | `manual` / `auto` | no | `auto` | User-triggered only |
+| `runs` | `subagent` / `inline` / `fork` | no | `subagent` | How the node runs: its own agent, a skill in the caller's context, or a skill in a fresh forked context (V101) |
+| `independent` | boolean | no | `false` | Must not see the author's reasoning: gets only the artifacts it reads; cannot run inline (V101) |
+| `color` | string | no | -- | Display color in the agent list |
+| `initial-prompt` | string | no | -- | First user turn when the agent runs as the main session agent |
+| `omit-claude-md` | boolean | no | -- | Leave the project's CLAUDE.md out of the agent's context |
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory never blocks flow |
 | `memory` | name-list | no | `[]` | Store IDs this agent can access (V35) |
 | `retrieval` | identifier | no | -- | Retrieval strategy ID for memory queries (V35) |
@@ -1173,10 +1178,20 @@ hooks {
 |-------|------|----------|---------|
 | `on` | hook-event | yes | -- |
 | `matcher` | string | no | -- |
-| `run` | string | yes | -- |
+| `run` | string | command, prompt, agent, mod | -- |
 | `type` | hook-type | no | `command` |
+| `url` | string | http | -- |
+| `server`, `tool` | string | mcp_tool | -- |
+| `async` | boolean | no (command only) | `false` |
+| `model` | identifier | no (prompt, agent) | -- |
 | `flag` | env-name | no (mod only) | -- |
 | `timeout` | number | no | `600` |
+
+`hook-type` is `command` (a shell command), `prompt` or `agent` (a model or a
+subagent judges the event; `run:` is the prompt), `http` (the event is POSTed
+to `url:`), `mcp_tool` (`tool:` on `server:` is called) or `mod`. V100 checks
+that each has its fields and that a prompt or agent judge sits on an event
+Claude Code runs judges for.
 
 A `type: mod` hook is a TypeScript module loaded inside the engine (Claude
 Code function hooks). Its `on:` is an `engine-event` (V95); a command or
@@ -1421,6 +1436,14 @@ skill classification {
 | `context` | identifier | no | -- |
 | `agent` | identifier | no | -- |
 | `allowed-tools` | tool-list | no | `[]` |
+| `disallowed-tools` | tool-list | no | `[]` |
+| `when-to-use` | string | no | -- |
+| `argument-hint` | string | no | -- |
+| `arguments` | name-list | no | `[]` |
+| `paths` | glob-list | no | `[]` |
+| `shell` | `bash` / `powershell` | no | -- |
+| `model` | identifier | no | -- |
+| `thinking` | effort level | no | -- |
 | `extensions` | skill-extensions | no | -- |
 
 A skill's `prompt { }` block is its SKILL.md instructions; `prompt: "path"` names a file holding them, and the SKILL.md tells Claude to read and follow it.

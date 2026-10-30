@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 99 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 101 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89 and V90 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -773,6 +773,8 @@ through the validator like any other rule.
 | V97 | error | A node, skill or command `file:` must be a project-relative path (no `..`, not absolute, safe names) — it marks hand-written internals scaffold never writes, so it must be a path scaffold can honour |
 | V98 | error | A `gate`, `hook`, `tool`, `job`, `command` or `level` block must sit inside its container (`gates`, `hooks`, `tools`, `schedule`, `triggers`, `depth`) — written beside it, it was dropped with no message and validate passed |
 | V99 | warning | An agent's `skills:` and `mcp-servers:`, and a skill's `agent:`, should name something the topology declares (or a built-in agent) — a misspelled name compiled to a reference Claude Code could not resolve, with no message |
+| V100 | error | A hook has what its type needs (command/prompt/agent: `run`; http: `url`; mcp_tool: `server` and `tool`; `async` only on a command), and a prompt or agent judge sits on an event Claude Code runs judges for |
+| V101 | error | An agent's `runs:` is `subagent`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an
