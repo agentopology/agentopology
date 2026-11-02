@@ -41,6 +41,7 @@ import {
   readProject,
   type FlowReport,
 } from "../import/index.js";
+import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
@@ -553,7 +554,12 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 }
 
 function readDirRecursive(dirPath: string): PlatformFile[] {
-  return readProject(requireDir(dirPath));
+  try {
+    return readProject(requireDir(dirPath)).files;
+  } catch (err) {
+    console.error(c.red(`Error: ${(err as Error).message}`));
+    process.exit(1);
+  }
 }
 
 function requireDir(dirPath: string): string {
@@ -1048,15 +1054,24 @@ function cmdInfo(filePath: string): void {
 
 function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string): void {
   const resolved = requireDir(dirPath);
-  const project = targetName === "claude-code" ? readClaudeProject(resolved) : null;
-  const files = project?.files ?? readProject(resolved);
-
   const name = topologyName ?? path.basename(resolved).replace(/^\./, "");
 
+  // First, before any read: a run that fails must still have said something.
   console.log(
     c.bold(`Importing from ${targetName} files in ${dirPath}`)
   );
   console.log("");
+
+  let project: ReturnType<typeof readClaudeProject> = null;
+  let read: Pick<ClaudeProject, "files" | "unread">;
+  try {
+    project = targetName === "claude-code" ? readClaudeProject(resolved) : null;
+    read = project ?? readProject(resolved);
+  } catch (err) {
+    console.error(c.red(`Import error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+  const files = read.files;
 
   let atSource: string;
   let flow: FlowReport | undefined;
@@ -1082,6 +1097,7 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.log("");
     for (const line of flowReportLines(flow)) console.log(`  ${line}`);
   }
+  for (const u of read.unread) console.log(`  ${c.yellow(`Not read: ${u.path} (${u.reason})`)}`);
   for (const nested of project?.nestedConfigs ?? []) {
     console.log(`  ${c.dim(`Not read: ${nested} (a .claude folder below the root; run import there for it)`)}`);
   }

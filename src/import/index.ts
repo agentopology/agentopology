@@ -52,7 +52,7 @@ export function importClaudeCodeWithReport(
 }
 
 export { flowReportLines, type FlowReport } from "./flow.js";
-export { readProject, readClaudeProject } from "./walk.js";
+export { readProject, readClaudeProject, ReadBudgetError, type Unread } from "./walk.js";
 export { importClaudeCode } from "./claude-code.js";
 export { importOpenClaw } from "./openclaw.js";
 export { serializeAST } from "./serializer.js";

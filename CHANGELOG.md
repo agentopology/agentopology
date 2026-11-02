@@ -10,7 +10,11 @@ All notable changes to agentopology are documented here.
   shell files, `.mcp.json`, and `.at` files. `.worktrees`, `.claude/worktrees`, `dist`, `build`,
   `coverage` and the source tree are never read, so an `agents/x.md` in the source is no longer
   an agent. A skill the author named `build` is kept. Symlink cycles end. On a client repo with
-  31 agents the read went from over two minutes to about two seconds (143 files).
+  31 agents 0.8.0 tried to hold 1,061,701 files (16.4 GB), ran 656 seconds and was terminated with
+  no output; the read is now 143 files.
+- **Always ends, and says why.** An unreadable, broken or oversized (over 5 MB) file is skipped and
+  named; a link at the root is not followed out of the project; past 256 MB the read stops with a
+  message and exit 1. The first line prints before any read.
 - **Recovers the flow.** A `.at` that shares at least 2 agents, and half of its own, supplies its
   edges, actions, humans, gates and orchestrator; an agent's own file wins. That repo's export
   went from `edges: []` to 52 edges. Scaffolding such an import wires the recovered gates into

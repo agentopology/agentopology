@@ -74,6 +74,7 @@ Run the live suite before every release, and after any change to a binding.
 | M2 | An `independent` node judges only its artifacts, the playbook hands it nothing else, and V101 refuses it inline | e2e/compile.test.ts |
 | B5 | An agent asking for a looser permission mode than a subagent can get is warned at scaffold | e2e/compile.test.ts |
 | I1 | Import on a repo root reads only the root .claude's Markdown, JSON and shell files, .mcp.json and .at files: worktrees, build output and source are never read, and a skill the author named `build` is kept | e2e/import-project.test.ts |
+| I5 | Import always ends and says why: an unreadable, broken or oversized file is skipped and named, a root link is not followed out of the project, and past 256 MB it stops with a message, exit 1 and no partial .at | e2e/import-project.test.ts |
 | I2 | Import recovers the flow of a .at that describes the project (edges, conditions, actions, humans, gates); an agent's own file wins | e2e/import-project.test.ts |
 | I3 | Import reports the flow honestly: sources used and skipped, agents wired and unknown, agents with no file; no edge is invented | e2e/import-project.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |

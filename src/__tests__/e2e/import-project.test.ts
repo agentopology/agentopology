@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { resolve, dirname, join } from "node:path";
@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { importClaudeCodeWithReport, readClaudeProject, readProject } from "../../import/index.js";
+import { MAX_FILE_BYTES, MAX_TOTAL_BYTES } from "../../import/walk.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../../../dist/cli/index.js");
 
@@ -106,7 +107,7 @@ describe("import reads only what it needs", () => {
     expect(paths()).toEqual(expect.arrayContaining([".claude/skills/build/SKILL.md", ".claude/agents/dist/AGENT.md"]));
     expect(imported().ast.nodes.map((n) => n.id)).toContain("dist");
     // the generic walk used by sync and openclaw keeps them too
-    expect(readProject(root).map((f) => f.path)).toContain(".claude/skills/build/SKILL.md");
+    expect(readProject(root).files.map((f) => f.path)).toContain(".claude/skills/build/SKILL.md");
   });
 
   it("[I1] an agents/x.md in the source tree is not an agent, and a nested .claude is named, not read", () => {
@@ -129,6 +130,63 @@ describe("import reads only what it needs", () => {
     const bare = fs.mkdtempSync(join(os.tmpdir(), "at-bare-"));
     expect(readClaudeProject(bare)).toBeNull();
     fs.rmSync(bare, { recursive: true });
+  });
+});
+
+describe("import always ends, and says why", () => {
+  const run = (...extra: string[]) => {
+    const r = spawnSync(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", root, "--name", "shop", "--output", join(root, "o"), ...extra], { encoding: "utf8" });
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+
+  it("[I5] an unreadable file, an unreadable folder, a broken link and an oversized file do not stop the import, and each is named", () => {
+    put(".claude/agents/locked.md", "secret");
+    fs.chmodSync(join(root, ".claude/agents/locked.md"), 0o000);
+    put(".claude/locked/a.md");
+    fs.chmodSync(join(root, ".claude/locked"), 0o000);
+    fs.symlinkSync(join(root, "nowhere"), join(root, ".claude/agents/broken.md"));
+    put(".claude/skills/logs/run.md");
+    fs.truncateSync(join(root, ".claude/skills/logs/run.md"), MAX_FILE_BYTES + 1);
+    const { code, out } = run();
+    fs.chmodSync(join(root, ".claude/agents/locked.md"), 0o644);
+    fs.chmodSync(join(root, ".claude/locked"), 0o755);
+    expect(code).toBe(0);
+    expect(fs.existsSync(join(root, "o/shop.at"))).toBe(true);
+    expect(out).toContain("Not read: .claude/agents/locked.md (EACCES");
+    expect(out).toContain("Not read: .claude/locked (EACCES");
+    expect(out).toContain("Not read: .claude/skills/logs/run.md (5 MB, over the 5 MB limit)");
+  });
+
+  it("[I5] a link at the root is not followed out of the project; a linked skill inside .claude still is", () => {
+    const outside = fs.mkdtempSync(join(os.tmpdir(), "at-outside-"));
+    fs.writeFileSync(join(outside, "elsewhere.at"), "not read");
+    fs.mkdirSync(join(outside, "linked"));
+    fs.writeFileSync(join(outside, "linked/SKILL.md"), "---\nname: linked\ndescription: l\n---\n");
+    fs.symlinkSync(outside, join(root, "shots"));
+    fs.mkdirSync(join(root, ".claude/skills"), { recursive: true });
+    fs.symlinkSync(join(outside, "linked"), join(root, ".claude/skills/linked"));
+    const files = paths();
+    fs.rmSync(outside, { recursive: true });
+    expect(files.filter((p) => p.includes("elsewhere"))).toEqual([]);
+    expect(files).toContain(".claude/skills/linked/SKILL.md");
+  });
+
+  it("[I5] past the total budget the read stops with a message, exit 1, and no partial .at", () => {
+    for (let i = 0; i * MAX_FILE_BYTES <= MAX_TOTAL_BYTES; i++) {
+      put(`.claude/skills/s/f${i}.md`);
+      fs.truncateSync(join(root, `.claude/skills/s/f${i}.md`), MAX_FILE_BYTES);
+    }
+    const { code, out } = run();
+    expect(code).toBe(1);
+    expect(out).toContain("Importing from claude-code files");
+    expect(out).toMatch(/Import error: Stopped reading after 256 MB/);
+    expect(fs.existsSync(join(root, "o/shop.at"))).toBe(false);
+  });
+
+  it("[I5] what import holds does not grow with the source tree", () => {
+    for (let d = 0; d < 20; d++) put(`src/d${d}/f.ts`, "x".repeat(1024));
+    const project = readClaudeProject(root)!;
+    expect(project.files.reduce((n, f) => n + f.content.length, 0)).toBeLessThan(1024);
   });
 });
 
