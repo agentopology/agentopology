@@ -73,6 +73,10 @@ Run the live suite before every release, and after any change to a binding.
 | M1 | `runs: inline` and `runs: fork` compile to skills (fork: `context: fork`), never a subagent; V101 checks the mode | e2e/compile.test.ts |
 | M2 | An `independent` node judges only its artifacts, the playbook hands it nothing else, and V101 refuses it inline | e2e/compile.test.ts |
 | B5 | An agent asking for a looser permission mode than a subagent can get is warned at scaffold | e2e/compile.test.ts |
+| I1 | Import on a repo root reads only the root .claude's Markdown, JSON and shell files, .mcp.json and .at files: worktrees, build output and source are never read, and a skill the author named `build` is kept | e2e/import-project.test.ts |
+| I5 | Import always ends and says why: an unreadable, broken or oversized file is skipped and named, a root link is not followed out of the project, and past 256 MB it stops with a message, exit 1 and no partial .at | e2e/import-project.test.ts |
+| I2 | Import recovers the flow of a .at that describes the project (edges, conditions, actions, humans, gates); an agent's own file wins | e2e/import-project.test.ts |
+| I3 | Import reports the flow honestly: sources used and skipped, agents wired and unknown, agents with no file; no edge is invented | e2e/import-project.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher and the phase-4 fields, registers `runs: fork`/`inline` nodes as skills, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
@@ -85,6 +89,7 @@ real test and the row moves to Guarantees. Source: the compile audit,
 
 | Id | Finding | Phase |
 |---|---|---|
+| I4 | V14 refuses an agent with both `tools` and `disallowed-tools`, but Claude Code accepts both, so an honest import of such a hand-built agent has validation errors | later |
 | B3 | Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only | later |
 | B7 | The `observability { }` block is ignored by the claude-code binding | later |
 | N22 | Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked | later |

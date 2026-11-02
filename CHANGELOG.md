@@ -2,6 +2,28 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [fix] Import works on a repo root, and recovers the flow
+
+- **Reads only what it needs.** For Claude Code: the root `.claude` folder's Markdown, JSON and
+  shell files, `.mcp.json`, and `.at` files. `.worktrees`, `.claude/worktrees`, `dist`, `build`,
+  `coverage` and the source tree are never read, so an `agents/x.md` in the source is no longer
+  an agent. A skill the author named `build` is kept. Symlink cycles end. On a client repo with
+  31 agents 0.8.0 tried to hold 1,061,701 files (16.4 GB), ran 656 seconds and was terminated with
+  no output; the read is now 143 files.
+- **Always ends, and says why.** An unreadable, broken or oversized (over 5 MB) file is skipped and
+  named; a link at the root is not followed out of the project; past 256 MB the read stops with a
+  message and exit 1. The first line prints before any read.
+- **Recovers the flow.** A `.at` that shares at least 2 agents, and half of its own, supplies its
+  edges, actions, humans, gates and orchestrator; an agent's own file wins. That repo's export
+  went from `edges: []` to 52 edges. Scaffolding such an import wires the recovered gates into
+  settings.json (hooks are added, the user's are kept).
+- **Says what it does not know.** The CLI and the top of the `.at` report sources used and
+  skipped, agents wired and unknown, agents declared with no file, and possible handoffs. No edge
+  is invented; names that match only by suffix are reported, not mapped.
+- An agent with no `model:` imports as `model: inherit`; a gate heading with a note gives a clean id.
+
 ## [0.8.0] — 2026-10-30
 
 ### [feat] The language says what Claude Code can do, out loud
