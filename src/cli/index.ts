@@ -33,7 +33,14 @@ import { exporters } from "../exporters/index.js";
 import { analyze } from "../analyzer/index.js";
 import { listTopics, getTopic, getAllTopics, searchTopics, getAgentGuide } from "../docs/index.js";
 import { lessonsFor } from "../docs/teach.js";
-import { importFromPlatform } from "../import/index.js";
+import {
+  flowReportLines,
+  importClaudeCodeWithReport,
+  importFromPlatform,
+  readClaudeProject,
+  readProject,
+  type FlowReport,
+} from "../import/index.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
@@ -546,33 +553,16 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 }
 
 function readDirRecursive(dirPath: string): PlatformFile[] {
+  return readProject(requireDir(dirPath));
+}
+
+function requireDir(dirPath: string): string {
   const resolved = path.resolve(dirPath);
   if (!fs.existsSync(resolved)) {
     console.error(c.red(`Error: directory not found: ${resolved}`));
     process.exit(1);
   }
-
-  const files: PlatformFile[] = [];
-  // Paths are project-relative (what `file:` records), so a walk started at
-  // the .claude folder itself keeps that prefix.
-  const prefix0 = path.basename(resolved) === ".claude" ? ".claude" : "";
-  function walk(dir: string, prefix: string): void {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const rel = path.join(prefix, entry.name);
-      const full = path.join(dir, entry.name);
-      // A symlinked folder (a skill linked from another repo) is read like any
-      // other; reading it used to crash with EISDIR.
-      const isDir = entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(full, { throwIfNoEntry: false })?.isDirectory());
-      if (isDir) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
-        walk(full, rel);
-      } else {
-        files.push({ path: rel, content: fs.readFileSync(full, "utf-8") });
-      }
-    }
-  }
-  walk(resolved, prefix0);
-  return files;
+  return resolved;
 }
 
 function cmdSync(filePath: string, targetName: string, dirPath: string): void {
@@ -1057,9 +1047,11 @@ function cmdInfo(filePath: string): void {
 }
 
 function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string): void {
-  const files = readDirRecursive(dirPath);
+  const resolved = requireDir(dirPath);
+  const project = targetName === "claude-code" ? readClaudeProject(resolved) : null;
+  const files = project?.files ?? readProject(resolved);
 
-  const name = topologyName ?? path.basename(path.resolve(dirPath)).replace(/^\./, "");
+  const name = topologyName ?? path.basename(resolved).replace(/^\./, "");
 
   console.log(
     c.bold(`Importing from ${targetName} files in ${dirPath}`)
@@ -1067,8 +1059,13 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   console.log("");
 
   let atSource: string;
+  let flow: FlowReport | undefined;
   try {
-    atSource = importFromPlatform(files, targetName, name);
+    if (targetName === "claude-code") {
+      ({ source: atSource, report: flow } = importClaudeCodeWithReport(files, name));
+    } else {
+      atSource = importFromPlatform(files, targetName, name);
+    }
   } catch (err) {
     console.error(c.red(`Import error: ${(err as Error).message}`));
     process.exit(1);
@@ -1081,6 +1078,13 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(outFile, atSource, "utf-8");
   console.log(c.green(`  Written: ${outFile}`));
+  if (flow) {
+    console.log("");
+    for (const line of flowReportLines(flow)) console.log(`  ${line}`);
+  }
+  for (const nested of project?.nestedConfigs ?? []) {
+    console.log(`  ${c.dim(`Not read: ${nested} (a .claude folder below the root; run import there for it)`)}`);
+  }
 
   // Validate the generated file
   try {

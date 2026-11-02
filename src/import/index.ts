@@ -8,6 +8,7 @@ import type { PlatformFile } from "../sync/index.js";
 import { importClaudeCode } from "./claude-code.js";
 import { importOpenClaw } from "./openclaw.js";
 import { serializeAST } from "./serializer.js";
+import { flowReportLines, type FlowReport } from "./flow.js";
 
 /**
  * Import platform files and generate .at source text.
@@ -23,10 +24,8 @@ export function importFromPlatform(
   topologyName: string,
 ): string {
   switch (binding) {
-    case "claude-code": {
-      const ast = importClaudeCode(files, topologyName);
-      return serializeAST(ast);
-    }
+    case "claude-code":
+      return importClaudeCodeWithReport(files, topologyName).source;
     case "openclaw": {
       const ast = importOpenClaw(files, topologyName);
       return serializeAST(ast);
@@ -38,6 +37,22 @@ export function importFromPlatform(
   }
 }
 
+/**
+ * A Claude Code import with its flow report. The generated .at opens with the
+ * report as comments, so what is known and unknown stays with the file.
+ */
+export function importClaudeCodeWithReport(
+  files: PlatformFile[],
+  topologyName: string,
+): { source: string; report: FlowReport } {
+  let report!: FlowReport;
+  const ast = importClaudeCode(files, topologyName, (r) => (report = r));
+  const header = flowReportLines(report).map((l) => `# ${l}`).join("\n");
+  return { source: `${header}\n\n${serializeAST(ast)}`, report };
+}
+
+export { flowReportLines, type FlowReport } from "./flow.js";
+export { readProject, readClaudeProject } from "./walk.js";
 export { importClaudeCode } from "./claude-code.js";
 export { importOpenClaw } from "./openclaw.js";
 export { serializeAST } from "./serializer.js";

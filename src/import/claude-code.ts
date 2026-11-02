@@ -5,6 +5,7 @@
  * @module
  */
 
+import { buildFlowReport, recoverFlowFromAt, type FlowReport } from "./flow.js";
 import type {
   TopologyAST,
   NodeDef,
@@ -324,7 +325,8 @@ export function parseAgentMd(
   };
 
   // Frontmatter fields
-  if (fields.model) agent.model = fields.model as string;
+  // No model in the file means Claude Code runs it on the session's model.
+  agent.model = (fields.model as string | undefined) ?? "inherit";
   if (fields.description) agent.description = fields.description as string;
   if (fields.maxTurns) agent.maxTurns = parseInt(fields.maxTurns as string, 10);
   // Claude Code writes these as a comma string ("Read, Grep") or a YAML list;
@@ -589,7 +591,8 @@ export function parseSkillMd(content: string): SkillMdResult {
     const gateParts = gatesSection.split(/^### /m).filter((s) => s.trim());
     for (const part of gateParts) {
       const lines = part.split("\n");
-      const gateId = lines[0].trim().toLowerCase().replace(/\s+/g, "-");
+      // A hand-written heading may carry a note: "base-check (after builder)".
+      const gateId = lines[0].split(/\s+[(—–:]|\(/)[0].trim().toLowerCase().replace(/\s+/g, "-");
       const gate: GateNode = {
         type: "gate",
         id: gateId,
@@ -839,6 +842,7 @@ export function parseActionScript(filename: string, content: string): ActionNode
 export function importClaudeCode(
   files: PlatformFile[],
   topologyName: string,
+  onFlowReport?: (report: FlowReport) => void,
 ): TopologyAST {
   const nodes: NodeDef[] = [];
   const roles: Record<string, string> = {};
@@ -1003,6 +1007,8 @@ export function importClaudeCode(
       }
     }
   }
+  const skillEdges = edges.length;
+
   // 10. Every node a flow names exists: the handles of each topology's
   // orchestrator become action nodes.
   for (const handleId of otherTopologies.flatMap((m) => m.orchestrator?.handles ?? [])) {
@@ -1016,6 +1022,10 @@ export function importClaudeCode(
     }
   }
 
+  // A .at file that describes this project supplies the flow nothing else on
+  // disk records (see flow.ts).
+  const recovered = recoverFlowFromAt(files, nodes, edges);
+
   // 11. An agent no flow mentions is invoked on demand, which is how a
   // hand-built Claude Code subagent runs. Import used to invent a linear chain
   // through every agent in file order, a flow the author never wrote.
@@ -1027,11 +1037,12 @@ export function importClaudeCode(
   }
 
   // Build topology meta
+  const atMeta = recovered.first?.topology;
   const meta: TopologyMeta = {
     name: topologyMeta?.name ?? topologyName,
-    version: topologyMeta?.version ?? "1.0.0",
-    description: topologyMeta?.description ?? "",
-    patterns: topologyMeta?.patterns ?? [],
+    version: topologyMeta?.version ?? atMeta?.version ?? "1.0.0",
+    description: topologyMeta?.description ?? atMeta?.description ?? "",
+    patterns: topologyMeta?.patterns ?? atMeta?.patterns ?? [],
     foundations: topologyMeta?.foundations,
     advanced: topologyMeta?.advanced,
     domain: topologyMeta?.domain,
@@ -1039,6 +1050,8 @@ export function importClaudeCode(
     errorHandler: topologyMeta?.errorHandler,
     durable: topologyMeta?.durable,
   };
+
+  onFlowReport?.(buildFlowReport(nodes, edges, skillEdges, recovered));
 
   const ast: TopologyAST = {
     topology: meta,
