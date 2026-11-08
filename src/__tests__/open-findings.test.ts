@@ -15,4 +15,6 @@ describe("open findings (spec/testing.md)", () => {
   it.todo("[B7] The `observability { }` block is ignored by the claude-code binding");
   it.todo("[N22] Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked");
   it.todo("[F4] Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word");
+  it.todo("[N25] An agent's `role:` is documented but never read; the role text comes only from the roles block by agent id");
+  it.todo("[N26] V102 does not look inside free-form or not-yet-listed blocks (prompt, extensions, settings, env, memory, providers, mcp-servers, interfaces, triggers, depth, flow, ...)");
 });

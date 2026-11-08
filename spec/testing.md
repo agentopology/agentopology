@@ -77,6 +77,8 @@ Run the live suite before every release, and after any change to a binding.
 | I5 | Import always ends and says why: an unreadable, broken or oversized file is skipped and named, a root link is not followed out of the project, and past 256 MB it stops with a message, exit 1 and no partial .at | e2e/import-project.test.ts |
 | I2 | Import recovers the flow of a .at that describes the project (edges, conditions, actions, humans, gates); an agent's own file wins | e2e/import-project.test.ts |
 | I3 | Import reports the flow honestly: sources used and skipped, agents wired and unknown, agents with no file; no edge is invented | e2e/import-project.test.ts |
+| N23 | Every field and block name in a node, `meta`, a hook, job, artifact, tool or skill, and every topology section, is in the AST or a V102 error naming it and its block (with the field it resembles, or the node type it belongs to); validate exits 1 and scaffold writes nothing; every field the docs list passes | e2e/unknown-names.test.ts |
+| N24 | An agent's or gate's `behavior:` outside `advisory`/`blocking` is a V103 error, never emitted unchecked | e2e/unknown-names.test.ts |
 | L2 | Real Claude Code loads a hand-built project after import then scaffold | live/claude-code.live.test.ts |
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher and the phase-4 fields, registers `runs: fork`/`inline` nodes as skills, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
@@ -94,3 +96,5 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | B7 | The `observability { }` block is ignored by the claude-code binding | later |
 | N22 | Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked | later |
 | F4 | Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word | later |
+| N25 | An agent's `role:` is documented (spec/grammar.md §4.6) but the parser never reads it: the role text comes only from the `roles` block by agent id, so `role: analyst` on `agent classifier` is lost | later |
+| N26 | V102 does not look inside free-form or not-yet-listed blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, `providers`, `mcp-servers`, `interfaces`, `triggers`, `depth`, `flow`, `defaults`, `observability`, `checkpoint`, ...): an unknown name there can still vanish | later |

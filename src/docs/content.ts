@@ -127,7 +127,7 @@ agent NAME {
 | invocation | string | no | "auto" | "manual" or "auto" (V4: manual exempts from orphan check) |
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
-| maxTurns | number | no | -- | Max agentic turns before stopping |
+| max-turns | number | no | -- | Max agentic turns before stopping |
 | sandbox | string or boolean | no | -- | "docker", "none", "network-only", true, false |
 | skip | string | no | -- | Skip condition: "not identifier" or "identifier.identifier op value" |
 
@@ -137,20 +137,20 @@ agent NAME {
 |-------|------|----------|---------|-------------|
 | prompt | string | no (V10) | -- | Multi-line via \`prompt {}\` block or file path string |
 | outputs | OutputsMap | no | -- | Enum outputs: \`{ field: val1 \\| val2 }\` (V5) |
-| outputFormat | string | no | "text" | "text", "json", "json-schema" |
-| inputSchema | SchemaFieldDef[] | no | -- | Typed input schema fields |
-| outputSchema | SchemaFieldDef[] | no | -- | Typed output schema fields |
+| output-format | string | no | "text" | "text", "json", "json-schema" |
+| input-schema | SchemaFieldDef[] | no | -- | Typed input schema fields |
+| output-schema | SchemaFieldDef[] | no | -- | Typed output schema fields |
 
 ### Tools & Data
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
-| disallowedTools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
+| disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
 | writes | string[] | no | -- | Memory keys this agent writes (V11) |
-| mcpServers | string[] | no | -- | MCP server names this agent uses |
+| mcp-servers | string[] | no | -- | MCP server names this agent uses |
 | produces | string[] | no | -- | Artifact IDs this agent produces |
 | consumes | string[] | no | -- | Artifact IDs this agent consumes |
 
@@ -160,9 +160,9 @@ agent NAME {
 |-------|------|----------|---------|-------------|
 | behavior | string | no | -- | "advisory" or "blocking" |
 | join | string | no | -- | Fan-in: "all", "any", "all-done", "none-failed" |
-| onFail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
+| on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
 | timeout | string | no | -- | Duration: "5m", "2h" |
-| fallbackChain | string[] | no | -- | Ordered model IDs to try (V22) |
+| fallback-chain | string[] | no | -- | Ordered model IDs to try (V22) |
 | compensates | string | no | -- | Agent ID (saga pattern compensation) |
 
 ### Retry & Resilience
@@ -170,27 +170,27 @@ agent NAME {
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | retry | number or RetryConfig | no | -- | Simple count or structured config |
-| circuitBreaker | CircuitBreakerConfig | no | -- | \`{ threshold, window, cooldown }\` |
-| rateLimit | string | no | -- | "60/min", "1000/hour", "5/sec" |
+| circuit-breaker | CircuitBreakerConfig | no | -- | \`{ threshold, window, cooldown }\` |
+| rate-limit | string | no | -- | "60/min", "1000/hour", "5/sec" |
 
 ### Sampling Parameters
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | temperature | number | no | -- | Sampling temperature (0-2) |
-| maxTokens | number | no | -- | Max tokens to generate |
-| topP | number | no | -- | Nucleus sampling (0-1) |
-| topK | number | no | -- | Top-k sampling |
+| max-tokens | number | no | -- | Max tokens to generate |
+| top-p | number | no | -- | Nucleus sampling (0-1) |
+| top-k | number | no | -- | Top-k sampling |
 | stop | string[] | no | -- | Stop sequences |
 | seed | number | no | -- | Random seed for reproducibility |
 | thinking | string | no | -- | "off", "low", "medium", "high", "xhigh", "max" — the reasoning-effort field. Compiles to Codex model_reasoning_effort and to the Workflow tool effort option. |
-| thinkingBudget | number | no | -- | Token budget for reasoning (min 1000) |
+| thinking-budget | number | no | -- | Token budget for reasoning (min 1000) |
 
 ### Observability
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| logLevel | string | no | -- | "debug", "info", "warn", "error" |
+| log-level | string | no | -- | "debug", "info", "warn", "error" |
 
 ### Scaling
 
@@ -2878,7 +2878,7 @@ The \`artifacts\` block defines named outputs with types, storage, retention, an
 
 \`\`\`at
 artifacts {
-  NAME {
+  artifact NAME {
     type: "markdown"
     path: "output/report.md"
     retention: "30d"
@@ -2912,20 +2912,20 @@ agent writer {
 
 \`\`\`at
 artifacts {
-  research-notes {
+  artifact research-notes {
     type: "markdown"
     path: "workspace/research/"
     retention: "90d"
   }
 
-  draft {
+  artifact draft {
     type: "markdown"
     path: "workspace/drafts/"
     retention: "30d"
     depends-on: [research-notes]
   }
 
-  final-report {
+  artifact final-report {
     type: "pdf"
     path: "output/"
     retention: "1y"
