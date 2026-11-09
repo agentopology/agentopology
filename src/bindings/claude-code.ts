@@ -29,7 +29,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, STUB_MARKER } from "./lib/stub.js";
+import { shellStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
@@ -275,6 +275,7 @@ function generateBeforeAgentScript(ast: TopologyAST): GeneratedFile | null {
     "# PreToolUse hook on the Agent tool. Exit 2 blocks the launch and shows the",
     "# reason to Claude; an \"ask\" decision makes Claude Code ask the user first.",
     "set -euo pipefail",
+    ...FAIL_CLOSED,
     'cd "$CLAUDE_PROJECT_DIR"',
     `DIR=".claude/skills/${name}/scripts"`,
     'AGENT=$(jq -r \'.tool_input.subagent_type // ""\')',
@@ -288,7 +289,7 @@ function generateBeforeAgentScript(ast: TopologyAST): GeneratedFile | null {
   for (const [agent, body] of steps) {
     lines.push(`  ${agent})`, ...body, "    ;;");
   }
-  lines.push("esac", "exit 0", "");
+  lines.push("esac", FAIL_CLOSED_DONE, "exit 0", "");
   return {
     path: `.claude/skills/${name}/scripts/before-agent.sh`,
     content: lines.join("\n"),
@@ -2015,7 +2016,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const project = isProjectPath(script);
     files.push({
       path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
       category: "script",
       ...(project ? { createOnly: true } : {}),
     });
@@ -2067,6 +2068,7 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
       enforcementNote,
       enforcementNote2,
       "set -euo pipefail",
+      ...FAIL_CLOSED,
       "",
       "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
       "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),
@@ -2111,6 +2113,7 @@ function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
     contentLines.push(`  echo "Gate '${gate.id}' FAILED (exit code $GATE_RESULT)"`);
     contentLines.push(`  ${onFailExit}`);
     contentLines.push("fi");
+    contentLines.push(FAIL_CLOSED_DONE);
     contentLines.push("");
 
     const content = contentLines.join("\n");
@@ -2554,7 +2557,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent.PreToolUse.push({
       // Agent is the subagent tool; Task is its earlier name.
       matcher: "Agent|Task",
-      hooks: [{ type: "command", command: beforeAgentCommand(ast) }],
+      // onFailure "block" (Claude Code 2.1.295+): a script that cannot start,
+      // times out or exits other than 0/2 blocks the launch instead of
+      // letting it through. The script's own EXIT trap covers the rest.
+      hooks: [{ type: "command", command: beforeAgentCommand(ast), onFailure: "block" }],
     });
   }
 

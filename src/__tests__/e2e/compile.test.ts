@@ -126,7 +126,7 @@ describe("gates and human steps are enforced before the agent they guard", () =>
   it("[C4] a gate after an action runs before its next agent launches (PreToolUse on the Agent tool)", () => {
     expect(settings.hooks.PreToolUse).toContainEqual({
       matcher: "Agent|Task",
-      hooks: [{ type: "command", command: 'bash "$CLAUDE_PROJECT_DIR/.claude/skills/compile/scripts/before-agent.sh"' }],
+      hooks: [{ type: "command", command: 'bash "$CLAUDE_PROJECT_DIR/.claude/skills/compile/scripts/before-agent.sh"', onFailure: "block" }],
     });
     expect(script).toMatch(/drafter\)\n[\s\S]*bash "\$DIR\/gate-brief-check\.sh" >&2 \|\| exit 2/);
     // not also a SubagentStop hook on a node Claude Code never registers

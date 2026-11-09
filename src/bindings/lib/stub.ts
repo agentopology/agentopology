@@ -46,7 +46,7 @@ export const STUB_MARKER = "# AGENTOPOLOGY_STUB — fill this in before relying 
  * script as "implemented" — `agentopology stubs` ignores files whose marker
  * has been stripped.
  */
-export function shellStub(description: string): string {
+export function shellStub(description: string, opts: { fail?: boolean } = {}): string {
   return [
     "#!/usr/bin/env bash",
     `# ${description}`,
@@ -54,10 +54,37 @@ export function shellStub(description: string): string {
     STUB_MARKER,
     "set -euo pipefail",
     "",
-    'echo "TODO: implement this script"',
+    ...(opts.fail
+      ? [
+          // A check nobody has written must not pass: exit 2 is the code
+          // Claude Code treats as "block".
+          'echo "TODO: implement this script — it fails until it is written" >&2',
+          "exit 2",
+        ]
+      : ['echo "TODO: implement this script"']),
     "",
   ].join("\n");
 }
+
+/**
+ * Lines that make an enforcement hook script fail closed.
+ *
+ * Claude Code blocks only on exit 2; exit 1 (an error), 127 (a missing
+ * command such as jq) or an unset variable under `set -u` let the step
+ * through. An EXIT trap catches all of them, including `set -u` failures that
+ * an ERR trap misses; the script sets AT_DONE=1 on its success path. Only for scripts whose job is to refuse: on a logging
+ * hook, exit 2 on SubagentStop would stop the subagent from finishing.
+ */
+export const FAIL_CLOSED = [
+  "# Fail closed: unless the script reaches its end (AT_DONE=1) or exits 2 on",
+  "# purpose, it exits 2 (block). A flag, not $?: macOS bash 3.2 hands the trap",
+  "# status 0 after an unset-variable error.",
+  "AT_DONE=0",
+  "trap 'rc=$?; if [ \"$AT_DONE\" != 1 ] && [ \"$rc\" != 2 ]; then echo \"agentopology: this check failed to run (exit $rc), so the step is blocked\" >&2; exit 2; fi' EXIT",
+];
+
+/** The last line of a fail-closed script's success path. */
+export const FAIL_CLOSED_DONE = "AT_DONE=1";
 
 /**
  * Return true if the file content contains the {@link STUB_MARKER}, indicating

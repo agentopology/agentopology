@@ -2,6 +2,23 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.9.2] - 2026-11-09
+
+### [fix] Generated gates fail closed
+
+Claude Code blocks only on exit 2. On 0.9.1 a gate could fail open: with `CLAUDE_PROJECT_DIR`
+unset `before-agent.sh` exited 1, with `jq` missing 127, and a gate script nobody had written
+exited 0. In each case the agent launched with its gate and approval step skipped.
+- `before-agent.sh` and every gate wrapper now exit 2 on any error. An EXIT trap with a
+  done-flag catches it, because macOS `/bin/bash` 3.2 hands the trap status 0 after an
+  unset-variable error.
+- A gate script stub exits 2 until it is written, the way action stubs already fail.
+- The guard's settings entry sets `onFailure: "block"` (Claude Code 2.1.295+), so a hook that
+  cannot start or times out blocks too. Older versions may ignore the field (undocumented);
+  the scripts' own trap still holds there.
+- Logging and observability hooks are unchanged: exit 2 there would stop a subagent from
+  finishing.
+
 ## [0.9.1] - 2026-11-09
 
 ### [fix] A gate's `description:` is read, as V96 asks
