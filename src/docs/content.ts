@@ -432,6 +432,7 @@ gates {
 | after | identifier | no (V13) | -- | Node this gate runs after |
 | before | identifier | no (V13) | -- | Node this gate runs before |
 | run | string | no | -- | Script to execute for the check |
+| description | string | no | -- | What the gate checks, in words (prose goes here, never in \`run\`: V96) |
 | checks | string[] | no | -- | List of check identifiers |
 | retry | number | no | -- | Max retries on failure |
 | on-fail | string | no | "halt" | "halt" or "bounce-back" |

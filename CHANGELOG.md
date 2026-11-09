@@ -2,6 +2,15 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.9.1] - 2026-11-09
+
+### [fix] A gate's `description:` is read, as V96 asks
+
+- V96 tells you to put a gate's explanation in `description:`, but the parser never read that
+  field on a gate, so 0.9.0's V102 rejected it. It's now a gate field: parsed, kept by import
+  and serialize, and documented in `docs gate` and the grammar. Found on the content harness:
+  all 17 V102 errors in its two files were gate descriptions.
+
 ## [0.9.0] - 2026-11-09
 
 **Breaking: a file with a field or block the parser does not read now fails `validate` (V102),

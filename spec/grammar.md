@@ -194,7 +194,8 @@ gate-decl       = 'gate' identifier '{' gate-fields '}'
 gate-fields     = ('after' ':' identifier | 'before' ':' identifier | 'run' ':' string
                   | 'checks' ':' name-list | 'retry' ':' number
                   | 'on-fail' ':' ('bounce-back' | 'halt')
-                  | 'behavior' ':' ('advisory' | 'blocking'))*
+                  | 'behavior' ':' ('advisory' | 'blocking')
+                  | 'description' ':' string)*
 command-decl    = 'command' identifier '{' command-fields '}'
 level-decl      = 'level' number string '{' 'omit' ':' name-list '}'
 env-decl        = identifier '{' (identifier ':' (identifier | string))* '}'
@@ -1002,6 +1003,7 @@ gates {
 | `retry` | number | no | `0` | Max retry attempts |
 | `on-fail` | `bounce-back` / `halt` | no | `halt` | Failure behavior |
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory gates never block |
+| `description` | string | no | -- | What the gate checks, in words. Prose goes here, never in `run` (V96) |
 
 ---
 
