@@ -11,8 +11,8 @@ All notable changes to agentopology are documented here.
   in 0.10.0 and to use 0.9.x. 125 tests that covered them went with them.
 - **Experimental:** `codex`, `cursor` and `claude-workflow` stay. `targets` labels them and
   scaffold warns, because they are not verified against their platform the way claude-code is.
-  `claude-workflow` is held, pending a decision: it is a Claude target and feeds the hybrid seam
-  in `examples/matchmat-ship.at`.
+  `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
+  hybrid seam in `examples/matchmat-ship.at`.
 
 ## [0.9.2] - 2026-11-09
 
