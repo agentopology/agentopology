@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.9.2] - 2026-11-09
 
 ### [fix] Generated gates fail closed
 
