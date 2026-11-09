@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.9.1] - 2026-11-09
 
 ### [fix] A gate's `description:` is read, as V96 asks
 
