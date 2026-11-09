@@ -68,7 +68,7 @@ const NODE_SCHEMAS = {
   agent: AGENT,
   action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join"] },
   gate: {
-    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout"],
+    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description"],
     blocks: { extensions: OPAQUE },
   },
   human: { fields: ["file", "description", "timeout", "on-timeout"] },

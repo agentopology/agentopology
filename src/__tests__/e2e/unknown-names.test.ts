@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { topics } from "../../docs/content.js";
+import { serializeAST } from "../../import/serializer.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../../../dist/cli/index.js");
 
@@ -233,6 +234,16 @@ describe("a name the parser does not read is reported, never dropped", () => {
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("zzmarker");
     expect(wrote).toBe(false);
+  });
+
+  it("[N23] a gate's description is kept, since V96 sends a gate's prose there", () => {
+    const source = withLine("gate", 'description: "zzAAA130 checks the draft"');
+    const { ast, results } = run(source);
+    expect(results).toEqual([]);
+    const gate = ast.nodes.find((n) => n.id === "g") as { description?: string };
+    expect(gate.description).toBe("zzAAA130 checks the draft");
+    const again = parse(serializeAST(ast)).nodes.find((n) => n.id === "g") as { description?: string };
+    expect(again.description).toBe("zzAAA130 checks the draft");
   });
 
   it("[N23] the on-timeout value is still caught by V59 (the case that already worked)", () => {

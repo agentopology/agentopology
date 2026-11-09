@@ -732,6 +732,8 @@ export interface GateNode extends BaseNode {
   behavior?: string;
   /** Timeout duration string (e.g. "5m", "2h"). */
   timeout?: string;
+  /** What the gate checks, in words (V96 sends prose here, out of `run`). */
+  description?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }

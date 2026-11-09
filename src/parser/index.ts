@@ -772,6 +772,7 @@ export function parseGate(
   if (fields["on-fail"]) node.onFail = fields["on-fail"];
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.timeout) node.timeout = fields.timeout;
+  if (fields.description) node.description = unquote(fields.description);
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;

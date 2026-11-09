@@ -309,6 +309,7 @@ function serializeGate(node: GateNode): string {
   if (node.retry) lines.push(`      retry: ${node.retry}`);
   if (node.behavior) lines.push(`      behavior: ${node.behavior}`);
   if (node.timeout) lines.push(`      timeout: ${q(node.timeout)}`);
+  if (node.description) lines.push(`      description: "${node.description}"`);
   lines.push("    }");
   return lines.join("\n");
 }
