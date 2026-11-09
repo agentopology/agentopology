@@ -110,7 +110,7 @@ ${c.bold("Commands:")}
   docs       Language reference — show documentation for .at syntax and features.
 
 ${c.bold("Options:")}
-  --target <name>   Binding target (e.g. claude-code, codex, gemini-cli, copilot-cli, kiro)
+  --target <name>   Binding target (claude-code; codex, cursor and claude-workflow are experimental)
   --format <name>   Export format (markdown, mermaid, json, ascii, brief).
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
@@ -402,9 +402,17 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 
   const binding = bindings[targetName];
   if (!binding) {
-    console.error(c.red(`Unknown target: "${targetName}"`));
-    console.error(`Available targets: ${Object.keys(bindings).join(", ")}`);
+    if (REMOVED_TARGETS.includes(targetName)) {
+      console.error(c.red(`Target "${targetName}" was removed in 0.10.0: Claude Code is the supported target.`));
+      console.error(`Use agentopology 0.9.x for ${targetName}, or one of: ${Object.keys(bindings).join(", ")}`);
+    } else {
+      console.error(c.red(`Unknown target: "${targetName}"`));
+      console.error(`Available targets: ${Object.keys(bindings).join(", ")}`);
+    }
     process.exit(1);
+  }
+  if (binding.experimental) {
+    console.warn(c.yellow(`  ${targetName} is experimental: not verified against the platform the way claude-code is.`));
   }
 
   // Never compile what does not validate: fields the validator rejects can
@@ -1122,11 +1130,15 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   console.log("");
 }
 
+/** Targets removed in 0.10.0, named so the error says so instead of "unknown". */
+const REMOVED_TARGETS = ["gemini-cli", "copilot-cli", "openclaw", "kiro"];
+
 function cmdTargets(): void {
   console.log(c.bold("Available binding targets:"));
   console.log("");
   for (const [name, binding] of Object.entries(bindings)) {
-    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}`);
+    const label = binding.experimental ? c.yellow(" (experimental)") : "";
+    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}`);
   }
   console.log("");
 }

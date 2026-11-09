@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>Claude Code</strong> · <strong>Claude Workflow</strong> · <strong>OpenClaw</strong> · <strong>Codex</strong> · <strong>Cursor</strong> · <strong>Gemini CLI</strong> · <strong>Copilot</strong> · <strong>Kiro</strong>
+  <strong>Claude Code</strong> · experimental: Claude Workflow · Codex · Cursor
 </p>
 
 <p align="center">
@@ -61,7 +61,6 @@ topology code-review : [pipeline] {
 ```bash
 agentopology scaffold my-team.at --target claude-code      # → .claude/agents/
 agentopology scaffold my-team.at --target claude-workflow  # → my-team.workflow.js (+ SEAM/README/LOSSY-REPORT)
-agentopology scaffold my-team.at --target openclaw         # → .openclaw/soul.md
 agentopology scaffold my-team.at --target codex            # → .codex/
 agentopology scaffold my-team.at --target cursor           # → .cursor/rules/
 ```
@@ -98,8 +97,7 @@ who works, when they work, and what they know when they work. One file, two ways
       │   .at file   │─▶│  Validator │──┤                ├── .claude/agents/
       │  (you write) │  │  103 rules  │  │                ├── <topology>.workflow.js
       └──────────────┘  └────────────┘  │                ├── .codex/  .cursor/rules/
-                                        │                ├── .openclaw/  .github/agents/
-                                        │                └── .kiro/  …
+                                        │                └── …
                                         │
                                         └── plan ──────▶ Execution brief
                                                           │
@@ -235,7 +233,7 @@ Say **"I want a code review team with an analyzer, security scanner, and reviewe
 
 1. Generates the `.at` file with the right syntax
 2. Validates it against 103 rules
-3. Scaffolds it to Claude Code, OpenClaw, Cursor, or any target
+3. Scaffolds it to Claude Code (or an experimental target: Codex, Cursor)
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
 
@@ -249,7 +247,7 @@ You have a working `.at` file and want to make it better? Just tell the skill wh
 - **"Add a hook that formats code after every write"** — generates the hook block with the right lifecycle event
 - **"Add an MCP server for GitHub"** — adds the server config with environment variables
 - **"Add a quality gate between the builder and reviewer"** — inserts a gate with halt-on-fail
-- **"Switch the target to OpenClaw"** — re-scaffolds the entire topology for a different platform
+- **"Switch the target to Codex"** — re-scaffolds the entire topology for an experimental target
 
 The workflow is always the same: **describe the change → the skill updates the `.at` file → validates → re-scaffolds.** You never touch config files manually.
 
@@ -323,15 +321,11 @@ This defines three agents, their tools and memory, a quality gate, and a flow wi
 | Target | Command | What It Generates |
 |--------|---------|-------------------|
 | **Claude Code** | `--target claude-code` | `.claude/agents/`, `.claude/skills/`, `.mcp.json`, `.claude/settings.json` (the event-driven host) |
-| **Claude Workflow** | `--target claude-workflow` | `<topology>.workflow.js` (deterministic fan-out rung) + `-SEAM.md`, `-README.md`, `-LOSSY-REPORT.md` |
-| **OpenClaw** | `--target openclaw` | `.openclaw/soul.md`, `.openclaw/skills/`, `.openclaw/config.json` |
-| **Codex** | `--target codex` | `.codex/config.toml`, `AGENTS.md` |
-| **Cursor** | `--target cursor` | `.cursor/rules/*.mdc`, `.cursor/mcp.json`, `.cursor/hooks.json` |
-| **Gemini CLI** | `--target gemini-cli` | `.gemini/`, `AGENTS.md` |
-| **Copilot** | `--target copilot-cli` | `.github/agents/*.agent.md`, `.github/copilot-instructions.md` |
-| **Kiro** | `--target kiro` | `.kiro/agents/*.json`, `.kiro/steering/` |
+| **Claude Workflow** (experimental) | `--target claude-workflow` | `<topology>.workflow.js` (deterministic fan-out rung) + `-SEAM.md`, `-README.md`, `-LOSSY-REPORT.md` |
+| **Codex** (experimental) | `--target codex` | `.codex/config.toml`, `AGENTS.md` |
+| **Cursor** (experimental) | `--target cursor` | `.cursor/rules/*.mdc`, `.cursor/mcp.json`, `.cursor/hooks.json` |
 
-Every binding is ground-truth validated against real-world configs from production repos.
+Claude Code is the supported target. The experimental ones are kept, not verified the way claude-code is. `gemini-cli`, `copilot-cli`, `openclaw` and `kiro` were removed in 0.10.0 (use 0.9.x for them).
 
 ---
 

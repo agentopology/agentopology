@@ -192,3 +192,30 @@ describe("agentopology CLI", () => {
     });
   });
 });
+
+describe("0.10.0 targets", () => {
+  const run = (...args: string[]) => {
+    try {
+      return { code: 0, out: execFileSync(process.execPath, [CLI, ...args], { encoding: "utf8", stdio: "pipe" }) };
+    } catch (e) {
+      const err = e as { status: number; stdout: string; stderr: string };
+      return { code: err.status, out: err.stdout + err.stderr };
+    }
+  };
+
+  it("a removed target says it was removed, not that it is unknown", () => {
+    for (const t of ["gemini-cli", "copilot-cli", "openclaw", "kiro"]) {
+      const r = run("scaffold", resolve(root, "examples/simple-pipeline.at"), "--target", t, "--dry-run");
+      expect(r.code, t).toBe(1);
+      expect(r.out, t).toContain("was removed in 0.10.0");
+    }
+  });
+
+  it("targets labels codex, cursor and claude-workflow experimental, and claude-code not", () => {
+    const out = run("targets").out;
+    for (const line of out.split("\n").filter((l) => /^\s+(codex|cursor|claude-workflow)\s/.test(l))) {
+      expect(line).toContain("(experimental)");
+    }
+    expect(out.split("\n").find((l) => /^\s+claude-code\s/.test(l))).not.toContain("experimental");
+  });
+});

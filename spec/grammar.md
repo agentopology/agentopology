@@ -1889,13 +1889,10 @@ Bindings map universal permissions to platform-specific modes:
 | Binding | Status | Target |
 |---------|--------|--------|
 | `claude-code` | Stable | Claude Code agent files, settings, MCP config (the event-driven HOST layer) |
-| `claude-workflow` | Stable | Claude Workflow tool script (`<topology>.workflow.js`) for the deterministic fan-out rung, plus SEAM/README/LOSSY-REPORT companion files |
-| `codex` | Stable | Codex agent definitions and config |
-| `gemini-cli` | Stable | Gemini CLI agent definitions and config |
-| `copilot-cli` | Stable | GitHub Copilot CLI agent definitions and config |
-| `openclaw` | Stable | OpenClaw soul.md, skill files, channel/gateway/workspace config |
-| `kiro` | Stable | Kiro agent definitions and config |
-| `cursor` | Stable | Cursor rules and agent config |
+| `claude-workflow` | Experimental | Claude Workflow tool script (`<topology>.workflow.js`) for the deterministic fan-out rung, plus SEAM/README/LOSSY-REPORT companion files |
+| `codex` | Experimental | Codex agent definitions and config |
+| `cursor` | Experimental | Cursor rules and agent config |
+| `gemini-cli`, `copilot-cli`, `openclaw`, `kiro` | Removed in 0.10.0 | Use agentopology 0.9.x |
 | `agent-sdk` | Planned | Anthropic Agent SDK tool definitions |
 | `e2b` | Planned | E2B sandbox configuration |
 | `openai-swarm` | Planned | OpenAI Swarm agent definitions |

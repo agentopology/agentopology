@@ -168,7 +168,7 @@ describe("other targets cannot host a Mod", () => {
       const out = b.scaffold(parse(topology([REDACT, GATE].join("\n"))));
       expect(out.some((f) => f.content.includes("redact.ts")), name).toBe(false);
     }
-    expect(warn.mock.calls.filter((c) => String(c[0]).includes("cannot host them"))).toHaveLength(7);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("cannot host them"))).toHaveLength(Object.keys(bindings).length - 1);
     warn.mockRestore();
   });
 });

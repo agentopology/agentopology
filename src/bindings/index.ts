@@ -11,10 +11,6 @@ import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "./claude-code.js";
 import { claudeWorkflowBinding } from "./claude-workflow.js";
 import { codexBinding } from "./codex.js";
-import { geminiCliBinding } from "./gemini-cli.js";
-import { copilotCliBinding } from "./copilot-cli.js";
-import { openClawBinding } from "./openclaw.js";
-import { kiroBinding } from "./kiro.js";
 import { cursorBinding } from "./cursor.js";
 
 export type { GeneratedFile, BindingTarget } from "./types.js";
@@ -22,10 +18,6 @@ export { deduplicateFiles } from "./types.js";
 export { claudeCodeBinding } from "./claude-code.js";
 export { claudeWorkflowBinding } from "./claude-workflow.js";
 export { codexBinding } from "./codex.js";
-export { geminiCliBinding } from "./gemini-cli.js";
-export { copilotCliBinding } from "./copilot-cli.js";
-export { openClawBinding } from "./openclaw.js";
-export { kiroBinding } from "./kiro.js";
 export { cursorBinding } from "./cursor.js";
 
 /**
@@ -49,14 +41,16 @@ export function withoutMods(binding: BindingTarget): BindingTarget {
   };
 }
 
-/** All available binding targets, keyed by name. */
+const experimental = (b: BindingTarget): BindingTarget => ({ ...b, experimental: true });
+
+/**
+ * All available binding targets, keyed by name. Claude Code is the supported
+ * target; the others are experimental (0.10.0 removed gemini-cli, copilot-cli,
+ * openclaw and kiro).
+ */
 export const bindings: Record<string, BindingTarget> = {
   "claude-code": claudeCodeBinding,
-  "claude-workflow": withoutMods(claudeWorkflowBinding),
-  "codex": withoutMods(codexBinding),
-  "gemini-cli": withoutMods(geminiCliBinding),
-  "copilot-cli": withoutMods(copilotCliBinding),
-  "openclaw": withoutMods(openClawBinding),
-  "kiro": withoutMods(kiroBinding),
-  "cursor": withoutMods(cursorBinding),
+  "claude-workflow": experimental(withoutMods(claudeWorkflowBinding)),
+  "codex": experimental(withoutMods(codexBinding)),
+  "cursor": experimental(withoutMods(cursorBinding)),
 };

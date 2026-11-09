@@ -4035,7 +4035,7 @@ topology data-pipeline : [pipeline, fan-out] {
     description: "All binding targets and what they generate",
     content: () => `# bindings
 
-AgenTopology compiles to multiple target platforms via bindings. Each binding reads the parsed AST and generates platform-specific configuration files.
+AgenTopology compiles to platform files via bindings. Claude Code is the supported target; the others are experimental. Each binding reads the parsed AST and generates platform-specific configuration files.
 
 ## Available Bindings
 
@@ -4051,29 +4051,9 @@ AgenTopology compiles to multiple target platforms via bindings. Each binding re
 **Generates:** \`codex.yaml\`, agent configuration files
 **Description:** Generates Codex CLI configuration for OpenAI-powered agent workflows. Maps AgenTopology permissions to Codex approval modes (suggest, auto-edit, full-auto).
 
-### gemini-cli
+### Experimental
 
-**Target:** Google Gemini CLI
-**Generates:** \`.gemini/\` configuration directory, agent files
-**Description:** Generates Gemini CLI configuration. Maps tools to Gemini function declarations and supports Gemini-specific model identifiers.
-
-### copilot-cli
-
-**Target:** GitHub Copilot CLI
-**Generates:** \`.github/copilot/\` configuration
-**Description:** Generates GitHub Copilot CLI agent configuration. Maps AgenTopology concepts to Copilot's instruction and tool systems.
-
-### openclaw
-
-**Target:** OpenClaw framework
-**Generates:** OpenClaw project configuration
-**Description:** Generates configuration for the OpenClaw multi-agent framework. Supports OpenClaw's native agent orchestration model.
-
-### kiro
-
-**Target:** Anthropic Kiro
-**Generates:** \`.kiro/\` configuration directory with specs
-**Description:** Generates Kiro project configuration. Maps agents to Kiro specs with steering prompts and tool configurations.
+\`codex\`, \`cursor\` and \`claude-workflow\` are kept but experimental: they are not verified against their platform the way \`claude-code\` is. \`gemini-cli\`, \`copilot-cli\`, \`openclaw\` and \`kiro\` were removed in 0.10.0; use agentopology 0.9.x for them.
 
 ## Usage
 
