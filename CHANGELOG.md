@@ -2,7 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.9.0] - 2026-11-09
+
+**Breaking: a file with a field or block the parser does not read now fails `validate` (V102),
+and so does an agent's or gate's `behavior:` other than `advisory`/`blocking` (V103).** On 0.8.0
+those names were dropped in silence and validate passed. This release also carries the import fix
+(PR #27): import reads only what it needs on a repo root, always ends, and recovers the flow.
 
 ### [fix] An unknown field or block is an error, never dropped in silence
 
