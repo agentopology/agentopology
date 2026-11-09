@@ -245,13 +245,10 @@ An Agent SDK binding would generate `agents/writer.json`:
 | Binding | Status | Target | Description |
 |---------|--------|--------|-------------|
 | `claude-code` | **Stable** | Claude Code | Generates `.claude/agents/`, `.claude/settings.json`, `.mcp.json` — the event-driven HOST layer |
-| `claude-workflow` | **Stable** | Claude Workflow | Compiles the deterministic fan-out phases into `<topology>.workflow.js`, plus SEAM/README/LOSSY-REPORT companion files |
-| `codex` | **Stable** | Codex | Codex agent definitions and config |
-| `gemini-cli` | **Stable** | Gemini CLI | Gemini CLI agent definitions and config |
-| `copilot-cli` | **Stable** | GitHub Copilot CLI | Copilot CLI agent definitions and config |
-| `openclaw` | **Stable** | OpenClaw | soul.md, skill files, channel/gateway/workspace config |
-| `kiro` | **Stable** | Kiro | Kiro agent definitions and config |
-| `cursor` | **Stable** | Cursor | Cursor rules and agent config |
+| `claude-workflow` | Experimental | Claude Workflow | Compiles the deterministic fan-out phases into `<topology>.workflow.js`, plus SEAM/README/LOSSY-REPORT companion files |
+| `codex` | Experimental | Codex | Codex agent definitions and config |
+| `cursor` | Experimental | Cursor | Cursor rules and agent config |
+| `gemini-cli`, `copilot-cli`, `openclaw`, `kiro` | Removed in 0.10.0 | — | Use agentopology 0.9.x |
 | `agent-sdk` | Planned | Anthropic Agent SDK | Tool definitions and agent configs for the Agent SDK |
 | `e2b` | Planned | E2B | Sandbox configuration and tool registration |
 | `openai-swarm` | Planned | OpenAI Swarm | Swarm agent definitions and handoff logic |

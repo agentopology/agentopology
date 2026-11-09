@@ -50,12 +50,6 @@ export function syncFromPlatform(
     case "codex":
       prompts = extractCodexPrompts(files);
       break;
-    case "gemini-cli":
-      prompts = extractGeminiPrompts(files);
-      break;
-    case "copilot-cli":
-      prompts = extractCopilotPrompts(files);
-      break;
     default:
       throw new Error(`Unknown binding: ${binding}`);
   }
@@ -137,15 +131,6 @@ export const CLAUDE_CODE_STRUCTURAL_HEADINGS = [
   "## Scale",
 ];
 
-/** Known structural headings in Copilot .agent.md files. */
-export const COPILOT_STRUCTURAL_HEADINGS = [
-  "## Role",
-  "## Reads",
-  "## Writes",
-  "## Outputs",
-  "## Scale",
-];
-
 /**
  * Extract prompts from Codex AGENTS.md file.
  *
@@ -166,115 +151,6 @@ function extractCodexPrompts(files: PlatformFile[]): ExtractedPrompt[] {
     // Heading is the agent title — convert back to kebab-case id
     const agentId = heading.trim().toLowerCase().replace(/\s+/g, "-");
     const content = extractSubsectionContent(body, "#### Instructions");
-    if (content) {
-      prompts.push({ agentId, content });
-    }
-  }
-
-  return prompts;
-}
-
-/**
- * Extract prompts from Gemini CLI files.
- *
- * Finds the Gemini context file (`.gemini/CONTEXT.md` or legacy `GEMINI.md`),
- * splits agent sections under `## Agents` > `### AgentName`,
- * and extracts body content after metadata bullet points.
- */
-function extractGeminiPrompts(files: PlatformFile[]): ExtractedPrompt[] {
-  const prompts: ExtractedPrompt[] = [];
-
-  const geminiFile = files.find(
-    (f) => f.path.endsWith("GEMINI.md") || f.path === "GEMINI.md" ||
-           f.path.endsWith(".gemini/CONTEXT.md"),
-  );
-  if (!geminiFile) return prompts;
-
-  // Find the ## Agents section first
-  const agentsSection = extractSectionContent(geminiFile.content, "## Agents");
-  if (!agentsSection) return prompts;
-
-  // Split into per-agent sections by ### headings
-  const agentSections = splitByHeading(agentsSection, "### ");
-
-  for (const [heading, body] of agentSections) {
-    const agentId = heading.trim().toLowerCase().replace(/\s+/g, "-");
-
-    // Extract content that's not metadata bullets (lines starting with `- `)
-    // The prompt content is non-bullet text after the description/role paragraph
-    // and before the metadata bullets
-    const lines = body.split("\n");
-    const contentLines: string[] = [];
-    let foundBullets = false;
-    let inPromptBlock = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("- ") && !inPromptBlock) {
-        foundBullets = true;
-        continue;
-      }
-      // Skip empty lines before any content
-      if (!inPromptBlock && trimmed === "") continue;
-      // Once we've seen bullets, anything after is prompt content
-      if (foundBullets && trimmed !== "") {
-        inPromptBlock = true;
-      }
-      if (inPromptBlock) {
-        contentLines.push(line);
-      }
-    }
-
-    // If we didn't find content after bullets, try extracting the first
-    // non-bullet paragraph (before the bullets)
-    if (contentLines.length === 0) {
-      const preLines: string[] = [];
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("- ")) break;
-        if (trimmed === "" && preLines.length === 0) continue;
-        preLines.push(line);
-      }
-      // Only treat as prompt if it's more than a single short description line
-      if (preLines.length > 1) {
-        const content = preLines.join("\n").trim();
-        if (content) {
-          prompts.push({ agentId, content });
-        }
-      }
-    } else {
-      const content = contentLines.join("\n").trim();
-      if (content) {
-        prompts.push({ agentId, content });
-      }
-    }
-  }
-
-  return prompts;
-}
-
-/**
- * Extract prompts from Copilot CLI agent files.
- *
- * Files matching `.github/agents/<id>.agent.md` are parsed:
- * - Skip YAML frontmatter
- * - Look for `## Instructions` section
- */
-function extractCopilotPrompts(files: PlatformFile[]): ExtractedPrompt[] {
-  const prompts: ExtractedPrompt[] = [];
-
-  for (const file of files) {
-    const match = file.path.match(
-      /(?:^|[\\/])agents[\\/]([^\\/]+)\.agent\.md$/,
-    );
-    if (!match) continue;
-
-    const agentId = match[1];
-    const content = extractSectionUntilKnownHeading(
-      file.content,
-      "## Instructions",
-      COPILOT_STRUCTURAL_HEADINGS,
-    );
     if (content) {
       prompts.push({ agentId, content });
     }

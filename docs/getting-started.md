@@ -107,12 +107,8 @@ agentopology scaffold my-pipeline.at --target claude-code
 This produces agent configuration files, permission settings, MCP configs, and orchestrator logic for your chosen platform. The `--target` flag selects which binding to use.
 
 Available targets:
-- `claude-code` -- Claude Code agent files, settings, and MCP config
-- `codex` -- OpenAI Codex CLI configuration
-- `gemini-cli` -- Google Gemini CLI settings
-- `copilot-cli` -- GitHub Copilot CLI instructions
-- `openclaw` -- OpenClaw platform JSON
-- `kiro` -- Anthropic Kiro configuration
+- `claude-code` -- Claude Code agent files, settings, and MCP config (supported)
+- `codex`, `cursor`, `claude-workflow` -- experimental
 
 ## Visualize
 

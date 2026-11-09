@@ -6,7 +6,6 @@
 
 import type { PlatformFile } from "../sync/index.js";
 import { importClaudeCode } from "./claude-code.js";
-import { importOpenClaw } from "./openclaw.js";
 import { serializeAST } from "./serializer.js";
 import { flowReportLines, type FlowReport } from "./flow.js";
 
@@ -26,13 +25,9 @@ export function importFromPlatform(
   switch (binding) {
     case "claude-code":
       return importClaudeCodeWithReport(files, topologyName).source;
-    case "openclaw": {
-      const ast = importOpenClaw(files, topologyName);
-      return serializeAST(ast);
-    }
     default:
       throw new Error(
-        `Import not supported for binding: "${binding}". Currently supported: claude-code, openclaw`,
+        `Import not supported for binding: "${binding}". Currently supported: claude-code`,
       );
   }
 }
@@ -54,5 +49,4 @@ export function importClaudeCodeWithReport(
 export { flowReportLines, type FlowReport } from "./flow.js";
 export { readProject, readClaudeProject, ReadBudgetError, type Unread } from "./walk.js";
 export { importClaudeCode } from "./claude-code.js";
-export { importOpenClaw } from "./openclaw.js";
 export { serializeAST } from "./serializer.js";

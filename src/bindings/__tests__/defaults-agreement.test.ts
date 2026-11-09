@@ -75,17 +75,4 @@ describe("bindings agree with the spec's defaults table", () => {
     // DEFAULT, not the mapping.
     expect(toml!.content).toContain('approval_policy = "untrusted"');
   });
-
-  it("openclaw's `auto` fallback resolves to the same meaning as the spec", () => {
-    // openclaw falls back to the literal "auto", but its mapPermissions turns
-    // "auto" into "autonomous" — so it agrees with the spec despite the
-    // different literal. Asserted so a future refactor of the mapping cannot
-    // silently change the meaning.
-    const files = bindings["openclaw"].scaffold(parse(BARE));
-    const withPermissions = files.find((f) => f.content.includes("Permission model:"));
-    if (withPermissions) {
-      expect(withPermissions.content).toContain("autonomous");
-      expect(withPermissions.content).not.toContain("Permission model: supervised");
-    }
-  });
 });

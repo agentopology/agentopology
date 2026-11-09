@@ -47,10 +47,15 @@ export function deduplicateFiles(files: GeneratedFile[]): GeneratedFile[] {
 
 /** A binding target that can scaffold project structure from a TopologyAST. */
 export interface BindingTarget {
-  /** Machine-readable name (e.g. "claude-code", "codex", "gemini-cli"). */
+  /** Machine-readable name (e.g. "claude-code", "codex"). */
   name: string;
   /** Human-readable description of the target platform. */
   description: string;
+  /**
+   * Not a supported target: kept, but not verified against the platform the way
+   * claude-code is. `targets` labels it and scaffold warns.
+   */
+  experimental?: boolean;
   /** Generate all files for the target platform from a parsed topology. */
   scaffold(ast: TopologyAST): GeneratedFile[];
 }

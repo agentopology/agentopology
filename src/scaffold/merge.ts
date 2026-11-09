@@ -11,7 +11,6 @@
 import {
   extractSectionUntilKnownHeading,
   CLAUDE_CODE_STRUCTURAL_HEADINGS,
-  COPILOT_STRUCTURAL_HEADINGS,
 } from "../sync/index.js";
 import { hashContent } from "./manifest.js";
 import { fenceSpan } from "../bindings/lib/prompt-fence.js";
@@ -22,8 +21,6 @@ import { fenceSpan } from "../bindings/lib/prompt-fence.js";
  */
 function getStructuralHeadings(binding: string): string[] {
   switch (binding) {
-    case "copilot-cli":
-      return COPILOT_STRUCTURAL_HEADINGS;
     case "claude-code":
     default:
       return CLAUDE_CODE_STRUCTURAL_HEADINGS;

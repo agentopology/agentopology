@@ -27,14 +27,6 @@ export function getManifestPath(target: string): string {
       return join(".claude", MANIFEST_FILENAME);
     case "codex":
       return join(".codex", MANIFEST_FILENAME);
-    case "gemini-cli":
-      return join(".gemini", MANIFEST_FILENAME);
-    case "copilot-cli":
-      return join(".github", MANIFEST_FILENAME);
-    case "openclaw":
-      return join(".openclaw", MANIFEST_FILENAME);
-    case "kiro":
-      return join(".kiro", MANIFEST_FILENAME);
     default:
       // SDK bindings and unknown targets use root
       return MANIFEST_FILENAME;
