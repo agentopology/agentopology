@@ -77,6 +77,7 @@ import {
   parseOutputsBlock,
   dedentBlock,
 } from "./lexer.js";
+import { findUnknownNames } from "./known-fields.js";
 
 // Re-export AST types for convenience
 export type * from "./ast.js";
@@ -2603,8 +2604,14 @@ export function parse(source: string): TopologyAST {
     });
   }
 
+  // --- Names the parser does not read ---
+  // A field or block the grammar does not have was dropped with no message,
+  // and validate passed (N23). V102 names each one with its block.
+  const unknownNameErrors = findUnknownNames(topBody);
+
   // --- Assemble AST ---
   const ast: TopologyAST & {
+    _unknownNameErrors?: typeof unknownNameErrors;
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
     _misplacedBlockErrors?: typeof misplacedBlockErrors;
@@ -2668,6 +2675,9 @@ export function parse(source: string): TopologyAST {
   }
   if (blockFieldMisuseWarnings.length > 0) {
     ast._blockFieldMisuseWarnings = blockFieldMisuseWarnings;
+  }
+  if (unknownNameErrors.length > 0) {
+    ast._unknownNameErrors = unknownNameErrors;
   }
 
   // Attach source map for line number tracking in validation results.

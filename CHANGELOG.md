@@ -2,7 +2,34 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.9.0] - 2026-11-09
+
+**Breaking: a file with a field or block the parser does not read now fails `validate` (V102),
+and so does an agent's or gate's `behavior:` other than `advisory`/`blocking` (V103).** On 0.8.0
+those names were dropped in silence and validate passed. This release also carries the import fix
+(PR #27): import reads only what it needs on a repo root, always ends, and recovers the flow.
+
+### [fix] An unknown field or block is an error, never dropped in silence
+
+- **V102 (error).** Every field and block name in a node (orchestrator, agent, action, gate,
+  human, group), `meta`, a hook, job, artifact, tool or skill, and every topology section, must be
+  one the parser reads. A typo (`modle:` → "did you mean `model`?"), a field of another node type
+  (`produces:` on an action → "it is a field of agent") or a block the language does not have
+  (`contract c1 { }`) used to vanish from the AST while validate printed "All validation rules
+  passed" and scaffold dropped it. On 0.8.0, 15 of 17 probe cases were dropped this way.
+- **V103 (error).** An agent's or gate's `behavior:` must be `advisory` or `blocking`; any other
+  value was emitted into the scaffold unchecked.
+- **Breaking for files that relied on the silence.** A file with a name the parser ignored now
+  fails validate with exit 1. Words the language does not have yet (`serves`, `strength`,
+  `state`) are errors until they are added.
+- **The docs taught dropped forms.** `docs agent` listed 15 fields by their AST names
+  (`maxTurns`, `onFail`, ...), which the parser ignores; they are now the names you write
+  (`max-turns`, `on-fail`). `docs artifacts` showed `NAME { }`; the parser reads
+  `artifact NAME { }`. `kitchen-sink.at` and two examples carried such fields and are fixed
+  (an orchestrator `plan:` and an undeclared `hooks { PostToolUse { } }` that the binding
+  already synthesizes are removed).
+- Not checked yet (open findings N25, N26): an agent's `role:` is still not read, and V102 does
+  not look inside free-form blocks (`settings`, `env`, `memory`, `providers`, `flow`, ...).
 
 ### [fix] Import works on a repo root, and recovers the flow
 

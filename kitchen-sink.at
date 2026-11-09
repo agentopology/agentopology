@@ -218,9 +218,9 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     sandbox: docker
     background: true
     temperature: 0.1
-    maxTokens: 4096
+    max-tokens: 4096
     thinking: low
-    logLevel: debug
+    log-level: debug
     fallback-chain: [sonnet, haiku]
     outputs {
       severity: critical | major | minor
@@ -267,7 +267,7 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     on-fail: continue
     behavior: blocking
     join: all
-    outputFormat: json
+    output-format: json
     output-schema {
       priority: string
       affected: array of string
@@ -277,9 +277,9 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
       route: fix-now | investigate | defer
     }
     seed: 42
-    maxTurns: 10
+    max-turns: 10
     thinking: high
-    thinkingBudget: 8192
+    thinking-budget: 8192
     isolation: worktree
     prompt {
       You are the incident triager. Assess the detection report,
@@ -305,11 +305,11 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     timeout: 30m
     on-fail: fallback verifier
     thinking: high
-    thinkingBudget: 10000
-    maxTurns: 20
-    maxTokens: 16384
-    topP: 0.9
-    topK: 40
+    thinking-budget: 10000
+    max-turns: 20
+    max-tokens: 16384
+    top-p: 0.9
+    top-k: 40
     stop: ["DONE", "ABORT"]
     sandbox: network-only
     compensates: deploy-rollback
@@ -645,27 +645,27 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
   # --- Artifacts ---
 
   artifacts {
-    detection-report {
+    artifact detection-report {
       type: "json"
       path: "workspace/alerts/"
       retention: "30d"
     }
 
-    triage-report {
+    artifact triage-report {
       type: "json"
       path: "workspace/triage/"
       retention: "90d"
       depends-on: [detection-report]
     }
 
-    fix-log {
+    artifact fix-log {
       type: "markdown"
       path: "workspace/fixes/"
       retention: "90d"
       depends-on: [triage-report]
     }
 
-    post-mortem-doc {
+    artifact post-mortem-doc {
       type: "markdown"
       path: "workspace/reports/"
       retention: "1y"

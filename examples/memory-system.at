@@ -7,7 +7,6 @@ topology knowledge-assistant : [supervisor, human-gate] {
 
   orchestrator {
     model: opus
-    plan: auto
     handles: [research, answer]
   }
 

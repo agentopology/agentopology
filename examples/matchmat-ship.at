@@ -238,12 +238,6 @@ topology matchmat-ship : [pipeline, fan-out, blackboard, human-gate] {
   }
 
   # --- Hooks (host-layer concurrent observability — watch the Blackboard live) ---
-
-  hooks {
-    PostToolUse {
-      matcher: "Write"
-      type: command
-      command: "scripts/observe-blackboard.sh"
-    }
-  }
+  # The claude-code binding synthesizes the PostToolUse(Write) observe-blackboard
+  # hook for a hybrid topology, so none is declared here.
 }

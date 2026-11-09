@@ -7,7 +7,6 @@ topology memory-integration-test : [supervisor] {
 
   orchestrator {
     model: opus
-    plan: auto
     handles: [process]
   }
 

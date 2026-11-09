@@ -677,6 +677,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _misplacedBlockErrors?: ValidationResult[];
   _unknownMemorySubBlockWarnings?: ValidationResult[];
   _blockFieldMisuseWarnings?: ValidationResult[];
+  _unknownNameErrors?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
@@ -1236,6 +1237,40 @@ function v101RunMode(ast: TopologyAST): ValidationResult[] {
         message: `Agent "${agent.id}" is independent but runs inline, in its caller's context, where it reads the author's reasoning. Use runs: fork or runs: subagent.`,
       });
     }
+  }
+  return results;
+}
+
+/**
+ * V102: every field and block name in a checked block is one the parser reads.
+ *
+ * Anything else (a typo, a field of another node type, a block the language
+ * does not have) vanished from the AST while validate passed. Collected at
+ * parse time by findUnknownNames (src/parser/known-fields.ts).
+ */
+function v102KnownNames(ast: TopologyAST): ValidationResult[] {
+  return ((ast as TopologyASTWithParseErrors)._unknownNameErrors ?? []).map((r) =>
+    r.node && lookupLine(ast, r.node) !== undefined ? { ...r, line: lookupLine(ast, r.node) } : r
+  );
+}
+
+/**
+ * V103: an agent's or gate's `behavior` is `advisory` or `blocking`.
+ *
+ * Any other value was kept and emitted into the scaffold unchecked (N24).
+ */
+const BEHAVIORS = ["advisory", "blocking"];
+
+function v103BehaviorValue(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "agent" && node.type !== "gate") continue;
+    const behavior = (node as AgentNode | GateNode).behavior;
+    if (behavior === undefined || BEHAVIORS.includes(behavior)) continue;
+    results.push({
+      rule: "V103", level: "error", node: node.id, line: lookupLine(ast, node.id),
+      message: `${node.type === "agent" ? "Agent" : "Gate"} "${node.id}" has behavior: ${behavior} — it must be ${BEHAVIORS.join(" or ")}.`,
+    });
   }
   return results;
 }
@@ -3592,6 +3627,8 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v99ReferencesDeclared(ast),
     ...v100HookTypeFields(ast),
     ...v101RunMode(ast),
+    ...v102KnownNames(ast),
+    ...v103BehaviorValue(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
