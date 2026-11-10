@@ -44,7 +44,7 @@ import { isProjectPath, proseInRun, runParts, scriptNameFromRun } from "../parse
  * Convert .at MCP tool notation (mcp.server.method) to Claude Code format (mcp__server__method).
  * Non-MCP tool names pass through unchanged.
  */
-function convertMcpToolName(tool: string): string {
+export function convertMcpToolName(tool: string): string {
   if (!tool.startsWith("mcp.")) return tool;
   // mcp.server → mcp__server (every tool on it); mcp.server.* → mcp__server__*;
   // mcp.server.method_name → mcp__server__method_name. Only the first dot after
@@ -207,12 +207,12 @@ function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
  * - `none`: nothing in Claude Code marks the moment (inline delegation, or no
  *   agent on either side); the playbook runs the gate script.
  */
-type GateWiring =
+export type GateWiring =
   | { kind: "subagent-stop"; anchors: string[] }
   | { kind: "before-agent"; agents: string[] }
   | { kind: "none" };
 
-function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
+export function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
   if (getDelegationMode(ast) === "inline") return { kind: "none" };
   const afters = gateAnchors(gate, "after");
   if (afters.length > 0 && afters.every((a) => isRegisteredSubagentType(ast, a))) {
@@ -223,7 +223,7 @@ function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
 }
 
 /** Agents a human approval step stands before: its direct flow successors. */
-function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
+export function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
   if (getDelegationMode(ast) === "inline") return [];
   const out = ast.edges.filter((e) => e.from === human.id && !e.isError).map((e) => e.to);
   return [...new Set(out)].filter((id) => isRegisteredSubagentType(ast, id));

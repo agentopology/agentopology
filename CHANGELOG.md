@@ -14,6 +14,21 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] `guard <file> --check`: what a project enforces today
+
+Read-only. For every gate, approval step and deny/ask rule, it works out what the claude-code
+binding compiles it to, then looks in the project:
+- **refuse**: its hook or settings rule is on disk, anchored to `$CLAUDE_PROJECT_DIR`.
+- **none**: the binding generates one, but the project lacks it or names its script by a relative
+  path. The command exits 1.
+- **hope**: no Claude Code hook exists for it (an advisory gate, inline delegation, a gate between
+  two script steps); only the playbook's prose asks for it.
+
+Notes flag a check script that is a stub or missing (it blocks every run), a before-agent entry
+without `onFailure: "block"`, and an approval step that `claude -p` denies. It prints
+`enforcement: k of m steps refuse` and lists any hook in settings.json it can't tie to a step: a
+hand-built guard it can't credit yet. That waits for the strength and `guard:` citation work.
+
 ### [fix] Generated hooks run from any directory (conformance v0)
 
 Claude Code runs a hook in the session's current directory, not the project root, and that

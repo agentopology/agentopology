@@ -1,0 +1,229 @@
+/**
+ * `agentopology guard <file> --check`: what a project enforces today, read
+ * from disk. It writes nothing.
+ *
+ * For each gate, approval step and permission rule the topology declares, it
+ * works out what the claude-code binding compiles it to, then looks in the
+ * project for that piece: the settings.json hook entry, the scripts it runs,
+ * the permission rule. Each item gets a strength:
+ *
+ * - `refuse`: a hook or a settings rule stops the step, and it is on disk.
+ * - `none`: the binding compiles it to a hook or rule, but the project is
+ *   missing it (or names it by a relative path, which is skipped once Claude
+ *   changes directory). Nothing stops the step.
+ * - `hope`: the binding has no hook for it (an advisory gate, inline
+ *   delegation, or a gate with no agent on either side); only the playbook's
+ *   prose asks for it.
+ *
+ * @module
+ */
+
+import * as fs from "node:fs";
+import { join } from "node:path";
+import type { GateNode, HumanNode, TopologyAST } from "../parser/ast.js";
+import { gateAnchors } from "../parser/ast.js";
+import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
+import { approvalTargets, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { isStubContent } from "../bindings/lib/stub.js";
+import { unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+
+export type Strength = "refuse" | "none" | "hope";
+
+export interface GuardItem {
+  kind: "gate" | "human" | "permission";
+  id: string;
+  strength: Strength;
+  by: "hook" | "settings" | "prose";
+  /** Where the enforcement lives (event, matcher, script), or why there is none. */
+  where: string;
+  notes: string[];
+}
+
+export interface GuardReport {
+  items: GuardItem[];
+  /** Gates and approval steps: how many refuse, of how many declared. */
+  enforcement: { refuse: number; of: number };
+  /** Items the binding compiles to a hook or rule that the project lacks. */
+  missing: number;
+  /**
+   * Hooks in settings.json this check cannot tie to a step: hand-built
+   * guards. They may refuse a step this report calls hope or none; citing
+   * them from the topology (strength, guard:) comes later.
+   */
+  unattributed: string[];
+  verifiedOn: string;
+}
+
+interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string }> }
+
+function readJson(path: string): Record<string, any> | null {
+  try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
+}
+
+function readText(path: string): string | null {
+  try { return fs.readFileSync(path, "utf8"); } catch { return null; }
+}
+
+/** The command hooks on disk for an event whose command names `file`, under a matcher test. */
+function findHooks(settings: Record<string, any> | null, event: string, file: string, matcher: (m?: string) => boolean) {
+  const entries = (settings?.hooks?.[event] ?? []) as HookEntry[];
+  return entries.filter((e) => matcher(e.matcher)).flatMap((e) => (e.hooks ?? []).filter((h) => h.type === "command" && h.command?.includes(file)));
+}
+
+/** Notes on the check script a gate's `run:` names: unwritten or missing scripts block every run. */
+function checkScriptNotes(root: string, scriptsDir: string, run: string): string[] {
+  const { script } = runParts(run);
+  const path = script.startsWith("/") ? script : isProjectPath(script) ? join(root, script.replace(/^\.\//, "")) : join(root, scriptsDir, script.replace(/^.*\//, ""));
+  const text = readText(path);
+  const shown = path.startsWith(root) ? path.slice(root.length + 1) : path;
+  if (text === null) return [`its check script ${shown} is missing, so it blocks every run`];
+  if (isStubContent(text)) return [`its check script ${shown} is still a stub, so it blocks every run until it is written`];
+  return [];
+}
+
+/** Notes on a hook's command: a relative path is skipped off the project root. */
+function commandProblem(command = ""): string | null {
+  const loose = unanchoredScript(command);
+  return loose ? `the hook names ${loose} by a relative path, so it is skipped once Claude changes directory` : null;
+}
+
+export function checkGuards(ast: TopologyAST, root: string): GuardReport {
+  const name = ast.topology.name;
+  const scriptsDir = `.claude/skills/${name}/scripts`;
+  const settings = readJson(join(root, ".claude/settings.json"));
+  const beforeAgent = readText(join(root, scriptsDir, "before-agent.sh"));
+  const items: GuardItem[] = [];
+
+  /** The before-agent PreToolUse entry: present and anchored, with onFailure noted. */
+  const guardEntry = (): { ok: boolean; notes: string[] } => {
+    const hooks = findHooks(settings, "PreToolUse", "before-agent.sh", (m) => !!m && /\b(Agent|Task)\b/.test(m));
+    if (hooks.length === 0) return { ok: false, notes: ["no PreToolUse entry for before-agent.sh in .claude/settings.json"] };
+    const bad = commandProblem(hooks[0].command);
+    if (bad) return { ok: false, notes: [bad] };
+    if (beforeAgent === null) return { ok: false, notes: [`${scriptsDir}/before-agent.sh is missing`] };
+    const notes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+    return { ok: true, notes };
+  };
+
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    const base = { kind: "gate" as const, id: gate.id };
+    if (gate.behavior === "advisory") {
+      items.push({ ...base, strength: "hope", by: "prose", where: "advisory: it reports and never blocks", notes: [] });
+      continue;
+    }
+    if (!gate.run || !scriptNameFromRun(gate.run)) {
+      items.push({ ...base, strength: "hope", by: "prose", where: "its run: names no script", notes: [] });
+      continue;
+    }
+    const wiring = gateWiring(ast, gate);
+    if (wiring.kind === "none") {
+      const anchors = [...gateAnchors(gate, "after"), ...gateAnchors(gate, "before")].join(", ") || "nothing";
+      items.push({ ...base, strength: "hope", by: "prose", where: `no Claude Code event marks its moment (between ${anchors}); the playbook runs it`, notes: [] });
+      continue;
+    }
+    const scriptNotes = checkScriptNotes(root, scriptsDir, gate.run);
+    if (wiring.kind === "subagent-stop") {
+      const file = `gate-${gate.id}.sh`;
+      const problems: string[] = [];
+      for (const anchor of wiring.anchors) {
+        const hooks = findHooks(settings, "SubagentStop", file, (m) => m === anchor);
+        if (hooks.length === 0) problems.push(`no SubagentStop entry for ${anchor} running ${file} in .claude/settings.json`);
+        else { const bad = commandProblem(hooks[0].command); if (bad) problems.push(bad); }
+      }
+      if (readText(join(root, scriptsDir, file)) === null) problems.push(`${scriptsDir}/${file} is missing`);
+      const where = `SubagentStop on ${wiring.anchors.join(", ")} → ${file}`;
+      items.push(problems.length
+        ? { ...base, strength: "none", by: "hook", where, notes: problems }
+        : { ...base, strength: "refuse", by: "hook", where, notes: scriptNotes });
+      continue;
+    }
+    // before-agent
+    const where = `PreToolUse on launching ${wiring.agents.join(", ")} → before-agent.sh`;
+    const entry = guardEntry();
+    const problems = entry.ok ? [] : entry.notes;
+    if (entry.ok && !beforeAgent!.includes(`gate-${gate.id}.sh`)) problems.push(`before-agent.sh does not run gate-${gate.id}.sh`);
+    if (readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
+    items.push(problems.length
+      ? { ...base, strength: "none", by: "hook", where, notes: problems }
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...scriptNotes] });
+  }
+
+  for (const node of ast.nodes) {
+    if (node.type !== "human") continue;
+    const human = node as HumanNode;
+    const base = { kind: "human" as const, id: human.id };
+    const targets = approvalTargets(ast, human);
+    if (targets.length === 0) {
+      items.push({ ...base, strength: "hope", by: "prose", where: "no agent follows it, so no launch to ask before; the playbook asks", notes: [] });
+      continue;
+    }
+    const where = `PreToolUse on launching ${targets.join(", ")} → ask`;
+    const entry = guardEntry();
+    const problems = entry.ok ? [] : entry.notes;
+    if (entry.ok && !beforeAgent!.includes(`# approval step ${human.id}`)) problems.push(`before-agent.sh does not ask for ${human.id}`);
+    items.push(problems.length
+      ? { ...base, strength: "none", by: "hook", where, notes: problems }
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
+  }
+
+  for (const key of ["deny", "ask"] as const) {
+    for (const raw of (ast.settings?.[key] as string[] | undefined) ?? []) {
+      const rule = convertMcpToolName(raw);
+      const onDisk = ((settings?.permissions?.[key] ?? []) as string[]).includes(rule);
+      items.push({
+        kind: "permission",
+        id: `${key} ${rule}`,
+        strength: onDisk ? "refuse" : "none",
+        by: "settings",
+        where: `permissions.${key} in .claude/settings.json`,
+        notes: onDisk ? [] : [`.claude/settings.json has no ${key} rule ${rule}`],
+      });
+    }
+  }
+
+  // A hook is the topology's own when it runs a script from the skill's
+  // scripts folder, or when it is one the topology's hooks {} block compiles to.
+  const ours = `.claude/skills/${name}/scripts/`;
+  const declared = new Set<string>();
+  for (const [event, entries] of Object.entries(settingsHooksOf(ast))) {
+    for (const e of entries as HookEntry[]) for (const h of (e.hooks ?? []) as Array<Record<string, unknown>>) declared.add(`${event}|${h.command ?? h.prompt ?? h.url ?? ""}`);
+  }
+  const unattributed: string[] = [];
+  for (const [event, entries] of Object.entries((settings?.hooks ?? {}) as Record<string, HookEntry[]>)) {
+    for (const e of entries ?? []) for (const h of e.hooks ?? []) {
+      const handler = h as Record<string, unknown>;
+      if (h.command?.includes(ours) || declared.has(`${event}|${handler.command ?? handler.prompt ?? handler.url ?? ""}`)) continue;
+      unattributed.push(`${event}${e.matcher ? ` ${e.matcher}` : ""}: ${h.type === "command" ? h.command : h.type}`);
+    }
+  }
+
+  const steps = items.filter((i) => i.kind !== "permission");
+  return {
+    items,
+    enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
+    missing: items.filter((i) => i.strength === "none").length,
+    unattributed,
+    verifiedOn: VERIFIED_ON,
+  };
+}
+
+/** The report as terminal lines. */
+export function renderGuardReport(report: GuardReport): string[] {
+  const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
+  const width = Math.max(10, ...report.items.map((i) => label(i).length));
+  const lines: string[] = [];
+  for (const i of report.items) {
+    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(6)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" ? "✗" : "⚠"} ${n}`);
+  }
+  lines.push("");
+  lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
+  if (report.unattributed.length) {
+    lines.push(`${report.unattributed.length} hook(s) in .claude/settings.json are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none; this check can't tell yet:`);
+    for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
+  }
+  if (report.missing) lines.push(`${report.missing} item(s) the binding generates are missing from this project: rerun scaffold, or fix them by hand`);
+  return lines;
+}
