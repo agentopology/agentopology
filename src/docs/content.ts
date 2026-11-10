@@ -433,6 +433,11 @@ gates {
 | before | identifier | no (V13) | -- | Node this gate runs before |
 | run | string | no | -- | Script to execute for the check |
 | description | string | no | -- | What the gate checks, in words (prose goes here, never in \`run\`: V96) |
+| strength | refuse / detect / hope / none | no | -- | What stops the step, as written down (V104) |
+| by | code / hook / settings / gate | no | -- | Which mechanism refuses (V104) |
+| at | "path" or "path:line" | no | -- | The code that refuses, project-relative (V106) |
+| match | string | no | -- | Text expected near \`at\`; needs \`at\` (V106) |
+| bypass | string | no | -- | The declared way around it (an env switch, a flag) |
 | checks | string[] | no | -- | List of check identifiers |
 | retry | number | no | -- | Max retries on failure |
 | on-fail | string | no | "halt" | "halt" or "bounce-back" |
@@ -628,6 +633,9 @@ Attributes appear in brackets after the target. Order matters (V12):
 | wait | \`[wait 30s]\` | Timer delay before edge fires |
 | weight | \`[weight 0.7]\` | Routing probability (0-1) |
 | reflection | \`[reflection]\` | Marks an evaluator/reflection loop |
+| strength | \`[strength: none]\` | Enforcement written down: refuse, detect, hope or none (V104) |
+| at | \`[at: "story/SKILL.md"]\` | Where the enforcement or the hoping prose lives (V106) |
+| guard | \`[guard: lock-bash]\` or \`[guard: [a, b]]\` | Hooks or gates that guard this edge, by id (V105) |
 
 Multiple attributes can be combined:
 

@@ -773,6 +773,11 @@ export function parseGate(
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.timeout) node.timeout = fields.timeout;
   if (fields.description) node.description = unquote(fields.description);
+  if (fields.strength) node.strength = fields.strength;
+  if (fields.by) node.by = fields.by;
+  if (fields.at) node.at = unquote(fields.at);
+  if (fields.match) node.match = unquote(fields.match);
+  if (fields.bypass) node.bypass = unquote(fields.bypass);
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -838,6 +843,15 @@ export function parseGroup(
   return node;
 }
 
+/** An edge's enforcement attributes (strength, at, guard), only those written. */
+function enforcement(e: Partial<EdgeDef>): Partial<EdgeDef> {
+  return {
+    ...(e.strength ? { strength: e.strength } : {}),
+    ...(e.at !== undefined ? { at: e.at } : {}),
+    ...(e.guard ? { guard: [...e.guard] } : {}),
+  };
+}
+
 /**
  * Parse the `flow { ... }` block into an array of {@link EdgeDef}.
  *
@@ -860,12 +874,15 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let wait: string | undefined;
     let weight: number | undefined;
     let reflection: boolean | undefined;
+    let strength: string | undefined;
+    let at: string | undefined;
+    let guard: string[] | undefined;
     let flowPart = trimmed;
 
     // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
     // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?)\]\s*$/
     );
     // V92: two bracket groups on one edge. The grammar defines ONE annotation
     // with comma-separated attributes (`[when ..., max N]`). Written as
@@ -875,7 +892,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     // Count only ANNOTATION brackets. A fan-out list is also bracketed —
     // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
     // `] [` alone flagged valid topologies.
-    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection)\b/g;
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at)\b/g;
     const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
     if (annotationBrackets > 1 && _edgeAttributeErrors) {
       _edgeAttributeErrors.push({
@@ -902,7 +919,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -938,6 +955,16 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       // reflection
       if (/\breflection\b/.test(annotation)) {
         reflection = true;
+      }
+
+      // strength: refuse | detect | hope | none; at: "path:line"; guard: id | [id, id]
+      const strengthMatch = annotation.match(/\bstrength\s*:\s*([A-Za-z-]+)/);
+      if (strengthMatch) strength = strengthMatch[1];
+      const atMatch = annotation.match(/(?:^|,)\s*at\s*:\s*"([^"]*)"/);
+      if (atMatch) at = atMatch[1];
+      const guardMatch = annotation.match(/\bguard\s*:\s*(\[[^\]]*\]|[A-Za-z0-9_-]+)/);
+      if (guardMatch) {
+        guard = guardMatch[1].replace(/^\[|\]$/g, "").split(",").map((g) => g.trim()).filter(Boolean);
       }
     }
 
@@ -1015,6 +1042,9 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && wait) baseEdge.wait = wait;
       if (isLastSegment && weight !== undefined) baseEdge.weight = weight;
       if (isLastSegment && reflection) baseEdge.reflection = true;
+      if (isLastSegment && strength) baseEdge.strength = strength;
+      if (isLastSegment && at !== undefined) baseEdge.at = at;
+      if (isLastSegment && guard) baseEdge.guard = guard;
 
       if (fanOutMatch) {
         const targets = fanOutMatch[1].split(",").map((s) => s.trim());
@@ -1032,6 +1062,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
             ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
             ...(baseEdge.reflection ? { reflection: true } : {}),
+            ...enforcement(baseEdge),
           });
         }
       } else {
@@ -1048,6 +1079,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
           ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
           ...(baseEdge.reflection ? { reflection: true } : {}),
+          ...enforcement(baseEdge),
         });
       }
     }
@@ -1476,6 +1508,8 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     ...(fields.tool ? { tool: unquote(fields.tool) } : {}),
     ...(fields.async ? { async: fields.async === "true" } : {}),
     ...(fields.model ? { model: unquote(fields.model) } : {}),
+    ...(fields.strength ? { strength: fields.strength } : {}),
+    ...(fields.bypass ? { bypass: unquote(fields.bypass) } : {}),
   };
 }
 

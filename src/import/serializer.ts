@@ -310,6 +310,11 @@ function serializeGate(node: GateNode): string {
   if (node.behavior) lines.push(`      behavior: ${node.behavior}`);
   if (node.timeout) lines.push(`      timeout: ${q(node.timeout)}`);
   if (node.description) lines.push(`      description: "${node.description}"`);
+  if (node.strength) lines.push(`      strength: ${node.strength}`);
+  if (node.by) lines.push(`      by: ${node.by}`);
+  if (node.at) lines.push(`      at: ${q(node.at)}`);
+  if (node.match) lines.push(`      match: ${q(node.match)}`);
+  if (node.bypass) lines.push(`      bypass: ${q(node.bypass)}`);
   lines.push("    }");
   return lines.join("\n");
 }
@@ -356,6 +361,9 @@ function serializeEdge(edge: EdgeDef): string {
   if (edge.wait) attrs.push(`wait ${edge.wait}`);
   if (edge.weight !== undefined) attrs.push(`weight ${edge.weight}`);
   if (edge.reflection) attrs.push("reflection");
+  if (edge.strength) attrs.push(`strength: ${edge.strength}`);
+  if (edge.at !== undefined) attrs.push(`at: "${edge.at}"`);
+  if (edge.guard?.length) attrs.push(`guard: ${edge.guard.length === 1 ? edge.guard[0] : `[${edge.guard.join(", ")}]`}`);
 
   if (attrs.length > 0) {
     line += ` [${attrs.join(", ")}]`;
@@ -397,6 +405,8 @@ function serializeHook(hook: HookDef, pad: string): string[] {
   if (hook.async !== undefined) lines.push(`${pad}  async: ${hook.async}`);
   if (hook.model) lines.push(`${pad}  model: ${hook.model}`);
   if (hook.timeout) lines.push(`${pad}  timeout: ${hook.timeout}`);
+  if (hook.strength) lines.push(`${pad}  strength: ${hook.strength}`);
+  if (hook.bypass) lines.push(`${pad}  bypass: ${q(hook.bypass)}`);
   lines.push(`${pad}}`);
   return lines;
 }

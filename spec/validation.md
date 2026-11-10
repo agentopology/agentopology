@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 103 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 106 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -777,6 +777,9 @@ through the validator like any other rule.
 | V101 | error | An agent's `runs:` is `subagent`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
 | V102 | error | Every field and block name in a node, `meta`, a hook, job, artifact, tool or skill, and every topology section, is one the parser reads — a typo, a field of another node type or an unknown block vanished from the AST while validate passed. Contents of free-form blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, ...) are not checked yet |
 | V103 | error | An agent's or gate's `behavior:` is `advisory` or `blocking` — any other value was kept and emitted into the scaffold unchecked |
+| V104 | error | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` |
+| V105 | error | A flow edge's `guard:` names a hook in `hooks { }` or a gate in `gates { }`, so an edge is never credited with a refusal nothing provides |
+| V106 | error | An `at:` citation is a safe project-relative `"path"` or `"path:line"`, and a gate's `match:` has an `at:` to be looked for in. Whether the file, line and match text exist is read by `guard --check`, never by validate |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

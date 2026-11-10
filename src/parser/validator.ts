@@ -1275,6 +1275,92 @@ function v103BehaviorValue(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+const STRENGTHS = ["refuse", "detect", "hope", "none"];
+const ENFORCED_BY = ["code", "hook", "settings", "gate"];
+
+/**
+ * V104: `strength:` and `by:` use their words.
+ *
+ * strength says what stops a step (refuse, detect, hope, none) and by says
+ * which mechanism refuses (code, hook, settings, gate), on a gate, a hook or
+ * a flow edge. Any other word could not be read by guard --check or drawn.
+ */
+function v104StrengthWords(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (owner: string, field: "strength" | "by", value: string | undefined, nodeId?: string) => {
+    const words = field === "strength" ? STRENGTHS : ENFORCED_BY;
+    if (value === undefined || words.includes(value)) return;
+    results.push({
+      rule: "V104", level: "error",
+      message: `${owner} has ${field}: ${value} — it must be one of ${words.join(", ")}.`,
+      ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
+    });
+  };
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    check(`Gate "${gate.id}"`, "strength", gate.strength, gate.id);
+    check(`Gate "${gate.id}"`, "by", gate.by, gate.id);
+  }
+  for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, "strength", hook.strength);
+  for (const edge of ast.edges) check(`Edge ${edge.from} -> ${edge.to}`, "strength", edge.strength);
+  return results;
+}
+
+/**
+ * V105: an edge's `guard:` names a hook or gate this file declares.
+ *
+ * The guard is how the edge cites what refuses it. A misspelled name would
+ * credit the edge with a refusal nothing provides.
+ */
+function v105GuardResolves(ast: TopologyAST): ValidationResult[] {
+  const known = new Set<string>([
+    ...(ast.hooks ?? []).map((h) => h.name),
+    ...ast.nodes.filter((n) => n.type === "gate").map((n) => n.id),
+  ]);
+  const results: ValidationResult[] = [];
+  for (const edge of ast.edges) {
+    for (const g of edge.guard ?? []) {
+      if (known.has(g)) continue;
+      results.push({
+        rule: "V105", level: "error",
+        message: `Edge ${edge.from} -> ${edge.to} has guard: ${g}, but no hook or gate is named "${g}". A guard names a hook in hooks { } or a gate in gates { }.`,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * V106: an `at:` citation is a safe project-relative "path" or "path:line",
+ * and a `match:` has an `at:` to be looked for in.
+ *
+ * validate never reads the project: whether the file and line exist and the
+ * match text is there is guard --check's job.
+ */
+function v106CitationForm(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (owner: string, at: string | undefined, match: string | undefined, nodeId?: string) => {
+    const where = nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {};
+    if (match !== undefined && at === undefined) {
+      results.push({ rule: "V106", level: "error", message: `${owner} has match: but no at: — match is the text expected at the cited lines, so it needs at: "path:line".`, ...where });
+    }
+    if (at === undefined) return;
+    const path = /^(.*?)(?::\d+)?$/.exec(at)![1];
+    const why = path.includes(":")
+      ? `the part after ":" must be a line number, e.g. at: "pxframes.py:949"`
+      : unsafePathReason(path.replace(/^\.\//, ""));
+    if (why) results.push({ rule: "V106", level: "error", message: `${owner} at: "${at}" is not a project-relative "path" or "path:line" — ${why}.`, ...where });
+  };
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    check(`Gate "${gate.id}"`, gate.at, gate.match, gate.id);
+  }
+  for (const edge of ast.edges) check(`Edge ${edge.from} -> ${edge.to}`, edge.at, undefined);
+  return results;
+}
+
 /**
  * V98: a block that belongs inside a container is not written beside it.
  *
@@ -3629,6 +3715,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v101RunMode(ast),
     ...v102KnownNames(ast),
     ...v103BehaviorValue(ast),
+    ...v104StrengthWords(ast),
+    ...v105GuardResolves(ast),
+    ...v106CitationForm(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

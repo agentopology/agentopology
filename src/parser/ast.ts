@@ -96,6 +96,10 @@ export interface HookDef {
   flag?: string;
   /** Timeout, passed through as written (the Claude Code binding writes it to settings.json, which reads SECONDS). */
   timeout?: number;
+  /** What stops the step this hook guards: refuse | detect | hope | none (V104). */
+  strength?: string;
+  /** The declared way around it (an env switch, a flag). */
+  bypass?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -734,6 +738,16 @@ export interface GateNode extends BaseNode {
   timeout?: string;
   /** What the gate checks, in words (V96 sends prose here, out of `run`). */
   description?: string;
+  /** What stops the step: refuse | detect | hope | none (V104). */
+  strength?: string;
+  /** How it refuses: code | hook | settings | gate (V104). */
+  by?: string;
+  /** The code that refuses, "path" or "path:line", project-relative (V106). */
+  at?: string;
+  /** Text expected on the cited lines, so a refactor that removes the check is caught. */
+  match?: string;
+  /** The declared way around it (an env switch, a flag). */
+  bypass?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -867,6 +881,12 @@ export interface EdgeDef {
   weight?: number;
   /** Whether this back-edge represents an evaluator/reflection loop pattern. */
   reflection?: boolean;
+  /** What stops this step, written down: refuse | detect | hope | none (V104). */
+  strength?: string;
+  /** Where the enforcement (or the prose that hopes) lives, "path[:line]" (V106). */
+  at?: string;
+  /** Hooks or gates that guard this edge, by id (V105). */
+  guard?: string[];
 }
 
 // ---------------------------------------------------------------------------

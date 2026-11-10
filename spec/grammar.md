@@ -941,6 +941,11 @@ flow {
 | `[when x.y == z]` | Conditional: edge taken only when condition is true |
 | `[max N]` | Bounded loop: back-edge limited to N iterations |
 | `[per ticket]` | One instance per unit (currently only `ticket` is valid) |
+| `[strength: none]` | Enforcement written down: `refuse`, `detect`, `hope` or `none` (V104), so an absence is declared, not implied |
+| `[at: "story/SKILL.md"]` | Where the enforcement, or the prose that hopes, lives (V106) |
+| `[guard: lock-bash]` / `[guard: [a, b]]` | The hooks or gates that guard this edge, by id (V105) |
+
+**Enforcement.** `strength` says what stops a step: code or a hook **refuses** it, a critic **detects** it after the fact, prose **hopes**, or **none**. `by` names the mechanism (`code`, `hook`, `settings`, `gate`); `at` cites it, `match` is the text expected there, and `bypass` names the way around it. A gate or hook carries the evidence; an edge cites it with `guard:` or writes its strength down. Hooks take `strength` and `bypass`. validate checks the words and the references (V104 to V106) and never reads the project. Reading the cited files (does the line exist, is the `match` text there) is `guard --check`'s job, and lands with it in 0.10.0.
 
 **Chained flows:** `a -> b -> c [when x]` desugars to `a -> b` + `b -> c [when x]`. Edge attributes apply to the **last edge only**.
 
@@ -1004,6 +1009,11 @@ gates {
 | `on-fail` | `bounce-back` / `halt` | no | `halt` | Failure behavior |
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory gates never block |
 | `description` | string | no | -- | What the gate checks, in words. Prose goes here, never in `run` (V96) |
+| `strength` | `refuse` / `detect` / `hope` / `none` | no | -- | What stops the step, as written down (V104). See "Enforcement" below |
+| `by` | `code` / `hook` / `settings` / `gate` | no | -- | Which mechanism refuses (V104) |
+| `at` | `"path"` or `"path:line"` | no | -- | The code that refuses, project-relative (V106) |
+| `match` | string | no | -- | Text expected within 5 lines of `at`, so a refactor that removes the check is caught. Needs `at` (V106) |
+| `bypass` | string | no | -- | The declared way around it (an env switch, a flag) |
 
 ---
 
