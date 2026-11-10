@@ -231,7 +231,7 @@ function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
 
 /** The settings.json command for the topology's before-agent hook. */
 function beforeAgentCommand(ast: TopologyAST): string {
-  return `bash "$CLAUDE_PROJECT_DIR/.claude/skills/${ast.topology.name}/scripts/before-agent.sh"`;
+  return `bash ${skillScriptPath(ast.topology.name, "before-agent.sh")}`;
 }
 
 /**
@@ -691,7 +691,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         for (const hook of hooks) {
           const scriptName = scriptNameFromRun(hook.run);
           if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
-          const handler = hookHandler(hook, () => `bash .claude/skills/${topologyName}/scripts/${agent.id}-${scriptName}`);
+          const handler = hookHandler(hook, () => `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
           // JSON strings are valid YAML double-quoted scalars, so a regex
           // matcher or a prompt with quotes or colons can never break the file.
           hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
@@ -2372,6 +2372,16 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
 }
 
 /**
+ * A script this topology's skill scaffolds, as a hook command names it. A
+ * hook runs in the session's current directory, which moves when Claude
+ * changes directory, so the path is anchored to the project: a relative one
+ * is not found there, exits 127, and 127 does not block.
+ */
+export function skillScriptPath(topologyName: string, file: string): string {
+  return `"$CLAUDE_PROJECT_DIR/.claude/skills/${topologyName}/scripts/${file}"`;
+}
+
+/**
  * The shell command for a command hook's or gate's `run:`.
  *
  * A `run:` whose script (see runParts) is a project path names the user's own
@@ -2386,7 +2396,7 @@ export function hookCommand(run: string, topologyName: string): string {
   const { interpreter: named, script: first, args: rest } = runParts(run);
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");
-    return [named ?? "bash", `.claude/skills/${topologyName}/scripts/${base}`, ...rest].join(" ");
+    return [named ?? "bash", skillScriptPath(topologyName, base), ...rest].join(" ");
   }
   const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
   const where = first.startsWith("/")
@@ -2525,7 +2535,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (!hooksByEvent[eventName]) hooksByEvent[eventName] = [];
 
     const scriptName = `gate-${gate.id}.sh`;
-    const command = `bash .claude/skills/${topologyName}/scripts/${scriptName}`;
+    const command = `bash ${skillScriptPath(topologyName, scriptName)}`;
 
     // ONE ENTRY PER ANCHOR. A SubagentStop matcher is a STRING — an array would
     // land in settings.json, type-check clean through Record<string, unknown>,
@@ -3368,7 +3378,7 @@ function buildHybridObserveHook(
       hooks: [
         {
           type: "command",
-          command: `bash ${scriptPath}`,
+          command: `bash ${skillScriptPath(topologyName, "observe-blackboard.sh")}`,
         },
       ],
     },

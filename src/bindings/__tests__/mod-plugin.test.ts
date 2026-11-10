@@ -107,7 +107,7 @@ describe("claude-code: Mods become a plugin", () => {
   it("keeps Mods out of settings.json; the command hook stays there", () => {
     const hooks = JSON.parse(file(files, ".claude/settings.json")!.content).hooks;
     expect(Object.keys(hooks)).toEqual(["PreToolUse"]);
-    expect(hooks.PreToolUse[0].hooks[0]).toEqual({ type: "command", command: "bash .claude/skills/mini/scripts/gate.sh" });
+    expect(hooks.PreToolUse[0].hooks[0]).toEqual({ type: "command", command: 'bash "$CLAUDE_PROJECT_DIR/.claude/skills/mini/scripts/gate.sh"' });
     expect(JSON.stringify(hooks)).not.toContain("mod");
   });
 

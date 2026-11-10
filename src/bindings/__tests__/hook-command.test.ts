@@ -35,8 +35,8 @@ describe("hookCommand", () => {
   });
 
   it("keeps any other run: in the skill's scripts folder by basename, as before", () => {
-    expect(hookCommand("gate.sh", "mini")).toBe("bash .claude/skills/mini/scripts/gate.sh");
-    expect(hookCommand("scripts/post-write.sh", "mini")).toBe("bash .claude/skills/mini/scripts/post-write.sh");
+    expect(hookCommand("gate.sh", "mini")).toBe('bash "$CLAUDE_PROJECT_DIR/.claude/skills/mini/scripts/gate.sh"');
+    expect(hookCommand("scripts/post-write.sh", "mini")).toBe('bash "$CLAUDE_PROJECT_DIR/.claude/skills/mini/scripts/post-write.sh"');
   });
 });
 

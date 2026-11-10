@@ -17,4 +17,6 @@ describe("open findings (spec/testing.md)", () => {
   it.todo("[F4] Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word");
   it.todo("[N25] An agent's `role:` is documented but never read; the role text comes only from the roles block by agent id");
   it.todo("[N26] V102 does not look inside free-form or not-yet-listed blocks (prompt, extensions, settings, env, memory, providers, mcp-servers, interfaces, triggers, depth, flow, ...)");
+  it.todo("[N29] A hook `run:` that is a shell command (`exit 1`) scaffolds a stub named after its first word that exits 0, so the hook never blocks; only exit 2 blocks");
+  it.todo("[N30] A hook matcher in permission-rule syntax (`Bash(rm -rf *)`) never matches a tool name; the argument filter belongs in `if`");
 });

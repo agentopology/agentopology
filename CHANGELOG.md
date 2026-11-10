@@ -14,6 +14,21 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [fix] Generated hooks run from any directory (conformance v0)
+
+Claude Code runs a hook in the session's current directory, not the project root, and that
+directory moves when Claude changes directory. Every generated hook command except the
+before-agent guard named its script by a relative path (`bash .claude/skills/...`). Run from a
+subfolder, the script was not found, the shell exited 127, and 127 does not block, so the hook
+was skipped. That included every SubagentStop gate. Measured on all 13 corpus topologies: 16 hooks.
+- Every generated hook command is now `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<topology>/scripts/<file>"`.
+- New: `src/conformance/claude-code.ts` holds Claude Code's hook contract (33 events, matcher
+  support, handler fields, `onFailure`, the PreToolUse decision schema), checked against the docs
+  on Claude Code 2.1.319. `e2e/conformance.test.ts` scaffolds every example and fixture, checks
+  their hooks against it, and runs each command hook from a subfolder with the event's JSON on stdin.
+- Found and left open: a hook `run: "exit 1"` scaffolds a stub that exits 0 (N29), and a matcher
+  in permission-rule syntax, such as `Bash(rm -rf *)`, never matches a tool name (N30).
+
 ## [0.9.2] - 2026-11-09
 
 ### [fix] Generated gates fail closed
