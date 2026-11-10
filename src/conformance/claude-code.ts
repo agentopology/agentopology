@@ -5,7 +5,9 @@
  * Each fact below was checked against https://code.claude.com/docs/en/hooks.md
  * on 2026-11-10 (Claude Code 2.1.319 installed). When the contract moves,
  * this file moves with it, and the conformance tests say which generated
- * output stopped matching.
+ * output stopped matching. spec/claude-code/hooks-contract.json is the same
+ * page as a snapshot: e2e/contract-drift.test.ts holds these constants to it,
+ * and `npm run drift` holds it to the live page.
  *
  * @module
  */
@@ -32,6 +34,7 @@ export const HOOK_EVENTS: ReadonlySet<string> = new Set([
 export const NO_MATCHER_EVENTS: ReadonlySet<string> = new Set([
   "UserPromptSubmit", "PostToolBatch", "Stop", "TeammateIdle", "TaskCreated",
   "TaskCompleted", "WorktreeCreate", "WorktreeRemove", "MessageDisplay",
+  "CwdChanged", // in the per-event matcher table; missed until the snapshot test (N37)
 ]);
 
 /** Handler types and the field each one requires. */
