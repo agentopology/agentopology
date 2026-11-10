@@ -75,7 +75,7 @@ const UNIVERSAL_EVENTS: Record<string, string> = {
   Error: "PostToolUseFailure",
 };
 
-function claudeEvent(on: string): string {
+export function claudeEvent(on: string): string {
   return UNIVERSAL_EVENTS[on] ?? on;
 }
 

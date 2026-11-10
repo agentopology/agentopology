@@ -14,6 +14,18 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] `guard --check` reads citations and credits cited guards
+
+- A gate's `at: "path:line"` is checked on disk: the file exists, the line is in it, and `match:`
+  appears within 5 lines. A citation that no longer holds is `none`, and the command exits 1, so a
+  refactor that moves or removes the check is caught.
+- A gate the binding gives no hook (one between two script steps, for example) is credited by the
+  hook its edge cites, `[guard: lock-bash]`, when that hook is in `.claude/settings.json` and
+  declares `strength:`. The credit reads "cited, not proven", and its `bypass:` is printed.
+- An edge's written `[strength: none]` is reported as declared, never as a failure.
+- A declared hook's settings entry is attributed however its interpreter is spelled, so it is no
+  longer listed as a hand-built hook.
+
 ### [feature] Enforcement written in the file: `strength`, `by`, `at`, `match`, `bypass`, `guard`
 
 Optional and additive, so no existing file changes meaning.
