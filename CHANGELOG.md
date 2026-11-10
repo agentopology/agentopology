@@ -14,6 +14,17 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] Claude Code's hook contract as a snapshot, and a drift check
+
+- `spec/claude-code/hooks-contract.json` is extracted from the hooks reference page: 33 events,
+  10 with no matcher support, the matcher rules, the five handler types' fields, and each
+  "Requires Claude Code vX". `hooks-contract.2.1.295.json` is the same contract at the minimum
+  supported version, derived by dropping what needs a newer one.
+- Tests hold the code to the snapshot. They found `CwdChanged` missing from the no-matcher
+  events, where a matcher is silently ignored. They also check that every event and handler
+  field the binding writes exists at 2.1.295.
+- `npm run drift` fetches the page and exits 1 when the contract moved. `--write` accepts it.
+
 ### [fix] Hook matchers are checked the way Claude Code reads them; `if:` and `exit 2` work
 
 - **V107 (error):** a matcher that can never match. Examples: permission-rule syntax

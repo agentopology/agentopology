@@ -51,6 +51,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "drift": "npm run build && node scripts/claude-code-drift.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

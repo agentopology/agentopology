@@ -1,0 +1,142 @@
+{
+  "source": "https://code.claude.com/docs/en/hooks.md",
+  "fetched": "2026-11-10",
+  "claudeCode": "2.1.319",
+  "events": [
+    "SessionStart",
+    "Setup",
+    "InstructionsLoaded",
+    "UserPromptSubmit",
+    "UserPromptExpansion",
+    "MessageDisplay",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "PermissionDenied",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+    "TaskCreated",
+    "TaskCompleted",
+    "Stop",
+    "StopFailure",
+    "TeammateIdle",
+    "ConfigChange",
+    "CwdChanged",
+    "DirectoryAdded",
+    "FileChanged",
+    "WorktreeCreate",
+    "WorktreeRemove",
+    "PreCompact",
+    "PostCompact",
+    "PreModelSwitch",
+    "PostModelSwitch",
+    "SessionEnd",
+    "Elicitation",
+    "ElicitationResult"
+  ],
+  "eventRequires": {
+    "PreModelSwitch": "2.1.251",
+    "PostModelSwitch": "2.1.251"
+  },
+  "noMatcherEvents": [
+    "CwdChanged",
+    "MessageDisplay",
+    "PostToolBatch",
+    "Stop",
+    "TaskCompleted",
+    "TaskCreated",
+    "TeammateIdle",
+    "UserPromptSubmit",
+    "WorktreeCreate",
+    "WorktreeRemove"
+  ],
+  "handlerTypes": [
+    "command",
+    "http",
+    "mcp_tool",
+    "prompt",
+    "agent"
+  ],
+  "fields": {
+    "common": {
+      "type": {
+        "required": true
+      },
+      "if": {
+        "required": false
+      },
+      "timeout": {
+        "required": false
+      },
+      "statusMessage": {
+        "required": false
+      },
+      "once": {
+        "required": false
+      }
+    },
+    "command": {
+      "command": {
+        "required": true
+      },
+      "args": {
+        "required": false
+      },
+      "async": {
+        "required": false
+      },
+      "asyncRewake": {
+        "required": false
+      },
+      "shell": {
+        "required": false
+      },
+      "onFailure": {
+        "required": false,
+        "requires": "2.1.295"
+      }
+    },
+    "http": {
+      "url": {
+        "required": true
+      },
+      "headers": {
+        "required": false
+      },
+      "allowedEnvVars": {
+        "required": false
+      },
+      "onFailure": {
+        "required": false,
+        "requires": "2.1.295"
+      }
+    },
+    "mcp_tool": {
+      "server": {
+        "required": true
+      },
+      "tool": {
+        "required": true
+      },
+      "input": {
+        "required": false
+      }
+    },
+    "prompt": {
+      "prompt": {
+        "required": true
+      },
+      "model": {
+        "required": false
+      }
+    }
+  },
+  "matcherRules": [
+    "`\"*\"`, `\"\"`, or omitted → Match all",
+    "Only letters, digits, `_`, `-`, spaces, `,`, and `|` → Exact string, or list of exact strings separated by `|` or `,` with optional surrounding whitespace",
+    "Contains any other character → JavaScript regular expression, unanchored"
+  ]
+}
