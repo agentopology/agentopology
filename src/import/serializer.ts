@@ -397,6 +397,7 @@ function serializeHook(hook: HookDef, pad: string): string[] {
   lines.push(`${pad}hook ${hook.name} {`);
   lines.push(`${pad}  on: ${hook.on}`);
   if (hook.matcher) lines.push(`${pad}  matcher: ${q(hook.matcher)}`);
+  if (hook.if) lines.push(`${pad}  if: ${q(hook.if)}`);
   if (hook.run) lines.push(`${pad}  run: ${q(hook.run)}`);
   if (hook.type) lines.push(`${pad}  type: ${hook.type}`);
   if (hook.url) lines.push(`${pad}  url: ${q(hook.url)}`);

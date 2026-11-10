@@ -534,8 +534,9 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
 
     hook block-dangerous-commands {
       on: PreToolUse
-      matcher: "Bash(rm -rf *)"
-      run: "exit 1"
+      matcher: "Bash"
+      if: "Bash(rm -rf *)"
+      run: "exit 2"
       type: command
     }
 

@@ -164,6 +164,17 @@ describe("coverage: the .at against what is live", () => {
   });
 });
 
+describe("matcher gaps against the inventory's tool names", () => {
+  it("[N36] a refuse hook that guards a server is checked against every tool the inventory lists for it", () => {
+    const locked = parse(source.replace("    hook finished {", `    hook lock-search {\n      on: PreToolUse\n      matcher: "mcp__search__find"\n      run: "scripts/lock.sh"\n      strength: refuse\n    }\n    hook finished {`));
+    const items = [...collectInventory(root), { id: "mcp-tool:mcp__search__find", kind: "mcp-tool" as const }, { id: "mcp-tool:mcp__search__crawl", kind: "mcp-tool" as const }];
+    const r = coverage(locked, items, root);
+    // crawl comes from the inventory; find.all from the drafter's own tools: list.
+    expect(r.gaps.map((g) => g.tool).sort()).toEqual(["mcp__search__crawl", "mcp__search__find.all"]);
+    expect(ids(r.unmapped)).not.toContain("mcp-tool:mcp__search__crawl");
+  });
+});
+
 describe("the CLI", () => {
   it("[N34] [IV7] inventory <dir> prints JSON and writes nothing", () => {
     const before = fs.readdirSync(root, { recursive: true }).sort();

@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 106 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 109 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -780,6 +780,9 @@ through the validator like any other rule.
 | V104 | error | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` |
 | V105 | error | A flow edge's `guard:` names a hook in `hooks { }` or a gate in `gates { }`, so an edge is never credited with a refusal nothing provides |
 | V106 | error | An `at:` citation is a safe project-relative `"path"` or `"path:line"`, and a gate's `match:` has an `at:` to be looked for in. Whether the file, line and match text exist is read by `guard --check`, never by validate |
+| V107 | error | A hook matcher can match: not permission-rule syntax (`Bash(rm -rf *)`, which belongs in `if:`), not the dotted `mcp.server.*` form, not a bare `mcp__server` (which matches no tool), and a regex that compiles. A hook's `if:` sits on a tool event, the only ones Claude Code reads it on |
+| V108 | warning | A hook's `run: "exit N"` with N other than 0 or 2 does not block: only exit 2 blocks |
+| V109 | warning | A hook with `strength: refuse` on PreToolUse or PermissionRequest that matches a tool of an MCP server matches every tool of that server the topology names (`validate --inventory` adds the inventory's tool names) |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

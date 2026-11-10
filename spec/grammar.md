@@ -1190,6 +1190,7 @@ hooks {
 |-------|------|----------|---------|
 | `on` | hook-event | yes | -- |
 | `matcher` | string | no | -- |
+| `if` | permission rule | no (tool events only) | -- |
 | `run` | string | command, prompt, agent, mod | -- |
 | `type` | hook-type | no | `command` |
 | `url` | string | http | -- |
@@ -1209,6 +1210,16 @@ A `type: mod` hook is a TypeScript module loaded inside the engine (Claude
 Code function hooks). Its `on:` is an `engine-event` (V95); a command or
 prompt hook takes a PascalCase event. `flag:` names the env variable that
 switches the Mod on. Fields are one per line (V90).
+
+A `matcher` is tested against the tool name (or agent type, or path) alone, the
+way Claude Code reads it: only letters, digits, `_`, `-`, spaces, `,` and `|`
+mean an exact name or a list; any other character makes it an unanchored
+regex. An MCP tool is `mcp__<server>__<tool>`. Permission-rule syntax
+(`Bash(rm -rf *)`) goes in `if:`, which Claude Code reads on tool events only.
+V107 refuses a matcher that can never match and an `if:` that is never read.
+`run: "exit 2"` runs as written; only exit 2 blocks, and V108 warns on any
+other code. V109 warns when a hook with `strength: refuse` guards a server but
+its matcher misses one of the server's tools that the topology names.
 
 ---
 

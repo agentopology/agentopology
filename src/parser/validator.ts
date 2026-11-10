@@ -22,6 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
 import { proseInRun } from "./run.js";
+import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import type {
   HookDef,
@@ -1359,6 +1360,62 @@ function v106CitationForm(ast: TopologyAST): ValidationResult[] {
   }
   for (const edge of ast.edges) check(`Edge ${edge.from} -> ${edge.to}`, edge.at, undefined);
   return results;
+}
+
+/** Claude Code's event name for an .at hook event (AgentStop is Stop). */
+const hookEvent = (on: string) => (on === "AgentStop" ? "Stop" : on);
+
+/**
+ * V107: a matcher Claude Code would never match, and an `if:` it would never read.
+ *
+ * Matchers are exact names unless they hold a regex character, and are tested
+ * against the tool name alone (hooks docs, checked 2026-11-10). So
+ * `Bash(rm -rf *)` (N30), the dotted `mcp.chrome.*` and the bare server
+ * `mcp__chrome` never match anything, and a regex that does not compile never
+ * matches. `if:` is read on tool events only; elsewhere the hook never runs.
+ */
+function v107MatcherForm(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const { hook, where: name, agent: node } of allHooks(ast)) {
+    const owner = `Hook "${name}"`;
+    const where = node ? { node, line: lookupLine(ast, node) } : {};
+    const event = hookEvent(hook.on);
+    const why = matcherProblem(event, hook.matcher);
+    if (why) results.push({ rule: "V107", level: "error", message: `${owner} matcher ${why}.`, ...where });
+    if (hook.if && !TOOL_EVENTS.has(event)) {
+      results.push({ rule: "V107", level: "error", message: `${owner} has if: "${hook.if}" on ${hook.on}, which is not a tool event, so Claude Code never runs the hook; if: is read on ${[...TOOL_EVENTS].join(", ")}.`, ...where });
+    }
+  }
+  return results;
+}
+
+/**
+ * V108: a hook whose run: exits with a code that does not block (N29).
+ * Only exit 2 blocks; exit 1 is a non-blocking error and the action goes ahead.
+ */
+function v108ExitCode(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const { hook, where: name, agent: node } of allHooks(ast)) {
+    const owner = `Hook "${name}"`;
+    if ((hook.type ?? "command") !== "command") continue;
+    const code = /^\s*exit\s+(\d+)\s*$/.exec(hook.run ?? "")?.[1];
+    if (code === undefined || code === "0" || code === "2") continue;
+    results.push({ rule: "V108", level: "warning", message: `${owner} run: "exit ${code}" does not block: only exit 2 blocks, so the action goes ahead. Write exit 2 to refuse.`, ...(node ? { node, line: lookupLine(ast, node) } : {}) });
+  }
+  return results;
+}
+
+/**
+ * V109: a refuse hook that guards a server but misses one of its tools.
+ * The tools are the ones the topology names; `validate --inventory` adds the
+ * tool names the inventory lists.
+ */
+function v109MatcherGaps(ast: TopologyAST): ValidationResult[] {
+  return matcherGaps(ast as never).map((g) => ({
+    rule: "V109",
+    level: "warning" as const,
+    message: `Hook "${g.hook}" declares strength: refuse and guards server ${g.server}, but its matcher does not match ${g.tool}, so that tool is not refused.`,
+  }));
 }
 
 /**
@@ -3718,6 +3775,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v104StrengthWords(ast),
     ...v105GuardResolves(ast),
     ...v106CitationForm(ast),
+    ...v107MatcherForm(ast),
+    ...v108ExitCode(ast),
+    ...v109MatcherGaps(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

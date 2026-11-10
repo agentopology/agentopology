@@ -1530,7 +1530,7 @@ hooks {
     matcher: "pattern"
     run: "scripts/handler.sh"
     type: command
-    timeout: 5000
+    timeout: 5
   }
 }
 \`\`\`
@@ -1555,11 +1555,13 @@ agent my-agent {
 |-------|------|----------|---------|-------------|
 | name | identifier | yes | -- | Hook identifier |
 | on | string | yes | -- | Event name to listen for |
-| matcher | string | no | -- | Pattern to match against event payload |
-| run | string | yes | -- | Command or script to execute |
+| matcher | string | no | -- | Tool name (or agent type, path) the event must match: exact names (\`Edit\\|Write\`) or a regex (\`mcp__chrome__.*\`), never permission-rule syntax (V107) |
+| if | string | no | -- | Permission-rule filter on the tool's arguments, e.g. \`"Bash(rm -rf *)"\`; tool events only (V107) |
+| run | string | yes | -- | Command or script to execute; \`exit 2\` runs as written, and only exit 2 blocks (V108) |
 | type | string | no | command | "command", "prompt" or "mod" (V94) |
 | flag | string | no | -- | mod only: the env switch that turns the Mod on |
-| timeout | number | no | -- | Timeout in milliseconds |
+| timeout | number | no | -- | Timeout in seconds (Claude Code reads seconds) |
+| strength | string | no | -- | refuse, detect, hope or none (V104); a refuse hook is checked against every tool of a server it guards (V109) |
 | extensions | Record | no | -- | Binding-specific fields |
 
 ## Events (23 total, command and prompt hooks)
@@ -1625,8 +1627,9 @@ Mod's flag and \`--plugin-dir\`.
 hooks {
   hook block-dangerous-tools {
     on: PreToolUse
-    matcher: "Bash(rm -rf *)"
-    run: "exit 1"
+    matcher: "Bash"
+    if: "Bash(rm -rf *)"
+    run: "exit 2"
     type: command
   }
 
@@ -1643,7 +1646,8 @@ hooks {
 
 - \`type: command\` runs a shell command; \`type: prompt\` injects text into the agent's context; \`type: mod\` loads a module inside the engine.
 - Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90).
-- The \`matcher\` field filters events by payload pattern (e.g. tool name for ToolUse events).
+- The \`matcher\` is tested against the tool name alone. Letters, digits, \`_\`, \`-\`, spaces, \`,\` and \`|\` mean exact names; any other character makes it an unanchored regex. MCP tools are \`mcp__<server>__<tool>\`, so match a whole server with \`mcp__chrome__.*\` (\`mcp__chrome\` alone matches nothing). Filter on arguments with \`if:\`.
+- Only exit 2 blocks. Exit 1 is a non-blocking error and the action goes ahead.
 - Global hooks fire for all agents; per-agent hooks fire only for that agent.
 `,
   },

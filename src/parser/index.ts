@@ -1498,6 +1498,7 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     on: fields.on ?? "",
     matcher: fields.matcher ? unquote(fields.matcher) : "",
     run: fields.run ? unquote(fields.run) : "",
+    ...(fields.if ? { if: unquote(fields.if) } : {}),
     ...(fields.type ? { type: fields.type } : {}),
     ...(fields.flag ? { flag: unquote(fields.flag) } : {}),
     ...(fields.timeout
