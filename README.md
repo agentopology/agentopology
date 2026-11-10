@@ -649,6 +649,7 @@ agentopology visualize <file>             Interactive topology graph (+ cross-li
 agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-style graph (no Obsidian)
 agentopology export <file> --format <fmt> Export as markdown, mermaid, json, ascii, or brief
 agentopology info <file>                  Topology analysis and suggestions
+agentopology guard <file> --check [--dir <d>]   What the project enforces today: refuse / none / hope per gate
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
 ```

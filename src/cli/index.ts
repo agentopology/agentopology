@@ -49,6 +49,7 @@ import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
+import { checkGuards, renderGuardReport } from "../guard/check.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -84,6 +85,10 @@ ${c.bold("Usage:")}
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
+  agentopology guard <file.at> --check [--dir <project-dir>]
+                       Report which gates, approval steps and permission rules the
+                       project enforces today (refuse / none / hope). Writes nothing;
+                       exits 1 when something the binding generates is missing.
   agentopology stubs [<project-dir>]
   agentopology targets
   agentopology docs [topic]
@@ -173,6 +178,7 @@ interface ParsedArgs {
   log: string | undefined;
   task: string | undefined;
   root: string | undefined;
+  check: boolean;
   help: boolean;
 }
 
@@ -198,6 +204,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     log: undefined,
     task: undefined,
     root: undefined,
+    check: false,
     help: false,
   };
 
@@ -227,6 +234,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--prune") {
       result.prune = true;
+      i++;
+      continue;
+    }
+    if (arg === "--check") {
+      result.check = true;
       i++;
       continue;
     }
@@ -1151,6 +1163,17 @@ function cmdTargets(): void {
  * removing it (after implementing the script) flips the file out of stub
  * state. Designed for CI: exits 1 if stubs remain, 0 if clean.
  */
+function cmdGuardCheck(filePath: string, dirPath: string): void {
+  const source = fs.readFileSync(path.resolve(filePath), "utf-8");
+  const ast = parse(source);
+  const root = path.resolve(dirPath);
+  const report = checkGuards(ast, root);
+  console.log(`guard --check ${filePath} (project: ${dirPath})`);
+  console.log("");
+  for (const line of renderGuardReport(report)) console.log(line);
+  process.exit(report.missing > 0 ? 1 : 0);
+}
+
 function cmdStubs(dirPath: string): void {
   const resolved = path.resolve(dirPath);
   if (!fs.existsSync(resolved)) {
@@ -1324,6 +1347,19 @@ function main(): void {
     case "targets":
       cmdTargets();
       break;
+
+    case "guard": {
+      if (!args.file) {
+        console.error(c.red("Error: guard requires a file argument."));
+        process.exit(1);
+      }
+      if (!args.check) {
+        console.error(c.red("Error: only guard --check (read-only) exists so far; guard --target, which writes guards, comes later."));
+        process.exit(1);
+      }
+      cmdGuardCheck(args.file, args.dir ?? ".");
+      break;
+    }
 
     case "stubs": {
       // `agentopology stubs [<dir>]` — scan for unimplemented scaffold stubs.
