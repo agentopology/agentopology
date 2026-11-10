@@ -14,6 +14,23 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [fix] Hook matchers are checked the way Claude Code reads them; `if:` and `exit 2` work
+
+- **V107 (error):** a matcher that can never match. Examples: permission-rule syntax
+  (`Bash(rm -rf *)`; the argument filter belongs in the new `if:`), the dotted
+  `mcp.chrome.*`, a bare `mcp__chrome`, and a regex that does not compile. An `if:` on an event
+  that is not a tool event is also an error, because Claude Code never runs that hook.
+- **`if:` on hooks:** a permission-rule filter on the tool's arguments, written on the
+  settings.json handler and in agent frontmatter.
+- **`run: "exit 2"`** (any shell builtin) is written as the command itself. It used to scaffold
+  a stub named `exit` that exited 0, so the hook never blocked. **V108 (warning):** `exit 1`
+  does not block; only exit 2 does.
+- **V109 (warning):** a hook with `strength: refuse` guards an MCP server, but its matcher misses
+  a tool of that server the topology names. `validate --inventory` also checks the tool names
+  an owner lists in inventory.json (`"kind": "mcp-tool"`) and prints them as `matcher gaps`.
+- The hooks doc topic taught `matcher: "Bash(rm -rf *)"` and `run: "exit 1"`. Neither works:
+  the example now uses `matcher: "Bash"`, `if:` and `exit 2`, and gives the timeout in seconds.
+
 ### [feature] `inventory` and `validate --inventory`: how much of a project the .at accounts for
 
 - `agentopology inventory [<dir>]` prints, as JSON, what is live in a project: every file in the

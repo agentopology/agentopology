@@ -23,6 +23,9 @@ import { createHash } from "node:crypto";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
 import { runParts, isProjectPath } from "../parser/run.js";
+import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
+
+export { matcherGaps, type MatcherGap };
 
 /** h: the harness itself · instrument: what measures it · e: the environment (never required). */
 export type InventoryTag = "h" | "instrument" | "e";
@@ -30,7 +33,7 @@ export type InventoryTag = "h" | "instrument" | "e";
 export interface InventoryItem {
   /** Stable id, `<kind>:<name>`. */
   id: string;
-  kind: "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "script";
+  kind: "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script";
   /** Project-relative file, for things that are files. */
   path?: string;
   /** sha256 of the file's bytes. */
@@ -155,6 +158,8 @@ export interface CoverageReport {
   missing: MissingPointer[];
   /** Files scaffold would write that are not on disk: scaffold has not been run since. */
   notScaffolded: string[];
+  /** Tools a refuse hook leaves open on a server it guards, counting the inventory's tool names. */
+  gaps: MatcherGap[];
 }
 
 const norm = (p: string) => p.replace(/^\.\//, "").replace(/^\$\{?CLAUDE_PROJECT_DIR\}?\//, "");
@@ -233,6 +238,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
         return scripts.some((s) => command.includes(s));
       }
       case "mcp-server": return servers.has(i.id.slice(4));
+      // A tool is the server's, listed so matchers can be checked against it.
+      case "mcp-tool": return servers.has(i.id.slice(9).split("__")[1] ?? "");
       case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${i.id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
       default: {
         const p = norm(i.path ?? "");
@@ -252,7 +259,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
     .filter((d) => !fs.existsSync(path.join(root, d.path)))
     .filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
   const notScaffolded = [...genPaths].filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
-  return { total: counted.length, mapped: counted.length - unmapped.length, unmapped, external, missing, notScaffolded };
+  const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => i.id.slice(9)));
+  return { total: counted.length, mapped: counted.length - unmapped.length, unmapped, external, missing, notScaffolded, gaps };
 }
 
 /** The coverage section validate prints. */
@@ -266,6 +274,10 @@ export function renderCoverage(r: CoverageReport): string[] {
   if (r.missing.length) {
     lines.push(`  missing (${r.missing.length}), the .at points at these and they are not on disk:`);
     for (const m of r.missing) lines.push(`    ${m.path}  ← ${m.from}`);
+  }
+  if (r.gaps.length) {
+    lines.push(`  matcher gaps (${r.gaps.length}), a refuse hook guards the server but not this tool:`);
+    for (const g of r.gaps) lines.push(`    ${g.tool}  ← hook ${g.hook}`);
   }
   if (r.external.length) lines.push(`  external (${r.external.length}), tagged e, not required: ${r.external.map((i) => i.id).join(", ")}`);
   if (r.notScaffolded.length) lines.push(`  not scaffolded (${r.notScaffolded.length}): scaffold would write these and they are not on disk; rerun scaffold`);

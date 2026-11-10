@@ -87,3 +87,15 @@ export function proseInRun(run: string): string | null {
   if (scriptNameFromRun(text) === null) return "no script file name can be derived from it";
   return null;
 }
+
+/** Shell builtins a `run:` may be written as directly (`exit 2`, `true`). */
+const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
+
+/**
+ * Whether `run` is a shell command to run as written rather than a script:
+ * its first word is a builtin. `run: "exit 2"` used to scaffold a stub script
+ * named `exit` that exited 0, so a hook meant to block let everything through.
+ */
+export function isShellCommand(run: string | undefined): boolean {
+  return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
+}

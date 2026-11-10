@@ -73,6 +73,8 @@ export interface HookDef {
   on: string;
   /** Pattern to match against the event payload. */
   matcher: string;
+  /** Permission-rule filter on the tool's arguments (`Bash(rm -rf *)`); read on tool events only. */
+  if?: string;
   /** Command or script to run when the hook fires. */
   run: string;
   /**

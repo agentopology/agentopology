@@ -34,7 +34,7 @@ import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
-import { isProjectPath, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,18 +87,20 @@ function isCommandHook(hook: HookDef): boolean {
 /** A settings.json hook handler, in the shape Claude Code reads for its type. */
 function hookHandler(hook: HookDef, command: () => string): Record<string, unknown> {
   const timeout = hook.timeout ? { timeout: hook.timeout } : {};
+  // `if` filters on the tool's arguments (permission-rule syntax); a common handler field.
+  const filter = hook.if ? { if: hook.if } : {};
   switch (hook.type ?? "command") {
     // A prompt or agent hook asks a model (or a subagent) to judge the event;
     // its run: is the prompt.
     case "prompt":
     case "agent":
-      return { type: hook.type, prompt: hook.run, ...(hook.model ? { model: hook.model } : {}), ...timeout };
+      return { type: hook.type, prompt: hook.run, ...(hook.model ? { model: hook.model } : {}), ...timeout, ...filter };
     case "http":
-      return { type: "http", url: hook.url, ...timeout };
+      return { type: "http", url: hook.url, ...timeout, ...filter };
     case "mcp_tool":
-      return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout };
+      return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout, ...filter };
     default:
-      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout };
+      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter };
   }
 }
 
@@ -691,7 +693,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         for (const hook of hooks) {
           const scriptName = scriptNameFromRun(hook.run);
           if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
-          const handler = hookHandler(hook, () => `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
+          const handler = hookHandler(hook, () => isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
           // JSON strings are valid YAML double-quoted scalars, so a regex
           // matcher or a prompt with quotes or colons can never break the file.
           hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
@@ -2307,6 +2309,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // A Mod's run: is the user's TypeScript module — never overwrite it with a
     // bash stub. generateModPlugin imports it instead.
     if (!isCommandHook(hook)) continue; // a mod's module, or no script at all
+    if (isShellCommand(hook.run)) continue; // run as written: no script to stub
     const runPath = hook.run;
 
     // If the run path starts with '.' or '/' it is already project-relative —
@@ -2350,6 +2353,7 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
 
     for (const hook of agent.hooks) {
       if (!hook.run || !isCommandHook(hook)) continue;
+      if (isShellCommand(hook.run)) continue; // run as written: no script to stub
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
       files.push({
@@ -2393,6 +2397,7 @@ export function skillScriptPath(topologyName: string, file: string): string {
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
 export function hookCommand(run: string, topologyName: string): string {
+  if (isShellCommand(run)) return run.trim();
   const { interpreter: named, script: first, args: rest } = runParts(run);
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");

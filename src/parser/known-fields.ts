@@ -26,7 +26,7 @@ interface BlockSchema {
 const OPAQUE = null;
 
 const HOOK: BlockSchema = {
-  fields: ["on", "matcher", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass"],
+  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass"],
   blocks: { extensions: OPAQUE },
 };
 

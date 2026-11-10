@@ -139,3 +139,84 @@ export function checkStdout(event: string, stdout: string): string | null {
   if (event === "PreToolUse" && ("decision" in json)) return "top-level decision is deprecated on PreToolUse; use hookSpecificOutput.permissionDecision";
   return null;
 }
+
+/** Tool events: the ones a handler's `if` is read on, and whose matcher is a tool name. */
+export const TOOL_EVENTS: ReadonlySet<string> = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied"]);
+
+/** The characters that keep a matcher an exact name or list (FileChanged and StopFailure allow fewer). */
+function exactPath(event: string, matcher: string): boolean {
+  return event === "FileChanged" || event === "StopFailure" ? /^[A-Za-z0-9_|]*$/.test(matcher) : /^[A-Za-z0-9_\- ,|]*$/.test(matcher);
+}
+
+/**
+ * Whether `matcher` on `event` matches `value` (a tool name, an agent type, a
+ * path), as the hooks docs state it: `*`, "" and no matcher match all; only
+ * letters, digits, `_`, `-`, spaces, `,` and `|` mean an exact name or a list
+ * split on `|` or `,`; anything else is a JavaScript regex tested unanchored.
+ */
+export function matcherMatches(event: string, matcher: string | undefined, value: string): boolean {
+  const m = matcher ?? "";
+  if (m === "" || m === "*") return true;
+  if (exactPath(event, m)) return m.split(/[|,]/).map((x) => x.trim()).includes(value);
+  try { return new RegExp(m).test(value); } catch { return false; }
+}
+
+/** Why a matcher can never match what it seems meant to, or null. */
+export function matcherProblem(event: string, matcher: string | undefined): string | null {
+  const m = matcher ?? "";
+  if (m === "" || m === "*") return null;
+  const rule = m.match(/^([A-Za-z][A-Za-z0-9_]*)\((.*)\)$/);
+  if (rule) return `"${m}" is permission-rule syntax, but a matcher is tested against the tool name alone, so it never matches; write matcher: "${rule[1]}" and if: "${m}"`;
+  if (/^mcp\./.test(m)) {
+    const [server, ...tool] = m.slice(4).split(".");
+    const t = tool.join(".");
+    const fix = !t || t === "*" ? `mcp__${server}__.*` : `mcp__${server}__${t}`;
+    return `"${m}" is the .at's dotted form, but a hook sees mcp__<server>__<tool>, so it never matches; write matcher: "${fix}"`;
+  }
+  if (/^mcp__[A-Za-z0-9_-]+$/.test(m) && !/^mcp__[^_].*__/.test(m) && exactPath(event, m)) {
+    return `"${m}" names a server, not a tool, and is compared as an exact name, so it matches no tool; write matcher: "${m}__.*"`;
+  }
+  if (!exactPath(event, m)) {
+    try { new RegExp(m); } catch (err) { return `"${m}" is read as a regex and does not compile (${(err as Error).message}), so it never matches`; }
+  }
+  return null;
+}
+
+export interface MatcherGap {
+  /** The refuse hook whose matcher misses the tool. */
+  hook: string;
+  server: string;
+  /** The tool's name as a hook sees it, mcp__<server>__<tool>. */
+  tool: string;
+}
+
+interface GapHook { name: string; on: string; matcher?: string; strength?: string }
+interface GapSource { hooks?: GapHook[]; nodes: Array<{ type: string; tools?: string[]; hooks?: GapHook[] }> }
+
+/** `mcp.server.tool` as a hook sees it; null for wildcards and non-MCP tools. */
+function concreteMcp(tool: string): string | null {
+  const m = /^mcp\.([^.]+)\.(.+)$/.exec(tool);
+  if (!m || m[2].includes("*")) return null;
+  return `mcp__${m[1]}__${m[2]}`;
+}
+
+/**
+ * Tools a refuse hook leaves open on a server it guards. A PreToolUse or
+ * PermissionRequest hook that declares `strength: refuse` and matches at least
+ * one tool of a server is held to every tool of that server the topology names
+ * (an agent's `tools:`) or `extra` lists (the inventory's tool names). A tool
+ * it does not match is a gap: the lock is on the door but not on this window.
+ */
+export function matcherGaps(ast: GapSource, extra: string[] = []): MatcherGap[] {
+  const named = ast.nodes.flatMap((n) => (n.type === "agent" ? n.tools ?? [] : [])).map(concreteMcp).filter((t): t is string => !!t);
+  const tools = [...new Set([...named, ...extra.filter((t) => t.startsWith("mcp__"))])].sort();
+  const server = (t: string) => t.slice(5, t.indexOf("__", 5));
+  const hooks = [...(ast.hooks ?? []), ...ast.nodes.flatMap((n) => n.hooks ?? [])]
+    .filter((h) => h.strength === "refuse" && (h.on === "PreToolUse" || h.on === "PermissionRequest"));
+  const gaps: MatcherGap[] = [];
+  for (const h of hooks) {
+    const guarded = new Set(tools.filter((t) => matcherMatches(h.on, h.matcher, t)).map(server));
+    for (const t of tools) if (guarded.has(server(t)) && !matcherMatches(h.on, h.matcher, t)) gaps.push({ hook: h.name, server: server(t), tool: t });
+  }
+  return gaps;
+}
