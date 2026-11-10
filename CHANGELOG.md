@@ -14,6 +14,19 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] `inventory` and `validate --inventory`: how much of a project the .at accounts for
+
+- `agentopology inventory [<dir>]` prints, as JSON, what is live in a project: every file in the
+  .claude tree with its sha256, each settings.json hook handler, each .mcp.json server and each
+  package.json script. It writes nothing; save it as `inventory.json` and settle its tags by hand.
+- `agentopology validate <file> --inventory <dir or inventory.json> [--dir <project>]` adds
+  `coverage: k of n live things are in the .at`. A live thing is accounted for when scaffold
+  would write it from the .at, or the .at points at it (`file:`, a hook's or gate's `run:`, a
+  tool's `script:`, `at:`, an mcp server, a skill folder it declares). It lists what nothing
+  accounts for (unmapped, a warning) and what the .at points at that is not on disk (missing,
+  exit 1). Things tagged `e` (the platform, the machine; `settings.local.json` is suggested as
+  one) are counted apart.
+
 ### [feature] `guard --check` reads citations and credits cited guards
 
 - A gate's `at: "path:line"` is checked on disk: the file exists, the line is in it, and `match:`

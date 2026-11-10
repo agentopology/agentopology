@@ -19,4 +19,5 @@ describe("open findings (spec/testing.md)", () => {
   it.todo("[N26] V102 does not look inside free-form or not-yet-listed blocks (prompt, extensions, settings, env, memory, providers, mcp-servers, interfaces, triggers, depth, flow, ...)");
   it.todo("[N29] A hook `run:` that is a shell command (`exit 1`) scaffolds a stub named after its first word that exits 0, so the hook never blocks; only exit 2 blocks");
   it.todo("[N30] A hook matcher in permission-rule syntax (`Bash(rm -rf *)`) never matches a tool name; the argument filter belongs in `if`");
+  it.todo("[N35] A second top-level `hooks { }` block is dropped silently: only the first block's hooks are parsed and nothing warns");
 });

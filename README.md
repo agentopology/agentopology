@@ -650,6 +650,8 @@ agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-st
 agentopology export <file> --format <fmt> Export as markdown, mermaid, json, ascii, or brief
 agentopology info <file>                  Topology analysis and suggestions
 agentopology guard <file> --check [--dir <d>]   What the project enforces today: refuse / none / hope per gate
+agentopology inventory [<dir>]                  What is live in the project, as JSON (writes nothing)
+agentopology validate <file> --inventory <dir>  Coverage: live things the .at accounts for; unmapped, missing
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
 ```
