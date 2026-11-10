@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { checkGuards, type GuardItem } from "../../guard/check.js";
+import { validate } from "../../parser/validator.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(here, "fixtures/compile.at");
@@ -168,5 +169,175 @@ describe("guard --check from the CLI", () => {
     const r = cli("guard", FIXTURE, "--dir", root);
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/--check/);
+  });
+});
+
+/**
+ * Citations (N33). A hand-built guard can be credited when the file cites it:
+ * a gate with `by: code` and `at: "path:line"` is checked on disk (the file,
+ * the line, and the `match:` text within 5 lines), and a gate whose edge says
+ * `[guard: lock-bash]` is credited with that hook when the hook is in
+ * settings.json and declares its strength. A broken citation is `none` and
+ * exits 1; a strength the file writes down as `none` is reported, not failed.
+ */
+const CITED = `topology cited : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Citation probe"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [release, voice]
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Writes the post"
+    prompt {
+      Write the post.
+    }
+  }
+
+  human owner-yes {
+    description: "The owner approves the post"
+  }
+
+  action release {
+    kind: external
+    description: "Posts it"
+    commands: ["./media post"]
+  }
+
+  action voice {
+    kind: external
+    description: "Records the voice-over"
+    commands: ["./media voice"]
+  }
+
+  hooks {
+    hook lock-bash {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "python3 harness/lock/hook.py"
+      strength: refuse
+      bypass: "AT_UNLOCK"
+    }
+    hook note-bash {
+      on: PostToolUse
+      matcher: "Bash"
+      run: "python3 harness/lock/note.py"
+    }
+  }
+
+  gates {
+    gate lock-release {
+      after: owner-yes
+      before: release
+      run: "scripts/lock.sh"
+      on-fail: halt
+    }
+    gate lock-voice {
+      after: owner-yes
+      before: voice
+      run: "scripts/lock-voice.sh"
+      on-fail: halt
+    }
+    gate doctrine {
+      after: owner-yes
+      before: voice
+      strength: refuse
+      by: code
+      at: "tools/px.py:5"
+      match: "PX_ALLOW_NO_DOCTRINE"
+      bypass: "PX_ALLOW_NO_DOCTRINE"
+    }
+  }
+
+  flow {
+    writer -> owner-yes
+    owner-yes -> release [guard: lock-bash]
+    owner-yes -> voice [guard: note-bash]
+    writer -> voice [strength: none]
+  }
+}
+`;
+
+describe("guard --check credits what the file cites", () => {
+  const cast = parse(CITED);
+  let proj: string;
+  const put = (p: string, text: string) => { fs.mkdirSync(dirname(join(proj, p)), { recursive: true }); fs.writeFileSync(join(proj, p), text); };
+  const lines = (n: number, at: number, text: string) => Array.from({ length: n }, (_, i) => (i + 1 === at ? text : `line ${i + 1}`)).join("\n") + "\n";
+  const handBuilt = (hooks: Record<string, unknown>) => put(".claude/settings.json", JSON.stringify({ hooks }, null, 2));
+  const LOCK = { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: '/usr/bin/python3 "$CLAUDE_PROJECT_DIR/harness/lock/hook.py"' }] }] };
+  const find = (id: string) => checkGuards(cast, proj).items.find((i: GuardItem) => i.id === id)!;
+
+  beforeEach(() => {
+    proj = fs.mkdtempSync(join(os.tmpdir(), "at-guard-cite-"));
+    put("tools/px.py", lines(20, 7, 'if os.environ.get("PX_ALLOW_NO_DOCTRINE"): return'));
+    handBuilt(LOCK);
+  });
+  afterEach(() => fs.rmSync(proj, { recursive: true, force: true }));
+
+  it("[N33] the file parses and validates clean", () => {
+    expect(validate(cast).filter((r) => r.level === "error")).toEqual([]);
+  });
+
+  it("[N33] a by: code citation whose match text is within 5 lines: refuse by code, cited not proven, bypass named", () => {
+    const g = find("doctrine");
+    expect(g).toMatchObject({ kind: "gate", strength: "refuse", by: "code" });
+    expect(g.where).toContain("tools/px.py:5");
+    expect(g.notes.join(" ")).toMatch(/cited, not proven/);
+    expect(g.notes.join(" ")).toMatch(/bypass.*PX_ALLOW_NO_DOCTRINE/);
+  });
+
+  it("[N33] the match text moved away from the cited line: none, and exit-worthy", () => {
+    put("tools/px.py", lines(20, 15, 'if os.environ.get("PX_ALLOW_NO_DOCTRINE"): return'));
+    const g = find("doctrine");
+    expect(g.strength).toBe("none");
+    expect(g.notes.join(" ")).toMatch(/PX_ALLOW_NO_DOCTRINE.*not within 5 lines of line 5/);
+    expect(checkGuards(cast, proj).missing).toBeGreaterThan(0);
+  });
+
+  it("[N33] the cited file missing, or the line past its end: none", () => {
+    fs.rmSync(join(proj, "tools/px.py"));
+    expect(find("doctrine").notes.join(" ")).toMatch(/tools\/px\.py is missing/);
+    put("tools/px.py", lines(3, 2, "PX_ALLOW_NO_DOCTRINE"));
+    expect(find("doctrine").strength).toBe("none");
+    expect(find("doctrine").notes.join(" ")).toMatch(/has 3 lines/);
+  });
+
+  it("[N33] a gate with no hook of its own is credited by the guard its edge cites, when that hook is in settings.json", () => {
+    const g = find("lock-release");
+    expect(g).toMatchObject({ strength: "refuse", by: "hook" });
+    expect(g.where).toContain("lock-bash");
+    expect(g.notes.join(" ")).toMatch(/bypass.*AT_UNLOCK/);
+    expect(checkGuards(cast, proj).unattributed).toEqual([]);
+  });
+
+  it("[N33] the cited hook missing from settings.json: the gate stays hope, and says why", () => {
+    handBuilt({});
+    const g = find("lock-release");
+    expect(g.strength).toBe("hope");
+    expect(g.notes.join(" ")).toMatch(/lock-bash.*not in .claude\/settings.json/);
+  });
+
+  it("[N33] a cited hook that declares no strength is not credited", () => {
+    handBuilt({ ...LOCK, PostToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: 'python3 "$CLAUDE_PROJECT_DIR/harness/lock/note.py"' }] }] });
+    const g = find("lock-voice");
+    expect(g.strength).toBe("hope");
+    expect(g.notes.join(" ")).toMatch(/note-bash declares no strength/);
+  });
+
+  it("[N33] an edge whose strength is written down as none is reported as declared, and is not a failure", () => {
+    const e = find("writer -> voice");
+    expect(e).toMatchObject({ kind: "edge", strength: "none", by: "prose" });
+    expect(e.notes.join(" ")).toMatch(/declared/);
+    put("tools/px.py", lines(20, 7, 'if os.environ.get("PX_ALLOW_NO_DOCTRINE"): return'));
+    expect(checkGuards(cast, proj).missing).toBe(0);
+  });
+
+  it("[N33] the count reads the credit: 2 of 4 steps refuse (doctrine by code, lock-release by its cited hook)", () => {
+    expect(checkGuards(cast, proj).enforcement).toEqual({ refuse: 2, of: 4 });
   });
 });

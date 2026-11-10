@@ -20,20 +20,22 @@
 
 import * as fs from "node:fs";
 import { join } from "node:path";
-import type { GateNode, HumanNode, TopologyAST } from "../parser/ast.js";
+import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
-import { approvalTargets, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { approvalTargets, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 
-export type Strength = "refuse" | "none" | "hope";
+export type Strength = "refuse" | "detect" | "hope" | "none";
 
 export interface GuardItem {
-  kind: "gate" | "human" | "permission";
+  kind: "gate" | "human" | "permission" | "edge";
   id: string;
   strength: Strength;
-  by: "hook" | "settings" | "prose";
+  by: "hook" | "settings" | "code" | "gate" | "prose";
+  /** The file wrote this strength down itself (an edge's [strength: none]): reported, never a failure. */
+  declared?: boolean;
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
@@ -43,12 +45,12 @@ export interface GuardReport {
   items: GuardItem[];
   /** Gates and approval steps: how many refuse, of how many declared. */
   enforcement: { refuse: number; of: number };
-  /** Items the binding compiles to a hook or rule that the project lacks. */
+  /** Items the binding compiles to a hook or rule that the project lacks, and broken citations. */
   missing: number;
   /**
    * Hooks in settings.json this check cannot tie to a step: hand-built
-   * guards. They may refuse a step this report calls hope or none; citing
-   * them from the topology (strength, guard:) comes later.
+   * guards. They may refuse a step this report calls hope or none. Declare
+   * them in hooks { } with a strength and cite them with [guard: name].
    */
   unattributed: string[];
   verifiedOn: string;
@@ -79,6 +81,38 @@ function checkScriptNotes(root: string, scriptsDir: string, run: string): string
   if (text === null) return [`its check script ${shown} is missing, so it blocks every run`];
   if (isStubContent(text)) return [`its check script ${shown} is still a stub, so it blocks every run until it is written`];
   return [];
+}
+
+/** How many lines either side of a cited line the match text may sit. */
+const MATCH_WINDOW = 5;
+
+/**
+ * Check an `at: "path[:line]"` citation on disk: the file exists, the line is
+ * in it, and `match` appears within 5 lines of it (anywhere, with no line).
+ * Null when it holds; otherwise why not.
+ */
+function citationProblem(root: string, at: string, match?: string): string | null {
+  const m = /^(.*?)(?::(\d+))?$/.exec(at)!;
+  const [file, lineText] = [m[1].replace(/^\.\//, ""), m[2]];
+  const text = readText(join(root, file));
+  if (text === null) return `the cited file ${file} is missing`;
+  const all = text.split("\n");
+  if (text.endsWith("\n")) all.pop();
+  const line = lineText ? parseInt(lineText, 10) : undefined;
+  if (line !== undefined && (line < 1 || line > all.length)) return `${file} has ${all.length} lines, so line ${line} is not in it`;
+  if (match === undefined) return null;
+  const window = line === undefined ? all : all.slice(Math.max(0, line - 1 - MATCH_WINDOW), line + MATCH_WINDOW);
+  if (window.some((l) => l.includes(match))) return null;
+  return line === undefined
+    ? `"${match}" is not in ${file}`
+    : `"${match}" is not within ${MATCH_WINDOW} lines of line ${line} in ${file}; the check may have moved or gone`;
+}
+
+/** Whether a declared hook is in settings.json: same event, same matcher, a command naming its script. */
+function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): boolean {
+  const script = runParts(hook.run).script.replace(/^\.\//, "");
+  if (!script) return false;
+  return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher).length > 0;
 }
 
 /** Notes on a hook's command: a relative path is skipped off the project root. */
@@ -199,11 +233,75 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     }
   }
 
-  const steps = items.filter((i) => i.kind !== "permission");
+  // Citations. A gate that cites the code refusing it (by: code, at:) is
+  // checked on disk; a gate the binding gives no hook is credited by a guard
+  // its edge cites. A cited hook counts only when it is in settings.json and
+  // declares its strength: the file's own claim, cited, not proven.
+  const hooksByName = new Map((ast.hooks ?? []).map((h) => [h.name, h]));
+  const gateItem = (id: string) => items.find((i) => i.kind === "gate" && i.id === id);
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    const item = gateItem(gate.id)!;
+    if (gate.at) {
+      const bad = citationProblem(root, gate.at, gate.match);
+      const by = (gate.by ?? "code") as GuardItem["by"];
+      const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
+      if (item.strength !== "refuse" || bad) {
+        Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes });
+      } else {
+        item.notes.push(...notes.map((n) => `also ${n}`));
+      }
+    }
+  }
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    const item = gateItem(gate.id)!;
+    if (item.strength === "refuse" || item.strength === "none") continue;
+    const afters = gateAnchors(gate, "after");
+    const befores = gateAnchors(gate, "before");
+    const edges = ast.edges.filter((e) => e.guard?.length && afters.includes(e.from) && befores.includes(e.to));
+    const why: string[] = [];
+    const credited = () => (item.strength as Strength) === "refuse";
+    for (const edge of edges) {
+      for (const g of edge.guard!) {
+        const hook = hooksByName.get(g);
+        if (hook) {
+          if (!hook.strength) { why.push(`its edge cites ${g}, but ${g} declares no strength`); continue; }
+          if (!hookOnDisk(settings, hook)) { why.push(`its edge cites ${g}, but ${g} is not in .claude/settings.json`); continue; }
+          if (hook.strength === "refuse" || hook.strength === "detect") {
+            Object.assign(item, { strength: hook.strength, by: "hook", where: `${hook.on}${hook.matcher ? ` ${hook.matcher}` : ""} hook ${g}, cited on ${edge.from} -> ${edge.to}`, notes: ["cited, not proven", ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+          }
+        } else {
+          const other = gateItem(g);
+          if (other?.strength === "refuse") Object.assign(item, { strength: "refuse", by: "gate", where: `gate ${g}, cited on ${edge.from} -> ${edge.to}`, notes: [`as strong as gate ${g}`] });
+        }
+        if (credited()) break;
+      }
+      if (credited()) break;
+    }
+    if (!credited() && why.length) item.notes.push(...why);
+  }
+  for (const edge of ast.edges) {
+    if (!edge.strength) continue;
+    items.push({
+      kind: "edge", id: `${edge.from} -> ${edge.to}`, strength: edge.strength as Strength, by: "prose", declared: true,
+      where: edge.at ? `as written, at ${edge.at}` : "as written in the flow",
+      notes: [`declared in the file${edge.strength === "none" ? ": nothing stops this step, and the file says so" : ""}`],
+    });
+  }
+  // A declared hook's settings entry is the topology's own, however its interpreter is spelled.
+  for (let i = unattributed.length - 1; i >= 0; i--) {
+    const u = unattributed[i];
+    if ((ast.hooks ?? []).some((h) => { const sc = runParts(h.run).script.replace(/^\.\//, ""); return !!sc && u.startsWith(claudeEvent(h.on)) && u.includes(sc); })) unattributed.splice(i, 1);
+  }
+
+  const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none").length,
+    missing: items.filter((i) => i.strength === "none" && !i.declared).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
   };
@@ -216,14 +314,14 @@ export function renderGuardReport(report: GuardReport): string[] {
   const lines: string[] = [];
   for (const i of report.items) {
     lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(6)}  by: ${i.by.padEnd(8)}  ${i.where}`);
-    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" ? "✗" : "⚠"} ${n}`);
+    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
   lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
   if (report.unattributed.length) {
-    lines.push(`${report.unattributed.length} hook(s) in .claude/settings.json are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none; this check can't tell yet:`);
+    lines.push(`${report.unattributed.length} hook(s) in .claude/settings.json are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none. Declare them in hooks { } with a strength and cite them on the edge with [guard: name]:`);
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
-  if (report.missing) lines.push(`${report.missing} item(s) the binding generates are missing from this project: rerun scaffold, or fix them by hand`);
+  if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
   return lines;
 }
