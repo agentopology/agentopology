@@ -22,6 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
+import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
@@ -50,6 +51,7 @@ import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -77,7 +79,13 @@ ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
-  agentopology validate <file.at>
+  agentopology validate <file.at> [--inventory <project-dir|inventory.json>] [--dir <project-dir>]
+                       With --inventory: how many live things in the project the .at
+                       accounts for (unmapped warns), and what it points at that is not
+                       on disk (missing, exits 1).
+  agentopology inventory [<project-dir>]
+                       Print the project's live things (the .claude tree, settings hooks,
+                       .mcp.json servers, package.json scripts) as JSON. Writes nothing.
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--allow-invalid] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize <file.at> [--output <dir>]
@@ -179,6 +187,7 @@ interface ParsedArgs {
   task: string | undefined;
   root: string | undefined;
   check: boolean;
+  inventory: string | undefined;
   help: boolean;
 }
 
@@ -205,6 +214,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     task: undefined,
     root: undefined,
     check: false,
+    inventory: undefined,
     help: false,
   };
 
@@ -240,6 +250,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--check") {
       result.check = true;
       i++;
+      continue;
+    }
+    if (arg === "--inventory" && i + 1 < args.length) {
+      result.inventory = args[i + 1];
+      i += 2;
       continue;
     }
     if (arg === "--all") {
@@ -324,7 +339,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdValidate(filePath: string): void {
+function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   const source = readFile(filePath);
 
   let ast;
@@ -341,10 +356,12 @@ function cmdValidate(filePath: string): void {
   console.log("");
 
   const results = validate(ast);
+  const covered = inventory ? printCoverage(ast, inventory, dir) : true;
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
+    if (!covered) process.exit(1);
     return;
   }
 
@@ -369,9 +386,38 @@ function cmdValidate(filePath: string): void {
 
   printLessons(results.map((r) => r.rule));
 
-  if (errors.length > 0) {
+  if (errors.length > 0 || !covered) {
     process.exit(1);
   }
+}
+
+/**
+ * The --inventory section: a directory is collected now, a file is a saved
+ * inventory.json (its tags settled by the owner). Missing paths are resolved
+ * against --dir, else the directory given, else the current directory.
+ * Returns false when something the .at points at is missing.
+ */
+function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boolean {
+  const target = path.resolve(inventory);
+  if (!fs.existsSync(target)) {
+    console.error(c.red(`Error: --inventory ${inventory} not found.`));
+    process.exit(1);
+  }
+  const isDir = fs.statSync(target).isDirectory();
+  const root = path.resolve(dir ?? (isDir ? target : "."));
+  let items: InventoryItem[];
+  if (isDir) items = collectInventory(target);
+  else {
+    try { items = JSON.parse(fs.readFileSync(target, "utf-8")).items; } catch (err) {
+      console.error(c.red(`Error: ${inventory} is not an inventory.json (${(err as Error).message}).`));
+      process.exit(1);
+    }
+    if (!Array.isArray(items)) { console.error(c.red(`Error: ${inventory} has no items list.`)); process.exit(1); }
+  }
+  const r = coverage(ast, items, root);
+  for (const line of renderCoverage(r)) console.log(`  ${line}`);
+  console.log("");
+  return r.missing.length === 0;
 }
 
 /**
@@ -1244,7 +1290,11 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file);
+      cmdValidate(args.file, args.inventory, args.dir);
+      break;
+
+    case "inventory":
+      console.log(JSON.stringify({ version: 1, items: collectInventory(path.resolve(args.file ?? args.dir ?? ".")) }, null, 2));
       break;
 
     case "scaffold":
