@@ -14,6 +14,18 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] Enforcement written in the file: `strength`, `by`, `at`, `match`, `bypass`, `guard`
+
+Optional and additive, so no existing file changes meaning.
+- A gate takes `strength: refuse | detect | hope | none`, `by: code | hook | settings | gate`,
+  `at: "path:line"` (the code that refuses), `match:` (the text expected there) and `bypass:`.
+- A hook takes `strength` and `bypass`.
+- A flow edge takes `[strength: none]`, `[at: "story/SKILL.md"]` and `[guard: lock-bash]` or
+  `[guard: [a, b]]`, alone or after `when`. An absence of enforcement can now be declared.
+- New rules (106 in all): **V104**, the words; **V105**, a `guard:` names a declared hook or gate;
+  **V106**, `at:` is a safe project-relative `path[:line]`, and `match:` needs an `at:`.
+  validate never reads the project; checking the cited lines is `guard --check`'s job, which comes next.
+
 ### [feature] `guard <file> --check`: what a project enforces today
 
 Read-only. For every gate, approval step and deny/ask rule, it works out what the claude-code
