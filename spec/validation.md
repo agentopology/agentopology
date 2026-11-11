@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 109 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 112 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -698,7 +698,7 @@ through the validator like any other rule.
 | V22 | error/warning | Every model in a fallback-chain should exist in at least one provider's models list |
 | V23 | error/warning | Duplicate top-level singleton sections |
 | V24 | error/warning | Unknown sub-blocks in the `memory` section |
-| V25 | error/warning | `on-fail: bounce-back` enforcement depends on the gate's `after` target |
+| V25 | error/warning | `on-fail: bounce-back` enforcement depends on the gate's `after` target (a gate before an action with `commands:` is compiled to before-action.sh and does not warn) |
 | V26 | error/warning | `action.kind` must be one of the allowed values |
 | V27 | error/warning | `agent.permissions` should be one of the known values |
 | V28 | error/warning | `metering.format` must be one of the allowed values |
@@ -783,6 +783,9 @@ through the validator like any other rule.
 | V107 | error | A hook matcher can match: not permission-rule syntax (`Bash(rm -rf *)`, which belongs in `if:`), not the dotted `mcp.server.*` form, not a bare `mcp__server` (which matches no tool), and a regex that compiles. A hook's `if:` sits on a tool event, the only ones Claude Code reads it on |
 | V108 | warning | A hook's `run: "exit N"` with N other than 0 or 2 does not block: only exit 2 blocks |
 | V109 | warning | A hook with `strength: refuse` on PreToolUse or PermissionRequest that matches a tool of an MCP server matches every tool of that server the topology names (`validate --inventory` adds the inventory's tool names) |
+| V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
+| V111 | error | An action's `unit-from` is not a valid regex, or has no capture group |
+| V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

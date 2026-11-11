@@ -34,6 +34,7 @@ import type {
   MeteringDef,
   CheckpointDef,
   ArtifactDef,
+  RecordDef,
   ParamDef,
   PromptVariant,
   StoreNode,
@@ -294,6 +295,7 @@ function serializeAction(node: ActionNode): string {
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.join) lines.push(`    join: ${node.join}`);
+  if (node.unitFrom) lines.push(`    unit-from: "${node.unitFrom}"`);
   lines.push("  }");
   return lines.join("\n");
 }
@@ -315,6 +317,7 @@ function serializeGate(node: GateNode): string {
   if (node.at) lines.push(`      at: ${q(node.at)}`);
   if (node.match) lines.push(`      match: ${q(node.match)}`);
   if (node.bypass) lines.push(`      bypass: ${q(node.bypass)}`);
+  if (node.ledger) lines.push(`      ledger: ${node.ledger}`);
   lines.push("    }");
   return lines.join("\n");
 }
@@ -819,6 +822,14 @@ function serializeArtifacts(artifacts: ArtifactDef[]): string | null {
   return lines.join("\n");
 }
 
+function serializeRecords(records: RecordDef[] | undefined): string | null {
+  if (!records?.length) return null;
+  const lines: string[] = ["  records {"];
+  for (const r of records) lines.push(`    record ${r.id} { path: "${r.path}" }`);
+  lines.push("  }");
+  return lines.join("\n");
+}
+
 function serializeParams(params: ParamDef[]): string | null {
   if (params.length === 0) return null;
   const lines: string[] = ["  params {"];
@@ -1072,6 +1083,13 @@ export function serializeAST(ast: TopologyAST): string {
   if (artifacts) {
     sections.push("");
     sections.push(artifacts);
+  }
+
+  // Records
+  const records = serializeRecords(ast.records);
+  if (records) {
+    sections.push("");
+    sections.push(records);
   }
 
   // Interface endpoints

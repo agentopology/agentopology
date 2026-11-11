@@ -423,6 +423,17 @@ export interface RetrievalNode {
 // Artifact / asset lineage
 // ---------------------------------------------------------------------------
 
+/**
+ * A record in the top-level `records` block: a project-relative JSON Lines
+ * file a step's own script appends to. agentopology only reads it.
+ * (`append-only` and `written-by` are reserved, not implemented.)
+ */
+export interface RecordDef {
+  id: string;
+  /** Project-relative path; may contain `{unit}`. */
+  path: string;
+}
+
 /** An artifact definition in the top-level `artifacts` block. */
 export interface ArtifactDef {
   /** Artifact identifier. */
@@ -553,6 +564,12 @@ export interface ActionNode extends BaseNode {
   onFail?: string;
   /** Join semantics for fan-in: "all" | "any" | "all-done" | "none-failed". */
   join?: string;
+  /**
+   * Regex with one capture group that reads the unit (an episode id, a ticket)
+   * out of the command line, e.g. `./tool publish (\S+)`. A gate before this
+   * action checks its ledger for that unit.
+   */
+  unitFrom?: string;
 }
 
 /** An agent node. */
@@ -750,6 +767,12 @@ export interface GateNode extends BaseNode {
   match?: string;
   /** The declared way around it (an env switch, a flag). */
   bypass?: string;
+  /**
+   * Record id of the ledger a gate before an action reads: the step in `after:`
+   * must have an ok line for the unit. Omitted, a topology with exactly one
+   * record uses that record.
+   */
+  ledger?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -1078,6 +1101,8 @@ export interface TopologyAST {
   checkpoint: CheckpointDef | null;
   /** Artifact definitions from the top-level `artifacts` block. */
   artifacts: ArtifactDef[];
+  /** Records from the top-level `records` block (ledgers gates read). */
+  records?: RecordDef[];
 }
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,7 @@ import type {
   CheckpointDef,
   ReplayConfig,
   ArtifactDef,
+  RecordDef,
   PromptVariant,
   AuthDef,
   StoreNode,
@@ -455,6 +456,7 @@ export function parseAction(
   if (fields.timeout) node.timeout = fields.timeout;
   if (fields["on-fail"]) node.onFail = fields["on-fail"];
   if (fields.join) node.join = fields.join;
+  if (fields["unit-from"]) node.unitFrom = unquote(fields["unit-from"]);
   return node;
 }
 
@@ -778,6 +780,7 @@ export function parseGate(
   if (fields.at) node.at = unquote(fields.at);
   if (fields.match) node.match = unquote(fields.match);
   if (fields.bypass) node.bypass = unquote(fields.bypass);
+  if (fields.ledger) node.ledger = fields.ledger;
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -2130,6 +2133,18 @@ export function parseArtifacts(topBody: string): ArtifactDef[] {
   return artifacts;
 }
 
+/**
+ * Parse the top-level `records { record <id> { path: "..." } }` block.
+ * A record without a path is kept with an empty path so V112 can name it.
+ */
+export function parseRecords(topBody: string): RecordDef[] {
+  const block = extractBlock(topBody, "records");
+  if (!block) return [];
+  return extractAllBlocks(block.body, "record")
+    .filter((b) => b.id)
+    .map((b) => ({ id: b.id!, path: unquote(parseFields(b.body).path ?? "") }));
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -2581,6 +2596,9 @@ export function parse(source: string): TopologyAST {
   // --- Artifacts ---
   const artifacts = parseArtifacts(topBody);
 
+  // --- Records ---
+  const records = parseRecords(topBody);
+
   // --- Top-level Extensions ---
   // Only an `extensions` block at the topology's own level. The first one
   // anywhere used to win, so an agent's extensions (effort, color, ...) were
@@ -2609,7 +2627,7 @@ export function parse(source: string): TopologyAST {
     "triggers", "settings", "mcp-servers", "metering", "context", "env",
     "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
     "defaults", "schemas", "observability", "params", "interface",
-    "checkpoint", "artifacts",
+    "checkpoint", "artifacts", "records",
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
@@ -2687,6 +2705,7 @@ export function parse(source: string): TopologyAST {
     includes,
     checkpoint,
     artifacts,
+    records,
     ...(isFragment ? { isFragment: true } : {}),
   };
 
