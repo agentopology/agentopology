@@ -472,6 +472,7 @@ action <name> {
 | `source` | string | no | -- |
 | `commands` | name-list | no | `[]` |
 | `description` | string | no | -- |
+| `unit-from` | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. `"./tool publish (\\S+)"`. Needs a capture group (V111) |
 
 **action-kind:** `external` | `git` | `decision` | `inline` | `report`
 
@@ -1014,6 +1015,25 @@ gates {
 | `at` | `"path"` or `"path:line"` | no | -- | The code that refuses, project-relative (V106) |
 | `match` | string | no | -- | Text expected within 5 lines of `at`, so a refactor that removes the check is caught. Needs `at` (V106) |
 | `bypass` | string | no | -- | The declared way around it (an env switch, a flag) |
+| `ledger` | record id | no | the only record | The record a gate before a script step reads. Omitted, a topology with exactly one `record` uses it (V112) |
+
+**Gates before a script step.** A gate whose `before:` is an `action` with `commands:` refuses that step in Claude Code sessions. The claude-code binding writes one script, `before-action.sh`, wired as a `PreToolUse` hook on `Bash` with `onFailure: "block"`. When the Bash command starts with one of the action's `commands:` (leading `VAR=value` words are ignored), the script checks the gate: if it has a ledger, the **last** line for the `after:` step (and the same unit, when the command names one with `unit-from`) must have `ok: true`; if it has `run:`, that wrapper must exit 0. Anything else exits 2 and says which gate, step, unit and ledger path refused. A gate with neither a ledger nor `run:` has nothing to check (V110).
+
+```agenttopology
+records {
+  record trace { path: "logs/{unit}/trace.jsonl" }
+}
+```
+
+`records { record <id> { path: "<project-relative path>" } }` declares ledgers. `path` may contain `{unit}`. `append-only` and `written-by` are reserved and not implemented.
+
+**Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
+
+```json
+{"step": "<node id>", "unit": "<unit, omitted when none>", "ok": true, "at": "<ISO time>"}
+```
+
+A hook only covers Claude Code sessions. A step run from a terminal or a scheduler checks itself, by calling `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` at its start (`by: code`): it exits 0 when every gate before that step is satisfied and 1 otherwise, naming each failing gate and why.
 
 ---
 

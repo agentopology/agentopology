@@ -358,7 +358,8 @@ action NAME {
 | kind | string | yes (V26) | -- | "external", "git", "decision", "inline", "report" |
 | source | string | no | -- | Source reference (file path or URL) |
 | description | string | no | -- | Human-readable description |
-| commands | string[] | no | -- | Shell commands to execute |
+| commands | string[] | no | -- | Shell commands to execute. A gate before this action guards them in Claude Code sessions |
+| unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\\\S+)"\`. Needs a capture group (V111) |
 | timeout | string | no | -- | Duration string (e.g. "5m", "2h") |
 | on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
 | join | string | no | -- | Fan-in: "all", "any", "all-done", "none-failed" |
@@ -438,6 +439,7 @@ gates {
 | at | "path" or "path:line" | no | -- | The code that refuses, project-relative (V106) |
 | match | string | no | -- | Text expected near \`at\`; needs \`at\` (V106) |
 | bypass | string | no | -- | The declared way around it (an env switch, a flag) |
+| ledger | record id | no | the only record | The record a gate before a script step reads (V112) |
 | checks | string[] | no | -- | List of check identifiers |
 | retry | number | no | -- | Max retries on failure |
 | on-fail | string | no | "halt" | "halt" or "bounce-back" |
@@ -452,10 +454,41 @@ gates {
 | halt | Stop the topology on gate failure |
 | bounce-back | Return work to the \`after\` agent for correction |
 
+## Gates before a script step
+
+A gate whose \`before\` is an action with \`commands\` refuses that step in Claude Code sessions. The claude-code binding writes \`before-action.sh\`, a PreToolUse hook on Bash (\`onFailure: "block"\`). When the command starts with one of the action's commands (leading \`VAR=value\` words ignored) it checks the gate: with a ledger, the LAST line for the \`after\` step (same unit, when \`unit-from\` reads one) must have \`ok: true\`; with \`run\`, that wrapper must exit 0. Otherwise it exits 2 and names the gate, step, unit and ledger path.
+
+\`\`\`at
+action publish {
+  kind: external
+  commands: ["./tool publish"]
+  unit-from: "./tool publish (\\\\S+)"
+}
+records {
+  record trace { path: "logs/{unit}/trace.jsonl" }
+}
+gates {
+  gate publish-ready { after: render  before: publish  ledger: trace }
+}
+\`\`\`
+
+\`records { record ID { path: "..." } }\` declares ledgers; \`path\` is project-relative and may contain \`{unit}\`. With exactly one record, a gate needs no \`ledger:\`.
+
+**Ledger line format.** JSON Lines, one object per line, appended by the step's own script (agentopology only reads it):
+
+\`\`\`json
+{"step": "render", "unit": "ep42", "ok": true, "at": "2026-01-01T00:00:00Z"}
+\`\`\`
+
+\`unit\` is omitted when the step has none. A hook covers Claude Code sessions only: a step run from a terminal or a scheduler should call \`agentopology step check FILE.at STEP [--unit U] [--dir D]\` at its start (\`by: code\`). It exits 0 when every gate before STEP is satisfied, 1 otherwise, naming each failing gate and why.
+
 ## Validation Rules
 
 - **V13**: \`after\` and \`before\` must reference declared nodes
-- **V25**: \`on-fail: bounce-back\` warning when \`after\` is not an agent/group (cannot be wired as a SubagentStop hook on claude-code)
+- **V25**: \`on-fail: bounce-back\` warning when \`after\` is not an agent/group (cannot be wired as a SubagentStop hook on claude-code). Not raised for a gate before an action with commands: that is compiled to before-action.sh
+- **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
+- **V111**: error, \`unit-from\` is not a valid regex or has no capture group
+- **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
 
 ## Example
 

@@ -21,9 +21,10 @@
 
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
-import { proseInRun } from "./run.js";
+import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
+import { gateLedger, guardedActions } from "./ledger.js";
 import type {
   HookDef,
   TopologyAST,
@@ -1419,6 +1420,95 @@ function v109MatcherGaps(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
+ * V110: a gate before a script step that has nothing to check.
+ *
+ * Such a gate compiles to before-action.sh, which refuses the step until the
+ * ledger shows the gate's `after:` step ok, or until the gate's `run:` passes.
+ * With neither, the guard has nothing to look at and the step is never
+ * refused, so the gate reads as a guard and guards nothing.
+ */
+function v110ActionGateChecksNothing(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.behavior === "advisory" || guardedActions(ast, gate).length === 0) continue;
+    if (gateLedger(ast, gate) || scriptNameFromRun(gate.run)) continue;
+    results.push({
+      rule: "V110",
+      level: "warning",
+      message: `Gate "${gate.id}" stands before a script step but has no ledger and no run:, so there is nothing to check and the step is never refused. Declare a records { } block and a ledger:, or give the gate a run: script`,
+      node: gate.id,
+      line: lookupLine(ast, gate.id),
+    });
+  }
+  return results;
+}
+
+/**
+ * V111: an action's `unit-from` is a regex with a capture group.
+ * The unit is the first group; without one the guard cannot name the unit,
+ * and a regex that does not compile would make the generated script fail on
+ * every command.
+ */
+function v111UnitFromRegex(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "action") continue;
+    const action = node as ActionNode;
+    if (action.unitFrom === undefined) continue;
+    let problem: string | null = null;
+    try {
+      const groups = new RegExp(`${action.unitFrom}|`).exec("")!.length - 1;
+      if (groups < 1) problem = "it has no capture group, so no unit can be read from the command (wrap the unit in parentheses)";
+    } catch (e) {
+      problem = `it is not a valid regex (${(e as Error).message})`;
+    }
+    if (problem) {
+      results.push({
+        rule: "V111",
+        level: "error",
+        message: `Action "${action.id}" has unit-from "${action.unitFrom}": ${problem}`,
+        node: action.id,
+        line: lookupLine(ast, action.id),
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * V112: ledgers resolve and their paths are safe.
+ * A gate's `ledger:` names a declared record; a record path is project-relative
+ * (`{unit}` allowed); and a gate before a script step that needs a ledger but
+ * names none is only unambiguous when the topology declares exactly one record.
+ */
+function v112Ledgers(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const records = ast.records ?? [];
+  const err = (message: string, node?: string) =>
+    results.push({ rule: "V112", level: "error", message, ...(node ? { node, line: lookupLine(ast, node) } : {}) });
+  for (const r of records) {
+    const why = unsafePathReason(r.path.replace(/\{unit\}/g, "unit").replace(/^\.\//, ""));
+    if (why) err(`Record "${r.id}" has path "${r.path}", which is unsafe: ${why}`);
+  }
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.ledger) {
+      if (!records.some((r) => r.id === gate.ledger)) {
+        err(`Gate "${gate.id}" has ledger: ${gate.ledger}, but no record of that name is declared (records: ${records.map((r) => r.id).join(", ") || "none"})`, gate.id);
+      }
+      continue;
+    }
+    if (records.length > 1 && guardedActions(ast, gate).length > 0 && !scriptNameFromRun(gate.run)) {
+      err(`Gate "${gate.id}" stands before a script step and names no ledger, and ${records.length} records are declared (${records.map((r) => r.id).join(", ")}), so it is unclear which one to read. Add ledger: <record id>`, gate.id);
+    }
+  }
+  return results;
+}
+
+/**
  * V98: a block that belongs inside a container is not written beside it.
  *
  * `gate x { }` outside `gates { }` (likewise hook, tool, job, command, level)
@@ -1613,6 +1703,8 @@ function v25BounceBackAdvisory(ast: TopologyAST): ValidationResult[] {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (gate.onFail !== "bounce-back") continue;
+    // A gate before an action with commands is compiled (before-action.sh).
+    if (guardedActions(ast, gate).length > 0) continue;
     if (gate.after && gateAnchors(gate, "after").every((a) => registeredIds.has(a))) {
       // Agent/group target — enforceable on claude-code via SubagentStop. No warning.
       continue;
@@ -3778,6 +3870,9 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v107MatcherForm(ast),
     ...v108ExitCode(ast),
     ...v109MatcherGaps(ast),
+    ...v110ActionGateChecksNothing(ast),
+    ...v111UnitFromRegex(ast),
+    ...v112Ledgers(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

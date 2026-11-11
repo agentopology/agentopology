@@ -23,7 +23,7 @@ import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
-import { approvalTargets, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 
@@ -145,6 +145,31 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     const base = { kind: "gate" as const, id: gate.id };
     if (gate.behavior === "advisory") {
       items.push({ ...base, strength: "hope", by: "prose", where: "advisory: it reports and never blocks", notes: [] });
+      continue;
+    }
+    // A gate before a script step: before-action.sh refuses its command. One
+    // with nothing to check (V110) compiles to no line, and falls through to
+    // the cases below (prose, or a citation).
+    if (checkableActionGate(ast, gate)) {
+      const where = `PreToolUse on Bash running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
+      const problems: string[] = [];
+      const hooks = findHooks(settings, "PreToolUse", "before-action.sh", (m) => !!m && /\bBash\b/.test(m));
+      if (hooks.length === 0) problems.push("no PreToolUse entry on Bash for before-action.sh in .claude/settings.json");
+      else {
+        const bad = commandProblem(hooks[0].command);
+        if (bad) problems.push(bad);
+      }
+      const script = readText(join(root, scriptsDir, "before-action.sh"));
+      if (script === null) problems.push(`${scriptsDir}/before-action.sh is missing`);
+      else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
+      if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
+      const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
+      if (problems.length) {
+        items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope] });
+      } else {
+        const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+        items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope] });
+      }
       continue;
     }
     if (!gate.run || !scriptNameFromRun(gate.run)) {

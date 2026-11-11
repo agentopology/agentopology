@@ -4,6 +4,23 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Guards for script steps: a gate before an action refuses in Claude Code
+
+- A gate whose `before:` is an action with `commands:` used to compile to nothing (V25: "invoke
+  it from your playbook"), so a session ran the step whether or not the gate held. It now
+  compiles to `before-action.sh`, a `PreToolUse` hook on `Bash` with `onFailure: "block"`.
+  Exit 2 when the ledger has no ok record for the gate's `after:` step and unit, or its
+  `run:` check fails; a command that matches no guarded step goes through.
+- New, all optional: action `unit-from: "<regex, one capture group>"` reads the unit from the
+  command line; top-level `records { record trace { path: "logs/{unit}/trace.jsonl" } }`; gate
+  `ledger: <record id>` (omitted, the only record). A ledger is JSON Lines:
+  `{"step": "<node id>", "unit": "<unit>", "ok": true, "at": "<ISO time>"}`, appended by the
+  step's own script; the last line for the step decides.
+- V110 (no ledger and no `run:`: nothing to check), V111 (bad `unit-from`), V112 (unknown
+  ledger, unsafe record path, ambiguous ledger). V25 no longer warns for a compiled gate.
+- `guard --check` reports such a gate as refuse by hook, noting it covers Claude Code sessions
+  only.
+
 ### [breaking] Claude Code is the supported target; four bindings are removed
 
 - **Removed:** `gemini-cli`, `copilot-cli`, `openclaw` and `kiro` (bindings), and the OpenClaw

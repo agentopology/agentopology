@@ -66,9 +66,9 @@ const NODE_SCHEMAS = {
     blocks: { outputs: OPAQUE },
   },
   agent: AGENT,
-  action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join"] },
+  action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join", "unit-from"] },
   gate: {
-    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass"],
+    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
     blocks: { extensions: OPAQUE },
   },
   human: { fields: ["file", "description", "timeout", "on-timeout"] },
@@ -78,6 +78,7 @@ const NODE_SCHEMAS = {
   hook: HOOK,
   job: { fields: ["cron", "every", "agent", "action", "enabled"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
+  record: { fields: ["path"] },
   tool: { fields: ["script", "description", "args", "lang"] },
   skill: {
     fields: [
@@ -107,6 +108,7 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
+    records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },
     tools: { fields: [], blocks: { tool: NODE_SCHEMAS.tool } },
     // Not in the grammar, but the parser reads the skills inside it.
     skills: { fields: [], blocks: { skill: NODE_SCHEMAS.skill } },

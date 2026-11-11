@@ -180,6 +180,9 @@ describe("guard --check from the CLI", () => {
  * settings.json and declares its strength. A broken citation is `none` and
  * exits 1; a strength the file writes down as `none` is reported, not failed.
  */
+// release and voice carry no commands: the binding compiles no hook for a gate
+// before them, so only the cited guard can credit it. (With commands, such a
+// gate is guarded by before-action.sh: see action-guard.test.ts.)
 const CITED = `topology cited : [pipeline] {
   meta {
     version: "1.0.0"
@@ -206,13 +209,11 @@ const CITED = `topology cited : [pipeline] {
   action release {
     kind: external
     description: "Posts it"
-    commands: ["./media post"]
   }
 
   action voice {
     kind: external
     description: "Records the voice-over"
-    commands: ["./media voice"]
   }
 
   hooks {
