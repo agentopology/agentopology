@@ -14,6 +14,13 @@ All notable changes to agentopology are documented here.
   guarded steps, `unit-from` reads from that segment, and every matching segment is checked.
   Quoting is not parsed, which can only over-block. A command that runs the step indirectly
   (`bash -c`, `eval`, a script that calls it) is still not seen; `guard --check` now says so.
+- The segments are read from a separate file descriptor and every child in the loop runs with stdin
+  from `/dev/null`, so a gate's check script that reads stdin cannot swallow the later segments.
+
+### [fix] `@types/node` is a devDependency
+
+- It was missing, so on a fresh `npm ci` `npx tsc --noEmit` failed with hundreds of TS2307 errors
+  (`Cannot find module 'node:fs'`); machines that had it installed by accident never saw it.
 
 ### [feature] `step check`: a script step asks whether its gates hold
 
