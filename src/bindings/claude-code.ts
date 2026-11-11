@@ -393,7 +393,8 @@ function generateBeforeActionScript(ast: TopologyAST): GeneratedFile | null {
     "re_wrap='^(\\(+[[:space:]]*|\\{[[:space:]]+|(then|do|exec|time|nohup|env)([[:space:]]+|$))'",
     "UNIT=''",
     "",
-    "while IFS= read -r C || [ -n \"$C\" ]; do",
+    "# Segments come in on fd 3 and children get stdin from /dev/null: a check that reads stdin must not swallow the later segments.",
+    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
     "  prev=''",
     '  while [ "$C" != "$prev" ]; do',
     '    prev=$C',
@@ -422,12 +423,12 @@ function generateBeforeActionScript(ast: TopologyAST): GeneratedFile | null {
         }
       }
       if (scriptNameFromRun(gate.run)) {
-        lines.push(`  bash "$DIR/gate-${gate.id}.sh" >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
+        lines.push(`  bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
       }
     }
     lines.push("  fi", "");
   }
-  lines.push('done <<< "$SEGS"', "", FAIL_CLOSED_DONE, "exit 0", "");
+  lines.push('done 3<<< "$SEGS"', "", FAIL_CLOSED_DONE, "exit 0", "");
   return {
     path: `.claude/skills/${name}/scripts/before-action.sh`,
     content: lines.join("\n"),
