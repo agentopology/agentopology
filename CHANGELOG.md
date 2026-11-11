@@ -42,6 +42,22 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] `guard --target claude-code` writes only the guards
+
+- `agentopology guard <file.at> --target claude-code [--dir D] [--dry-run]` adds the enforcement
+  to a project built by hand: the hook scripts, the gate wrappers they call, the checks the gates
+  run, and the `hooks` and `permissions` of settings.json, merged with what is there. Nothing
+  else scaffold writes (agents, skills, commands, rules, .mcp.json, CLAUDE.md) is touched.
+- The set is found by following script paths from settings.json, so a new hook script is picked
+  up with no list to update. Edited scripts and checks that are no longer stubs are kept and
+  named. A rerun changes nothing. It ends with the `guard --check` report and exits like it.
+
+### [feature] `validate` says which Claude Code it was checked against
+
+- Every `validate` run ends with `checked against Claude Code 2.1.319 (supports 2.1.295 and later)`,
+  on success, warnings, errors and `--inventory`. `scaffold --target claude-code` and
+  `targets` print it too. The numbers are read from the conformance constants, never retyped.
+
 ### [feature] Claude Code's hook contract as a snapshot, and a drift check
 
 - `spec/claude-code/hooks-contract.json` is extracted from the hooks reference page: 33 events,

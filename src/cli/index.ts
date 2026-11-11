@@ -52,6 +52,8 @@ import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
+import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
+import { verifiedOnLine } from "../conformance/claude-code.js";
 import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,11 @@ ${c.bold("Usage:")}
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
+  agentopology guard <file.at> --target claude-code [--dir <project-dir>] [--dry-run]
+                       Write only the guard part of scaffold into a project that may be
+                       hand-built: hook scripts, gates, checks, and the hooks and
+                       permissions of settings.json (merged). Keeps edited scripts and
+                       implemented checks, reports each. Then runs --check.
   agentopology guard <file.at> --check [--dir <project-dir>]
                        Report which gates, approval steps and permission rules the
                        project enforces today (refuse / none / hope). Writes nothing;
@@ -367,6 +374,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
+    console.log(c.dim(verifiedOnLine()));
     if (!covered) process.exit(1);
     return;
   }
@@ -391,6 +399,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   printLessons(results.map((r) => r.rule));
+  console.log(c.dim(verifiedOnLine()));
 
   if (errors.length > 0 || !covered) {
     process.exit(1);
@@ -499,6 +508,11 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     c.bold(`Scaffolding ${ast.topology.name} for ${binding.description}`)
   );
   console.log("");
+
+  if (targetName === "claude-code") {
+    console.log(c.dim(`  ${verifiedOnLine()}`));
+    console.log("");
+  }
 
   const files = binding.scaffold(ast);
 
@@ -1202,7 +1216,8 @@ function cmdTargets(): void {
   console.log("");
   for (const [name, binding] of Object.entries(bindings)) {
     const label = binding.experimental ? c.yellow(" (experimental)") : "";
-    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}`);
+    const verified = name === "claude-code" ? c.dim(` — ${verifiedOnLine()}`) : "";
+    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}${verified}`);
   }
   console.log("");
 }
@@ -1224,6 +1239,75 @@ function cmdGuardCheck(filePath: string, dirPath: string): void {
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
   process.exit(report.missing > 0 ? 1 : 0);
+}
+
+/**
+ * `guard <file> --target claude-code`: write only the guard part of scaffold's
+ * output (see src/guard/target.ts), print what was written or kept, then run
+ * the `--check` report and exit like it.
+ */
+function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, dryRun: boolean): void {
+  if (targetName !== "claude-code") {
+    console.error(c.red(`Error: guard --target supports claude-code only (got "${targetName}").`));
+    process.exit(1);
+  }
+  const source = readFile(filePath);
+  let ast;
+  try {
+    ast = parse(source);
+  } catch (err) {
+    console.error(c.red(`Parse error: ${(err as Error).message}`));
+    process.exit(1);
+  }
+  const errors = validate(ast).filter((r) => r.level === "error");
+  if (errors.length > 0) {
+    console.error(c.red(`  ${errors.length} validation error(s). Nothing was written.`));
+    for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
+    process.exit(1);
+  }
+  const root = path.resolve(dirPath);
+  const name = path.basename(filePath);
+  const plan = planGuardTarget(ast, root, name);
+  const unsafe = plan.actions.filter((a) => a.type === "blocked" && a.unsafe);
+  if (unsafe.length > 0) {
+    console.error(c.red(`  Refusing to write: ${unsafe.length} generated path(s) are not safe file names. Nothing was written.`));
+    process.exit(1);
+  }
+
+  console.log(c.bold(`guard --target ${targetName} ${filePath} (project: ${dirPath})${dryRun ? c.cyan(" — dry run, nothing is written") : ""}`));
+  console.log(c.dim(`  ${verifiedOnLine()}`));
+  console.log("");
+  for (const a of plan.actions) {
+    if (a.type === "create") console.log(`  ${c.green("+")} ${a.path}`);
+    else if (a.type === "update") {
+      console.log(`  ${c.yellow("~")} ${a.path} (${a.detail})`);
+      if (dryRun) {
+        for (const line of jsonChanges(fs.readFileSync(path.join(root, a.path), "utf-8"), a.content)) console.log(`      ${c.dim(line)}`);
+      }
+    } else if (a.type === "unchanged") console.log(`  ${c.dim("=")} ${a.path}`);
+  }
+  for (const s of plan.skipped) console.log(`  ${c.bold("!")} ${s.path} (${s.why})`);
+  console.log("");
+
+  if (dryRun) {
+    const writes = plan.actions.filter((a) => a.type === "create" || a.type === "update").length;
+    console.log(`  ${writes} file(s) would be written, ${plan.skipped.length} kept.`);
+    return;
+  }
+  let result;
+  try {
+    result = applyGuardTarget(plan, root, name, source);
+  } catch (err) {
+    console.error(c.red(`  Could not write: ${(err as Error).message}`));
+    process.exit(1);
+  }
+  console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${plan.skipped.length} kept`);
+  if (result.failures.length > 0) {
+    for (const f of result.failures) console.error(`  ${c.red("✗")} ${f.path} — ${f.error}`);
+    process.exit(1);
+  }
+  console.log("");
+  cmdGuardCheck(filePath, dirPath);
 }
 
 function cmdStubs(dirPath: string): void {
@@ -1409,8 +1493,12 @@ function main(): void {
         console.error(c.red("Error: guard requires a file argument."));
         process.exit(1);
       }
+      if (args.target) {
+        cmdGuardTarget(args.file, args.target, args.dir ?? ".", args.dryRun);
+        break;
+      }
       if (!args.check) {
-        console.error(c.red("Error: only guard --check (read-only) exists so far; guard --target, which writes guards, comes later."));
+        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code (write the guards)."));
         process.exit(1);
       }
       cmdGuardCheck(args.file, args.dir ?? ".");
