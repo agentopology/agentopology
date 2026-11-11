@@ -4,6 +4,17 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A guarded script step is found inside a chained command (N42)
+
+- `before-action.sh` tested whether the whole Bash command started with the step's command, so
+  `cd repo && ./tool publish ep1`, `true; ./tool publish ep1` and `make x || ./tool publish ep1`
+  ran the step with its gate unmet while `guard --check` reported the gate as refuse. The command
+  is now split on `&&`, `||`, `;`, `|`, `&` and newlines; each segment, after a leading `(`, `{`,
+  `then`, `do`, `exec`, `time`, `nohup`, `env` and `VAR=value` are stripped, is matched against the
+  guarded steps, `unit-from` reads from that segment, and every matching segment is checked.
+  Quoting is not parsed, which can only over-block. A command that runs the step indirectly
+  (`bash -c`, `eval`, a script that calls it) is still not seen; `guard --check` now says so.
+
 ### [feature] `step check`: a script step asks whether its gates hold
 
 - `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` exits 0 when every gate with
