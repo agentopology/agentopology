@@ -51,6 +51,7 @@ import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { verifiedOnLine } from "../conformance/claude-code.js";
 import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -361,6 +362,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
+    console.log(c.dim(verifiedOnLine()));
     if (!covered) process.exit(1);
     return;
   }
@@ -385,6 +387,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   printLessons(results.map((r) => r.rule));
+  console.log(c.dim(verifiedOnLine()));
 
   if (errors.length > 0 || !covered) {
     process.exit(1);
@@ -493,6 +496,11 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     c.bold(`Scaffolding ${ast.topology.name} for ${binding.description}`)
   );
   console.log("");
+
+  if (targetName === "claude-code") {
+    console.log(c.dim(`  ${verifiedOnLine()}`));
+    console.log("");
+  }
 
   const files = binding.scaffold(ast);
 
@@ -1196,7 +1204,8 @@ function cmdTargets(): void {
   console.log("");
   for (const [name, binding] of Object.entries(bindings)) {
     const label = binding.experimental ? c.yellow(" (experimental)") : "";
-    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}`);
+    const verified = name === "claude-code" ? c.dim(` — ${verifiedOnLine()}`) : "";
+    console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}${verified}`);
   }
   console.log("");
 }

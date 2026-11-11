@@ -14,6 +14,12 @@ All notable changes to agentopology are documented here.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
   hybrid seam in `examples/matchmat-ship.at`.
 
+### [feature] `validate` says which Claude Code it was checked against
+
+- Every `validate` run ends with `checked against Claude Code 2.1.319 (supports 2.1.295 and later)`,
+  on success, warnings, errors and `--inventory`. `scaffold --target claude-code` and
+  `targets` print it too. The numbers are read from the conformance constants, never retyped.
+
 ### [feature] Claude Code's hook contract as a snapshot, and a drift check
 
 - `spec/claude-code/hooks-contract.json` is extracted from the hooks reference page: 33 events,
