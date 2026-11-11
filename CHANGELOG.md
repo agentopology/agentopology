@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.10.0] - 2026-11-11
 
 ### [fix] A guarded script step is found inside a chained command (N42)
 
