@@ -324,6 +324,18 @@ describe.skipIf(!hasJq)("[N42] before-action.sh sees a step inside a chained com
     expect(ok.status).toBe(0);
   });
 
+  it("[N42] AG26 a check script that reads stdin does not swallow the later segments", () => {
+    const two = topology().replace(
+      "    gate publish-ready {",
+      '    gate render-ready {\n      before: render\n      run: "scripts/check.sh"\n      on-fail: halt\n    }\n    gate publish-ready {',
+    );
+    scaffold(two);
+    fs.writeFileSync(at(".claude/skills/ship/scripts/check.sh"), "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n", { mode: 0o755 });
+    const r = hook(bash("./tool render && ./tool publish ep1"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("publish-ready");
+  });
+
   it("[N42] AG25 guard --check notes that an indirect run is not seen", () => {
     const ast = scaffold(topology());
     const g = checkGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
