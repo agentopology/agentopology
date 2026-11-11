@@ -4,6 +4,17 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] `step check`: a script step asks whether its gates hold
+
+- `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` exits 0 when every gate with
+  `before: <step-id>` holds, else 1, naming each failing gate and why. Hooks guard Claude Code
+  sessions only; a script run from a terminal or a scheduler calls this at its start (`by: code`).
+- A gate holds when its ledger's last record for the `after:` step (same unit, if given) is ok,
+  and its `run:` (if any) exits 0 from D. A gate with neither is unsatisfiable ("nothing to
+  check", the case V110 warns about). A step no gate guards exits 0 ("no gate guards <step>");
+  a step that is no node exits 1. It reads ledgers and runs check scripts; it never writes.
+- The ledger line format is documented in the gate grammar and the `gate` docs topic.
+
 ### [feature] Guards for script steps: a gate before an action refuses in Claude Code
 
 - A gate whose `before:` is an action with `commands:` used to compile to nothing (V25: "invoke

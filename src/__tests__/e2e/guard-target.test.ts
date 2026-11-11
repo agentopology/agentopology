@@ -155,4 +155,52 @@ describe("[N41] guard --target", () => {
     expect(fs.existsSync(join(bare, SCRIPTS, "before-agent.sh"))).toBe(true);
     expect(r.stdout).toContain("enforcement:");
   });
+  it("[N41] picks up the before-action.sh of a gate before a script step and guard --check reports it as refuse", () => {
+    const src = `topology ship : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Render then publish"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [render, publish]
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  action publish {
+    kind: external
+    commands: ["./tool publish"]
+    unit-from: "./tool publish (\\S+)"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate publish-ready {
+      after: render
+      before: publish
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { render -> publish }
+}
+`;
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "at-guard-target-action-"));
+    const file = join(dir, "ship.at");
+    fs.writeFileSync(file, src);
+    const r = spawnSync("node", [CLI, "guard", file, "--target", "claude-code", "--dir", dir], { encoding: "utf8" });
+    const script = join(dir, ".claude/skills/ship/scripts/before-action.sh");
+    expect(fs.existsSync(script), r.stdout + r.stderr).toBe(true);
+    const cfg = fs.readFileSync(join(dir, ".claude/settings.json"), "utf8");
+    expect(cfg).toContain("before-action.sh");
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/publish-ready[^\n]*refuse/);
+    const report = checkGuards(parse(src), dir);
+    const gate = report.items.find((i) => i.kind === "gate");
+    expect(gate?.strength).toBe("refuse");
+    expect(gate?.by).toBe("hook");
+  });
 });

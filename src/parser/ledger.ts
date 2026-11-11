@@ -24,10 +24,13 @@ export function guardedActions(ast: TopologyAST, gate: GateNode): ActionNode[] {
 
 /**
  * The record a gate reads: the one it names, else the topology's only record.
- * Undefined when it names none and there is not exactly one record, or the name
- * is not declared (V112 reports both).
+ * Undefined when it names none and there is not exactly one record, when the
+ * name is not declared (V112 reports both), or when the gate has no `after:`
+ * step to look up.
  */
 export function gateLedger(ast: TopologyAST, gate: GateNode): RecordDef | undefined {
+  // A ledger answers "did the after: step finish ok?"; with no after: there is no step to look up.
+  if (gateAnchors(gate, "after").length === 0) return undefined;
   const records = ast.records ?? [];
   if (gate.ledger) return records.find((r) => r.id === gate.ledger);
   return records.length === 1 ? records[0] : undefined;
