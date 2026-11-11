@@ -51,6 +51,7 @@ import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,11 @@ ${c.bold("Usage:")}
                        Report which gates, approval steps and permission rules the
                        project enforces today (refuse / none / hope). Writes nothing;
                        exits 1 when something the binding generates is missing.
+  agentopology step check <file.at> <step-id> [--unit U] [--dir D]
+                       Exit 0 when every gate before <step-id> holds (its ledger shows the
+                       after: step ok for the unit; its run: exits 0 from D), else 1,
+                       naming each failing gate. Call it at the start of a script step.
+                       Reads and runs check scripts; never writes.
   agentopology stubs [<project-dir>]
   agentopology targets
   agentopology docs [topic]
@@ -1409,6 +1415,20 @@ function main(): void {
       }
       cmdGuardCheck(args.file, args.dir ?? ".");
       break;
+    }
+
+    case "step": {
+      // `agentopology step check <file.at> <step-id> [--unit U] [--dir D]`
+      const rest = process.argv.slice(2);
+      const sub = rest[rest.indexOf("step") + 1];
+      const a = parseStepArgs(rest.slice(rest.indexOf("step") + 2));
+      if (sub !== "check" || !a.file || !a.step) {
+        console.error(c.red("Usage: agentopology step check <file.at> <step-id> [--unit U] [--dir D]"));
+        process.exit(1);
+      }
+      const report = checkStep(parse(readFile(a.file)), a.step, { unit: a.unit, dir: a.dir ?? "." });
+      for (const line of renderStepReport(report)) (report.ok ? console.log : console.error)(line);
+      process.exit(report.ok ? 0 : 1);
     }
 
     case "stubs": {
