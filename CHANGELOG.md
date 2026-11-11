@@ -4,6 +4,19 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A guarded script step is found inside a chained command (N42)
+
+- `before-action.sh` tested whether the whole Bash command started with the step's command, so
+  `cd repo && ./tool publish ep1`, `true; ./tool publish ep1` and `make x || ./tool publish ep1`
+  ran the step with its gate unmet while `guard --check` reported the gate as refuse. The command
+  is now split on `&&`, `||`, `;`, `|`, `&` and newlines; each segment, after a leading `(`, `{`,
+  `then`, `do`, `exec`, `time`, `nohup`, `env` and `VAR=value` are stripped, is matched against the
+  guarded steps, `unit-from` reads from that segment, and every matching segment is checked.
+  Quoting is not parsed, which can only over-block. A command that runs the step indirectly
+  (`bash -c`, `eval`, a script that calls it) is still not seen; `guard --check` now says so.
+- The segments are read from a separate file descriptor and every child in the loop runs with stdin
+  from `/dev/null`, so a gate's check script that reads stdin cannot swallow the later segments.
+
 ### [fix] `@types/node` is a devDependency
 
 - It was missing, so on a fresh `npm ci` `npx tsc --noEmit` failed with hundreds of TS2307 errors

@@ -164,11 +164,12 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
       const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
+      const indirect = "a command that runs the step indirectly (bash -c, eval, a script that calls it) is not seen";
       if (problems.length) {
-        items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope] });
+        items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect] });
       } else {
         const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
-        items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope] });
+        items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
       }
       continue;
     }

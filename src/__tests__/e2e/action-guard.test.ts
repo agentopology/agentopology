@@ -268,3 +268,77 @@ describe.skipIf(!hasJq)("[N38] guard --check", () => {
     expect(checkGuards(ast, root).items.find((i) => i.id === "publish-ready")!.strength).toBe("none");
   });
 });
+
+describe.skipIf(!hasJq)("[N42] before-action.sh sees a step inside a chained command", () => {
+  beforeEach(() => { scaffold(topology()); });
+
+  it("[N42] AG21 a step after cd, ;, ||, | or on a later line is refused while its gate is unmet", () => {
+    for (const c of [
+      "cd sub && ./tool publish ep1",
+      "true; ./tool publish ep1",
+      "make x || ./tool publish ep1",
+      "./tool lint | ./tool publish ep1",
+      "echo hi\n./tool publish ep1",
+      "(cd sub && ./tool publish ep1)",
+      "cd sub && DEBUG=1 time ./tool publish ep1",
+      "{ ./tool publish ep1; }",
+      "./tool lint & ./tool publish ep1",
+    ]) {
+      const r = hook(bash(c));
+      expect(r.status, c).toBe(2);
+      expect(r.stderr, c).toContain("publish-ready");
+    }
+  });
+
+  it("[N42] AG22 with an ok record the chained step runs, and the unit is read from the right segment", () => {
+    ledger("ep1", [rec("render", true, "ep1")]);
+    expect(hook(bash("cd sub && ./tool publish ep1")).status).toBe(0);
+    const r = hook(bash("cd sub && ./tool publish ep2"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("ep2");
+  });
+
+  it("[N42] AG23 a command word that is not at a segment start is not a step", () => {
+    expect(hook(bash("echo ./tool publish ep1")).status).toBe(0);
+    expect(hook(bash("cd sub && echo ./tool publish ep1")).status).toBe(0);
+  });
+
+  it("[N42] AG24 two guarded steps in one command need both gates", () => {
+    const two = topology().replace(
+      "  records {",
+      '  action archive {\n    kind: external\n    commands: ["./tool archive"]\n    unit-from: "./tool archive (\\S+)"\n  }\n  records {',
+    ).replace("  }\n  flow", "    gate archive-ready {\n      after: publish\n      before: archive\n      ledger: trace\n      on-fail: halt\n    }\n  }\n  flow");
+    scaffold(two);
+    const cmd = "./tool publish ep1 && ./tool archive ep1";
+    ledger("ep1", [rec("render", true, "ep1")]);
+    const r = hook(bash(cmd));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("archive-ready");
+    ledger("ep1", [rec("publish", true, "ep1")]);
+    const r2 = hook(bash(cmd));
+    expect(r2.status).toBe(2);
+    expect(r2.stderr).toContain("publish-ready");
+    ledger("ep1", [rec("render", true, "ep1"), rec("publish", true, "ep1")]);
+    const ok = hook(bash(cmd));
+    expect(ok.stderr).toBe("");
+    expect(ok.status).toBe(0);
+  });
+
+  it("[N42] AG26 a check script that reads stdin does not swallow the later segments", () => {
+    const two = topology().replace(
+      "    gate publish-ready {",
+      '    gate render-ready {\n      before: render\n      run: "scripts/check.sh"\n      on-fail: halt\n    }\n    gate publish-ready {',
+    );
+    scaffold(two);
+    fs.writeFileSync(at(".claude/skills/ship/scripts/check.sh"), "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n", { mode: 0o755 });
+    const r = hook(bash("./tool render && ./tool publish ep1"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("publish-ready");
+  });
+
+  it("[N42] AG25 guard --check notes that an indirect run is not seen", () => {
+    const ast = scaffold(topology());
+    const g = checkGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+    expect(g.notes.join(" ")).toContain("a command that runs the step indirectly (bash -c, eval, a script that calls it) is not seen");
+  });
+});

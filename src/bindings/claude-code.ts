@@ -379,17 +379,33 @@ function generateBeforeActionScript(ast: TopologyAST): GeneratedFile | null {
     '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
     "}",
     "",
-    "# Leading VAR=value assignments are not part of the command.",
-    "re_assign='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'\"'\"'[^'\"'\"']*'\"'\"'|[^[:space:]]*)[[:space:]]+'",
-    "C=$CMD",
-    'while [[ "$C" =~ $re_assign ]]; do C="${C:${#BASH_REMATCH[0]}}"; done',
-    'C="${C#"${C%%[![:space:]]*}"}"',
+    "# A Bash command is a list: `cd repo && ./tool publish ep1`, `a; b`, `a || b`, `a | b`, a",
+    "# backgrounded `a &`, or several lines. Each segment is checked on its own, because the step is",
+    "# the segment's command, not the whole line (matching only the start of the whole line let",
+    "# `cd repo && ./tool publish ep1` run the step with its gate unmet). Quoting is NOT parsed: a",
+    "# separator inside a quoted string also splits, which can only produce an extra segment that",
+    "# is checked too, so it over-blocks and never under-blocks (fail-safe). A command that runs the",
+    "# step indirectly (bash -c, eval, a script that calls it) is not seen.",
+    "SEGS=$CMD",
+    "for sep in '&' '|' ';'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
+    "# Leading VAR=value assignments and wrappers are not part of the command.",
+    "re_assign='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'\"'\"'[^'\"'\"']*'\"'\"'|[^[:space:]]*)([[:space:]]+|$)'",
+    "re_wrap='^(\\(+[[:space:]]*|\\{[[:space:]]+|(then|do|exec|time|nohup|env)([[:space:]]+|$))'",
     "UNIT=''",
     "",
+    "# Segments come in on fd 3 and children get stdin from /dev/null: a check that reads stdin must not swallow the later segments.",
+    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
+    "  prev=''",
+    '  while [ "$C" != "$prev" ]; do',
+    '    prev=$C',
+    '    C="${C#"${C%%[![:space:]]*}"}"',
+    '    if [[ "$C" =~ $re_assign ]]; then C="${C:${#BASH_REMATCH[0]}}"; elif [[ "$C" =~ $re_wrap ]]; then C="${C:${#BASH_REMATCH[0]}}"; fi',
+    "  done",
+    '  [ -n "$C" ] || continue',
   ];
   for (const { action, gates } of guards) {
     const tests = (action.commands ?? []).map((c) => `[[ "$C" == ${shellQuote(c)} || "$C" == ${shellQuote(c + " ")}* ]]`);
-    lines.push(`# step ${action.id}`, `if ${tests.join(" || ")}; then`);
+    lines.push(`  # step ${action.id}`, `  if ${tests.join(" || ")}; then`, "    UNIT=''");
     if (action.unitFrom) {
       lines.push(
         `  UNIT=$(jq -nr --arg c "$C" --arg re ${shellQuote(action.unitFrom)} '$c | match($re) | .captures[0].string // empty') || deny ${shellQuote(gates[0].id)} "unit-from does not compile"`,
@@ -407,12 +423,12 @@ function generateBeforeActionScript(ast: TopologyAST): GeneratedFile | null {
         }
       }
       if (scriptNameFromRun(gate.run)) {
-        lines.push(`  bash "$DIR/gate-${gate.id}.sh" >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
+        lines.push(`  bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
       }
     }
-    lines.push("fi", "");
+    lines.push("  fi", "");
   }
-  lines.push(FAIL_CLOSED_DONE, "exit 0", "");
+  lines.push('done 3<<< "$SEGS"', "", FAIL_CLOSED_DONE, "exit 0", "");
   return {
     path: `.claude/skills/${name}/scripts/before-action.sh`,
     content: lines.join("\n"),

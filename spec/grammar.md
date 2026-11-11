@@ -1033,7 +1033,7 @@ records {
 {"step": "<node id>", "unit": "<unit, omitted when none>", "ok": true, "at": "<ISO time>"}
 ```
 
-A hook only covers Claude Code sessions. A step run from a terminal or a scheduler checks itself, by calling `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` at its start (`by: code`): it exits 0 when every gate before that step is satisfied and 1 otherwise, naming each failing gate and why. A gate is satisfied when its ledger shows the `after:` step ok (for the unit, if given) **and**, if it has `run:`, that command exits 0 from `--dir` (default `.`); a gate with neither is unsatisfiable ("nothing to check"). A step no gate guards exits 0 with `no gate guards <step>`. It reads and runs check scripts; it never writes.
+A hook only covers Claude Code sessions. A step run from a terminal or a scheduler checks itself, by calling `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` at its start (`by: code`): it exits 0 when every gate before that step is satisfied and 1 otherwise, naming each failing gate and why. A gate is satisfied when its ledger shows the `after:` step ok (for the unit, if given) **and**, if it has `run:`, that command exits 0 from `--dir` (default `.`); a gate with neither is unsatisfiable ("nothing to check"). A step no gate guards exits 0 with `no gate guards <step>`. It reads and runs check scripts; it never writes. The hook sees a step inside a chained command (`cd dir && cmd`, `a; cmd`, `a || cmd`, `a | cmd`, a later line) and checks each segment; it does not see one run indirectly (`bash -c`, `eval`, a script that calls the step).
 
 ---
 
