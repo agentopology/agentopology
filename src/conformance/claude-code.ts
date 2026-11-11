@@ -18,6 +18,15 @@ export const VERIFIED_ON = "2.1.319";
 /** The oldest Claude Code the generated output supports (`onFailure` needs it). */
 export const MINIMUM_VERSION = "2.1.295";
 
+/**
+ * The one line the CLI prints about what the output was checked against.
+ * Built from the two constants above so the number a user reads can never be
+ * a copy that went stale (N40).
+ */
+export function verifiedOnLine(): string {
+  return `checked against Claude Code ${VERIFIED_ON} (supports ${MINIMUM_VERSION} and later)`;
+}
+
 /** Every hook event the docs list (33). A hook on any other name never fires. */
 export const HOOK_EVENTS: ReadonlySet<string> = new Set([
   "SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
