@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] `@types/node` is a devDependency
+
+- It was missing, so on a fresh `npm ci` `npx tsc --noEmit` failed with hundreds of TS2307 errors
+  (`Cannot find module 'node:fs'`); machines that had it installed by accident never saw it.
+
 ### [feature] `step check`: a script step asks whether its gates hold
 
 - `agentopology step check <file.at> <step-id> [--unit U] [--dir D]` exits 0 when every gate with
