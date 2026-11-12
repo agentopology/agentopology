@@ -177,3 +177,65 @@ ${job}
     expect(rule(doc("", "", "", hook), "V123")).toHaveLength(0);
   });
 });
+
+describe("[T06] schedule carrier and survives", () => {
+  const withJob = (job: string) => `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "g11" }
+  agent a {
+    model: sonnet
+    description: "a"
+  }
+  schedule {
+    job j {
+      cron: "0 3 * * *"
+      agent: a
+${job}
+    }
+  }
+  flow { a -> a }
+}`;
+  it("[T06] parses carrier and survives and round-trips them", () => {
+    const ast = parse(withJob("      carrier: launchd\n      survives: reboot"));
+    expect(ast.schedules[0]).toMatchObject({ carrier: "launchd", survives: "reboot" });
+    const again = parse(serializeAST(ast));
+    expect(again.schedules[0]).toMatchObject({ carrier: "launchd", survives: "reboot" });
+  });
+  it("[T06] every carrier and survives value is accepted", () => {
+    for (const c of ["session", "cron", "launchd", "cloud", "calendar"])
+      expect(rule(withJob(`      carrier: ${c}`), "V124"), c).toHaveLength(0);
+    for (const s of ["pane-close", "reboot", "away"])
+      expect(rule(withJob(`      carrier: cron\n      survives: ${s}`), "V124"), s).toHaveLength(0);
+  });
+  it("[T06] an unknown carrier or survives value is an error", () => {
+    expect(rule(withJob("      carrier: pigeon"), "V124")).toHaveLength(1);
+    expect(rule(withJob("      carrier: cron\n      survives: forever"), "V124")).toHaveLength(1);
+  });
+  it("[T06] [L-2] carrier: session with any survives is an error that says why", () => {
+    for (const s of ["pane-close", "reboot", "away"]) {
+      const r = rule(withJob(`      carrier: session\n      survives: ${s}`), "V125");
+      expect(r, s).toHaveLength(1);
+      expect(r[0].level).toBe("error");
+      expect(r[0].message).toContain("a session cron dies with its session and after 7 days");
+    }
+    expect(rule(withJob("      carrier: session"), "V125")).toHaveLength(0);
+    expect(rule(withJob("      carrier: launchd\n      survives: reboot"), "V125")).toHaveLength(0);
+  });
+  it("[T06] inventory lists launchd plists and crontab lines that point into the project dir", () => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-g11-proj-"));
+    const agents = fs.mkdtempSync(join(os.tmpdir(), "at-g11-la-"));
+    fs.writeFileSync(join(agents, "com.me.mine.plist"), `<plist><dict><key>Label</key><string>com.me.mine</string><key>ProgramArguments</key><array><string>${root}/run.sh</string></array></dict></plist>`);
+    fs.writeFileSync(join(agents, "com.me.other.plist"), `<plist><dict><key>ProgramArguments</key><array><string>/elsewhere/run.sh</string></array></dict></plist>`);
+    const crontab = `# comment ${root}\n0 3 * * * ${root}/nightly.sh\n5 * * * * /elsewhere/x.sh\n`;
+    const items = collectInventory(root, { launchAgentsDir: agents, crontab });
+    const ids = items.map((i) => i.id);
+    expect(ids).toContain("launchd:com.me.mine");
+    expect(ids).not.toContain("launchd:com.me.other");
+    expect(ids).toContain(`cron:0 3 * * * ${root}/nightly.sh`);
+    expect(ids.filter((i) => i.startsWith("cron:"))).toHaveLength(1);
+    // they are the machine's, listed apart and never required
+    expect(items.find((i) => i.id === "launchd:com.me.mine")?.tag).toBe("e");
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(agents, { recursive: true, force: true });
+  });
+});

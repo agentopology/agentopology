@@ -4058,6 +4058,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v121StoreOwner(ast),
     ...v122MachineKnown(ast),
     ...v123HomePaths(ast),
+    ...v124ScheduleCarrier(ast),
+    ...v125SessionCronSurvives(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4217,6 +4219,34 @@ function v123HomePaths(ast: TopologyAST): ValidationResult[] {
   for (const t of ast.toolDefs ?? []) {
     check(`Tool "${t.id}" script`, t.id, t.script);
     for (const a of t.args ?? []) check(`Tool "${t.id}" argument`, t.id, a);
+  }
+  return results;
+}
+
+const CARRIERS = ["session", "cron", "launchd", "cloud", "calendar"];
+const SURVIVES = ["pane-close", "reboot", "away"];
+
+/** V124 (T-06): a schedule job's `carrier:` and `survives:` must be one of the known values. */
+function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== undefined && !CARRIERS.includes(j.carrier))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has carrier "${j.carrier}"; use one of: ${CARRIERS.join(", ")}.` });
+    if (j.survives !== undefined && !SURVIVES.includes(j.survives))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has survives "${j.survives}"; use one of: ${SURVIVES.join(", ")}.` });
+  }
+  return results;
+}
+
+/** V125 (L-2): a job carried by a session cannot outlive it. */
+function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== "session" || !j.survives || !SURVIVES.includes(j.survives)) continue;
+    results.push({
+      rule: "V125", level: "error", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" has carrier: session and survives: ${j.survives}, but a session cron dies with its session and after 7 days. Use carrier: cron, launchd or cloud for a job that must survive.`,
+    });
   }
   return results;
 }
