@@ -4,6 +4,16 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Every documented import form is read, at the top of the file too (T02b)
+
+- `import reviewer from ./review.at`, the quoted path, `import linter from registry:@org/linter@1.2.0`
+  and `import auditor from ./audit.at sha256 "<hex>"` (also `sha256: "<hex>"`) now parse. Before, only
+  `import "./f.at" as x` did and the others were dropped with no message.
+- Imports written above the `topology` line are read, and checked like the ones inside it.
+- A line starting with `import` that matches no form is a V8 error ("unrecognized import form").
+- A registry import is not read from disk; `validate` prints a warning "registry import not checked".
+- Converting a topology back to `.at` writes the `from` form and keeps every import.
+
 ### [fix] The import check reads the imported files (N43, T-02)
 
 - `validate` now resolves each local `import "./f.at" as x` relative to the importing file. A missing file,

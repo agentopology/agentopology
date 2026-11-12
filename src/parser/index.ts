@@ -2316,78 +2316,112 @@ function parseInterfaceBlock(topBody: string): InterfaceEndpoints | null {
 }
 
 /**
- * Parse import statements from a topology body.
+ * Parse import statements from a topology body (or file top level).
  *
- * Syntax:
- *   import "./path.at" as alias
- *   import "./path.at" as alias with { key: value ... }
+ * Forms:
+ *   import alias from ./path.at
+ *   import alias from "./path.at"
+ *   import alias from registry:@org/pkg@1.2.0
+ *   import alias from ./path.at sha256 "<hex>"      (or `sha256: "<hex>"`)
+ *   import "./path.at" as alias                     (older form)
+ * Any of them may be followed by `with { key: value ... }`.
  *
- * Import statements are parsed from the raw body text since they are
- * not brace-delimited blocks in the usual sense.
+ * Only lines at brace depth zero are read. A line starting with `import` that
+ * matches no form is returned in `errors`, never dropped (T02b).
  */
-export function parseImports(body: string): ImportDef[] {
+export function parseImportsDetailed(text: string): { imports: ImportDef[]; errors: string[] } {
   const imports: ImportDef[] = [];
-
-  // Regex: import "source" as alias (captures everything after for optional with block)
-  const importRe = /(?:^|\n)\s*import\s+"([^"]+)"\s+as\s+([a-zA-Z][a-zA-Z0-9_-]*)/g;
+  const errors: string[] = [];
+  const lineRe = /^[ \t]*import\b([^\n]*)/gm;
+  const aliasRe = "([a-zA-Z][a-zA-Z0-9_-]*)";
   let m: RegExpExecArray | null;
+  let depth = 0;
+  let scanned = 0;
 
-  while ((m = importRe.exec(body)) !== null) {
-    const source = m[1];
-    const alias = m[2];
+  while ((m = lineRe.exec(text)) !== null) {
+    for (; scanned < m.index; scanned++) {
+      if (text[scanned] === "{") depth++;
+      else if (text[scanned] === "}") depth--;
+    }
+    if (depth > 0) continue;
+    const lineEnd = m.index + m[0].length;
+    const rest = m[1];
+
+    let source: string | undefined;
+    let alias: string | undefined;
+    let tail = "";
+    const legacy = rest.match(new RegExp(`^\\s+"([^"]+)"\\s+as\\s+${aliasRe}(.*)$`));
+    const from = rest.match(new RegExp(`^\\s+${aliasRe}\\s+from\\s+(?:"([^"]+)"|([^\\s"]+))(.*)$`));
+    if (legacy) {
+      [, source, alias, tail] = legacy;
+    } else if (from) {
+      alias = from[1];
+      source = from[2] ?? from[3];
+      tail = from[4];
+    }
+    if (source === undefined || alias === undefined) {
+      errors.push(`unrecognized import form: "${m[0].trim()}" (use: import <alias> from <path> [sha256 "<hex>"])`);
+      continue;
+    }
+
     const params: Record<string, string | number | boolean> = {};
+    const importDef: ImportDef = { source, alias, params };
 
-    // Check for `with { ... }` block following the import
-    const afterImport = body.slice(m.index! + m[0].length);
-    const withMatch = afterImport.match(/^\s*with\s*\{([^}]*)\}/);
-
-    if (withMatch) {
-      const withBody = withMatch[1];
+    let sha: string | undefined;
+    let withBody: string | undefined;
+    const sm = tail.match(/^\s+sha256\s*:?\s*"([^"]+)"/);
+    if (sm) {
+      sha = sm[1];
+      tail = tail.slice(sm[0].length);
+    }
+    let fullTail = tail + text.slice(lineEnd);
+    const wm = fullTail.match(/^\s*with\s*\{([^}]*)\}/);
+    if (wm) {
+      withBody = wm[1];
+      fullTail = fullTail.slice(wm[0].length);
+    } else if (tail.trim() !== "") {
+      errors.push(`unrecognized import form: "${m[0].trim()}" (unexpected "${tail.trim()}")`);
+      continue;
+    }
+    if (withBody !== undefined) {
       for (const line of withBody.split("\n")) {
         const kv = parseKV(line);
         if (!kv) continue;
         const [key, rawVal] = kv;
         const val = unquote(rawVal);
-        // Try number
-        if (/^-?\d+(\.\d+)?$/.test(val)) {
-          params[key] = parseFloat(val);
-        } else if (val === "true" || val === "false") {
-          params[key] = val === "true";
-        } else {
-          params[key] = val;
-        }
+        if (/^-?\d+(\.\d+)?$/.test(val)) params[key] = parseFloat(val);
+        else if (val === "true" || val === "false") params[key] = val === "true";
+        else params[key] = val;
       }
     }
+    if (!sha) {
+      // older form: sha256 after the with block
+      const after = fullTail.match(/^\s*sha256\s*:\s*"([^"]+)"/);
+      if (after) sha = after[1];
+    }
+    if (sha) importDef.sha256 = sha;
 
-    const importDef: ImportDef = { source, alias, params };
-
-    // Detect registry imports (not starting with ./ or ../)
-    const isRegistry = !source.startsWith("./") && !source.startsWith("../");
-    if (isRegistry) {
+    // Registry: explicit `registry:` prefix, or (older form) not a relative path.
+    const explicit = source.startsWith("registry:");
+    const pkg = explicit ? source.slice("registry:".length) : source;
+    if (explicit || (!source.startsWith("./") && !source.startsWith("../") && !source.startsWith("/"))) {
       importDef.registry = true;
-      // Parse package@version format
-      const atIdx = source.lastIndexOf("@");
+      const atIdx = pkg.lastIndexOf("@");
       if (atIdx > 0) {
-        importDef.registryPackage = source.slice(0, atIdx);
-        importDef.registryVersion = source.slice(atIdx + 1);
+        importDef.registryPackage = pkg.slice(0, atIdx);
+        importDef.registryVersion = pkg.slice(atIdx + 1);
       } else {
-        importDef.registryPackage = source;
+        importDef.registryPackage = pkg;
       }
     }
-
-    // Check for sha256 after the with block (or after alias if no with block)
-    const afterWithOrAlias = withMatch
-      ? afterImport.slice(withMatch[0].length)
-      : afterImport;
-    const sha256Match = afterWithOrAlias.match(/^\s*sha256\s*:\s*"([^"]+)"/);
-    if (sha256Match) {
-      importDef.sha256 = sha256Match[1];
-    }
-
     imports.push(importDef);
   }
+  return { imports, errors };
+}
 
-  return imports;
+/** Parse import statements; see {@link parseImportsDetailed}. */
+export function parseImports(body: string): ImportDef[] {
+  return parseImportsDetailed(body).imports;
 }
 
 /**
@@ -2673,7 +2707,14 @@ export function parse(source: string): TopologyAST {
   const interfaceEndpoints = parseInterfaceBlock(topBody);
 
   // --- Imports ---
-  const imports = parseImports(topBody);
+  // Read the file top level too: an import above the `topology` line used to
+  // be dropped with no message (T02b).
+  const topImports = parseImportsDetailed(stripComments(source).replace(/(?:^|\n)[ \t]*(?:topology|fragment)\b[^{\n]*\{[\s\S]*$/, "\n"));
+  const bodyImports = parseImportsDetailed(topBody);
+  const imports = [...topImports.imports, ...bodyImports.imports];
+  const importErrors = [...topImports.errors, ...bodyImports.errors].map((message) => ({
+    rule: "V8", level: "error" as const, message,
+  }));
 
   // --- Includes ---
   const includes = parseIncludes(topBody);
@@ -2781,6 +2822,10 @@ export function parse(source: string): TopologyAST {
   // Attach V24 unknown memory sub-block warnings for the validator to consume.
   if (unknownMemorySubBlockWarnings.length > 0) {
     ast._unknownMemorySubBlockWarnings = unknownMemorySubBlockWarnings;
+  }
+
+  if (importErrors.length > 0) {
+    (ast as TopologyAST & { _importErrors?: typeof importErrors })._importErrors = importErrors;
   }
 
   // Attach V89 block-vs-KV field misuse errors for the validator to consume.
