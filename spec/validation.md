@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 118 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 119 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -681,7 +681,7 @@ through the validator like any other rule.
 | V5 | error/warning | Every `[when x.y]` must reference a declared output |
 | V6 | error/warning | Every back-edge must have `max N` |
 | V7 | error/warning | Every agent and orchestrator must have a model |
-| V8 | error/warning | Import references should resolve (warning only -- we cannot check the filesystem) |
+| V8 | error/warning | A local import is read relative to the importing file: a missing file, a `sha256` that does not match, an import cycle, or an error inside the imported file is an error; validating a string with no file path skips this and warns `imports not checked` |
 | V9 | error/warning | Every action referenced in flow must appear in orchestrator.handles |
 | V10 | error/warning | Prompt content should not be empty if a prompt block is declared |
 | V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
@@ -792,6 +792,7 @@ through the validator like any other rule.
 | V116 | warning | Two agents claim one decision with `decides:`, or a decision listed in the topology's `decisions: [...]` has no agent claiming it |
 | V117 | warning | A `runs: session` agent sets `background`, `skills` or `permissions`, which are ignored when run as a session (one warning per field) |
 | V118 | warning | A talk edge joins two session agents that declare different `permission-mode`s: a session in another permission mode holds incoming messages for its user, so the edge may not arrive |
+| V119 | warning | `model:` is a bare alias (`opus`, `sonnet`, `haiku`, `fable`) while the topology sets `pin-models: true`: an alias resolves differently over time, so use the exact id for a pinned run |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

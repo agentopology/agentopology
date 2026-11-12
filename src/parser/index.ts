@@ -2531,6 +2531,9 @@ export function parse(source: string): TopologyAST {
   const decisionsField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*decisions[ \t]*:[ \t]*(\[[^\]]*\]|[^\n]*)/);
   const decisions = decisionsField ? parseList(decisionsField[1]) : undefined;
 
+  const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
+  const pinModels = pinField ? pinField[1] === "true" : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2761,6 +2764,7 @@ export function parse(source: string): TopologyAST {
     artifacts,
     records,
     ...(decisions ? { decisions } : {}),
+    ...(pinModels !== undefined ? { pinModels } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

@@ -368,7 +368,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   );
   console.log("");
 
-  const results = validate(ast);
+  const results = validate(ast, { filePath: path.resolve(filePath) });
   const covered = inventory ? printCoverage(ast, inventory, dir) : true;
 
   if (results.length === 0) {

@@ -19,7 +19,7 @@ const read = (p: string) => readFileSync(resolve(root, p), "utf8");
 function implementedRules(): number[] {
   const src = read("src/parser/validator.ts");
   const body = src.slice(src.indexOf("export function validate("));
-  const fns = [...body.matchAll(/\.\.\.(v(\d+)[A-Za-z0-9_]*)\(ast\)/g)];
+  const fns = [...body.matchAll(/\.\.\.(v(\d+)[A-Za-z0-9_]*)\(ast[,)]/g)];
   return [...new Set(fns.map((m) => Number(m[2])))].sort((a, b) => a - b);
 }
 
