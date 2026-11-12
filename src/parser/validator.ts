@@ -512,12 +512,18 @@ function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
  * (validating a string) nothing can be resolved, so say so.
  */
 function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
-  const local = ast.imports.filter((i) => !i.registry);
-  if (local.length === 0) return [];
-  if (!opts.filePath) {
-    return [{ rule: "V8", level: "warning", message: "imports not checked" }];
+  const results: ValidationResult[] = [
+    ...((ast as TopologyASTWithParseErrors)._importErrors ?? []),
+  ];
+  for (const imp of ast.imports.filter((i) => i.registry)) {
+    results.push({ rule: "V8", level: "warning", node: imp.alias, message: `import "${imp.source}": registry import not checked` });
   }
-  return checkImports(ast, opts.filePath, parseSource, validate, opts.importStack);
+  const local = ast.imports.filter((i) => !i.registry);
+  if (local.length === 0) return results;
+  if (!opts.filePath) {
+    return [...results, { rule: "V8", level: "warning", message: "imports not checked" }];
+  }
+  return [...results, ...checkImports(ast, opts.filePath, parseSource, validate, opts.importStack)];
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */
@@ -688,6 +694,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _unknownMemorySubBlockWarnings?: ValidationResult[];
   _blockFieldMisuseWarnings?: ValidationResult[];
   _unknownNameErrors?: ValidationResult[];
+  _importErrors?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
