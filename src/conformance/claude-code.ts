@@ -270,3 +270,10 @@ export function matcherGaps(ast: GapSource, extra: string[] = []): MatcherGap[] 
   }
   return gaps;
 }
+
+/**
+ * Whether a PreToolUse hook on these tools is proven to refuse a call in the
+ * installed Claude Code (N44b). Until a conformance run proves it, `guard
+ * --check` grades the talk and spawn guards `unverified`, never `refuse`.
+ */
+export const SESSION_HOOKS_PROVEN = { sendMessage: false, agent: false } as const;

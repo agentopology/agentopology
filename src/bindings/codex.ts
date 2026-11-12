@@ -13,6 +13,7 @@
  * @module
  */
 
+import { warnSessionsNotCompiled } from "./lib/session.js";
 import type {
   TopologyAST,
   AgentNode,
@@ -1715,6 +1716,7 @@ export const codexBinding: BindingTarget = {
     "OpenAI Codex CLI — generates .codex/config.toml, AGENTS.md, .codex/ directory structure, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
+    warnSessionsNotCompiled(ast, "codex");
     const files: GeneratedFile[] = [];
 
     // 1. .codex/config.toml — main configuration

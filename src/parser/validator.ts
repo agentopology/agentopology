@@ -4047,6 +4047,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v117SessionIgnoredFields(ast),
     ...v118TalkPermissionModes(ast),
     ...v119ModelAliases(ast),
+    ...v120DecisionArrives(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4112,4 +4113,24 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v87OrchestratorDelegation(ast),
     ...v88CustodyRefsValid(ast),
   ];
+}
+
+/**
+ * V120 (T-04c): an agent with `decides:` that a talk edge points at. A
+ * decision can arrive there as a message from another session rather than
+ * from the person at the seat. The warning names it; the binding writes a
+ * prompt log (typed or arrived) rather than refusing messages by keyword.
+ */
+function v120DecisionArrives(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const incoming = new Map<string, string[]>();
+  for (const e of talkEdges(ast)) incoming.set(e.to, [...(incoming.get(e.to) ?? []), e.from]);
+  for (const a of sessionAgents(ast)) {
+    if (!a.decides?.length || !incoming.has(a.id)) continue;
+    results.push({
+      rule: "V120", level: "warning", node: a.id, line: lookupLine(ast, a.id),
+      message: `Agent "${a.id}" holds ${a.decides.join(", ")} and ${[...new Set(incoming.get(a.id))].join(", ")} can message it: a decision can arrive here as a message.`,
+    });
+  }
+  return results;
 }

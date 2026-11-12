@@ -30,6 +30,40 @@ All notable changes to agentopology are documented here.
   with no flow edge at all is parked at the side. The page data now carries every parsed field, including `runs`,
   `place`, `decides`, `permissionMode`, an edge's `message` and the topology's `decisions`.
 
+### [fix] Session guards: fail-open and wrong-refusal fixes (N44b)
+
+- The spawn guard now blocks when its input is empty, `{}` or has no object `tool_input`; a spawn with no `subagent_type` is still an ordinary spawn. It lowercases and trims the value, strips a `<prefix>:` namespace, refuses a non-string `subagent_type`, and refuses a `name` that equals a session id.
+- The talk guard strips a trailing ` [ref]` (the mark ListAgents adds to duplicate names) before matching, lets a session message its own flow targets (such as its subagents) and `main`, refuses any target that is not `a-z`, `0-9` and `-` (so a newline or NUL no longer passes), and logs every refusal, including an oversize target or an unreadable payload.
+- The prompt log writes `kind: unknown` for empty or malformed input, and ignores leading whitespace before `<cross-session-message`.
+- The guards log to `$CLAUDE_PROJECT_DIR`, or to the project root found from the script's own path, and never append through a symlink. `talk.jsonl` is a trail, not evidence: whoever can write files can edit it, and `guard --check` says so.
+- `guard --check` grades a spawn or talk guard `none` when the script no longer holds its generated `exit 2` line and `jq -er` read.
+- The launcher single-quotes every value it interpolates and is not written when a place or session id is not `a-z`, `0-9` and `-`. It skips a session herdr already lists, warns that a rerun duplicates sessions when herdr cannot list them, and says in its header that the herdr subcommands are unproven.
+
+### [feature] Session agents: scaffold, guards and launcher (N44b)
+
+- `scaffold --target claude-code` writes each `runs: session` agent's file as for any agent, plus
+  `.claude/sessions.md` with one start line per session (`AT_SESSION=<id> claude --agent <id> -n <id>`,
+  with `--permission-mode` when declared) and `scripts/start-sessions.sh`, a plain POSIX launcher that
+  opens one herdr tab per `place:` and one pane per session, or prints the start lines when herdr is not installed.
+- A spawn guard (a PreToolUse hook on `Agent|Task`, `onFailure: "block"`) refuses to launch a session agent as a subagent.
+- A talk guard (a PreToolUse hook on `SendMessage`) refuses, with exit 2, a send to a session the current
+  session has no talk edge to. The current session is `$AT_SESSION`, set by the start line. When it is unset
+  the send passes with a note on stderr; when it is set the guard fails closed on any parse error.
+  Every send is appended to `.claude/state/talk.jsonl` as `allowed`, `refused` or `unguarded`.
+- `guard --check` lists both guards and grades them `unverified`, not `refuse`, until the conformance facts
+  mark PreToolUse on `SendMessage` and `Agent` as proven. Under the talk guard it says that a send through a
+  terminal command, a shared file or a session outside the repo is not seen.
+- Other targets (codex, cursor, claude-workflow) validate and draw session agents and print
+  "session agents: experimental, not compiled".
+
+### [feature] Decision seats see typed versus arrived input (T-04)
+
+- New rule V120: an agent with `decides:` that a talk edge points at gets a warning, because a decision can
+  arrive there as a message. Messages are not refused by keyword. Instead scaffold writes a UserPromptSubmit
+  hook for that agent's session (active only when `AT_SESSION` is its id) that logs each prompt to
+  `.claude/state/talk.jsonl` as `kind: arrived` when it starts with `<cross-session-message` and `kind: typed`
+  otherwise, so a human-gate script can tell the two apart. The hook never blocks.
+
 ### [feature] Session agents: grammar and validate (N44a)
 
 - An agent takes `runs: session` (beside `subagent`, `inline` and `fork`), `place: <name>`,

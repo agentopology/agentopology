@@ -12,6 +12,7 @@
  * @module
  */
 
+import { warnSessionsNotCompiled } from "./lib/session.js";
 import type {
   TopologyAST,
   AgentNode,
@@ -1929,6 +1930,7 @@ export const cursorBinding: BindingTarget = {
     "Cursor IDE -- generates .cursor/rules/*.mdc, .cursor/mcp.json, .cursor/hooks.json, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
+    warnSessionsNotCompiled(ast, "cursor");
     // Fragment check
     if (ast.isFragment) {
       return deduplicateFiles([
