@@ -25,12 +25,13 @@ import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { installedMark, SESSION_HOOKS_PROVEN, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
-export type Strength = "refuse" | "detect" | "hope" | "none";
+export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
 
 export interface GuardItem {
-  kind: "gate" | "human" | "permission" | "edge";
+  kind: "gate" | "human" | "permission" | "edge" | "session";
   id: string;
   strength: Strength;
   by: "hook" | "settings" | "code" | "gate" | "prose";
@@ -226,6 +227,32 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     items.push(problems.length
       ? { ...base, strength: "none", by: "hook", where, notes: problems }
       : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
+  }
+
+  // Session agents: the spawn guard and the talk guard. Both are PreToolUse
+  // hooks; until the conformance facts mark them proven they grade
+  // "unverified", never "refuse".
+  if (sessionAgentsOf(ast).length > 0) {
+    const sessionGuard = (id: string, file: string, matcher: string, event: string, proven: boolean, extra: string[]) => {
+      const problems: string[] = [];
+      const hooks = findHooks(settings, "PreToolUse", file, (m) => m === matcher);
+      if (hooks.length === 0) problems.push(`no PreToolUse entry on ${matcher} for ${file} in .claude/settings.json`);
+      else { const bad = commandProblem(hooks[0].command); if (bad) problems.push(bad); }
+      if (readText(join(root, scriptsDir, file)) === null) problems.push(`${scriptsDir}/${file} is missing`);
+      if (id === "talk guard" && readText(join(root, ".claude/sessions.md")) === null) problems.push("no .claude/sessions.md, so no session was started with AT_SESSION and every send is unguarded");
+      const where = `PreToolUse on ${matcher} → ${file}`;
+      const notes = [...extra];
+      if (problems.length) return items.push({ kind: "session", id, strength: "none", by: "hook", where, notes: [...problems, ...notes] });
+      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift('the entry has no onFailure: "block", so the step goes through if the hook cannot start');
+      if (!proven) notes.unshift(`${event} is not proven to stop a call in the installed Claude Code (conformance facts), so this is unverified`);
+      items.push({ kind: "session", id, strength: proven ? "refuse" : "unverified", by: "hook", where, notes });
+    };
+    sessionGuard("spawn guard", "spawn-guard.sh", "Agent|Task", "PreToolUse on Agent", SESSION_HOOKS_PROVEN.agent, []);
+    if (talkEdgesOf(ast).length > 0) {
+      sessionGuard("talk guard", "talk-guard.sh", "SendMessage", "PreToolUse on SendMessage", SESSION_HOOKS_PROVEN.sendMessage, [
+        "a send through a terminal command, a shared file or a session outside this repo is not seen",
+      ]);
+    }
   }
 
   for (const key of ["deny", "ask"] as const) {
