@@ -4,6 +4,24 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] The visualizer page carries check results (VZ-3)
+
+- `validate`, `guard --check`, `validate --inventory` and the Claude Code version stamp now have
+  functions that return their results as data. The terminal text is unchanged, pinned byte for byte
+  over every example.
+- `visualize --dir <project>` reads those results and embeds them in the page, keyed by item id, with
+  the sha256 of the `.at` source and the time they were read. A node's panel shows them under "Checks".
+  With no `--dir`, every fact reads "not checked".
+
+### [feature] `visualize` is quicker to run (VZ-11)
+
+- With no file argument, `visualize` draws the only `.at` in the current directory, or in
+  `.claude/topologies/`. With none or several it says so and lists them.
+- The page is written to `~/.cache/agentopology/visualize/` unless `--output` is given.
+- New flags: `--no-open` (write only), `--no-check` (ignore `--dir`, every fact "not checked") and
+  `--print-summary` (node counts and facts on stdout). `visualize-brain` also honours `--no-open`.
+- The browser opener is `open` on macOS, `xdg-open` on Linux, `start` on Windows and `wslview` under WSL.
+
 ### [fix] Every documented import form is read, at the top of the file too (T02b)
 
 - `import reviewer from ./review.at`, the quoted path, `import linter from registry:@org/linter@1.2.0`

@@ -54,6 +54,21 @@ export function installedStatus(): InstalledStatus {
   return (installedCache = status);
 }
 
+/** The version stamp as data: what the output was checked against, and what is installed. */
+export interface VersionStamp {
+  verifiedOn: string;
+  minimum: string;
+  /** The same sentence validate prints. */
+  line: string;
+  installed: InstalledStatus;
+  /** The mark validate and guard --check add; null when the installed version is VERIFIED_ON. */
+  mark: string | null;
+}
+
+export function versionStamp(): VersionStamp {
+  return { verifiedOn: VERIFIED_ON, minimum: MINIMUM_VERSION, line: verifiedOnLine(), installed: installedStatus(), mark: installedMark() };
+}
+
 /** The line validate and guard --check add about the installed Claude Code; null when it is VERIFIED_ON. */
 export function installedMark(): string | null {
   const s = installedStatus();

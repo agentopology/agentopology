@@ -20,7 +20,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
@@ -29,6 +29,8 @@ import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
+import { collectFacts, coverageResult, validateResult } from "../visualizer/facts.js";
+import { currentOpener, defaultOutputDir, pickTopology, summaryLines } from "../visualizer/command.js";
 import { parseBrainVault, renderBrainHtml } from "../visualizer/brain.js";
 import { exporters } from "../exporters/index.js";
 import { analyze } from "../analyzer/index.js";
@@ -91,7 +93,7 @@ ${c.bold("Usage:")}
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--allow-invalid] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
-  agentopology visualize <file.at> [--output <dir>]
+  agentopology visualize [file.at] [--dir <project>] [--output <dir>] [--no-open] [--no-check] [--print-summary]
   agentopology visualize-brain <vault-folder> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
@@ -125,6 +127,9 @@ ${c.bold("Commands:")}
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
+             No file: the only .at in the current directory or .claude/topologies/.
+             Writes to ~/.cache/agentopology/visualize/ unless --output is given.
+             With --dir <project>, check results are embedded in the page.
              Auto-renders + cross-links any brain stores it declares.
   visualize-brain  Render a brain vault (folder of markdown) as an Obsidian-style
              graph. Auto-detects + links back to its owning topology if nearby.
@@ -141,6 +146,9 @@ ${c.bold("Options:")}
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
+  --no-open         visualize: write the page, do not open a browser.
+  --no-check        visualize: do not read the project; every fact reads "not checked".
+  --print-summary   visualize: print node counts and facts to stdout.
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite files scaffold did not create or that were edited (never symlinks).
   --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
@@ -200,6 +208,9 @@ interface ParsedArgs {
   task: string | undefined;
   root: string | undefined;
   check: boolean;
+  noOpen: boolean;
+  noCheck: boolean;
+  printSummary: boolean;
   inventory: string | undefined;
   help: boolean;
 }
@@ -227,6 +238,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     task: undefined,
     root: undefined,
     check: false,
+    noOpen: false,
+    noCheck: false,
+    printSummary: false,
     inventory: undefined,
     help: false,
   };
@@ -265,6 +279,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       i++;
       continue;
     }
+    if (arg === "--no-open") { result.noOpen = true; i++; continue; }
+    if (arg === "--no-check") { result.noCheck = true; i++; continue; }
+    if (arg === "--print-summary") { result.printSummary = true; i++; continue; }
     if (arg === "--inventory" && i + 1 < args.length) {
       result.inventory = args[i + 1];
       i += 2;
@@ -368,7 +385,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   );
   console.log("");
 
-  const results = validate(ast, { filePath: path.resolve(filePath) });
+  const { results, errors: errorCount, warnings: warningCount } = validateResult(ast, path.resolve(filePath));
   const covered = inventory ? printCoverage(ast, inventory, dir) : true;
 
   if (results.length === 0) {
@@ -379,9 +396,6 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
     if (!covered) process.exit(1);
     return;
   }
-
-  const errors = results.filter((r) => r.level === "error");
-  const warnings = results.filter((r) => r.level === "warning");
 
   for (const result of results) {
     const prefix =
@@ -395,7 +409,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
 
   console.log("");
   console.log(
-    `  ${c.red(`${errors.length} error(s)`)}, ${c.yellow(`${warnings.length} warning(s)`)}`
+    `  ${c.red(`${errorCount} error(s)`)}, ${c.yellow(`${warningCount} warning(s)`)}`
   );
   console.log("");
 
@@ -403,7 +417,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   printInstalledMark();
   console.log(c.dim(verifiedOnLine()));
 
-  if (errors.length > 0 || !covered) {
+  if (errorCount > 0 || !covered) {
     process.exit(1);
   }
 }
@@ -431,7 +445,7 @@ function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boole
     }
     if (!Array.isArray(items)) { console.error(c.red(`Error: ${inventory} has no items list.`)); process.exit(1); }
   }
-  const r = coverage(ast, items, root);
+  const r = coverageResult(ast, items, root);
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
   return r.missing.length === 0;
@@ -674,7 +688,18 @@ function cmdSync(filePath: string, targetName: string, dirPath: string): void {
   );
 }
 
-function cmdVisualize(filePath: string, outputDir?: string): void {
+interface VisualizeFlags { dir?: string; noOpen: boolean; noCheck: boolean; printSummary: boolean }
+
+function cmdVisualize(fileArg: string | undefined, outputDir: string | undefined, flags: VisualizeFlags): void {
+  let filePath = fileArg;
+  if (!filePath) {
+    const picked = pickTopology(process.cwd());
+    if (picked.error || !picked.file) {
+      console.error(c.red(`Error: ${picked.error}`));
+      process.exit(1);
+    }
+    filePath = picked.file;
+  }
   const source = readFile(filePath);
 
   let ast;
@@ -687,7 +712,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
 
   const resolved = path.resolve(filePath);
   const stem = path.basename(resolved, ".at");
-  const outDir = outputDir ? path.resolve(outputDir) : path.dirname(resolved);
+  const outDir = outputDir ? path.resolve(outputDir) : defaultOutputDir();
   const atDir = path.dirname(resolved);
   const topoFileName = `${stem}-topology.html`;
   const outFile = path.join(outDir, topoFileName);
@@ -729,7 +754,9 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
     }
   }
 
-  const html = generateVisualization(ast, { brains });
+  // Facts are read from the project only with --dir (and not --no-check).
+  const facts = collectFacts(ast, { source, filePath: resolved, dir: flags.noCheck ? undefined : flags.dir });
+  const html = generateVisualization(ast, { brains, facts });
 
   try {
     fs.writeFileSync(outFile, html, "utf-8");
@@ -742,10 +769,13 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   console.log(c.green(`  Visualization written to ${outFile}`));
   if (brains.length) console.log(c.dim(`  ${brains.length} brain graph(s) linked from the topology header.`));
 
+  if (flags.printSummary) for (const line of summaryLines(ast, facts)) console.log(line);
+
   // Try to open in the default browser (non-fatal if it fails).
-  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  if (flags.noOpen) return;
+  const opener = currentOpener();
   try {
-    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+    execFileSync(opener.cmd, [...opener.args, outFile], { stdio: "ignore" });
   } catch {
     // Non-fatal — the file was written successfully regardless.
   }
@@ -838,7 +868,7 @@ function findOwningTopology(vaultPath: string): {
  * interactive force-directed graph — an Obsidian-style graph view in a single
  * self-contained HTML file, no Obsidian install required.
  */
-function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
+function cmdVisualizeBrain(vaultPath: string, outputDir?: string, noOpen = false): void {
   const resolved = path.resolve(vaultPath);
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
     console.error(c.red(`Error: "${vaultPath}" is not a directory. Point visualize-brain at a vault folder of .md files.`));
@@ -890,9 +920,10 @@ function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
   console.log(c.green(`  Brain graph written to ${outFile}`));
   console.log(c.dim(`  ${real} notes · ${graph.edges.length} links · ${ghosts} ghost nodes · ${graph.tags.length} tags`));
 
-  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  if (noOpen) return;
+  const opener = currentOpener();
   try {
-    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+    execFileSync(opener.cmd, [...opener.args, outFile], { stdio: "ignore" });
   } catch {
     // Non-fatal.
   }
@@ -1429,12 +1460,7 @@ function main(): void {
       break;
 
     case "visualize":
-      if (!args.file) {
-        console.error(c.red("Error: visualize requires a file argument."));
-        usage();
-        process.exit(1);
-      }
-      cmdVisualize(args.file, args.output);
+      cmdVisualize(args.file, args.output, { dir: args.dir, noOpen: args.noOpen, noCheck: args.noCheck, printSummary: args.printSummary });
       break;
 
     case "visualize-brain":
@@ -1443,7 +1469,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdVisualizeBrain(args.file, args.output);
+      cmdVisualizeBrain(args.file, args.output, args.noOpen);
       break;
 
     case "export":

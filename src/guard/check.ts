@@ -389,3 +389,26 @@ export function renderGuardReport(report: GuardReport): string[] {
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
   return mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
 }
+
+/** One item of a guard report as page data. */
+export interface GuardFact {
+  kind: GuardItem["kind"];
+  strength: Strength;
+  by: GuardItem["by"];
+  where: string;
+  notes: string[];
+  declared?: boolean;
+}
+
+/**
+ * The report as data keyed by item id (a gate or human id, a permission rule,
+ * `a -> b` for an edge, `spawn guard` / `talk guard`). The text render and
+ * this read the same report.
+ */
+export function guardFacts(report: GuardReport): Record<string, GuardFact> {
+  const out: Record<string, GuardFact> = {};
+  for (const i of report.items) {
+    out[i.id] = { kind: i.kind, strength: i.strength, by: i.by, where: i.where, notes: [...i.notes], ...(i.declared ? { declared: true } : {}) };
+  }
+  return out;
+}

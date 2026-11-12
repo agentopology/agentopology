@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { project } from "./project.js";
+import type { Facts } from "./facts.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -82,10 +83,12 @@ export interface VisualizationOptions {
    * each brain by name. A topology can own multiple brains.
    */
   brains?: BrainLinkRef[];
+  /** Facts read from a project (see facts.ts), embedded in the page keyed by item id. */
+  facts?: Facts;
 }
 
 export function generateVisualization(ast: TopologyAST, opts: VisualizationOptions = {}): string {
-  const dataJson = JSON.stringify(project(ast));
+  const dataJson = JSON.stringify(project(ast, opts.facts as unknown as Record<string, unknown> | undefined));
   const issues = validate(ast);
   const issuesJson = JSON.stringify(issues);
   return buildHtml(dataJson, ast.topology.name, issuesJson, opts.brains ?? []);
@@ -1735,6 +1738,16 @@ function showNodeDetail(id) {
       if (hk.run) h += '<div style="font-size:11px;font-family:var(--font-mono);color:var(--t3);margin-top:2px">' + esc(hk.run) + '</div>';
       h += '</div>';
     });
+    h += '</div></div>';
+  }
+  if (data.facts && data.facts.items && data.facts.items[id]) {
+    const fi = data.facts.items[id];
+    h += '<div class="panel-section expanded"><div class="panel-title" onclick="this.parentElement.classList.toggle(\\\'expanded\\\')">Checks</div><div class="panel-body">';
+    const fv = fi.validate;
+    h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">validate: ' + (typeof fv === 'string' ? esc(fv) : fv.length === 0 ? 'clean' : fv.length + ' issue(s)') + '</div>';
+    const fg = fi.guard;
+    if (fg) h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">guard: ' + (typeof fg === 'string' ? esc(fg) : esc(fg.strength) + ' <span style="color:var(--t3)">' + esc(fg.where) + '</span>') + '</div>';
+    h += '<div style="font-size:10px;margin-top:4px;color:var(--t3);font-family:var(--font-mono)">source ' + esc(data.facts.sha256.slice(0, 12)) + ' \\u00b7 ' + esc(data.facts.at) + '</div>';
     h += '</div></div>';
   }
   const inEdges = data.edges.filter(e => e.to === id);
