@@ -353,7 +353,11 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .edge-path.conditional{stroke:var(--t3);stroke-dasharray:6 4}
 .edge-path.failure{stroke:var(--red);stroke-dasharray:6 4;opacity:.7}
 .edge-path.loop{stroke:var(--orange);stroke-dasharray:4 4}
-.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.6}
+.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.22}
+.place-box rect{fill:rgba(167,139,250,.04);stroke:rgba(167,139,250,.35);stroke-width:1;stroke-dasharray:2 4}
+.place-box text{font-family:var(--font-mono);font-size:10px;letter-spacing:1.5px;fill:rgba(167,139,250,.75);font-weight:600;text-transform:uppercase}
+.session-mark rect{fill:rgba(96,165,250,.18);stroke:rgba(96,165,250,.5);stroke-width:.5}
+.session-mark text{font-family:var(--font-mono);font-size:7.5px;fill:#93c5fd;font-weight:700}
 .edge-group.dimmed .edge-path{opacity:.06}
 .edge-group.dimmed .edge-label-group{opacity:.06}
 .edge-group.highlighted .edge-path{stroke-width:2.5;opacity:1}
@@ -599,7 +603,11 @@ function layoutNodes(nodes, edges) {
 
   var orchestratorNode = nodes.find(function(n) { return n.type === 'orchestrator'; });
   var gateNodes = nodes.filter(function(n) { return n.type === 'gate'; });
-  var manualNodes = nodes.filter(function(n) { return isManualNode(n); });
+  // Manual nodes stay in the flow layout; only those with no flow edge at all
+  // go to the side.
+  var touched = new Set();
+  edges.forEach(function(e) { if (!e.isMemory) { touched.add(e.from); touched.add(e.to); } });
+  var manualNodes = nodes.filter(function(n) { return isManualNode(n) && !touched.has(n.id); });
   var triggerNodes = nodes.filter(function(n) { return n.type === 'trigger'; });
 
   var gateIds = new Set(gateNodes.map(function(g) { return g.id; }));
@@ -615,11 +623,12 @@ function layoutNodes(nodes, edges) {
 
   var dagreNodes = nodes.filter(function(n) {
     if (n.type === 'orchestrator' && !orchInFlow) return false;
+    if (n.type === 'store') return false;
     return !gateIds.has(n.id) && !manualIds.has(n.id) && !triggerIds.has(n.id);
   });
 
   // Create dagre graph
-  var g = new dagre.graphlib.Graph();
+  var g = new dagre.graphlib.Graph({ compound: true });
   g.setGraph({
     rankdir: 'TB',
     nodesep: 100,
@@ -635,6 +644,17 @@ function layoutNodes(nodes, edges) {
   dagreNodes.forEach(function(n) {
     var sz = nodeSize(n);
     g.setNode(n.id, { width: sz.w, height: sz.h });
+  });
+
+  // A place keeps its sessions together: members share one dagre cluster.
+  var placeMembers = {};
+  dagreNodes.forEach(function(n) {
+    if (n.runs === 'session' && n.place) (placeMembers[n.place] = placeMembers[n.place] || []).push(n.id);
+  });
+  Object.keys(placeMembers).forEach(function(pl) {
+    if (placeMembers[pl].length < 2) return;
+    g.setNode('__place:' + pl, {});
+    placeMembers[pl].forEach(function(id) { g.setParent(id, '__place:' + pl); });
   });
 
   // Add edges (only between dagre nodes)
@@ -657,7 +677,7 @@ function layoutNodes(nodes, edges) {
   // Extract positions (dagre returns center coords, we store top-left y)
   g.nodes().forEach(function(v) {
     var node = g.node(v);
-    if (node) {
+    if (node && nodeMap[v]) {
       var sz = nodeSize(nodeMap[v]);
       positions[v] = { x: node.x, y: node.y - sz.h / 2, w: sz.w, h: sz.h };
     }
@@ -740,6 +760,26 @@ function layoutNodes(nodes, edges) {
     }
   }
 
+  // Stores get their own band under the flow, centred on it.
+  var storeNodes = nodes.filter(function(n) { return n.type === 'store'; });
+  if (storeNodes.length > 0) {
+    var flowPos = Object.values(positions);
+    var bandY = 0, sumFX = 0;
+    flowPos.forEach(function(p) { bandY = Math.max(bandY, p.y + p.h); sumFX += p.x; });
+    bandY += 110;
+    var cx0 = flowPos.length ? sumFX / flowPos.length : 200;
+    var STORE_GAP = 40;
+    var totalW = 0;
+    storeNodes.forEach(function(n) { totalW += nodeSize(n).w; });
+    totalW += STORE_GAP * (storeNodes.length - 1);
+    var sx = cx0 - totalW / 2;
+    storeNodes.forEach(function(n) {
+      var sz = nodeSize(n);
+      positions[n.id] = { x: sx + sz.w / 2, y: bandY, w: sz.w, h: sz.h };
+      sx += sz.w + STORE_GAP;
+    });
+  }
+
   // Place any remaining disconnected nodes
   var placed = new Set(Object.keys(positions));
   var disconnected = nodes.filter(function(n) { return n.type !== 'orchestrator' && !placed.has(n.id); });
@@ -805,7 +845,27 @@ function renderGraph() {
     });
   }
 
+  // Place boxes: a titled box around each place's sessions.
+  const PLACE_PAD = 24, PLACE_TITLE = 22;
+  const placeGroups = {};
+  data.nodes.forEach(function(n) {
+    if (n.runs === 'session' && n.place && nodePositions[n.id]) (placeGroups[n.place] = placeGroups[n.place] || []).push(n.id);
+  });
+  window.__placeBoxes = Object.keys(placeGroups).map(function(pl) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    placeGroups[pl].forEach(function(id) {
+      var p = nodePositions[id];
+      x0 = Math.min(x0, p.x - p.w / 2); y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x + p.w / 2); y1 = Math.max(y1, p.y + p.h);
+    });
+    return { place: pl, x: x0 - PLACE_PAD, y: y0 - PLACE_PAD - PLACE_TITLE, w: x1 - x0 + PLACE_PAD * 2, h: y1 - y0 + PLACE_PAD * 2 + PLACE_TITLE, members: placeGroups[pl] };
+  });
+
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  window.__placeBoxes.forEach(b => {
+    minX = Math.min(minX, b.x - 60); minY = Math.min(minY, b.y - 60);
+    maxX = Math.max(maxX, b.x + b.w + 60); maxY = Math.max(maxY, b.y + b.h + 60);
+  });
   Object.values(nodePositions).forEach(p => {
     minX = Math.min(minX, p.x - p.w / 2 - 60); minY = Math.min(minY, p.y - 60);
     maxX = Math.max(maxX, p.x + p.w / 2 + 60); maxY = Math.max(maxY, p.y + p.h + 60);
@@ -831,6 +891,10 @@ function renderGraph() {
   s += '</defs>';
 
   s += '<g id="graph-transform" transform="translate(' + transform.x + ',' + transform.y + ') scale(' + transform.scale + ')">';
+  window.__placeBoxes.forEach(function(b) {
+    s += '<g class="place-box" data-place="' + esc(b.place) + '"><rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h + '" rx="14"/>';
+    s += '<text x="' + (b.x + 14) + '" y="' + (b.y + 16) + '">' + esc(b.place) + '</text></g>';
+  });
 
   const nodeRanks = {};
   data.nodes.forEach(n => {
@@ -928,7 +992,7 @@ function renderGraph() {
     s += '<g class="edge-group" data-from="' + edge.from + '" data-to="' + edge.to + '">';
     s += '<path d="' + pathD + '" class="edge-path ' + edgeClass + '" marker-end="' + markerEnd + '"' + backEdgeDash + '/>';
 
-    if (edge.condition || isLoop) {
+    if (edge.condition || isLoop || edge.message) {
       const isBack = toPos.y <= fromPos.y + fromPos.h;
       let labelX, labelY;
       if (isBack && (isLoop || isFailure)) {
@@ -950,6 +1014,7 @@ function renderGraph() {
       let label = '';
       if (edge.condition) label = edge.condition.replace('orchestrator.', '').replace('qa.', '').replace(' == ', '=');
       if (isLoop) label += (label ? ' ' : '') + 'max ' + edge.maxIterations;
+      if (edge.message) label += (label ? ' ' : '') + '[' + edge.message + ']';
       if (label) {
         if (!edgeLabelCount[edge.from]) edgeLabelCount[edge.from] = 0;
         const labelIdx = edgeLabelCount[edge.from]++;
@@ -1069,7 +1134,9 @@ function renderGraph() {
   if (dataFlowEnabled) s += renderDataFlowOverlay(nodeMap);
 
   // --- Manual agents label ---
-  const manualNodesArr = data.nodes.filter(n => isManualNode(n));
+  const flowIds = new Set();
+  allEdges.forEach(e => { if (!e.isMemory) { flowIds.add(e.from); flowIds.add(e.to); } });
+  const manualNodesArr = data.nodes.filter(n => isManualNode(n) && !flowIds.has(n.id));
   if (manualNodesArr.length > 0) {
     const firstManual = nodePositions[manualNodesArr[0].id];
     if (firstManual) {
@@ -1131,6 +1198,10 @@ function renderGraph() {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 11) + '">gate</text>';
     } else if (node.type === 'store') {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 13) + '">' + esc(node.storeType || 'store') + '</text>';
+    }
+
+    if (node.runs === 'session') {
+      s += '<g class="session-mark" data-for="' + esc(node.id) + '"><rect x="' + (pos.x - 20) + '" y="' + (y + pos.h - 7) + '" width="40" height="13" rx="6.5"/><text x="' + pos.x + '" y="' + (y + pos.h - 0.5) + '" text-anchor="middle" dominant-baseline="central">session</text></g>';
     }
 
     const badgeY = y - 2;
@@ -1476,17 +1547,28 @@ function zoomOut() {
 }
 function zoomFit() {
   const r = graphContainer.getBoundingClientRect();
+  // On narrow windows the open panel overlays the graph; fit into what is left.
+  const panelEl = document.getElementById('side-panel');
+  let overlay = 0;
+  if (panelEl && !panelEl.classList.contains('collapsed') && window.innerWidth <= 768) {
+    overlay = window.innerWidth <= 480 ? window.innerWidth : Math.min(380, 0.85 * window.innerWidth);
+  }
+  const availW = Math.max(r.width - overlay, 50);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   Object.values(nodePositions).forEach(p => {
     minX = Math.min(minX, p.x - p.w / 2); minY = Math.min(minY, p.y);
     maxX = Math.max(maxX, p.x + p.w / 2); maxY = Math.max(maxY, p.y + p.h);
   });
+  (window.__placeBoxes || []).forEach(b => {
+    minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+  });
   if (minX === Infinity) return;
   const gw = maxX - minX, gh = maxY - minY, pad = ZOOM_FIT_PAD;
-  const sx = (r.width - pad * 2) / gw, sy = (r.height - pad * 2) / gh;
-  const ns = Math.min(sx, sy, ZOOM_FIT_MAX);
+  const sx = (availW - pad * 2) / gw, sy = (r.height - pad * 2) / gh;
+  const ns = Math.max(Math.min(sx, sy, ZOOM_FIT_MAX), 0.05);
   transform.scale = ns;
-  transform.x = (r.width - gw * ns) / 2 - minX * ns;
+  transform.x = (availW - gw * ns) / 2 - minX * ns;
   transform.y = (r.height - gh * ns) / 2 - minY * ns;
   applyTransform();
 }
@@ -1565,6 +1647,10 @@ function showNodeDetail(id) {
   if (node.retry) h += dr('Retry', node.retry);
   if (node.behavior) h += dr('Behavior', node.behavior);
   if (node.invocation) h += dr('Invocation', node.invocation);
+  if (node.runs) h += dr('Runs', node.runs);
+  if (node.place) h += dr('Place', node.place);
+  if (node.decides && node.decides.length) h += dr('Decides', node.decides.join(', '));
+  if (node.permissionMode) h += dr('Permission mode', node.permissionMode);
   if (node.skip) h += dr('Skip', node.skip);
   if (node.kind) h += dr('Kind', node.kind);
   if (node.source) h += dr('Source', node.source);

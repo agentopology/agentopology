@@ -17,6 +17,19 @@ All notable changes to agentopology are documented here.
   used as a `model:`: an alias resolves differently over time, so use the exact id for a pinned run.
   `inherit` and exact ids are fine. Without `pin-models`, nothing changes.
 
+### [feature] The visualizer draws session agents (VZ-1)
+
+- A `runs: session` agent wears a "session" mark, and each `place` is a titled box around its sessions.
+  Talk edges show their `[message: ...]` kind, and the inspector lists runs, place, decides and permission mode.
+- Stores sit in their own band under the flow, and memory edges are faint until you hover them.
+- On load the graph fits to the screen, including the place boxes, and leaves room for the open panel on narrow windows.
+
+### [fix] Manual agents stay in the flow layout (N45)
+
+- Agents with `invocation: manual` are laid out with the rest of the flow and keep their edges. Only a manual agent
+  with no flow edge at all is parked at the side. The page data now carries every parsed field, including `runs`,
+  `place`, `decides`, `permissionMode`, an edge's `message` and the topology's `decisions`.
+
 ### [feature] Session agents: grammar and validate (N44a)
 
 - An agent takes `runs: session` (beside `subagent`, `inline` and `fork`), `place: <name>`,
