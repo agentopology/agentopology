@@ -1,0 +1,33 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.10.1-overnight.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/feat/n44b-session-binding. Create your branch feat/n44b-guard-fixes from it. Push ONLY that branch: `git push -u origin feat/n44b-guard-fixes`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you own src/bindings/lib/session.ts, src/bindings/claude-code.ts, src/guard/check.ts and their tests. Other lanes are editing src/parser/validator.ts and src/cli (T-02 lane), src/visualizer/* (VZ-1 lane) right now; touch those only if unavoidable, and then minimally. Add a CHANGELOG.md entry under a new "## [Unreleased]" section at the top (create the heading if missing): one "### [feature]" or "### [fix]" block per ticket, in plain sentences, no private names.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/n44b-guard-fixes` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): the spec section "N44b: session agents, binding, guards and launcher" is already built on your base branch. Your job is an adversarial review's findings against the generated guards in src/bindings/lib/session.ts. For each one, write the planted test first (red), then fix it. Prefix the tests with [N44b-fix].
+P0
+- F1 fail-open: the spawn guard exits 0 on empty stdin and on `{}`. Read the input as `jq -er '.tool_input | objects | (.subagent_type // "")'` so missing or non-object tool_input blocks (exit 2). A valid tool_input with no subagent_type is an ordinary general-purpose spawn and must still exit 0.
+- F3 wrong refusal: with AT_SESSION=lane-build, a send to "lane-manager [abc123]" exits 2. ListAgents documents a trailing " [ref]" for duplicate names. Strip a trailing ` [<ref>]` from `to` before matching.
+P1
+- F2: the prompt log writes `typed` for empty or malformed input, and for a prompt with leading whitespace before `<cross-session-message`. Default to `unknown`; write `typed` only on a positive parse of a non-empty prompt; trim leading whitespace before testing for the wrapper.
+- F4: a session cannot message its own declared subagent, or `main`. Allow `to` values that are non-session flow targets of the current session, plus `main`.
+- F5: the spawn guard lets "Lane-Build", surrounding whitespace, an array, "topology:id" and `.tool_input.name` equal to a session id through. Lowercase and trim; strip a `<prefix>:` namespace; refuse non-string values; also refuse when `.tool_input.name` equals a session id.
+- F7: with --allow-invalid, a hostile `place` is emitted unquoted into the launcher (`$(...)`). Single-quote every interpolated value in the launcher (escape embedded single quotes), and refuse to emit the launcher when a place or id is not ^[a-z0-9-]+$.
+P2
+- F6: a NUL or newline in `to` passes. After the ref strip, refuse unless `to` matches ^[a-z0-9-]+$ (main included).
+- F8: an oversize `to` refuses but logs nothing. Log every refusal.
+- F9: the log path is cwd-relative when CLAUDE_PROJECT_DIR is unset, and a symlinked log is followed. Use $CLAUDE_PROJECT_DIR when set, else the script's own project root (derived from its path). Refuse to append through a symlink. Document in guard --check and the docs that talk.jsonl is a trail, not evidence.
+- F10: guard --check only checks that the guard script exists (src/guard/check.ts:241). Also check that the script still holds its generated marker lines (the exit 2 path and the jq read); a gutted guard grades `none`.
+- F11: the launcher can half-start, and a rerun duplicates sessions. Before creating, check whether a session with that name is already listed (if herdr has a list command, use it; else print a warning that a rerun duplicates). Mark the herdr subcommands as unproven in the launcher header comment.
+Keep what already held: talk-guard refusals on case, spaces, uds:, agentId, `*`, self and bad types; extra fields ignored; jq missing makes both guards block (exit 2) and the prompt hook exit 0; onFailure: "block" on both guards; guard --check says unverified, never refuse. Add tests that pin these too.
