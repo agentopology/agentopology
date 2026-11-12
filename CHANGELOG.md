@@ -4,6 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Session guards: second review follow-ups (N44c)
+
+- A `permission-mode` with characters other than letters, digits and `-` is no longer written into `.claude/sessions.md` or `scripts/start-sessions.sh`, even with `--allow-invalid`; the launcher is not written and the session gets no start line.
+- The launcher skips a session only when herdr lists its exact name, so `lane-build-old` no longer hides `lane-build`, and an error banner that names the ids does not count as a listing.
+- The talk guard refuses to write through a hard-linked `talk.jsonl`. When the log cannot be written (hard link, symlink, or an unwritable folder) an allowed send still goes through and prints `talk log not written` to stderr.
+- A `[ref]` suffix on a `SendMessage` target must be only letters, digits, `_` and `-`, otherwise the send is refused. The spawn guard now refuses `subagent_type: false` and any other non-string value. A place name with unsafe characters is not printed in the `sessions.md` heading. `scaffold --prune` removes a stale `scripts/start-sessions.sh` when no session agents remain.
+
 ### [fix] Every documented import form is read, at the top of the file too (T02b)
 
 - `import reviewer from ./review.at`, the quoted path, `import linter from registry:@org/linter@1.2.0`

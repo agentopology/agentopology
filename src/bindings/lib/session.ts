@@ -49,12 +49,22 @@ export function warnSessionsNotCompiled(ast: TopologyAST, target: string): void 
   if (sessionAgentsOf(ast).length > 0) console.warn(`[${target}] ${SESSION_NOTICE}`);
 }
 
+/** Characters a permission mode may hold when it is put in a shell line (acceptEdits, bypassPermissions, ...). */
+const SAFE_MODE = /^[A-Za-z0-9-]+$/;
+
+/** True when the id, place and permission mode are safe to write into a start line or script. */
+export function sessionIsSafe(agent: AgentNode): boolean {
+  const mode = agent.permissionMode;
+  return SAFE_NAME.test(agent.id) && SAFE_NAME.test(agent.place ?? DEFAULT_PLACE) && (mode === undefined || (typeof mode === "string" && SAFE_MODE.test(mode)));
+}
+
 export function startLine(agent: AgentNode): string {
   const mode = agent.permissionMode ? ` --permission-mode ${agent.permissionMode}` : "";
   return `AT_SESSION=${agent.id} claude --agent ${agent.id} -n ${agent.id}${mode}`;
 }
 
 const DEFAULT_PLACE = "sessions";
+const SAFE_NAME = /^[a-z0-9-]+$/;
 
 function placesOf(agents: AgentNode[]): Map<string, AgentNode[]> {
   const places = new Map<string, AgentNode[]>();
@@ -69,7 +79,12 @@ export function sessionScriptPath(topology: string, file: string): string {
   return `.claude/skills/${topology}/scripts/${file}`;
 }
 
-function sessionsMd(agents: AgentNode[]): GeneratedFile {
+function sessionsMd(allAgents: AgentNode[]): GeneratedFile {
+  const agents = allAgents.filter((a) => {
+    if (sessionIsSafe(a)) return true;
+    console.warn(`[claude-code] .claude/sessions.md: no start line for a session whose id, place or permission-mode has characters outside a-z, A-Z, 0-9 and "-"`);
+    return false;
+  });
   const lines = [
     "# Sessions",
     "",
@@ -79,12 +94,11 @@ function sessionsMd(agents: AgentNode[]): GeneratedFile {
     "",
   ];
   for (const [place, members] of placesOf(agents)) {
-    lines.push(`## ${place}`, "", "```sh", ...members.map(startLine), "```", "");
+    const heading = SAFE_NAME.test(place) ? place : "(place name not shown: unsafe characters)";
+    lines.push(`## ${heading}`, "", "```sh", ...members.map(startLine), "```", "");
   }
   return { path: ".claude/sessions.md", content: lines.join("\n"), category: "machine" };
 }
-
-const SAFE_NAME = /^[a-z0-9-]+$/;
 
 /** Single-quote a value for a POSIX shell, escaping embedded single quotes. */
 export function shellQuote(value: string): string {
@@ -94,9 +108,8 @@ export function shellQuote(value: string): string {
 /** The launcher, or null (with a warning) when a place or id is not safe to put in a shell script. */
 function launcher(agents: AgentNode[]): GeneratedFile | null {
   for (const a of agents) {
-    const place = a.place ?? DEFAULT_PLACE;
-    if (!SAFE_NAME.test(a.id) || !SAFE_NAME.test(place)) {
-      console.warn(`[claude-code] scripts/start-sessions.sh not written: session "${a.id}" or its place "${place}" is not made of a-z, 0-9 and "-"`);
+    if (!sessionIsSafe(a)) {
+      console.warn(`[claude-code] scripts/start-sessions.sh not written: a session id, place or permission-mode has characters outside a-z, A-Z, 0-9 and "-"`);
       return null;
     }
   }
@@ -114,7 +127,8 @@ function launcher(agents: AgentNode[]): GeneratedFile | null {
     `trap 'rc=$?; [ "$rc" = 0 ] || echo "start-sessions: stopped early (exit $rc); some sessions may already be running, and a rerun starts them again" >&2' EXIT`,
     "",
     "if command -v herdr >/dev/null 2>&1; then",
-    '  listed=$(herdr pane list 2>/dev/null) || listed=""',
+    "  # Drop error/usage banners, then match whole whitespace-separated names.",
+    `  listed=$(herdr pane list 2>/dev/null | grep -viE '^ *(error|warn|warning|usage|fatal)' || true) || listed=""`,
     '  if [ -z "$listed" ]; then',
     '    echo "start-sessions: cannot list running sessions, so a rerun duplicates the ones already running" >&2',
     "  fi",
@@ -123,7 +137,7 @@ function launcher(agents: AgentNode[]): GeneratedFile | null {
     lines.push("  pane=");
     for (const a of members) {
       lines.push(
-        `  if printf '%s\\n' "$listed" | grep -qwF -- ${shellQuote(a.id)}; then`,
+        `  if printf '%s\\n' "$listed" | awk -v n=${shellQuote(a.id)} '{ for (i = 1; i <= NF; i++) if ($i == n) f = 1 } END { exit !f }'; then`,
         `    echo ${shellQuote(`skipping ${a.id}: already listed`)}`,
         "  else",
         '    if [ -z "$pane" ]; then',
@@ -161,6 +175,10 @@ const APPEND_LINES = [
   '    echo "guard: .claude/state/talk.jsonl or its folder is a symlink; not writing the log" >&2',
   "    return 1",
   "  fi",
+  "  if [ -n \"$(find .claude/state/talk.jsonl -type f -links +1 2>/dev/null)\" ]; then",
+  '    echo "guard: .claude/state/talk.jsonl has more than one hard link; not writing the log" >&2',
+  "    return 1",
+  "  fi",
   "  mkdir -p .claude/state && cat >> .claude/state/talk.jsonl",
   "}",
 ];
@@ -177,8 +195,8 @@ function spawnGuard(topology: string, agents: AgentNode[]): GeneratedFile {
     "set -euo pipefail",
     ...FAIL_CLOSED,
     "INPUT=$(cat)",
-    `AGENT=$(printf '%s' "$INPUT" | jq -er '.tool_input | objects | (.subagent_type // "") | strings | ${JQ_NORM}')`,
-    `NAME=$(printf '%s' "$INPUT" | jq -er '.tool_input | objects | (.name // "") | strings | ${JQ_NORM}')`,
+    `AGENT=$(printf '%s' "$INPUT" | jq -er '.tool_input | objects | (if .subagent_type == null then "" else .subagent_type end) | strings | ${JQ_NORM}')`,
+    `NAME=$(printf '%s' "$INPUT" | jq -er '.tool_input | objects | (if .name == null then "" else .name end) | strings | ${JQ_NORM}')`,
     'for CAND in "$AGENT" "$NAME"; do',
     '  case "$CAND" in',
     `    ${ids})`,
@@ -228,7 +246,7 @@ function talkGuard(topology: string, ast: TopologyAST): GeneratedFile {
     "  # Not started from sessions.md: allow, and say so.",
     `  TO=$(printf '%s' "$PAYLOAD" | jq -r '((.tool_input | objects | .to | strings | .[0:64]) // "")' 2>/dev/null || true)`,
     '  echo "talk guard: session not started from sessions.md, unguarded" >&2',
-    '  log "" "$TO" unguarded || true',
+    '  log "" "$TO" unguarded || echo "talk log not written" >&2',
     `  ${FAIL_CLOSED_DONE}`,
     "  exit 0",
     "fi",
@@ -237,7 +255,7 @@ function talkGuard(topology: string, ast: TopologyAST): GeneratedFile {
     "# and the refusal is logged. A trailing ' [ref]' (ListAgents' mark for a",
     "# duplicate name) is stripped; anything but a-z, 0-9 and - is refused.",
     'FROM="$AT_SESSION"',
-    String.raw`TO=$(printf '%s' "$PAYLOAD" | jq -er '.tool_input | objects | .to | strings | sub(" \\[[^\\]]*\\]\\z"; "") | if test("\\A[a-z0-9-]{1,64}\\z") then . else "?" + (.[0:64] | @json) end') || TO="?unreadable"`,
+    String.raw`TO=$(printf '%s' "$PAYLOAD" | jq -er '.tool_input | objects | .to | strings | sub(" \\[[A-Za-z0-9_-]+\\]\\z"; "") | if test("\\A[a-z0-9-]{1,64}\\z") then . else "?" + (.[0:64] | @json) end') || TO="?unreadable"`,
     "OK=0",
     "ALLOWED=",
     'case "$FROM" in',
@@ -249,11 +267,11 @@ function talkGuard(topology: string, ast: TopologyAST): GeneratedFile {
   lines.push(
     "esac",
     'if [ "$OK" = 1 ]; then',
-    '  log "$FROM" "$TO" allowed || echo "talk guard: could not write the log" >&2',
+    '  log "$FROM" "$TO" allowed || echo "talk log not written" >&2',
     `  ${FAIL_CLOSED_DONE}`,
     "  exit 0",
     "fi",
-    'log "$FROM" "$TO" refused || echo "talk guard: could not write the log" >&2',
+    'log "$FROM" "$TO" refused || echo "talk log not written" >&2',
     'echo "talk guard: $FROM may not message $TO; its talk edges allow: ${ALLOWED:-none}" >&2',
     "exit 2",
     "",
