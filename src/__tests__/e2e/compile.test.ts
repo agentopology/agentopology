@@ -302,7 +302,7 @@ describe("phase 4: the language says what Claude Code can do", () => {
     expect(read(".claude/skills/tidy/SKILL.md")).toMatch(/^disable-model-invocation: true$/m);
     expect(read(".claude/skills/compile/SKILL.md")).toContain("- **tidy**: invoke the `tidy` skill yourself; it runs in your own context.");
     expect(rule(fixture.replace("runs: inline", "runs: thread"), "V101").map((r) => r.message)).toEqual([
-      'Agent "tidy" has runs: thread — a node runs as subagent, inline, fork.',
+      'Agent "tidy" has runs: thread — a node runs as subagent, session, inline, fork.',
     ]);
   });
 

@@ -600,11 +600,24 @@ export interface AgentNode extends BaseNode {
   /** Invocation mode (e.g. "manual"). */
   invocation?: string;
   /**
-   * How the node runs: "subagent" (its own agent, the default), "inline" (a
+   * How the node runs: "subagent" (its own agent, the default), "session" (its
+   * own named Claude Code session that can message other sessions), "inline" (a
    * skill in the caller's own context) or "fork" (a skill in a fresh forked
    * context). The choice shows on the node instead of hiding in fields.
    */
   runs?: string;
+  /**
+   * Where a session agent lives, a name shared by the agents that run
+   * together (`place: ops`). Only meaningful with `runs: session`.
+   */
+  place?: string;
+  /** Decisions this agent holds the seat for (`decides: [package-yes]`). */
+  decides?: string[];
+  /**
+   * Permission mode of a session agent: default | acceptEdits | plan |
+   * bypassPermissions | auto. A talk edge whose ends differ may not arrive.
+   */
+  permissionMode?: string;
   /**
    * Must not see the author's reasoning (a critic, a judge): it gets only the
    * artifacts it reads. Cannot run inline (V101).
@@ -912,6 +925,8 @@ export interface EdgeDef {
   at?: string;
   /** Hooks or gates that guard this edge, by id (V105). */
   guard?: string[];
+  /** What crosses a talk edge between session agents: ticket | report | ask. */
+  message?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,6 +1118,8 @@ export interface TopologyAST {
   artifacts: ArtifactDef[];
   /** Records from the top-level `records` block (ledgers gates read). */
   records?: RecordDef[];
+  /** Decision names the topology says must have a seat (`decisions: [...]`). */
+  decisions?: string[];
 }
 
 // ---------------------------------------------------------------------------

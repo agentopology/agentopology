@@ -384,7 +384,10 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `retry` | number | no | `0` | Max validation rounds |
 | `isolation` | `worktree` | no | -- | Git worktree isolation |
 | `invocation` | `manual` / `auto` | no | `auto` | User-triggered only |
-| `runs` | `subagent` / `inline` / `fork` | no | `subagent` | How the node runs: its own agent, a skill in the caller's context, or a skill in a fresh forked context (V101) |
+| `runs` | `subagent` / `session` / `inline` / `fork` | no | `subagent` | How the node runs: its own agent, a skill in the caller's context, or a skill in a fresh forked context (V101). `session` is its own named Claude Code session that can message other sessions |
+| `place` | identifier | no | -- | Where a session agent lives; agents sharing a place run together (V113) |
+| `decides` | list | no | -- | Decisions this agent holds the seat for; one seat per decision (V116) |
+| `permission-mode` | `default` / `acceptEdits` / `plan` / `bypassPermissions` / `auto` | no | -- | Permission mode of a session agent; differing modes across a talk edge warn (V113, V118) |
 | `independent` | boolean | no | `false` | Must not see the author's reasoning: gets only the artifacts it reads; cannot run inline (V101) |
 | `color` | string | no | -- | Display color in the agent list |
 | `initial-prompt` | string | no | -- | First user turn when the agent runs as the main session agent |
@@ -911,11 +914,16 @@ The `memory` field is a name-list of store IDs. The `retrieval` field is a singl
 ```ebnf
 flow            = 'flow' '{' flow-statement* '}'
 flow-statement  = node ('->' node)+ edge-attrs?
+                | 'talk' ':' ('all' | 'hub' identifier) message-attr?
+message-attr    = '[' 'message' ':' ('ticket' | 'report' | 'ask') ']'
 node            = identifier | '[' identifier (',' identifier)+ ']'
 edge-attrs      = '[' attr (',' attr)* ']'
 attr            = 'when' condition | 'max' number | 'per' identifier
+                | 'message' ':' ('ticket' | 'report' | 'ask')
 condition       = identifier '.' identifier op value
 ```
+
+`talk: all` and `talk: hub <name>` are shorthand for the edges between session agents (`runs: session`): all makes an edge each way between every pair, hub makes `<name> <-> x` for every other session agent. The parser expands them into plain edges. An edge already written in the flow keeps its own attributes.
 
 ```agenttopology
 flow {

@@ -527,6 +527,11 @@ export function parseAgent(
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
   if (fields.runs) node.runs = fields.runs;
+  if (fields.place) node.place = unquote(fields.place);
+  if (fields["permission-mode"]) node.permissionMode = fields["permission-mode"];
+  const decides = parseMultilineList(body, "decides");
+  if (decides.length) node.decides = decides;
+  else if (fields.decides) node.decides = parseList(fields.decides);
   if (fields.independent) node.independent = fields.independent === "true";
   if (fields.color) node.color = unquote(fields.color);
   if (fields["initial-prompt"]) node.initialPrompt = unquote(fields["initial-prompt"]);
@@ -880,12 +885,13 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let strength: string | undefined;
     let at: string | undefined;
     let guard: string[] | undefined;
+    let message: string | undefined;
     let flowPart = trimmed;
 
     // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
     // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?)\]\s*$/
     );
     // V92: two bracket groups on one edge. The grammar defines ONE annotation
     // with comma-separated attributes (`[when ..., max N]`). Written as
@@ -895,7 +901,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     // Count only ANNOTATION brackets. A fan-out list is also bracketed —
     // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
     // `] [` alone flagged valid topologies.
-    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at)\b/g;
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message)\b/g;
     const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
     if (annotationBrackets > 1 && _edgeAttributeErrors) {
       _edgeAttributeErrors.push({
@@ -922,7 +928,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -965,6 +971,8 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (strengthMatch) strength = strengthMatch[1];
       const atMatch = annotation.match(/(?:^|,)\s*at\s*:\s*"([^"]*)"/);
       if (atMatch) at = atMatch[1];
+      const messageMatch = annotation.match(/\bmessage\s*:\s*([A-Za-z0-9_-]+)/);
+      if (messageMatch) message = messageMatch[1];
       const guardMatch = annotation.match(/\bguard\s*:\s*(\[[^\]]*\]|[A-Za-z0-9_-]+)/);
       if (guardMatch) {
         guard = guardMatch[1].replace(/^\[|\]$/g, "").split(",").map((g) => g.trim()).filter(Boolean);
@@ -1048,6 +1056,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && strength) baseEdge.strength = strength;
       if (isLastSegment && at !== undefined) baseEdge.at = at;
       if (isLastSegment && guard) baseEdge.guard = guard;
+      if (isLastSegment && message) baseEdge.message = message;
 
       if (fanOutMatch) {
         const targets = fanOutMatch[1].split(",").map((s) => s.trim());
@@ -1066,6 +1075,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
             ...(baseEdge.reflection ? { reflection: true } : {}),
             ...enforcement(baseEdge),
+            ...(baseEdge.message ? { message: baseEdge.message } : {}),
           });
         }
       } else {
@@ -1083,12 +1093,50 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
           ...(baseEdge.reflection ? { reflection: true } : {}),
           ...enforcement(baseEdge),
+          ...(baseEdge.message ? { message: baseEdge.message } : {}),
         });
       }
     }
   }
 
   return edges;
+}
+
+/**
+ * Expand `talk:` shorthand lines of a flow body into plain edges.
+ *
+ * `talk: all` makes an edge each way between every pair of session agents;
+ * `talk: hub <name>` makes `<name> <-> x` for every other session agent.
+ * An optional `[message: ticket]` marks every edge the line makes. An edge the
+ * flow already declares in that direction is kept as written, so one edge of a
+ * hub can carry its own `[message:]`. Expansion happens here, so the AST (and
+ * `export --format json`) only ever holds plain edges.
+ */
+export function expandTalk(flowBody: string, nodes: NodeDef[], edges: EdgeDef[]): EdgeDef[] {
+  const sessions = nodes.filter((n) => n.type === "agent" && (n as AgentNode).runs === "session").map((n) => n.id);
+  const out = [...edges];
+  const have = new Set(out.map((e) => `${e.from}\u0000${e.to}`));
+  const add = (from: string, to: string, message?: string) => {
+    if (from === to || have.has(`${from}\u0000${to}`)) return;
+    have.add(`${from}\u0000${to}`);
+    out.push({ from, to, condition: null, maxIterations: null, per: null, ...(message ? { message } : {}) });
+  };
+  for (const line of flowBody.split("\n")) {
+    const m = line.trim().match(/^talk\s*:\s*(all|hub\s+([A-Za-z0-9_-]+))\s*(?:\[\s*message\s*:\s*([A-Za-z0-9_-]+)\s*\])?\s*$/);
+    if (!m) continue;
+    const message = m[3];
+    if (m[1] === "all") {
+      for (const a of sessions) for (const b of sessions) add(a, b, message);
+    } else {
+      const hub = m[2];
+      if (!sessions.includes(hub)) continue; // V113 names a hub that is not a session agent
+      for (const x of sessions) {
+        add(hub, x, message);
+        add(x, hub, message);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -2475,7 +2523,13 @@ export function parse(source: string): TopologyAST {
   // --- Edges (flow) ---
   const flowBlock = extractBlock(topBody, "flow");
   const edgeAttributeErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
-  const edges = flowBlock ? parseFlow(flowBlock.body, edgeAttributeErrors) : [];
+  const edges = flowBlock
+    ? expandTalk(flowBlock.body, nodes, parseFlow(flowBlock.body, edgeAttributeErrors))
+    : [];
+
+  // --- Decisions (topology-level `decisions: [...]`) ---
+  const decisionsField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*decisions[ \t]*:[ \t]*(\[[^\]]*\]|[^\n]*)/);
+  const decisions = decisionsField ? parseList(decisionsField[1]) : undefined;
 
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
@@ -2706,6 +2760,7 @@ export function parse(source: string): TopologyAST {
     checkpoint,
     artifacts,
     records,
+    ...(decisions ? { decisions } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

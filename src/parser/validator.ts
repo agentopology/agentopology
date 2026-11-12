@@ -456,7 +456,10 @@ function v5OutputsExist(ast: TopologyAST): ValidationResult[] {
 function v6BoundedLoops(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const ids = allNodeIds(ast);
-  const backEdges = findBackEdges(ast.edges, ids);
+  // Talk edges between session agents are conversations, not loops: they run
+  // both ways by design, so they are left out of the loop check.
+  const talk = new Set(talkEdges(ast));
+  const backEdges = findBackEdges(ast.edges.filter((e) => !talk.has(e)), ids);
 
   for (const edge of backEdges) {
     if (edge.maxIterations === null) {
@@ -1220,7 +1223,7 @@ function v100HookTypeFields(ast: TopologyAST): ValidationResult[] {
  * fork (a skill in a fresh forked context). An independent critic running
  * inline would read the author's reasoning, which is what independent forbids.
  */
-const RUN_MODES = ["subagent", "inline", "fork"];
+const RUN_MODES = ["subagent", "session", "inline", "fork"];
 
 function v101RunMode(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -1239,6 +1242,140 @@ function v101RunMode(ast: TopologyAST): ValidationResult[] {
         message: `Agent "${agent.id}" is independent but runs inline, in its caller's context, where it reads the author's reasoning. Use runs: fork or runs: subagent.`,
       });
     }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Session agents (V113 - V118)
+// ---------------------------------------------------------------------------
+
+const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions", "auto"];
+const MESSAGE_KINDS = ["ticket", "report", "ask"];
+const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+function sessionAgents(ast: TopologyAST): AgentNode[] {
+  return ast.nodes.filter((n): n is AgentNode => n.type === "agent" && (n as AgentNode).runs === "session");
+}
+
+/** Talk edges: flow edges with a session agent at both ends. */
+function talkEdges(ast: TopologyAST): EdgeDef[] {
+  const ids = new Set(sessionAgents(ast).map((a) => a.id));
+  return ast.edges.filter((e) => !e.isError && ids.has(e.from) && ids.has(e.to));
+}
+
+/**
+ * V113: the forms session agents take. A session agent's id is its agent file
+ * name, its session name (`claude -n <id>`), its SendMessage address and what
+ * talk edges point at, so it is kebab-case. `place:` is a plain name,
+ * `permission-mode:` is one Claude Code has, `[message:]` is ticket, report or
+ * ask, and a `talk: hub` names a session agent.
+ */
+function v113SessionForms(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const sessions = sessionAgents(ast);
+  for (const a of sessions) {
+    const at = { node: a.id, line: lookupLine(ast, a.id) };
+    if (!KEBAB.test(a.id)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Session agent "${a.id}" is not kebab-case: its id is also its session name and its message address, so write it like "lane-build".` });
+    }
+  }
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    const a = n as AgentNode;
+    const at = { node: a.id, line: lookupLine(ast, a.id) };
+    if (a.place !== undefined && !/^[A-Za-z][A-Za-z0-9_-]*$/.test(a.place)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has place: ${a.place} — a place is a plain name like "ops".` });
+    }
+    if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has permission-mode: ${a.permissionMode} — use ${PERMISSION_MODES.join(", ")}.` });
+    }
+  }
+  for (const e of ast.edges) {
+    if (e.message !== undefined && !MESSAGE_KINDS.includes(e.message)) {
+      results.push({ rule: "V113", level: "error", message: `Edge ${e.from} -> ${e.to} has [message: ${e.message}] — what crosses is ${MESSAGE_KINDS.join(", ")}.` });
+    }
+  }
+  return results;
+}
+
+/** V114: sessions with no declared way to talk are unguarded. */
+function v114TalkDeclared(ast: TopologyAST): ValidationResult[] {
+  if (sessionAgents(ast).length < 2) return [];
+  if (talkEdges(ast).length > 0) return [];
+  return [{ rule: "V114", level: "warning", message: "talk not declared: unguarded" }];
+}
+
+/** V115: with the `hub` pattern, every session-to-session edge touches one node. */
+function v115HubHolds(ast: TopologyAST): ValidationResult[] {
+  if (!ast.topology.patterns.includes("hub")) return [];
+  const edges = talkEdges(ast);
+  if (edges.length === 0) return [];
+  // The hub is the node every edge touches; with none, the busiest node stands in.
+  const count = new Map<string, number>();
+  for (const e of edges) for (const id of new Set([e.from, e.to])) count.set(id, (count.get(id) ?? 0) + 1);
+  const hub = [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const e of edges) {
+    if (e.from === hub || e.to === hub) continue;
+    const key = [e.from, e.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({ rule: "V115", level: "warning", message: `Topology has the hub pattern, but the edge ${e.from} -> ${e.to} between two sessions does not touch the hub "${hub}".` });
+  }
+  return results;
+}
+
+/** V116: a decision has one seat; a decision the topology lists has one at all. */
+function v116DecisionSeats(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const holders = new Map<string, string[]>();
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    for (const d of (n as AgentNode).decides ?? []) holders.set(d, [...(holders.get(d) ?? []), n.id]);
+  }
+  for (const [d, ids] of holders) {
+    if (ids.length > 1) {
+      results.push({ rule: "V116", level: "warning", message: `Decision "${d}" is claimed by more than one agent: ${ids.join(", ")}. A decision has one seat.` });
+    }
+  }
+  for (const d of ast.decisions ?? []) {
+    if (!holders.has(d)) {
+      results.push({ rule: "V116", level: "warning", message: `Decision "${d}" is listed in decisions: but no agent claims it with decides:.` });
+    }
+  }
+  return results;
+}
+
+/** V117 (T-03): fields a session ignores, one warning per field. */
+function v117SessionIgnoredFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const a of sessionAgents(ast)) {
+    const set: string[] = [];
+    if (a.background !== undefined) set.push("background");
+    if (a.skills !== undefined) set.push("skills");
+    if (a.permissions !== undefined) set.push("permissions");
+    for (const f of set) {
+      results.push({ rule: "V117", level: "warning", node: a.id, line: lookupLine(ast, a.id), message: `Agent "${a.id}" sets ${f}:, which is ignored when run as a session.` });
+    }
+  }
+  return results;
+}
+
+/** V118 (L-1): a talk edge between sessions in different permission modes. */
+function v118TalkPermissionModes(ast: TopologyAST): ValidationResult[] {
+  const mode = new Map(sessionAgents(ast).map((a) => [a.id, a.permissionMode]));
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const e of talkEdges(ast)) {
+    const a = mode.get(e.from);
+    const b = mode.get(e.to);
+    if (a === undefined || b === undefined || a === b) continue;
+    const key = [e.from, e.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({ rule: "V118", level: "warning", message: `Edge ${e.from} -> ${e.to} joins permission-mode ${a} and ${b}: a session in another permission mode holds incoming messages for its user, so this edge may not arrive.` });
   }
   return results;
 }
@@ -3873,6 +4010,12 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v110ActionGateChecksNothing(ast),
     ...v111UnitFromRegex(ast),
     ...v112Ledgers(ast),
+    ...v113SessionForms(ast),
+    ...v114TalkDeclared(ast),
+    ...v115HubHolds(ast),
+    ...v116DecisionSeats(ast),
+    ...v117SessionIgnoredFields(ast),
+    ...v118TalkPermissionModes(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
