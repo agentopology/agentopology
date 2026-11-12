@@ -51,7 +51,7 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
       "temperature", "maxTokens", "topP", "topK", "stop", "seed", "thinking",
       "thinkingBudget", "outputFormat", "logLevel", "join", "circuitBreaker", "compensates",
       "inputSchema", "outputSchema", "produces", "consumes", "variants", "rateLimit",
-      "extensions",
+      "extensions", "place", "decides", "permissionMode",
     ],
   },
   gate: {
@@ -88,7 +88,7 @@ const EDGE_ALWAYS = ["from", "to", "condition", "maxIterations"] as const;
 export const EDGE_RULE: NodeRule = {
   carry: [
     ...EDGE_ALWAYS, "per", "isError", "errorType", "tolerance", "race", "wait", "weight",
-    "reflection", "strength", "at", "guard",
+    "reflection", "strength", "at", "guard", "message",
   ],
 };
 
@@ -177,6 +177,7 @@ export function project(ast: TopologyAST, facts?: ProjectFacts): Record<string, 
     retrievals: ast.retrievals,
     batch: ast.batch,
     environments: ast.environments,
+    decisions: ast.decisions,
     triggers: ast.triggers,
     hooks: ast.hooks,
     settings: ast.settings,
