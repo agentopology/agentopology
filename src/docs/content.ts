@@ -130,6 +130,10 @@ agent NAME {
 | max-turns | number | no | -- | Max agentic turns before stopping |
 | sandbox | string or boolean | no | -- | "docker", "none", "network-only", true, false |
 | skip | string | no | -- | Skip condition: "not identifier" or "identifier.identifier op value" |
+| runs | string | no | "subagent" | \`subagent\`, \`session\`, \`inline\` or \`fork\`. A \`session\` agent is its own named Claude Code session (V113) |
+| place | identifier | no | -- | Where a session agent lives (\`place: ops\`); agents sharing a place run together |
+| decides | list | no | -- | Decisions this agent holds the seat for (\`decides: [package-yes]\`); two claimants warn (V116) |
+| permission-mode | string | no | -- | Session agents: \`default\`, \`acceptEdits\`, \`plan\`, \`bypassPermissions\` or \`auto\` (V113); differing modes on a talk edge warn (V118) |
 
 ### Prompt & Output
 
@@ -669,12 +673,27 @@ Attributes appear in brackets after the target. Order matters (V12):
 | strength | \`[strength: none]\` | Enforcement written down: refuse, detect, hope or none (V104) |
 | at | \`[at: "story/SKILL.md"]\` | Where the enforcement or the hoping prose lives (V106) |
 | guard | \`[guard: lock-bash]\` or \`[guard: [a, b]]\` | Hooks or gates that guard this edge, by id (V105) |
+| message | \`[message: ticket]\` | What crosses a talk edge between session agents: ticket, report or ask (V113) |
 
 Multiple attributes can be combined:
 
 \`\`\`at
 reviewer -> writer [when reviewer.verdict == revise, max 3]
 \`\`\`
+
+## Talk between session agents
+
+Agents with \`runs: session\` message each other. Who may talk is the flow edges between two session agents, and two shorthands write them:
+
+\`\`\`at
+flow {
+  talk: all                 # an edge each way between every pair of sessions
+  talk: hub lane-manager    # lane-manager <-> every other session
+  lane-manager -> lane-build [message: ticket]
+}
+\`\`\`
+
+The parser expands \`talk:\` into plain edges, so \`export --format json\` shows them as ordinary edges. \`[message: ticket | report | ask]\` records what crosses an edge (V113). With the \`hub\` pattern every session-to-session edge must touch one node (V115). Sessions with no talk edge at all warn "talk not declared: unguarded" (V114). Talk edges are conversations, so they are not checked as loops (V6).
 
 ## Fan-Out
 

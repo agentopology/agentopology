@@ -2,6 +2,22 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [feature] Session agents: grammar and validate (N44a)
+
+- An agent takes `runs: session` (beside `subagent`, `inline` and `fork`), `place: <name>`,
+  `decides: [<decision>, ...]` and `permission-mode: default | acceptEdits | plan | bypassPermissions | auto`.
+  A session agent's id is also its session name and message address, so validate requires it to be kebab-case.
+- Who may talk is the flow edges between two session agents. `talk: all` and `talk: hub <name>` write them;
+  the parser expands them into plain edges, so `export --format json` shows ordinary edges.
+  `[message: ticket | report | ask]` on an edge records what crosses it. Talk edges are not checked as loops.
+- New validate rules V113 to V118: field forms, `talk not declared: unguarded` when sessions have no talk edge,
+  a `hub` pattern broken by an edge, two agents claiming one decision (and a topology-level `decisions: [...]`
+  entry nobody claims), fields a session ignores (`background`, `skills`, `permissions`), and a talk edge between
+  sessions in different permission modes.
+- `agentopology docs agent` and `docs flow` cover the new fields; `parse -> serialize -> parse` keeps them.
+
 ## [0.10.0] - 2026-11-11
 
 ### [fix] A guarded script step is found inside a chained command (N42)

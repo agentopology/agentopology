@@ -177,6 +177,9 @@ function serializeAgent(node: AgentNode): string {
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);
   if (node.invocation) lines.push(`    invocation: ${node.invocation}`);
   if (node.runs) lines.push(`    runs: ${node.runs}`);
+  if (node.place) lines.push(`    place: ${node.place}`);
+  if (node.permissionMode) lines.push(`    permission-mode: ${node.permissionMode}`);
+  if (node.decides?.length) lines.push(`    decides: ${inlineList(node.decides)}`);
   if (node.independent) lines.push("    independent: true");
   if (node.color) lines.push(`    color: ${q(node.color)}`);
   if (node.initialPrompt) lines.push(`    initial-prompt: ${q(node.initialPrompt)}`);
@@ -367,6 +370,7 @@ function serializeEdge(edge: EdgeDef): string {
   if (edge.strength) attrs.push(`strength: ${edge.strength}`);
   if (edge.at !== undefined) attrs.push(`at: "${edge.at}"`);
   if (edge.guard?.length) attrs.push(`guard: ${edge.guard.length === 1 ? edge.guard[0] : `[${edge.guard.join(", ")}]`}`);
+  if (edge.message) attrs.push(`message: ${edge.message}`);
 
   if (attrs.length > 0) {
     line += ` [${attrs.join(", ")}]`;
@@ -868,6 +872,12 @@ export function serializeAST(ast: TopologyAST): string {
 
   // Meta
   sections.push(serializeMeta(ast));
+
+  // Decisions the topology says need a seat
+  if (ast.decisions?.length) {
+    sections.push("");
+    sections.push(`  decisions: ${inlineList(ast.decisions)}`);
+  }
 
   // Orchestrator
   const orchestrator = ast.nodes.find((n): n is OrchestratorNode => n.type === "orchestrator");

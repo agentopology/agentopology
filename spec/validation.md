@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 112 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 118 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -774,7 +774,7 @@ through the validator like any other rule.
 | V98 | error | A `gate`, `hook`, `tool`, `job`, `command` or `level` block must sit inside its container (`gates`, `hooks`, `tools`, `schedule`, `triggers`, `depth`) — written beside it, it was dropped with no message and validate passed |
 | V99 | warning | An agent's `skills:` and `mcp-servers:`, and a skill's `agent:`, should name something the topology declares (or a built-in agent) — a misspelled name compiled to a reference Claude Code could not resolve, with no message |
 | V100 | error | A hook has what its type needs (command/prompt/agent: `run`; http: `url`; mcp_tool: `server` and `tool`; `async` only on a command), and a prompt or agent judge sits on an event Claude Code runs judges for |
-| V101 | error | An agent's `runs:` is `subagent`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
+| V101 | error | An agent's `runs:` is `subagent`, `session`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
 | V102 | error | Every field and block name in a node, `meta`, a hook, job, artifact, tool or skill, and every topology section, is one the parser reads — a typo, a field of another node type or an unknown block vanished from the AST while validate passed. Contents of free-form blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, ...) are not checked yet |
 | V103 | error | An agent's or gate's `behavior:` is `advisory` or `blocking` — any other value was kept and emitted into the scaffold unchecked |
 | V104 | error | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` |
@@ -786,6 +786,12 @@ through the validator like any other rule.
 | V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
 | V111 | error | An action's `unit-from` is not a valid regex, or has no capture group |
 | V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
+| V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `bypassPermissions` or `auto`; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
+| V114 | warning | Two or more session agents and no flow edge between any two of them: `talk not declared: unguarded` |
+| V115 | warning | With the `hub` pattern, a session-to-session edge that does not touch the hub node |
+| V116 | warning | Two agents claim one decision with `decides:`, or a decision listed in the topology's `decisions: [...]` has no agent claiming it |
+| V117 | warning | A `runs: session` agent sets `background`, `skills` or `permissions`, which are ignored when run as a session (one warning per field) |
+| V118 | warning | A talk edge joins two session agents that declare different `permission-mode`s: a session in another permission mode holds incoming messages for its user, so the edge may not arrive |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an
