@@ -24,6 +24,7 @@ import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
 import { runParts, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
+import { sessionAgentsOf } from "../bindings/lib/session.js";
 
 export { matcherGaps, type MatcherGap };
 
@@ -225,6 +226,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
   // A store's data lives under its path; the store is declared, its rows are not listed one by one.
   const storeDirs = (ast.stores ?? []).filter((st) => st.path).map((st) => norm(st.path!).replace(/\/?$/, "/"));
   const scripts = runScripts(ast);
+  const hasSessions = sessionAgentsOf(ast).length > 0;
   const mentioned = [
     ...ast.nodes.flatMap((n) => (n.type === "action" ? n.commands ?? [] : [])),
     ...(ast.hooks ?? []).map((h) => h.run ?? ""),
@@ -243,6 +245,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
       case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${i.id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
       default: {
         const p = norm(i.path ?? "");
+        // The generated talk guard appends to this log whenever session agents exist.
+        if (p === ".claude/state/talk.jsonl" && hasSessions) return true;
         if (genPaths.has(p) || handPaths.has(p)) return true;
         if (storeDirs.some((d) => p.startsWith(d))) return true;
         const folder = p.match(/^\.claude\/skills\/([^/]+)\//)?.[1];
