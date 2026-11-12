@@ -2,6 +2,14 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [feature] The visualizer builds its page data in one place (VZ-2)
+
+- `src/visualizer/project.ts` holds `project(ast, facts)`, a pure function from the parsed topology to the data the page draws. Each node kind has one row in a rules table that lists the fields it carries and the fields it drops on purpose; a node kind with no row is drawn with a default rule that keeps every field.
+- A new test checks that every field on every parsed node and edge in `kitchen-sink.at` and the examples reaches the page data or is claimed as dropped in the table, and that it fails on a field nobody claimed. Fields the page used to leave out silently (for example `timeout`, `join`, `custodianOf`, `extensions`, group members) now reach the page data.
+- The page looks the same: the node ids and edges in the data are unchanged for every example.
+
 ## [0.10.0] - 2026-11-11
 
 ### [fix] A guarded script step is found inside a chained command (N42)
