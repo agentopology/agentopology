@@ -2,6 +2,17 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [fix] The version line reports the Claude Code that is actually installed (T-01)
+
+- `validate` and `guard --check` now read `claude --version` (once per run, 3 second limit) and
+  print `installed X: unverified` when X is not the version the output was checked against. If the
+  version cannot be read, they print `unknown version: unverified`; if there is no `claude` on
+  PATH, they print `Claude Code not installed`. Exit codes do not change. In `guard --check`, every
+  line that reads "refuse" carries the same mark when the installed version is not the verified
+  one. With the verified version installed, the output is unchanged.
+
 ## [0.10.0] - 2026-11-11
 
 ### [fix] A guarded script step is found inside a chained command (N42)

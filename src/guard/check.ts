@@ -25,7 +25,7 @@ import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { installedMark, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none";
 
@@ -338,6 +338,8 @@ export function renderGuardReport(report: GuardReport): string[] {
   const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
   const lines: string[] = [];
+  // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
+  const mark = installedMark();
   for (const i of report.items) {
     lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(6)}  by: ${i.by.padEnd(8)}  ${i.where}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
@@ -349,5 +351,5 @@ export function renderGuardReport(report: GuardReport): string[] {
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
-  return lines;
+  return mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
 }
