@@ -1120,6 +1120,8 @@ export interface TopologyAST {
   records?: RecordDef[];
   /** Decision names the topology says must have a seat (`decisions: [...]`). */
   decisions?: string[];
+  /** `pin-models: true` at the top level: a bare model alias warns (V119). */
+  pinModels?: boolean;
 }
 
 // ---------------------------------------------------------------------------

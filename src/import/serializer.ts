@@ -879,6 +879,11 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push(`  decisions: ${inlineList(ast.decisions)}`);
   }
 
+  if (ast.pinModels !== undefined) {
+    sections.push("");
+    sections.push(`  pin-models: ${ast.pinModels}`);
+  }
+
   // Orchestrator
   const orchestrator = ast.nodes.find((n): n is OrchestratorNode => n.type === "orchestrator");
   if (orchestrator) {

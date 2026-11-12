@@ -25,6 +25,8 @@ import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
+import { checkImports } from "./imports.js";
+import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
   TopologyAST,
@@ -504,15 +506,18 @@ function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
- * V8: Import references should resolve (warning only -- we cannot check the filesystem).
- *
- * NOTE: This is a placeholder. The import system is not yet implemented in the
- * parser, so this rule always returns [] and is effectively skipped. It is
- * retained for completeness so the rule numbering stays consistent with the
- * spec. A future CLI extension can provide actual filesystem resolution.
+ * V8: Imports resolve (N43, T-02). With a file path, each local import is read
+ * relative to the importing file: a missing file, a wrong sha256, an import
+ * cycle or an error inside the imported file is an error. Without a file path
+ * (validating a string) nothing can be resolved, so say so.
  */
-function v8ImportsResolve(_ast: TopologyAST): ValidationResult[] {
-  return [];
+function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const local = ast.imports.filter((i) => !i.registry);
+  if (local.length === 0) return [];
+  if (!opts.filePath) {
+    return [{ rule: "V8", level: "warning", message: "imports not checked" }];
+  }
+  return checkImports(ast, opts.filePath, parseSource, validate, opts.importStack);
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */
@@ -1376,6 +1381,23 @@ function v118TalkPermissionModes(ast: TopologyAST): ValidationResult[] {
     if (seen.has(key)) continue;
     seen.add(key);
     results.push({ rule: "V118", level: "warning", message: `Edge ${e.from} -> ${e.to} joins permission-mode ${a} and ${b}: a session in another permission mode holds incoming messages for its user, so this edge may not arrive.` });
+  }
+  return results;
+}
+
+const MODEL_ALIASES = ["opus", "sonnet", "haiku", "fable"];
+
+/** V119 (L-3): with `pin-models: true`, a bare model alias drifts; warn once per alias. */
+function v119ModelAliases(ast: TopologyAST): ValidationResult[] {
+  if (!ast.pinModels) return [];
+  const users = new Map<string, string[]>();
+  for (const n of ast.nodes) {
+    const m = (n as { model?: string }).model;
+    if (m && MODEL_ALIASES.includes(m)) users.set(m, [...(users.get(m) ?? []), n.id]);
+  }
+  const results: ValidationResult[] = [];
+  for (const [alias, ids] of users) {
+    results.push({ rule: "V119", level: "warning", message: `model: ${alias} (${ids.join(", ")}) — alias resolves differently over time; use the exact id for a pinned run.` });
   }
   return results;
 }
@@ -3960,7 +3982,15 @@ function v95HookEventKnown(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-export function validate(ast: TopologyAST): ValidationResult[] {
+/** Where the topology was read from, so imports can be resolved (N43). */
+export interface ValidateOptions {
+  /** Path of the file `ast` was parsed from. Omit when validating a string. */
+  filePath?: string;
+  /** Files already being resolved (cycle detection); set by import resolution. */
+  importStack?: string[];
+}
+
+export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
   return [
     ...v1UniqueNames(ast),
     ...v2NoKeywordNames(ast),
@@ -3969,7 +3999,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v5OutputsExist(ast),
     ...v6BoundedLoops(ast),
     ...v7ModelRequired(ast),
-    ...v8ImportsResolve(ast),
+    ...v8ImportsResolve(ast, opts),
     ...v9ActionsHandled(ast),
     ...v10PromptsExist(ast),
     ...v11ReadWriteConsistency(ast),
@@ -4016,6 +4046,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v116DecisionSeats(ast),
     ...v117SessionIgnoredFields(ast),
     ...v118TalkPermissionModes(ast),
+    ...v119ModelAliases(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),

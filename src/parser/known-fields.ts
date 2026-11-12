@@ -95,7 +95,7 @@ const NODE_SCHEMAS = {
 
 /** The topology body: the sections it takes. Fields are not allowed there. */
 const TOPOLOGY: BlockSchema = {
-  fields: ["decisions"],
+  fields: ["decisions", "pin-models"],
   blocks: {
     meta: NODE_SCHEMAS.meta,
     orchestrator: NODE_SCHEMAS.orchestrator,

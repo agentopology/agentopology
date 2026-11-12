@@ -4,6 +4,19 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] The import check reads the imported files (N43, T-02)
+
+- `validate` now resolves each local `import "./f.at" as x` relative to the importing file. A missing file,
+  a `sha256` that does not match the file, an import cycle, and any error inside the imported file are
+  errors (V8) and make `validate` exit 1; errors from the imported file are shown with its path.
+  Validating a string with no file path cannot resolve anything, so it warns `imports not checked`.
+
+### [feature] Warn on bare model aliases when models are pinned (L-3)
+
+- With `pin-models: true` at the top level, V119 warns once per alias (`opus`, `sonnet`, `haiku`, `fable`)
+  used as a `model:`: an alias resolves differently over time, so use the exact id for a pinned run.
+  `inherit` and exact ids are fine. Without `pin-models`, nothing changes.
+
 ### [feature] Session agents: grammar and validate (N44a)
 
 - An agent takes `runs: session` (beside `subagent`, `inline` and `fork`), `place: <name>`,
