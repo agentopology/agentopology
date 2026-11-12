@@ -522,6 +522,8 @@ function serializeStores(stores: StoreNode[]): string[] {
     if (store.path) lines.push(`      path: ${q(store.path)}`);
     if (store.connection) lines.push(`      connection: secret ${q(store.connection)}`);
     if (store.extraction) lines.push(`      extraction: ${store.extraction}`);
+    if (store.owner) lines.push(`      owner: ${store.owner}`);
+    if (store.machine) lines.push(`      machine: ${store.machine}`);
 
     // Embedding sub-block
     if (store.embedding) {

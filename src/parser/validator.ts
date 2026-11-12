@@ -4055,6 +4055,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v118TalkPermissionModes(ast),
     ...v119ModelAliases(ast),
     ...v120DecisionArrives(ast),
+    ...v121StoreOwner(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4138,6 +4139,36 @@ function v120DecisionArrives(ast: TopologyAST): ValidationResult[] {
       rule: "V120", level: "warning", node: a.id, line: lookupLine(ast, a.id),
       message: `Agent "${a.id}" holds ${a.decides.join(", ")} and ${[...new Set(incoming.get(a.id))].join(", ")} can message it: a decision can arrive here as a message.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V121 (T-10): a store with `owner:` has one agent that may share it. Two
+ * agents that write it (list it under `memory:`, `custodian-of:` or `writes:`)
+ * are an error naming both, unless one of the two is the owner. An owner that
+ * is not an agent is an error too. A store with no `owner:` is unchecked.
+ */
+function v121StoreOwner(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
+  const ids = new Set(agents.map((a) => a.id));
+  for (const store of ast.stores ?? []) {
+    if (!store.owner) continue;
+    if (!ids.has(store.owner)) {
+      results.push({ rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id), message: `Store "${store.id}" has owner "${store.owner}", which is not an agent.` });
+      continue;
+    }
+    const writers = agents
+      .filter((a) => [...(a.memory ?? []), ...(a.custodianOf ?? []), ...(a.writes ?? [])].includes(store.id))
+      .map((a) => a.id)
+      .filter((id) => id !== store.owner);
+    if (writers.length >= 2) {
+      results.push({
+        rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id),
+        message: `Store "${store.id}" is owned by "${store.owner}", but "${writers[0]}" and "${writers[1]}" both write it and neither is the owner.`,
+      });
+    }
   }
   return results;
 }

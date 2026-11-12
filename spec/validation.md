@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 120 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 121 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -794,6 +794,7 @@ through the validator like any other rule.
 | V118 | warning | A talk edge joins two session agents that declare different `permission-mode`s: a session in another permission mode holds incoming messages for its user, so the edge may not arrive |
 | V119 | warning | `model:` is a bare alias (`opus`, `sonnet`, `haiku`, `fable`) while the topology sets `pin-models: true`: an alias resolves differently over time, so use the exact id for a pinned run |
 | V120 | warning | An agent with `decides:` has an incoming talk edge: a decision can arrive there as a message from another session. The binding logs each prompt as `typed` or `arrived` in `.claude/state/talk.jsonl` instead of refusing messages by keyword |
+| V121 | error | A store with `owner:` is written by two agents and neither is the owner (the message names both), or its owner is not an agent. An unowned store is not checked |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

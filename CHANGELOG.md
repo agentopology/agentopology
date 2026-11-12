@@ -4,6 +4,17 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] A store can name its owner (T-10)
+
+- `owner: <agent>` on a store. If two agents that are not the owner both write the store, validate now
+  reports an error (V121) that names both. An owner that is not an agent is an error too. Stores with no
+  owner are checked as before.
+
+### [fix] The validate inventory knows the talk log (N44c)
+
+- `validate --inventory` no longer lists `.claude/state/talk.jsonl` as unmapped when the topology declares
+  session agents, since the generated talk guard writes it.
+
 ### [fix] Every documented import form is read, at the top of the file too (T02b)
 
 - `import reviewer from ./review.at`, the quoted path, `import linter from registry:@org/linter@1.2.0`

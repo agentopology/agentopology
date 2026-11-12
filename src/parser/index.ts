@@ -1250,6 +1250,8 @@ export function parseStore(id: string, body: string): StoreNode {
   if (fields.path) store.path = unquote(fields.path);
   if (fields.extraction) store.extraction = fields.extraction;
   if (fields.format) store.format = fields.format;
+  if (fields.owner) store.owner = fields.owner;
+  if (fields.machine) store.machine = fields.machine;
 
   // Connection: may use `secret "uri"` modifier (same pattern as parseCheckpoint)
   if (fields.connection) {

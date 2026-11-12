@@ -31,3 +31,62 @@ describe("[N44c-inv] talk.jsonl is accounted for", () => {
     expect(withTalkLog(compile)).toContain("claude-file:state/talk.jsonl");
   });
 });
+
+import { validate } from "../../parser/validator.js";
+import { serializeAST } from "../../import/serializer.js";
+
+const base = (stores: string, agents: string, extra = "") => `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "g11" }
+  memory {
+${stores}
+  }
+${extra}
+${agents}
+  flow { a -> b }
+}`;
+const agent = (id: string, extra = "") => `  agent ${id} {
+    model: sonnet
+    description: "${id}"
+${extra}
+  }`;
+const rule = (src: string, id: string) => validate(parse(src)).filter((r) => r.rule === id);
+
+describe("[T10] owner: on a store", () => {
+  const store = (owner = "") => `    store notes {
+      type: semantic
+      backend: sqlite
+      path: "notes/"
+${owner}
+    }`;
+  const two = (aExtra: string, bExtra: string) => agent("a", aExtra) + "\n" + agent("b", bExtra);
+
+  it("[T10] parses owner and round-trips it", () => {
+    const ast = parse(base(store("      owner: a"), two("    memory: [notes]", "")));
+    expect(ast.stores[0].owner).toBe("a");
+    const again = parse(serializeAST(ast));
+    expect(again.stores[0].owner).toBe("a");
+  });
+  it("[T10] two non-owner agents writing an owned store is an error naming both", () => {
+    const src = base(store("      owner: c"), two("    memory: [notes]", "    memory: [notes]") + "\n" + agent("c"));
+    const r = rule(src, "V121");
+    expect(r).toHaveLength(1);
+    expect(r[0].level).toBe("error");
+    expect(r[0].message).toMatch(/"a"/);
+    expect(r[0].message).toMatch(/"b"/);
+  });
+  it("[T10] one of the two being the owner is fine", () => {
+    const src = base(store("      owner: a"), two("    memory: [notes]", "    memory: [notes]"));
+    expect(rule(src, "V121")).toHaveLength(0);
+  });
+  it("[T10] an unowned store with two writers is not an error", () => {
+    const src = base(store(), two("    memory: [notes]", "    memory: [notes]"));
+    expect(rule(src, "V121")).toHaveLength(0);
+  });
+  it("[T10] an owner that is not an agent is an error", () => {
+    const src = base(store("      owner: ghost"), two("", ""));
+    const r = rule(src, "V121");
+    expect(r).toHaveLength(1);
+    expect(r[0].message).toMatch(/ghost/);
+  });
+});

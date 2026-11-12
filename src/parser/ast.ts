@@ -377,6 +377,10 @@ export interface StoreNode {
   sources?: Record<string, SourceStyle>;
   /** Backend-specific passthrough configuration. */
   backendConfig?: Record<string, unknown>;
+  /** The one agent that may share this store with another writer (V121). */
+  owner?: string;
+  /** The machine this store lives on (T-07, V122). */
+  machine?: string;
 }
 
 /** Presentation styling for one provenance source (e.g. gmail) in the graph. */
