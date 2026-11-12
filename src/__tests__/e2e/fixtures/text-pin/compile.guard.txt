@@ -1,0 +1,31 @@
+guard --check src/__tests__/e2e/fixtures/compile.at (project: empty)
+
+  gate brief-check         none    by: hook      PreToolUse on launching drafter → before-agent.sh
+                           ✗ no PreToolUse entry for before-agent.sh in .claude/settings.json
+                           ✗ .claude/skills/compile/scripts/gate-brief-check.sh is missing
+  gate copy-check          none    by: hook      SubagentStop on drafter → gate-copy-check.sh
+                           ✗ no SubagentStop entry for drafter running gate-copy-check.sh in .claude/settings.json
+                           ✗ .claude/skills/compile/scripts/gate-copy-check.sh is missing
+  human approve            none    by: hook      PreToolUse on launching drafter → ask
+                           ✗ no PreToolUse entry for before-agent.sh in .claude/settings.json
+  deny mcp__notes__delete  none    by: settings  permissions.deny in .claude/settings.json
+                           ✗ .claude/settings.json has no deny rule mcp__notes__delete
+  ask Bash(git push:*)     none    by: settings  permissions.ask in .claude/settings.json
+                           ✗ .claude/settings.json has no ask rule Bash(git push:*)
+
+enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+5 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check src/__tests__/e2e/fixtures/compile.at (project: proj)
+
+  gate brief-check         refuse  by: hook      PreToolUse on launching drafter → before-agent.sh · Claude Code not installed
+                           ⚠ its check script .claude/skills/compile/scripts/brief-check.sh is still a stub, so it blocks every run until it is written
+  gate copy-check          refuse  by: hook      SubagentStop on drafter → gate-copy-check.sh · Claude Code not installed
+                           ⚠ its check script docs/tools/check.py is still a stub, so it blocks every run until it is written
+  human approve            refuse  by: hook      PreToolUse on launching drafter → ask · Claude Code not installed
+                           ⚠ Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied
+  deny mcp__notes__delete  refuse  by: settings  permissions.deny in .claude/settings.json · Claude Code not installed
+  ask Bash(git push:*)     refuse  by: settings  permissions.ask in .claude/settings.json · Claude Code not installed
+
+enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+--- exit 0
