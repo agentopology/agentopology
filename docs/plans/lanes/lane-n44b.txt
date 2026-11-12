@@ -1,0 +1,18 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.10.1-overnight.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/integrate/0.10.1. Create your branch feat/n44b-session-binding from it. Push ONLY that branch: `git push -u origin feat/n44b-session-binding`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you own src/bindings/claude-code.ts, src/bindings/lib/*, src/guard/check.ts, src/scaffold/*, the other bindings' one-line experimental notice, and one new rule function (V120) appended at the end of src/parser/validator.ts. Other lanes are editing src/parser/validator.ts V8 and src/cli/index.ts validate (T-02 lane), src/visualizer/* (VZ-1 lane) right now; touch those only if unavoidable, and then minimally. Add a CHANGELOG.md entry under a new "## [Unreleased]" section at the top (create the heading if missing): one "### [feature]" or "### [fix]" block per ticket, in plain sentences, no private names.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/n44b-session-binding` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): "N44b: session agents, binding, guards and launcher" (it includes T-04). Context: integrate/0.10.1 already holds N44a (AgentNode.runs 'session', place, decides, permissionMode; EdgeDef.message; TopologyAST.decisions; rules V113-V118; fixture src/__tests__/e2e/fixtures/session-ops.at), T-01 (installedMark() in src/conformance/claude-code.ts) and VZ-2 (src/visualizer/project.ts). Rule numbers: L-3 takes V119, N44b's T-04(c) warning takes V120; add rule rows to spec/validation.md and bump the rule counts the spec-sync test checks.
