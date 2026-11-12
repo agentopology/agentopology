@@ -1,0 +1,24 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.10.1-overnight.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/integrate/0.10.1. Create your branch feat/n44d-recipient from it. Push ONLY that branch: `git push -u origin feat/n44d-recipient`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you own src/bindings/lib/session.ts (talk guard) and its tests. Other lanes are editing src/parser/*, src/inventory/* (0.11 grammar lane, on 0.11), src/visualizer/*, src/cli, src/guard (0.11 visualizer lane, on 0.11) right now; touch those only if unavoidable, and then minimally. Add a CHANGELOG.md entry under a new "## [Unreleased]" section at the top (create the heading if missing): one "### [feature]" or "### [fix]" block per ticket, in plain sentences, no private names.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/n44d-recipient` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): one fix to the talk guard, plus the full 0.10.1 gate.
+FACT (measured live on Claude Code 2.1.323): the PreToolUse payload for SendMessage carries the target twice: tool_input = {to, recipient, recipient_kind, summary, message, content, type}. The generated talk guard reads only `.tool_input.to`. MEASURED: with AT_SESSION=lane-video, {"to":"lane-manager","recipient":"lane-text"} exits 0 (allowed). Which of the two Claude Code delivers by is not documented.
+Fix in the talk guard (planted tests first, prefix [N44d]):
+- target = `to` if present, else `recipient`; neither → refuse (exit 2, as today).
+- when both are present and differ after the same normalization (ref strip, trim, lowercase), refuse with "talk guard: to and recipient disagree", and log it as refused.
+- tests: mismatch refused; recipient-only on a declared edge allowed; recipient-only off-edge refused; to+recipient equal allowed; existing tests stay green.
+GATE (this is the 0.10.1 integration gate, report it in full): after the fix, run from a FRESH clone state `rm -rf node_modules dist && npm ci && npx tsc --noEmit && npm run build && npx vitest run`, with real exit codes and the full counts (passed / failed / skipped / todo), and list every failing test name. Known root-only failure: import-project.test.ts [I5].
