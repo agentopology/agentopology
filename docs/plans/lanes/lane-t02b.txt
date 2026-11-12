@@ -1,0 +1,32 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.10.1-overnight.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/integrate/0.10.1. Create your branch feat/t02b-import-forms from it. Push ONLY that branch: `git push -u origin feat/t02b-import-forms`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you own src/parser/index.ts (parseImports and where it is called), src/parser/imports.ts, src/import/serializer.ts (import output), their tests. Other lanes are editing src/bindings/lib/session.ts, src/bindings/claude-code.ts, src/guard/check.ts (N44b fix lane) right now; touch those only if unavoidable, and then minimally. Add a CHANGELOG.md entry under a new "## [Unreleased]" section at the top (create the heading if missing): one "### [feature]" or "### [fix]" block per ticket, in plain sentences, no private names.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/t02b-import-forms` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): a fix to "N43 + T-02: the import check tells the truth", which is already built on your base (src/parser/imports.ts, V8). The orchestrator found two silent drops, MEASURED on the built CLI:
+1. `parseImports` (src/parser/index.ts) only matches `import "./f.at" as alias`. The form the docs teach (`agentopology docs composition`) is never parsed, so it produces no import and no error:
+   import reviewer from ./review.at
+   import reviewer from "./review.at"
+   import linter from registry:@org/linter@1.2.0
+   import auditor from ./audit.at sha256 "abc123..."
+2. `parseImports` reads only the topology body. An import line written ABOVE the `topology ... {` line (at the top of the file, a natural place) is ignored.
+Fix: parse every form above (quoted or bare path; `registry:` sets registry/registryPackage/registryVersion on ImportDef and is not resolved from disk; trailing `sha256 "<hex>"` or `sha256: "<hex>"`) both at file top level before the topology header and inside the body. Any line starting with `import` that matches no form is a V8 error ("unrecognized import form"), never silently dropped. The serializer writes the `from` form, and parse → serialize → parse keeps every import.
+Done when (planted tests first, prefixed [T02b]):
+- each of the four documented forms parses to the right ImportDef, inside the body and above the header;
+- a top-level `import making from "./missing.at"` above the header makes validate exit 1 with V8 file not found;
+- a top-level `import making from "./good.at"` with a valid good.at passes, and the imported file's errors are reported under its path;
+- a registry import is not resolved from disk and prints "registry import not checked" as an info/warning, not an error;
+- `import garbage here` is a V8 error;
+- round-trip keeps imports.
