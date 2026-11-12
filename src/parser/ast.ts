@@ -184,6 +184,19 @@ export interface ScheduleJobDef {
   action?: string;
   /** Whether this job is enabled. Defaults to true. */
   enabled: boolean;
+  /** The machine the job runs on (a `machines` entry, V122). */
+  machine?: string;
+  /** What fires the job: session | cron | launchd | cloud | calendar (V124). */
+  carrier?: string;
+  /** What the job outlives: pane-close | reboot | away (V124, V125). */
+  survives?: string;
+}
+
+/** A machine from the top-level `machines` block. */
+export interface MachineDef {
+  id: string;
+  /** Operating system, as written (macos, linux, windows). */
+  os?: string;
 }
 
 /** An external interface definition (webhook, HTTP, etc.). */
@@ -615,6 +628,8 @@ export interface AgentNode extends BaseNode {
    * together (`place: ops`). Only meaningful with `runs: session`.
    */
   place?: string;
+  /** The machine a session agent runs on (a `machines` entry, V122). */
+  machine?: string;
   /** Decisions this agent holds the seat for (`decides: [package-yes]`). */
   decides?: string[];
   /**
@@ -1126,6 +1141,8 @@ export interface TopologyAST {
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
+  /** Machines from the top-level `machines` block (T-07). */
+  machines?: MachineDef[];
 }
 
 // ---------------------------------------------------------------------------

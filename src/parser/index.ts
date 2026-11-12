@@ -57,6 +57,7 @@ import type {
   PromptVariant,
   AuthDef,
   StoreNode,
+  MachineDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -528,6 +529,7 @@ export function parseAgent(
   if (fields.invocation) node.invocation = fields.invocation;
   if (fields.runs) node.runs = fields.runs;
   if (fields.place) node.place = unquote(fields.place);
+  if (fields.machine) node.machine = unquote(fields.machine);
   if (fields["permission-mode"]) node.permissionMode = fields["permission-mode"];
   const decides = parseMultilineList(body, "decides");
   if (decides.length) node.decides = decides;
@@ -1918,6 +1920,9 @@ export function parseSchedule(body: string): ScheduleJobDef[] {
     if (fields.agent) job.agent = fields.agent;
     if (fields.action) job.action = fields.action;
     if (fields.enabled) job.enabled = fields.enabled !== "false";
+    if (fields.machine) job.machine = unquote(fields.machine);
+    if (fields.carrier) job.carrier = unquote(fields.carrier);
+    if (fields.survives) job.survives = unquote(fields.survives);
     jobs.push(job);
   }
   return jobs;
@@ -2570,6 +2575,15 @@ export function parse(source: string): TopologyAST {
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
 
+  // --- Machines (top-level `machines { machine <id> { os: ... } }`) ---
+  const machinesBlock = extractBlock(topBody, "machines");
+  const machines: MachineDef[] | undefined = machinesBlock
+    ? extractAllBlocks(machinesBlock.body, "machine").filter((b) => b.id).map((b) => {
+        const f = parseFields(b.body);
+        return { id: b.id as string, ...(f.os ? { os: unquote(f.os) } : {}) };
+      })
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2808,6 +2822,7 @@ export function parse(source: string): TopologyAST {
     records,
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
+    ...(machines ? { machines } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

@@ -4,6 +4,14 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Machines, and home-folder paths are an error (T-07)
+
+- A top-level `machines { machine mac { os: macos } }` block, and `machine:` on session agents, schedule
+  jobs and stores. A machine that is not declared is a validate error (V122).
+- A hook, gate, tool or action command with an absolute path into one person's home folder
+  (`/Users/<name>/`, `/home/<name>/`, `C:\Users\`) is a validate error (V123), because it only works
+  on that machine.
+
 ### [feature] A store can name its owner (T-10)
 
 - `owner: <agent>` on a store. If two agents that are not the owner both write the store, validate now

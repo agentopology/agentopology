@@ -178,6 +178,7 @@ function serializeAgent(node: AgentNode): string {
   if (node.invocation) lines.push(`    invocation: ${node.invocation}`);
   if (node.runs) lines.push(`    runs: ${node.runs}`);
   if (node.place) lines.push(`    place: ${node.place}`);
+  if (node.machine) lines.push(`    machine: ${node.machine}`);
   if (node.permissionMode) lines.push(`    permission-mode: ${node.permissionMode}`);
   if (node.decides?.length) lines.push(`    decides: ${inlineList(node.decides)}`);
   if (node.independent) lines.push("    independent: true");
@@ -722,6 +723,9 @@ function serializeSchedules(jobs: ScheduleJobDef[]): string | null {
     if (job.every) lines.push(`      every: "${job.every}"`);
     if (job.agent) lines.push(`      agent: ${job.agent}`);
     if (job.action) lines.push(`      action: ${job.action}`);
+    if (job.machine) lines.push(`      machine: ${job.machine}`);
+    if (job.carrier) lines.push(`      carrier: ${job.carrier}`);
+    if (job.survives) lines.push(`      survives: ${job.survives}`);
     if (job.enabled === false) lines.push("      enabled: false");
     lines.push("    }");
   }
@@ -884,6 +888,13 @@ export function serializeAST(ast: TopologyAST): string {
   if (ast.pinModels !== undefined) {
     sections.push("");
     sections.push(`  pin-models: ${ast.pinModels}`);
+  }
+
+  if (ast.machines) {
+    sections.push("");
+    sections.push("  machines {");
+    for (const m of ast.machines) sections.push(`    machine ${m.id} {${m.os ? ` os: ${m.os} ` : ""}}`);
+    sections.push("  }");
   }
 
   // Orchestrator

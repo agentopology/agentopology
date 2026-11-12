@@ -4056,6 +4056,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v119ModelAliases(ast),
     ...v120DecisionArrives(ast),
     ...v121StoreOwner(ast),
+    ...v122MachineKnown(ast),
+    ...v123HomePaths(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4169,6 +4171,52 @@ function v121StoreOwner(ast: TopologyAST): ValidationResult[] {
         message: `Store "${store.id}" is owned by "${store.owner}", but "${writers[0]}" and "${writers[1]}" both write it and neither is the owner.`,
       });
     }
+  }
+  return results;
+}
+
+/** V122 (T-07): `machine:` on a session agent, a schedule job or a store must name a `machines` entry. */
+function v122MachineKnown(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const known = new Set((ast.machines ?? []).map((m) => m.id));
+  const check = (kind: string, id: string, machine: string | undefined) => {
+    if (machine === undefined || known.has(machine)) return;
+    const have = known.size ? `declared: ${[...known].join(", ")}` : "the topology declares no machines";
+    results.push({ rule: "V122", level: "error", node: id, line: lookupLine(ast, id), message: `${kind} "${id}" runs on machine "${machine}", which is not in machines { } (${have}).` });
+  };
+  for (const n of ast.nodes) if (n.type === "agent") check("Agent", n.id, (n as AgentNode).machine);
+  for (const j of ast.schedules ?? []) check("Schedule job", j.id, j.machine);
+  for (const st of ast.stores ?? []) check("Store", st.id, st.machine);
+  return results;
+}
+
+const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
+
+/**
+ * V123 (T-07): an absolute path into one person's home folder
+ * (`/Users/<x>/`, `/home/<x>/`, `C:\Users\`) in a hook, gate, tool or action
+ * command only works on that person's machine.
+ */
+function v123HomePaths(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (what: string, id: string, text: string | undefined) => {
+    if (!text) return;
+    const m = text.match(HOME_PATH);
+    if (!m) return;
+    results.push({ rule: "V123", level: "error", node: id, line: lookupLine(ast, id), message: `${what} has a home-folder absolute path (${m[0].replace(/^[^/A-Za-z]/, "")}...): it only works on one machine. Use a project-relative path or declare a machine.` });
+  };
+  for (const h of ast.hooks ?? []) check(`Hook "${h.name}" command`, h.name, h.run);
+  for (const n of ast.nodes) {
+    if (n.type === "agent") for (const h of (n as AgentNode).hooks ?? []) check(`Hook "${h.name}" command`, n.id, h.run);
+    if (n.type === "gate") {
+      check(`Gate "${n.id}" run`, n.id, (n as { run?: string }).run);
+      for (const c of (n as { checks?: string[] }).checks ?? []) check(`Gate "${n.id}" check`, n.id, c);
+    }
+    if (n.type === "action") for (const c of (n as { commands?: string[] }).commands ?? []) check(`Action "${n.id}" command`, n.id, c);
+  }
+  for (const t of ast.toolDefs ?? []) {
+    check(`Tool "${t.id}" script`, t.id, t.script);
+    for (const a of t.args ?? []) check(`Tool "${t.id}" argument`, t.id, a);
   }
   return results;
 }
