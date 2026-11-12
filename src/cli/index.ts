@@ -53,7 +53,7 @@ import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
-import { verifiedOnLine } from "../conformance/claude-code.js";
+import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
 import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -374,6 +374,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
+    printInstalledMark();
     console.log(c.dim(verifiedOnLine()));
     if (!covered) process.exit(1);
     return;
@@ -399,6 +400,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   printLessons(results.map((r) => r.rule));
+  printInstalledMark();
   console.log(c.dim(verifiedOnLine()));
 
   if (errors.length > 0 || !covered) {
@@ -1220,6 +1222,12 @@ function cmdTargets(): void {
     console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}${verified}`);
   }
   console.log("");
+}
+
+/** What the installed Claude Code is, when it is not the version the output was checked against. */
+function printInstalledMark(): void {
+  const mark = installedMark();
+  if (mark) console.log(c.dim(mark));
 }
 
 /**
