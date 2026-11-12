@@ -12,19 +12,9 @@ import fs from "node:fs";
 import Module from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type {
-  TopologyAST,
-  NodeDef,
-  AgentNode,
-  GateNode,
-  ActionNode,
-  HumanNode,
-  OrchestratorNode,
-  StoreNode,
-  RetrievalNode,
-} from "../parser/ast.js";
+import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
-import { gateAnchors } from "../parser/ast.js";
+import { project } from "./project.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -95,134 +85,11 @@ export interface VisualizationOptions {
 }
 
 export function generateVisualization(ast: TopologyAST, opts: VisualizationOptions = {}): string {
-  const dataJson = JSON.stringify(astToViewData(ast));
+  const dataJson = JSON.stringify(project(ast));
   const issues = validate(ast);
   const issuesJson = JSON.stringify(issues);
   return buildHtml(dataJson, ast.topology.name, issuesJson, opts.brains ?? []);
 }
-
-// ---------------------------------------------------------------------------
-// AST -> view data  (matches the DEFAULT_DATA shape in the advanced viewer)
-// ---------------------------------------------------------------------------
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-function astToViewData(ast: TopologyAST): Record<string, any> {
-  const nodes: Record<string, any>[] = ast.nodes.map((n: NodeDef) => {
-    const base: Record<string, any> = { id: n.id, type: n.type, label: n.label };
-    switch (n.type) {
-      case "orchestrator": {
-        const o = n as OrchestratorNode;
-        if (o.model) base.model = o.model;
-        if (o.generates) base.generates = o.generates;
-        if (o.handles && o.handles.length > 0) base.handles = o.handles;
-        if (o.outputs) base.outputs = o.outputs;
-        break;
-      }
-      case "agent": {
-        const a = n as AgentNode;
-        if (a.model) base.model = a.model;
-        if (a.phase != null) base.phase = a.phase;
-        if (a.permissions) base.permissions = a.permissions;
-        if (a.tools) base.tools = a.tools;
-        if (a.skills) base.skills = a.skills;
-        if (a.reads) base.reads = a.reads;
-        if (a.writes) base.writes = a.writes;
-        if (a.outputs) base.outputs = a.outputs;
-        if (a.role) base.role = a.role;
-        if (a.description) base.description = a.description;
-        if (a.invocation) base.invocation = a.invocation;
-        if (a.behavior) base.behavior = a.behavior;
-        if (a.skip) base.skip = a.skip;
-        if (a.isolation) base.isolation = a.isolation;
-        if (a.retry != null) base.retry = a.retry;
-        if (a.background) base.background = a.background;
-        if (a.mcpServers) base.mcpServers = a.mcpServers;
-        if (a.scale) base.scale = a.scale;
-        if (a.hooks && a.hooks.length > 0) base.hooks = a.hooks;
-        if (a.disallowedTools) base.disallowedTools = a.disallowedTools;
-        if (a.prompt) base.prompt = a.prompt;
-        if (a.maxTurns != null) base.maxTurns = a.maxTurns;
-        if (a.sandbox != null) base.sandbox = a.sandbox;
-        if (a.fallbackChain) base.fallbackChain = a.fallbackChain;
-        if (a.memory && a.memory.length > 0) base.memory = a.memory;
-        if (a.retrieval) base.retrieval = a.retrieval;
-        break;
-      }
-      case "gate": {
-        const g = n as GateNode;
-        // NORMALISE AT THE BOUNDARY. Everything downstream of here is a
-        // template literal of browser JS that TypeScript never checks — roughly
-        // a dozen `positions[gate.after]` lookups and `g.after === nodeId`
-        // comparisons. An array would coerce to "a,b" on lookup (miss) and
-        // never satisfy the equality (gate silently vanishes from the graph).
-        // So the payload carries a STRING here, plus the full list separately.
-        const afters = gateAnchors(g, "after");
-        const befores = gateAnchors(g, "before");
-        if (afters.length) base.after = afters[0];
-        if (befores.length) base.before = befores[0];
-        if (afters.length > 1) base.afterAll = afters;
-        if (befores.length > 1) base.beforeAll = befores;
-        if (g.run) base.run = g.run;
-        if (g.checks) base.checks = g.checks;
-        if (g.onFail) base.onFail = g.onFail;
-        if (g.behavior) base.behavior = g.behavior;
-        if (g.retry != null) base.retry = g.retry;
-        break;
-      }
-      case "action": {
-        const act = n as ActionNode;
-        if (act.kind) base.kind = act.kind;
-        if (act.description) base.description = act.description;
-        if (act.source) base.source = act.source;
-        if (act.commands) base.commands = act.commands;
-        break;
-      }
-      case "human": {
-        const h = n as HumanNode;
-        if (h.description) base.description = h.description;
-        if (h.timeout) base.timeout = h.timeout;
-        if (h.onTimeout) base.onTimeout = h.onTimeout;
-        break;
-      }
-    }
-    return base;
-  });
-
-  const edges = ast.edges.map((e) => ({
-    from: e.from,
-    to: e.to,
-    condition: e.condition,
-    maxIterations: e.maxIterations,
-  }));
-
-  return {
-    topology: {
-      name: ast.topology.name,
-      version: ast.topology.version,
-      description: ast.topology.description,
-      patterns: ast.topology.patterns,
-      foundations: ast.topology.foundations || [],
-      advanced: ast.topology.advanced || [],
-    },
-    nodes,
-    edges,
-    depth: ast.depth,
-    memory: ast.memory,
-    stores: ast.stores,
-    retrievals: ast.retrievals,
-    batch: ast.batch,
-    environments: ast.environments,
-    triggers: ast.triggers,
-    hooks: ast.hooks,
-    settings: ast.settings,
-    mcpServers: ast.mcpServers,
-    metering: ast.metering,
-    skills: ast.skills,
-    toolDefs: ast.toolDefs,
-    runs: [],
-  };
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ---------------------------------------------------------------------------
 // HTML builder
