@@ -91,8 +91,8 @@ describe("[N44b] scaffold", () => {
     const { files } = scaffold();
     const sh = files.find((f) => f.path === "scripts/start-sessions.sh")!.content;
     expect(sh.startsWith("#!/bin/sh")).toBe(true);
-    expect(sh).toContain("herdr tab create ops");
-    expect(sh).toContain("herdr tab create makers");
+    expect(sh).toContain("herdr tab create 'ops'");
+    expect(sh).toContain("herdr tab create 'makers'");
     expect(sh).toContain("herdr pane split");
     expect(sh).toContain("herdr pane run");
     expect(sh).toContain("command -v herdr");

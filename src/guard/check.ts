@@ -63,6 +63,12 @@ function readJson(path: string): Record<string, any> | null {
   try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
 }
 
+/** True when a session guard still has a real `exit 2` line and a `jq -e` read (comments do not count). */
+function holdsGeneratedLines(text: string): boolean {
+  const code = text.split("\n").filter((l) => !/^\s*#/.test(l));
+  return code.some((l) => /^\s*exit 2\s*$/.test(l)) && code.some((l) => /\bjq -er\b/.test(l));
+}
+
 function readText(path: string): string | null {
   try { return fs.readFileSync(path, "utf8"); } catch { return null; }
 }
@@ -238,7 +244,9 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const hooks = findHooks(settings, "PreToolUse", file, (m) => m === matcher);
       if (hooks.length === 0) problems.push(`no PreToolUse entry on ${matcher} for ${file} in .claude/settings.json`);
       else { const bad = commandProblem(hooks[0].command); if (bad) problems.push(bad); }
-      if (readText(join(root, scriptsDir, file)) === null) problems.push(`${scriptsDir}/${file} is missing`);
+      const text = readText(join(root, scriptsDir, file));
+      if (text === null) problems.push(`${scriptsDir}/${file} is missing`);
+      else if (!holdsGeneratedLines(text)) problems.push(`${scriptsDir}/${file} no longer holds its generated lines (the exit 2 path and the jq read); regenerate it`);
       if (id === "talk guard" && readText(join(root, ".claude/sessions.md")) === null) problems.push("no .claude/sessions.md, so no session was started with AT_SESSION and every send is unguarded");
       const where = `PreToolUse on ${matcher} → ${file}`;
       const notes = [...extra];
@@ -251,6 +259,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if (talkEdgesOf(ast).length > 0) {
       sessionGuard("talk guard", "talk-guard.sh", "SendMessage", "PreToolUse on SendMessage", SESSION_HOOKS_PROVEN.sendMessage, [
         "a send through a terminal command, a shared file or a session outside this repo is not seen",
+        ".claude/state/talk.jsonl is a trail, not evidence: whoever can write files can edit it",
       ]);
     }
   }

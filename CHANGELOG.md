@@ -4,6 +4,15 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Session guards: fail-open and wrong-refusal fixes (N44b)
+
+- The spawn guard now blocks when its input is empty, `{}` or has no object `tool_input`; a spawn with no `subagent_type` is still an ordinary spawn. It lowercases and trims the value, strips a `<prefix>:` namespace, refuses a non-string `subagent_type`, and refuses a `name` that equals a session id.
+- The talk guard strips a trailing ` [ref]` (the mark ListAgents adds to duplicate names) before matching, lets a session message its own flow targets (such as its subagents) and `main`, refuses any target that is not `a-z`, `0-9` and `-` (so a newline or NUL no longer passes), and logs every refusal, including an oversize target or an unreadable payload.
+- The prompt log writes `kind: unknown` for empty or malformed input, and ignores leading whitespace before `<cross-session-message`.
+- The guards log to `$CLAUDE_PROJECT_DIR`, or to the project root found from the script's own path, and never append through a symlink. `talk.jsonl` is a trail, not evidence: whoever can write files can edit it, and `guard --check` says so.
+- `guard --check` grades a spawn or talk guard `none` when the script no longer holds its generated `exit 2` line and `jq -er` read.
+- The launcher single-quotes every value it interpolates and is not written when a place or session id is not `a-z`, `0-9` and `-`. It skips a session herdr already lists, warns that a rerun duplicates sessions when herdr cannot list them, and says in its header that the herdr subcommands are unproven.
+
 ### [feature] Session agents: scaffold, guards and launcher (N44b)
 
 - `scaffold --target claude-code` writes each `runs: session` agent's file as for any agent, plus
