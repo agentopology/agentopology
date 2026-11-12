@@ -25,6 +25,7 @@ import type { GateNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.js";
 import { scriptNameFromRun } from "../parser/run.js";
+import { parseWindow, today as todayDate } from "../parser/window.js";
 import { hookCommand } from "../bindings/claude-code.js";
 
 export interface StepCheckOptions {
@@ -32,6 +33,8 @@ export interface StepCheckOptions {
   unit?: string;
   /** Project directory ledgers and check scripts are read from. Default ".". */
   dir?: string;
+  /** Today as YYYY-MM-DD; default the real date (or AT_TODAY). */
+  today?: string;
 }
 
 export interface GateResult {
@@ -98,6 +101,27 @@ function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string)
 }
 
 /**
+ * Humans that guard `step` (a flow edge from the human to it, or a gate before
+ * it that comes after the human) and whose `valid:` window has ended. Their
+ * approval is out of date, so the step is refused.
+ */
+function expiredHumans(ast: TopologyAST, step: string, now: string): GateResult[] {
+  const guards = new Set<string>();
+  for (const e of ast.edges) if (e.to === step) guards.add(e.from);
+  for (const g of ast.nodes) {
+    if (g.type !== "gate" || !gateAnchors(g as GateNode, "before").includes(step)) continue;
+    for (const a of gateAnchors(g as GateNode, "after")) guards.add(a);
+  }
+  const out: GateResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || !n.valid || !guards.has(n.id)) continue;
+    const w = parseWindow(n.valid);
+    if (w && now > w.end) out.push({ gate: n.id, ok: false, reasons: [`human ${n.id}'s approval is valid ${n.valid}, and today (${now}) is after it`] });
+  }
+  return out;
+}
+
+/**
  * Check every gate whose `before:` names `step`. An advisory gate reports and
  * never blocks, so it is left out. A step id that is no node of the topology
  * fails, so a typo cannot read as "nothing guards it".
@@ -110,6 +134,7 @@ export function checkStep(ast: TopologyAST, step: string, options: StepCheckOpti
     .filter((n): n is GateNode => n.type === "gate")
     .filter((g) => g.behavior !== "advisory" && gateAnchors(g, "before").includes(step))
     .map((g) => checkGate(ast, g, unit, root));
+  gates.push(...expiredHumans(ast, step, options.today ?? todayDate()));
   return { step, ...(unit ? { unit } : {}), known, gates, ok: known && gates.every((g) => g.ok) };
 }
 

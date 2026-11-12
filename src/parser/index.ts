@@ -58,6 +58,7 @@ import type {
   AuthDef,
   StoreNode,
   MachineDef,
+  PersonDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -818,6 +819,8 @@ export function parseHuman(
   if (fields.description) node.description = unquote(fields.description);
   if (fields.timeout) node.timeout = unquote(fields.timeout);
   if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
+  if (fields.who) node.who = unquote(fields.who);
+  if (fields.valid) node.valid = unquote(fields.valid);
 
   return node;
 }
@@ -2222,7 +2225,7 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Match: agent <id> {, action <id> {, gate <id> {, human <id> {, store <id> {, retrieval <id> {
-    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group|store|retrieval)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group|store|retrieval|person)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
     if (namedMatch) {
       sourceMap[namedMatch[1]] = i + 1; // 1-based line number
       continue;
@@ -2584,6 +2587,15 @@ export function parse(source: string): TopologyAST {
       })
     : undefined;
 
+  // --- People (top-level `person <id> { away: "..." }`) ---
+  const personBlocks = extractAllBlocks(topBody, "person").filter((b) => b.id);
+  const persons: PersonDef[] | undefined = personBlocks.length
+    ? personBlocks.map((b) => {
+        const f = parseFields(b.body);
+        return { id: b.id as string, ...(f.away ? { away: unquote(f.away) } : {}) };
+      })
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2823,6 +2835,7 @@ export function parse(source: string): TopologyAST {
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(machines ? { machines } : {}),
+    ...(persons ? { persons } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

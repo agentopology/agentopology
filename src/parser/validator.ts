@@ -26,6 +26,7 @@ import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { checkImports } from "./imports.js";
+import { parseWindow, today } from "./window.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -4060,6 +4061,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v123HomePaths(ast),
     ...v124ScheduleCarrier(ast),
     ...v125SessionCronSurvives(ast),
+    ...v126AwayWaits(ast),
+    ...v127PersonWindows(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4247,6 +4250,47 @@ function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
       rule: "V125", level: "error", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" has carrier: session and survives: ${j.survives}, but a session cron dies with its session and after 7 days. Use carrier: cron, launchd or cloud for a job that must survive.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V126 (T-09): a human step whose `who:` person is away today or later waits on
+ * someone who may not answer. The warning names the step, the person, the
+ * window and what the step does on timeout.
+ */
+function v126AwayWaits(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Map((ast.persons ?? []).map((p) => [p.id, p]));
+  const now = today();
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || !n.who) continue;
+    const person = people.get(n.who);
+    const w = parseWindow(person?.away);
+    if (!person || !w || w.end < now) continue;
+    const behavior = n.timeout
+      ? `on timeout (${n.timeout}) it will ${n.onTimeout ?? "halt"}`
+      : "it has no timeout, so it waits until they are back";
+    results.push({
+      rule: "V126", level: "warning", node: n.id, line: lookupLine(ast, n.id),
+      message: `Step "${n.id}" waits on ${person.id}, who is away ${person.away}: ${behavior}.`,
+    });
+  }
+  return results;
+}
+
+/** V127 (T-09): `who:` must name a `person`; `away:` and `valid:` must be real `YYYY-MM-DD..YYYY-MM-DD` windows. */
+function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Set((ast.persons ?? []).map((p) => p.id));
+  const bad = (id: string, what: string, value: string) =>
+    results.push({ rule: "V127", level: "error", node: id, line: lookupLine(ast, id), message: `${what} "${value}" is not a window like "2026-01-31..2026-02-14" (two real dates, the first not after the second).` });
+  for (const p of ast.persons ?? []) if (p.away !== undefined && !parseWindow(p.away)) bad(p.id, `Person "${p.id}" away:`, p.away);
+  for (const n of ast.nodes) {
+    if (n.type !== "human") continue;
+    if (n.who && !people.has(n.who))
+      results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message: `Human "${n.id}" has who: ${n.who}, which is not a person block.` });
+    if (n.valid !== undefined && !parseWindow(n.valid)) bad(n.id, `Human "${n.id}" valid:`, n.valid);
   }
   return results;
 }

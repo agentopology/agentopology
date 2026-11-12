@@ -239,3 +239,89 @@ ${job}
     fs.rmSync(agents, { recursive: true, force: true });
   });
 });
+
+import { checkStep } from "../../step/check.js";
+
+describe("[T09] person, away and valid", () => {
+  const doc = (person: string, human: string, flow = "approve -> ship") => `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "g11" }
+${person}
+  human approve {
+    description: "Sign off"
+${human}
+  }
+  action ship {
+    kind: script
+    commands: ["./ship.sh"]
+    description: "ship"
+  }
+  flow { ${flow} }
+}`;
+  const alice = `  person alice { away: "2026-11-10..2026-11-20" }`;
+  const withToday = <T>(day: string, fn: () => T): T => {
+    const old = process.env.AT_TODAY;
+    process.env.AT_TODAY = day;
+    try { return fn(); } finally { if (old === undefined) delete process.env.AT_TODAY; else process.env.AT_TODAY = old; }
+  };
+
+  it("[T09] parses person, who and valid, and round-trips them", () => {
+    const ast = parse(doc(alice, "    who: alice\n    valid: \"2026-11-01..2026-12-01\"\n    timeout: 1h\n    on-timeout: skip"));
+    expect(ast.persons).toEqual([{ id: "alice", away: "2026-11-10..2026-11-20" }]);
+    const h = ast.nodes.find((n) => n.id === "approve") as any;
+    expect(h.who).toBe("alice");
+    expect(h.valid).toBe("2026-11-01..2026-12-01");
+    const again = parse(serializeAST(ast));
+    expect(again.persons).toEqual(ast.persons);
+    expect((again.nodes.find((n) => n.id === "approve") as any).who).toBe("alice");
+    expect((again.nodes.find((n) => n.id === "approve") as any).valid).toBe("2026-11-01..2026-12-01");
+  });
+  it("[T09] validate lists a step waiting on a person whose away window includes today, with its timeout behavior", () => {
+    const src = doc(alice, "    who: alice\n    timeout: 1h\n    on-timeout: skip");
+    const r = withToday("2026-11-12", () => rule(src, "V126"));
+    expect(r).toHaveLength(1);
+    expect(r[0].level).toBe("warning");
+    expect(r[0].message).toContain("approve");
+    expect(r[0].message).toContain("alice");
+    expect(r[0].message).toContain("2026-11-10..2026-11-20");
+    expect(r[0].message).toContain("skip");
+  });
+  it("[T09] a window that starts later is listed too; one that has ended is not", () => {
+    const src = doc(alice, "    who: alice");
+    expect(withToday("2026-11-01", () => rule(src, "V126"))).toHaveLength(1);
+    expect(withToday("2026-11-21", () => rule(src, "V126"))).toHaveLength(0);
+  });
+  it("[T09] no timeout is said plainly", () => {
+    const r = withToday("2026-11-12", () => rule(doc(alice, "    who: alice"), "V126"));
+    expect(r[0].message).toMatch(/no timeout/);
+  });
+  it("[T09] a human with no who, or a person with no away window, is not listed", () => {
+    expect(withToday("2026-11-12", () => rule(doc(alice, ""), "V126"))).toHaveLength(0);
+    expect(withToday("2026-11-12", () => rule(doc("  person alice { }", "    who: alice"), "V126"))).toHaveLength(0);
+  });
+  it("[T09] an unknown person and a malformed or reversed window are errors", () => {
+    expect(rule(doc(alice, "    who: bob"), "V127")).toHaveLength(1);
+    expect(rule(doc('  person alice { away: "soon" }', "    who: alice"), "V127")).toHaveLength(1);
+    expect(rule(doc('  person alice { away: "2026-11-20..2026-11-10" }', "    who: alice"), "V127")).toHaveLength(1);
+    expect(rule(doc(alice, '    who: alice\n    valid: "2026-13-01..2026-14-01"'), "V127")).toHaveLength(1);
+    expect(rule(doc(alice, '    who: alice\n    valid: "2026-11-01..2026-12-01"'), "V127")).toHaveLength(0);
+  });
+  it("[T09] step check refuses a step guarded by a human after that human's valid window", () => {
+    const ast = parse(doc(alice, '    who: alice\n    valid: "2026-11-01..2026-11-30"'));
+    const inside = checkStep(ast, "ship", { today: "2026-11-30" });
+    expect(inside.ok).toBe(true);
+    const after = checkStep(ast, "ship", { today: "2026-12-01" });
+    expect(after.ok).toBe(false);
+    expect(after.gates[0].reasons.join(" ")).toMatch(/approve.*2026-11-01\.\.2026-11-30/);
+  });
+  it("[T09] a gate after the human guards the step too; a human with no valid window never refuses", () => {
+    const gateDoc = doc(alice, '    who: alice\n    valid: "2026-11-01..2026-11-30"', "approve -> ship").replace("  action ship", `  gates { gate sign { after: approve
+      before: ship
+      run: "scripts/ok.sh"
+      on-fail: halt } }
+  action ship`);
+    const r = checkStep(parse(gateDoc), "ship", { today: "2027-01-01", dir: "/nonexistent" });
+    expect(r.gates.some((g) => g.gate === "approve" && !g.ok)).toBe(true);
+    expect(checkStep(parse(doc(alice, "    who: alice")), "ship", { today: "2027-01-01" }).ok).toBe(true);
+  });
+});

@@ -851,6 +851,17 @@ export interface HumanNode extends BaseNode {
   timeout?: string;
   /** What to do if human doesn't respond: "halt" | "skip" | "fallback <id>". */
   onTimeout?: string;
+  /** The person this step waits on (a `person` block, V127). */
+  who?: string;
+  /** Window `"YYYY-MM-DD..YYYY-MM-DD"` this human's approval holds; `step check` refuses a guarded step after it. */
+  valid?: string;
+}
+
+/** A person from a top-level `person <id> { away: "YYYY-MM-DD..YYYY-MM-DD" }` block. */
+export interface PersonDef {
+  id: string;
+  /** Window the person is away, as written. */
+  away?: string;
 }
 
 /** Topology-level defaults for sampling params and shared agent config. */
@@ -1143,6 +1154,8 @@ export interface TopologyAST {
   pinModels?: boolean;
   /** Machines from the top-level `machines` block (T-07). */
   machines?: MachineDef[];
+  /** People from the top-level `person` blocks (T-09). */
+  persons?: PersonDef[];
 }
 
 // ---------------------------------------------------------------------------

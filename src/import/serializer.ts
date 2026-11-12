@@ -333,6 +333,8 @@ function serializeHuman(node: HumanNode): string {
   if (node.description) lines.push(`    description: "${node.description}"`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
+  if (node.who) lines.push(`    who: ${node.who}`);
+  if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
   lines.push("  }");
   return lines.join("\n");
 }
@@ -888,6 +890,11 @@ export function serializeAST(ast: TopologyAST): string {
   if (ast.pinModels !== undefined) {
     sections.push("");
     sections.push(`  pin-models: ${ast.pinModels}`);
+  }
+
+  for (const p of ast.persons ?? []) {
+    sections.push("");
+    sections.push(`  person ${p.id} {${p.away ? ` away: ${q(p.away)} ` : ""}}`);
   }
 
   if (ast.machines) {

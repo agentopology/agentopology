@@ -71,7 +71,7 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
     blocks: { extensions: OPAQUE },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },
@@ -107,6 +107,7 @@ const TOPOLOGY: BlockSchema = {
     gates: { fields: [], blocks: { gate: NODE_SCHEMAS.gate } },
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
+    person: { fields: ["away"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },

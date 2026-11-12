@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 125 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 127 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -799,6 +799,8 @@ through the validator like any other rule.
 | V123 | error | A hook, gate, tool or action command holds an absolute path into one person's home folder (`/Users/<x>/`, `/home/<x>/`, `C:\\Users\\`); it only works on that machine |
 | V124 | error | A schedule job's `carrier:` is not one of `session`, `cron`, `launchd`, `cloud`, `calendar`, or its `survives:` is not one of `pane-close`, `reboot`, `away` |
 | V125 | error | A schedule job has `carrier: session` and any `survives:`: a session cron dies with its session and after 7 days |
+| V126 | warning | A human step's `who:` person is away today or later: the message names the step, the person, the window and the step's timeout behavior (or says it has no timeout) |
+| V127 | error | A human's `who:` is no `person` block, or a person's `away:` or a human's `valid:` is not a real `YYYY-MM-DD..YYYY-MM-DD` window |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

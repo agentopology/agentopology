@@ -4,6 +4,14 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] People who are away, and approvals that expire (T-09)
+
+- A top-level `person <id> { away: "2026-01-31..2026-02-14" }` block. A `human` takes `who: <person>`.
+  Validate warns for every human step whose person is away today or later, with what the step does on
+  timeout (V126). An unknown person or a malformed window is an error (V127).
+- A human may declare `valid: "YYYY-MM-DD..YYYY-MM-DD"`. `step check` refuses a step that human guards
+  once today is past the window.
+
 ### [feature] Schedule jobs say what carries them and what they survive (T-06)
 
 - A schedule `job` takes `carrier: session | cron | launchd | cloud | calendar` and
