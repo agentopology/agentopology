@@ -4,6 +4,31 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Session agents: scaffold, guards and launcher (N44b)
+
+- `scaffold --target claude-code` writes each `runs: session` agent's file as for any agent, plus
+  `.claude/sessions.md` with one start line per session (`AT_SESSION=<id> claude --agent <id> -n <id>`,
+  with `--permission-mode` when declared) and `scripts/start-sessions.sh`, a plain POSIX launcher that
+  opens one herdr tab per `place:` and one pane per session, or prints the start lines when herdr is not installed.
+- A spawn guard (a PreToolUse hook on `Agent|Task`, `onFailure: "block"`) refuses to launch a session agent as a subagent.
+- A talk guard (a PreToolUse hook on `SendMessage`) refuses, with exit 2, a send to a session the current
+  session has no talk edge to. The current session is `$AT_SESSION`, set by the start line. When it is unset
+  the send passes with a note on stderr; when it is set the guard fails closed on any parse error.
+  Every send is appended to `.claude/state/talk.jsonl` as `allowed`, `refused` or `unguarded`.
+- `guard --check` lists both guards and grades them `unverified`, not `refuse`, until the conformance facts
+  mark PreToolUse on `SendMessage` and `Agent` as proven. Under the talk guard it says that a send through a
+  terminal command, a shared file or a session outside the repo is not seen.
+- Other targets (codex, cursor, claude-workflow) validate and draw session agents and print
+  "session agents: experimental, not compiled".
+
+### [feature] Decision seats see typed versus arrived input (T-04)
+
+- New rule V120: an agent with `decides:` that a talk edge points at gets a warning, because a decision can
+  arrive there as a message. Messages are not refused by keyword. Instead scaffold writes a UserPromptSubmit
+  hook for that agent's session (active only when `AT_SESSION` is its id) that logs each prompt to
+  `.claude/state/talk.jsonl` as `kind: arrived` when it starts with `<cross-session-message` and `kind: typed`
+  otherwise, so a human-gate script can tell the two apart. The hook never blocks.
+
 ### [feature] Session agents: grammar and validate (N44a)
 
 - An agent takes `runs: session` (beside `subagent`, `inline` and `fork`), `place: <name>`,

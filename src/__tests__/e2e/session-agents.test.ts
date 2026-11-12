@@ -70,7 +70,8 @@ describe("[N44a] grammar", () => {
 describe("[N44a] validate", () => {
   it("[N44a] the fixture validates with no errors and the expected warnings", () => {
     expect(errors(fixture)).toEqual([]);
-    expect(warnings(fixture)).toEqual([]);
+    // V120 (N44b, T-04): the hub manager decides and every lane can message it.
+    expect(warnings(fixture).map((r) => r.rule)).toEqual(["V120"]);
   });
 
   it("[N44a] a session agent id that is not kebab-case is an error", () => {
@@ -98,7 +99,7 @@ describe("[N44a] validate", () => {
 
   it("[N44a] a decision in decisions: with no agent claiming it warns", () => {
     const src = variant("decisions: [package-yes]", "decisions: [package-yes, ship-it]");
-    const w = warnings(src).map((r) => r.message);
+    const w = warnings(src).filter((r) => r.rule === "V116").map((r) => r.message);
     expect(w.some((m) => m.includes("ship-it"))).toBe(true);
     expect(w.some((m) => m.includes("package-yes"))).toBe(false);
   });
@@ -138,7 +139,7 @@ describe("[N44a] validate", () => {
 
   it("[N44a] same mode on both ends does not warn", () => {
     const src = fixture.replace(/runs: session/g, "runs: session\n    permission-mode: auto");
-    expect(warnings(src)).toEqual([]);
+    expect(warnings(src).filter((r) => r.rule !== "V120")).toEqual([]);
   });
 });
 
