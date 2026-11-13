@@ -130,3 +130,48 @@ describe("[E-4] zero drop: gate description and behavior, and a tool's declared 
     expect(tool?.content).toContain("AGENTOPOLOGY_STUB");
   });
 });
+
+/** F-23: a gate that cites the code refusing it: at, match and bypass (with strength and by). */
+const CITED = fs.readFileSync(resolve(here, "fixtures/codex-gates.at"), "utf8")
+  .replace("      ledger: trace\n", '      ledger: trace\n      strength: refuse\n      by: code\n      at: "tools/publish.py:2"\n      match: "zzassert_ready("\n      bypass: "ZZ_SKIP_READY=1"\n');
+
+describe("[F-23] zero drop: a gate's code citation (at, match, bypass)", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const ast = parse(CITED);
+  const files = codexBinding.scaffold(ast);
+  warn.mockRestore();
+
+  it("[F-23] the fixture sets the three fields", () => {
+    expect(ast.nodes.find((n) => n.id === "publish-ready")).toMatchObject({ at: "tools/publish.py:2", match: "zzassert_ready(", bypass: "ZZ_SKIP_READY=1" });
+  });
+
+  it("[F-23] every field it sets is in the Codex output: AGENTS.md names the cited code, the text expected there and the bypass", () => {
+    expect(unaccounted(ast, files)).toEqual([]);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain("tools/publish.py:2");
+    expect(md).toContain("zzassert_ready(");
+    expect(md).toContain("ZZ_SKIP_READY=1");
+  });
+
+  it("[F-23] codex guard --check reads the citation: a cited file that is there is credited, with the bypass; a missing one reads none", async () => {
+    const os = await import("node:os");
+    const { join, dirname: dn } = await import("node:path");
+    const { checkCodexGuards } = await import("../../guard/check-codex.js");
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-f23-"));
+    try {
+      for (const f of files) { fs.mkdirSync(dn(join(root, f.path)), { recursive: true }); fs.writeFileSync(join(root, f.path), f.content); }
+      const missing = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(missing.strength).toBe("none");
+      expect(missing.notes.join(" ")).toContain("tools/publish.py");
+      fs.mkdirSync(join(root, "tools"), { recursive: true });
+      fs.writeFileSync(join(root, "tools/publish.py"), "import sys\nzzassert_ready(sys.argv)\n");
+      const ok = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(ok.strength).not.toBe("none");
+      expect(ok.notes.join(" ")).toContain("ZZ_SKIP_READY=1");
+      fs.writeFileSync(join(root, "tools/publish.py"), "import sys\nprint('refactored')\n");
+      const moved = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(moved.strength).toBe("none");
+      expect(moved.notes.join(" ")).toContain("zzassert_ready(");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});

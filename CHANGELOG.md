@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a gate's code citation (`at`, `match`, `bypass`) reaches the Codex output and `guard --check` (F-23)
+
+- On Codex, `gate.at`, `gate.match` and `gate.bypass` were dropped with no warning, and `guard --check --target codex` ignored them while the Claude Code check reported them. `AGENTS.md` now names the cited code, the text expected there and the bypass, and the Codex check reads the citation on disk the way the Claude Code one does. The Codex zero-drop test has a gate that sets all three.
+
 ### [fix] Fixed: a gated step's generated action script checks the gate itself (F-6)
 
 - Claude Code scaffold writes `.claude/skills/<t>/scripts/action-<step>.sh`, whose body runs the step's commands. Only the `PreToolUse` hook on Bash checked the gate, so `bash .claude/skills/ship/scripts/action-publish.sh ep1` reached `./tool publish` with no ledger at all. The script of a gated step now hands each command, with its arguments, to `before-action.sh` (the same check, reused, not copied) and exits 2 before running anything when a gate is not met. The `action-<step>.sh` of every gated step in the examples and fixtures changes.

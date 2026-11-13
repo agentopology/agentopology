@@ -23,6 +23,7 @@ import { buildCodexHooks, codexGateHold } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { VERIFIED_ON, installedMark as codexInstalledMark, verifiedOnLine as codexVerifiedOnLine } from "../conformance/codex.js";
 import type { GuardItem, GuardReport } from "./check.js";
+import { citationProblem } from "./check.js";
 
 interface Handler { type?: string; command?: string }
 interface Entry { matcher?: string; hooks?: Handler[] }
@@ -93,6 +94,23 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
         break;
       }
+    }
+  }
+
+  // F-23: a gate that cites the code refusing it (at:, match:, bypass:) is checked on disk, as on
+  // Claude Code: the cited file and line must be there and still hold the match text.
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.at) continue;
+    const item = items.find((i) => i.kind === "gate" && i.id === gate.id)!;
+    const bad = citationProblem(root, gate.at, gate.match);
+    const by = (gate.by ?? "code") as GuardItem["by"];
+    const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
+    if (bad || item.strength === "hope" || item.strength === "none") {
+      Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes, structural: false });
+    } else {
+      item.notes.push(...notes.map((n) => `also ${n}`));
     }
   }
 

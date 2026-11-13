@@ -106,7 +106,7 @@ const MATCH_WINDOW = 5;
  * in it, and `match` appears within 5 lines of it (anywhere, with no line).
  * Null when it holds; otherwise why not.
  */
-function citationProblem(root: string, at: string, match?: string): string | null {
+export function citationProblem(root: string, at: string, match?: string): string | null {
   const m = /^(.*?)(?::(\d+))?$/.exec(at)!;
   const [file, lineText] = [m[1].replace(/^\.\//, ""), m[2]];
   const text = readText(join(root, file));

@@ -784,6 +784,12 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (gate.retry != null) sections.push(`- **Retry:** ${gate.retry}`);
       if (gate.timeout) sections.push(`- **Timeout:** ${gate.timeout}`);
       sections.push(`- **Enforcement:** ${gateEnforcementNote(ast, gate)}`);
+      // F-23: the code the gate cites as what refuses it, the text expected there, and the way around it.
+      if (gate.at) {
+        const by = gate.by ? ` (by: ${gate.by}${gate.strength ? `, strength: ${gate.strength}` : ""})` : gate.strength ? ` (strength: ${gate.strength})` : "";
+        sections.push(`- **Refused by:** \`${gate.at}\`${by}${gate.match ? `, which must still contain \`${gate.match}\`` : ""}; cited, not proven: \`agentopology guard --check --target codex\` checks that the code is there`);
+      }
+      if (gate.bypass) sections.push(`- **Bypass:** \`${gate.bypass}\` (the declared way around this gate)`);
       sections.push("");
     }
   }
