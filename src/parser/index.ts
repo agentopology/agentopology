@@ -2345,11 +2345,26 @@ export function parseImportsDetailed(text: string): { imports: ImportDef[]; erro
   let m: RegExpExecArray | null;
   let depth = 0;
   let scanned = 0;
+  // Braces inside a quoted string or a # comment do not count toward depth.
+  // A string ends at its closing quote or at the end of its line.
+  let inString = false;
+  let inComment = false;
 
   while ((m = lineRe.exec(text)) !== null) {
     for (; scanned < m.index; scanned++) {
-      if (text[scanned] === "{") depth++;
-      else if (text[scanned] === "}") depth--;
+      const ch = text[scanned];
+      if (ch === "\n") {
+        inString = false;
+        inComment = false;
+      } else if (inComment) {
+        continue;
+      } else if (inString) {
+        if (ch === "\\") scanned++;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') inString = true;
+      else if (ch === "#") inComment = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") depth--;
     }
     if (depth > 0) continue;
     const lineEnd = m.index + m[0].length;

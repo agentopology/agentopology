@@ -170,3 +170,20 @@ describe("[N44e] the visualizer escapes inlined page data", () => {
     expect(JSON.parse(out)).toEqual(v);
   });
 });
+
+import { parseImportsDetailed } from "../../parser/index.js";
+
+describe("[N44e] parseImportsDetailed ignores braces in strings and comments", () => {
+  it("[N44e] an import after description: \"use { to open\" is kept", () => {
+    const text = `meta {\n  description: "use { to open"\n}\nimport x from "./x.at"\n`;
+    expect(parseImportsDetailed(text).imports.map((i) => i.alias)).toEqual(["x"]);
+  });
+  it("[N44e] a } in a string or a { in a # comment does not move the depth", () => {
+    const text = `# a comment with {\nmeta {\n  description: "a } b \\" {"\n}\nimport y from "./y.at"\n`;
+    expect(parseImportsDetailed(text).imports.map((i) => i.alias)).toEqual(["y"]);
+  });
+  it("[N44e] an import inside a block is still skipped", () => {
+    const text = `agent a {\n  import z from "./z.at"\n}\n`;
+    expect(parseImportsDetailed(text).imports).toEqual([]);
+  });
+});
