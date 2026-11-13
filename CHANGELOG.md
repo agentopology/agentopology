@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.10.1] - 2026-11-13
 
 ### [fix] Review fixes for the 0.10.1 session and import work (N44e)
 
