@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
-import { FILE_WRITE_TOOLS, fileWriteMatcher } from "../../conformance/claude-code.js";
+import { FILE_WRITING_TOOLS, fileWriteMatcher } from "../../conformance/claude-code.js";
 import { extractFileWriteTools } from "../../conformance/extract.js";
 import { RECORD_BYPASS_LINE, guardedRecords, recordWaysIn } from "../../records/guard.js";
 
@@ -135,7 +135,7 @@ describe.skipIf(!hasJq)("[SP-7][B4] before-edit.sh refuses a file-writing tool o
     const e = pre.find((x) => x.hooks[0].command.includes("before-edit.sh"));
     expect(e).toBeTruthy();
     expect(e!.matcher).toBe(fileWriteMatcher());
-    for (const t of FILE_WRITE_TOOLS) expect(e!.matcher.split("|")).toContain(t);
+    for (const t of FILE_WRITING_TOOLS) expect(e!.matcher.split("|")).toContain(t);
     expect(e!.hooks[0].onFailure).toBe("block");
   });
 
@@ -282,10 +282,10 @@ describe("[SP-7] the file-writing tools come from the conformance facts", () => 
     expect(extractFileWriteTools("no table here")).toEqual([]);
   });
 
-  it("[SP-7] the snapshot of the tools page is held by the facts: every tool it lists is in FILE_WRITE_TOOLS", () => {
+  it("[SP-7] the snapshot of the tools page is held by the facts: every tool it lists is in FILE_WRITING_TOOLS", () => {
     const snap = JSON.parse(fs.readFileSync(resolve(here, "../../../spec/claude-code/tools-contract.json"), "utf8"));
     expect(snap.fileWriteTools.length).toBeGreaterThan(0);
-    for (const t of snap.fileWriteTools) expect(FILE_WRITE_TOOLS).toContain(t);
-    expect(fileWriteMatcher().split("|").sort()).toEqual([...FILE_WRITE_TOOLS].sort());
+    for (const t of snap.fileWriteTools) expect(FILE_WRITING_TOOLS).toContain(t);
+    expect(fileWriteMatcher().split("|").sort()).toEqual([...FILE_WRITING_TOOLS].sort());
   });
 });

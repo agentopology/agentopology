@@ -417,9 +417,9 @@ export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level
  * Claude Code still has it is not checked, so it stays: a name that matches
  * no tool costs nothing. The binding never types this list; it reads it here.
  */
-export const FILE_WRITE_TOOLS: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+export const FILE_WRITING_TOOLS: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 
 /** The PreToolUse matcher on every file-writing tool: `Write|Edit|MultiEdit|NotebookEdit`. */
 export function fileWriteMatcher(): string {
-  return FILE_WRITE_TOOLS.join("|");
+  return FILE_WRITING_TOOLS.join("|");
 }
