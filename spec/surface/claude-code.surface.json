@@ -1,0 +1,2229 @@
+{
+  "platform": "claude-code",
+  "areas": [
+    "hooks.events",
+    "hooks.handler",
+    "hooks.payload",
+    "settings",
+    "permissions.modes",
+    "permissions.rules",
+    "agents.file",
+    "sessions",
+    "skills",
+    "mcp",
+    "cli",
+    "env",
+    "instructions",
+    "schedules",
+    "commands",
+    "files",
+    "plugins"
+  ],
+  "entries": [
+    {
+      "id": "cc.agents.file.fm.background",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:background"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.description",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:description"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.effort",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:effort"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.fallback-chain",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:fallback-chain"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.hooks",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:hooks"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.isolation",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:isolation"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.maxTurns",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:maxTurns"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.mcpServers",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:mcpServers"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.model",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:model"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.name",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.permissionMode",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:permissionMode"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.sandbox",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:sandbox"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.skills",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:skills"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.fm.tools",
+      "area": "agents.file",
+      "tokens": [
+        "frontmatter:tools"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.agents.file.path:.claude/agents/*/AGENT.md",
+      "area": "agents.file",
+      "tokens": [
+        "path:.claude/agents/*/AGENT.md"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/sub-agents.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent file is not loaded or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cc.cli.--agent",
+      "area": "cli",
+      "tokens": [
+        "--agent"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/cli-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "runs: session",
+        "schedule"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "a generated start line or schedule fails to launch",
+      "grade": "check"
+    },
+    {
+      "id": "cc.cli.-n",
+      "area": "cli",
+      "tokens": [
+        "-n"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/cli-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "runs: session",
+        "schedule"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "a generated start line or schedule fails to launch",
+      "grade": "check"
+    },
+    {
+      "id": "cc.cli.-p",
+      "area": "cli",
+      "tokens": [
+        "-p"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/cli-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "runs: session",
+        "schedule"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "a generated start line or schedule fails to launch",
+      "grade": "check"
+    },
+    {
+      "id": "cc.commands.fm.argument-hint",
+      "area": "commands",
+      "tokens": [
+        "frontmatter:argument-hint"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/slash-commands.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "trigger"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a slash command is missing",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.commands.fm.description",
+      "area": "commands",
+      "tokens": [
+        "frontmatter:description"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/slash-commands.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "trigger"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a slash command is missing",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.env.CLAUDE_PROJECT_DIR",
+      "area": "env",
+      "tokens": [
+        "CLAUDE_PROJECT_DIR"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/env-vars.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a guard cannot find the project folder",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.files.path:.claude/commands/*",
+      "area": "files",
+      "tokens": [
+        "path:.claude/commands/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/memory.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.files.path:.claude/groups/*/config.json",
+      "area": "files",
+      "tokens": [
+        "path:.claude/groups/*/config.json"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/memory.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.files.path:.claude/groups/*/transcript.md",
+      "area": "files",
+      "tokens": [
+        "path:.claude/groups/*/transcript.md"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/memory.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.files.path:scripts/*",
+      "area": "files",
+      "tokens": [
+        "path:scripts/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/memory.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.hooks.event.Notification",
+      "area": "hooks.events",
+      "tokens": [
+        "Notification"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.PostToolUse",
+      "area": "hooks.events",
+      "tokens": [
+        "PostToolUse"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.PostToolUseFailure",
+      "area": "hooks.events",
+      "tokens": [
+        "PostToolUseFailure"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.PreCompact",
+      "area": "hooks.events",
+      "tokens": [
+        "PreCompact"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.PreToolUse",
+      "area": "hooks.events",
+      "tokens": [
+        "PreToolUse"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.SessionEnd",
+      "area": "hooks.events",
+      "tokens": [
+        "SessionEnd"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.SessionStart",
+      "area": "hooks.events",
+      "tokens": [
+        "SessionStart"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.SubagentStart",
+      "area": "hooks.events",
+      "tokens": [
+        "SubagentStart"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.SubagentStop",
+      "area": "hooks.events",
+      "tokens": [
+        "SubagentStop"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.TaskCompleted",
+      "area": "hooks.events",
+      "tokens": [
+        "TaskCompleted"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.TeammateIdle",
+      "area": "hooks.events",
+      "tokens": [
+        "TeammateIdle"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.event.UserPromptSubmit",
+      "area": "hooks.events",
+      "tokens": [
+        "UserPromptSubmit"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/events"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "hook"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a hook written for this event never fires",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.command",
+      "area": "hooks.handler",
+      "tokens": [
+        "command"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.exit2",
+      "area": "hooks.handler",
+      "tokens": [
+        "exit:2"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/fail-closed.test.ts",
+      "ifBroken": "a guard that wants to block lets the call through",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.hooks",
+      "area": "hooks.handler",
+      "tokens": [
+        "hooks"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.if",
+      "area": "hooks.handler",
+      "tokens": [
+        "if"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.matcher",
+      "area": "hooks.handler",
+      "tokens": [
+        "matcher"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.onFailure",
+      "area": "hooks.handler",
+      "tokens": [
+        "onFailure"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate",
+        "strength: refuse"
+      ],
+      "proof": "src/__tests__/e2e/fail-closed.test.ts",
+      "ifBroken": "a guard that errors stops blocking",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.timeout",
+      "area": "hooks.handler",
+      "tokens": [
+        "timeout"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.handler.type",
+      "area": "hooks.handler",
+      "tokens": [
+        "type",
+        "type:command"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md",
+        "snapshot": "spec/claude-code/hooks-contract.json#/fields"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/conformance/claude-code.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/conformance.test.ts",
+      "ifBroken": "a generated hook is skipped or misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.agent_type",
+      "area": "hooks.payload",
+      "tokens": [
+        "agent_type"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.command",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.command"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.hookEventName",
+      "area": "hooks.payload",
+      "tokens": [
+        "output.hookEventName"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.hookSpecificOutput",
+      "area": "hooks.payload",
+      "tokens": [
+        "output.hookSpecificOutput"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.name",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.permissionDecision",
+      "area": "hooks.payload",
+      "tokens": [
+        "output.permissionDecision"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.permissionDecisionReason",
+      "area": "hooks.payload",
+      "tokens": [
+        "output.permissionDecisionReason"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.prompt",
+      "area": "hooks.payload",
+      "tokens": [
+        "prompt"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.recipient",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.recipient"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "talk"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "the talk guard cannot tell who a message goes to",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.session_id",
+      "area": "hooks.payload",
+      "tokens": [
+        "session_id"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.subagent_type",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.subagent_type"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "the spawn guard cannot tell which agent is launched",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.to",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.to"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "talk"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "the talk guard cannot tell who a message goes to",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.tool_input",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.tool_name",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.transcript_path",
+      "area": "hooks.payload",
+      "tokens": [
+        "transcript_path"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/guard/check.ts"
+      ],
+      "language": [
+        "guard",
+        "talk",
+        "spawn"
+      ],
+      "proof": "src/__tests__/e2e/guard-check.test.ts",
+      "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.instructions.path:.claude/rules/*",
+      "area": "instructions",
+      "tokens": [
+        "path:.claude/rules/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/memory.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "instructions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "project rules are not read",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cc.mcp.mcpServers",
+      "area": "mcp",
+      "tokens": [
+        "mcpServers"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.path:.mcp.json",
+      "area": "mcp",
+      "tokens": [
+        "path:.mcp.json"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.server.args",
+      "area": "mcp",
+      "tokens": [
+        "server.args"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.server.command",
+      "area": "mcp",
+      "tokens": [
+        "server.command"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.server.env",
+      "area": "mcp",
+      "tokens": [
+        "server.env"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.server.type",
+      "area": "mcp",
+      "tokens": [
+        "server.type",
+        "server.type:http",
+        "server.type:sse",
+        "server.type:stdio"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.mcp.server.url",
+      "area": "mcp",
+      "tokens": [
+        "server.url"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/mcp.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an MCP server is not started",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.acceptEdits",
+      "area": "permissions.modes",
+      "tokens": [
+        "acceptEdits"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.auto",
+      "area": "permissions.modes",
+      "tokens": [
+        "auto"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.bypassPermissions",
+      "area": "permissions.modes",
+      "tokens": [
+        "bypassPermissions"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.default",
+      "area": "permissions.modes",
+      "tokens": [
+        "default"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.dontAsk",
+      "area": "permissions.modes",
+      "tokens": [
+        "dontAsk"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.modes.plan",
+      "area": "permissions.modes",
+      "tokens": [
+        "plan"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permission-modes.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "an agent runs in a different mode than declared",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.rules.allow",
+      "area": "permissions.rules",
+      "tokens": [
+        "allow"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permissions.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions",
+        "action"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "allow/ask/deny rules stop applying",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.permissions.rules.ask",
+      "area": "permissions.rules",
+      "tokens": [
+        "ask"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permissions.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions",
+        "action"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "allow/ask/deny rules stop applying",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.permissions.rules.deny",
+      "area": "permissions.rules",
+      "tokens": [
+        "deny"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/permissions.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "permissions",
+        "action"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "allow/ask/deny rules stop applying",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.schedules.path:crontab.fragment",
+      "area": "schedules",
+      "tokens": [
+        "path:crontab.fragment"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/routines.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "schedule"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a scheduled run does not start",
+      "grade": "check"
+    },
+    {
+      "id": "cc.schedules.path:scripts/*",
+      "area": "schedules",
+      "tokens": [
+        "path:scripts/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/routines.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "schedule"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a scheduled run does not start",
+      "grade": "check"
+    },
+    {
+      "id": "cc.sessions.path:.claude/sessions.md",
+      "area": "sessions",
+      "tokens": [
+        "path:.claude/sessions.md"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/cross-session-messaging.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/bindings/lib/session.ts"
+      ],
+      "language": [
+        "runs: session",
+        "talk"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "sessions are not started or cannot be told apart",
+      "grade": "check"
+    },
+    {
+      "id": "cc.sessions.path:scripts/*",
+      "area": "sessions",
+      "tokens": [
+        "path:scripts/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/cross-session-messaging.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts",
+        "src/bindings/lib/session.ts"
+      ],
+      "language": [
+        "runs: session",
+        "talk"
+      ],
+      "proof": "src/__tests__/e2e/session-binding.test.ts",
+      "ifBroken": "sessions are not started or cannot be told apart",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.env",
+      "area": "settings",
+      "tokens": [
+        "env"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "hook",
+        "permission",
+        "env"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "generated settings are ignored or rejected",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.hooks",
+      "area": "settings",
+      "tokens": [
+        "hooks"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "hook",
+        "permission",
+        "env"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "generated settings are ignored or rejected",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.path:.claude/settings.json",
+      "area": "settings",
+      "tokens": [
+        "path:.claude/settings.json"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "hook",
+        "permission",
+        "env"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "generated settings are ignored or rejected",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.permissions",
+      "area": "settings",
+      "tokens": [
+        "permissions"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "hook",
+        "permission",
+        "env"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "generated settings are ignored or rejected",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.project-type",
+      "area": "settings",
+      "tokens": [
+        "project-type"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "hook",
+        "permission",
+        "env"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "generated settings are ignored or rejected",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.agent",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:agent"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.allowed-tools",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:allowed-tools"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.context",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:context"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.description",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:description"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.entry",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:entry"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.name",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.patterns",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:patterns"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.topology",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:topology"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.user-invocable",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:user-invocable"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.fm.version",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:version"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/SKILL.md",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/SKILL.md"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/domains/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/domains/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/metrics.jsonl",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/metrics.jsonl"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/protocols/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/protocols/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/references/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/references/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/runs/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/runs/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/schemas/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/schemas/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/scripts/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/scripts/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/compile.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    }
+  ],
+  "areaWords": {
+    "hooks.events": [
+      "hook",
+      "hooks"
+    ],
+    "hooks.handler": [
+      "hook handler",
+      "onFailure"
+    ],
+    "permissions.modes": [
+      "permission mode",
+      "auto mode"
+    ],
+    "permissions.rules": [
+      "permission rule",
+      "permissions"
+    ],
+    "agents.file": [
+      "subagent",
+      "sub-agent",
+      "agent frontmatter"
+    ],
+    "sessions": [
+      "session",
+      "SendMessage"
+    ],
+    "skills": [
+      "skill",
+      "skills"
+    ],
+    "mcp": [
+      "MCP",
+      "mcp"
+    ],
+    "cli": [
+      "--flag",
+      "claude -p",
+      "CLI flag"
+    ],
+    "env": [
+      "environment variable"
+    ],
+    "plugins": [
+      "plugin"
+    ],
+    "schedules": [
+      "routine",
+      "scheduled task",
+      "cron"
+    ],
+    "settings": [
+      "settings.json",
+      "setting"
+    ]
+  },
+  "ignore": [
+    {
+      "pattern": "^Remote Control:",
+      "why": "AT writes nothing for it"
+    }
+  ],
+  "watchOnly": [
+    {
+      "id": "cc.new.code-mode",
+      "tokens": [
+        "Code Mode"
+      ],
+      "card": "LG-3"
+    }
+  ],
+  "knownDrift": []
+}
