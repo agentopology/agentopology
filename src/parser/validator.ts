@@ -35,6 +35,9 @@ import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
+import { composeRules } from "../compose/index.js";
+import { recordRules } from "../records/index.js";
+import { humanRules } from "../human/index.js";
 import type {
   HookDef,
   TopologyAST,
@@ -4105,6 +4108,10 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v127PersonWindows(ast),
     ...v128InventoryRoots(ast),
     ...v129NeedsOutside(ast),
+    // Spec A/B/C rule modules (SP-1: empty; filled by SP-2/3, SP-6, SP-10).
+    ...composeRules(ast, opts),
+    ...recordRules(ast),
+    ...humanRules(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),

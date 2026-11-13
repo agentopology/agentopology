@@ -822,8 +822,32 @@ export function parseHuman(
   if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
   if (fields.who) node.who = unquote(fields.who);
   if (fields.valid) node.valid = unquote(fields.valid);
+  if (fields["answered-by"]) node.answeredBy = unquote(fields["answered-by"]);
+  if (fields.instrument) node.instrument = unquote(fields.instrument);
+  if (fields.record) node.record = unquote(fields.record);
+  const covers = listField(body, fields, "covers");
+  if (covers) node.covers = covers;
+  if (fields.signed) node.signed = unquote(fields.signed);
+  if (fields.key) node.key = unquote(fields.key);
 
   return node;
+}
+
+/**
+ * A list field written inline (`k: [a, b]`) or over several lines. Undefined
+ * when the field is absent; a bare value is a one-item list.
+ */
+function listField(body: string, fields: Record<string, string>, key: string): string[] | undefined {
+  if (fields[key] === undefined) return undefined;
+  const raw = fields[key].trim();
+  if (raw.startsWith("[") && !raw.endsWith("]")) return parseMultilineList(body, key);
+  return parseList(raw).map(unquote);
+}
+
+/** `true` or `false` as written; undefined for anything else (the field is then not kept). */
+function boolField(raw: string | undefined): boolean | undefined {
+  const v = raw?.trim();
+  return v === "true" ? true : v === "false" ? false : undefined;
 }
 
 /**
@@ -2209,7 +2233,18 @@ export function parseRecords(topBody: string): RecordDef[] {
   if (!block) return [];
   return extractAllBlocks(block.body, "record")
     .filter((b) => b.id)
-    .map((b) => ({ id: b.id!, path: unquote(parseFields(b.body).path ?? "") }));
+    .map((b) => {
+      const f = parseFields(b.body);
+      const rec: RecordDef = { id: b.id!, path: unquote(f.path ?? "") };
+      const writtenBy = listField(b.body, f, "written-by");
+      if (writtenBy) rec.writtenBy = writtenBy;
+      const appendOnly = boolField(f["append-only"]);
+      if (appendOnly !== undefined) rec.appendOnly = appendOnly;
+      const guard = listField(b.body, f, "guard");
+      if (guard) rec.guard = guard;
+      if (f.description) rec.description = unquote(f.description);
+      return rec;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -2602,6 +2637,8 @@ export function parse(source: string): TopologyAST {
 
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
+  const pinImportsField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-imports[ \t]*:[ \t]*(true|false)\b/);
+  const pinImports = pinImportsField ? pinImportsField[1] === "true" : undefined;
 
   // --- Machines (top-level `machines { machine <id> { os: ... } }`) ---
   const machinesBlock = extractBlock(topBody, "machines");
@@ -2879,6 +2916,7 @@ export function parse(source: string): TopologyAST {
     records,
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
+    ...(pinImports !== undefined ? { pinImports } : {}),
     ...(machines ? { machines } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),

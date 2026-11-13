@@ -1,0 +1,33 @@
+topology records-b1 : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-1 B1: a record with written-by and append-only (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [record-step]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  action record-step {
+    kind: inline
+    description: "Records the approval"
+  }
+
+  flow {
+    record-step -> maker
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      written-by: ["scripts/approve.py"]
+      append-only: true
+    }
+  }
+}

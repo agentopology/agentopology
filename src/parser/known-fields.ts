@@ -71,14 +71,19 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
     blocks: { extensions: OPAQUE },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
+  human: {
+    fields: [
+      "file", "description", "timeout", "on-timeout", "who", "valid",
+      "answered-by", "instrument", "record", "covers", "signed", "key",
+    ],
+  },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },
   hook: HOOK,
   job: { fields: ["cron", "every", "agent", "action", "enabled", "machine", "carrier", "survives"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
-  record: { fields: ["path"] },
+  record: { fields: ["path", "written-by", "append-only", "guard", "description"] },
   tool: { fields: ["script", "description", "args", "lang"] },
   skill: {
     fields: [
@@ -95,7 +100,7 @@ const NODE_SCHEMAS = {
 
 /** The topology body: the sections it takes. Fields are not allowed there. */
 const TOPOLOGY: BlockSchema = {
-  fields: ["decisions", "pin-models"],
+  fields: ["decisions", "pin-models", "pin-imports"],
   blocks: {
     meta: NODE_SCHEMAS.meta,
     orchestrator: NODE_SCHEMAS.orchestrator,

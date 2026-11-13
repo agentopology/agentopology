@@ -267,6 +267,30 @@ topology my-team : [pipeline] {
 
 **Merge semantics:** `use` applies REPLACE on specified fields. Omitted fields KEEP their original values. Shallow merge -- nested objects (like `outputs`) and lists (like `reads`) are replaced entirely if specified, not appended.
 
+**A lane's node: `alias.node`.** A file that imports another (the **master**; the imported file is a **lane file**) may name a node of the lane as `<alias>.<node-id>` in its `flow` and in a gate's `after:` and `before:`:
+
+```agenttopology
+import making from "./making.at" sha256 "9c1f...e07a"
+
+topology release-ops : [pipeline] {
+  pin-imports: true
+  flow {
+    video-lane -> making.main
+    making.mark-published -> daily-report
+  }
+  gates {
+    gate report-needs-publish {
+      after: making.mark-published
+      before: daily-report
+    }
+  }
+}
+```
+
+The parser keeps the name whole (`making.main`). Resolving it against the lane (the master and the lanes read as one topology) is not built yet: until then validate reports such a name as undeclared (V3 in a flow, V13 on a gate anchor).
+
+**`pin-imports: true`** (top level, next to `pin-models`) says every local import must carry a `sha256`. It is parsed and kept (`pinImports` in the JSON export); the check that enforces it is not built yet.
+
 ---
 
 ### 4.4 `meta`
@@ -917,7 +941,8 @@ flow            = 'flow' '{' flow-statement* '}'
 flow-statement  = node ('->' node)+ edge-attrs?
                 | 'talk' ':' ('all' | 'hub' identifier) message-attr?
 message-attr    = '[' 'message' ':' ('ticket' | 'report' | 'ask') ']'
-node            = identifier | '[' identifier (',' identifier)+ ']'
+node            = node-name | '[' node-name (',' node-name)+ ']'
+node-name       = identifier | identifier '.' identifier    # alias.node: a node of an imported lane (4.3)
 edge-attrs      = '[' attr (',' attr)* ']'
 attr            = 'when' condition | 'max' number | 'per' identifier
                 | 'message' ':' ('ticket' | 'report' | 'ask')
@@ -1034,7 +1059,29 @@ records {
 }
 ```
 
-`records { record <id> { path: "<project-relative path>" } }` declares ledgers. `path` may contain `{unit}`. `append-only` and `written-by` are reserved and not implemented.
+`records { record <id> { ... } }` declares records: files that only named programs write. A gate reads one as its ledger.
+
+```agenttopology
+records {
+  record approvals {
+    path: "records/approvals.jsonl"
+    written-by: ["scripts/approve.py"]
+    append-only: true
+    guard: [protect-records, protect-bash]
+    description: "The owner's yes rows"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | string | yes | Project-relative; `{unit}` stands for one path segment (V112) |
+| `written-by` | string-list | no | The programs allowed to write it: project-relative paths |
+| `append-only` | `true` / `false` | no | The file only grows |
+| `guard` | name-list | no | Ids of declared hooks that already protect it in a hand-built project |
+| `description` | string | no | Free text |
+
+`written-by`, `append-only`, `guard` and `description` are parsed and kept (each is in the JSON export); the rules that check them and the guards built from them are not built yet. A store is memory agents read and write; a record is a file only named programs write.
 
 **Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
 
@@ -1851,6 +1898,49 @@ needs {
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+### 4.32 `human`
+
+```ebnf
+human           = 'human' identifier '{' human-fields '}'
+human-fields    = ('description' ':' string | 'timeout' ':' duration
+                  | 'on-timeout' ':' ('halt' | 'skip' | 'fallback' identifier)
+                  | 'who' ':' identifier | 'valid' ':' string | 'file' ':' string
+                  | 'answered-by' ':' ('relay' | 'session' | 'instrument')
+                  | 'instrument' ':' string | 'record' ':' identifier
+                  | 'covers' ':' string-list | 'signed' ':' 'ed25519' | 'key' ':' string)*
+```
+
+```agenttopology
+human approve {
+  description: "One yes per unit covers the whole package on every channel."
+  who: owner
+  answered-by: instrument
+  instrument: "scripts/approve.py"
+  record: approvals
+  covers: ["work/kits/{unit}/*", "!work/kits/{unit}/kit.json"]
+  signed: ed25519
+  key: "keys/approve.pub"
+  timeout: 1d
+  on-timeout: halt
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | What the person is asked |
+| `timeout` | duration | How long to wait |
+| `on-timeout` | `halt` / `skip` / `fallback <id>` | What happens then (V59) |
+| `who` | identifier | The `person` this step waits on (V127) |
+| `valid` | string | `"YYYY-MM-DD..YYYY-MM-DD"`: the window the yes holds (V127) |
+| `answered-by` | `relay` / `session` / `instrument` | Who creates the record of the answer: an agent passing on what the person said, the person at the platform's own prompt, or a named program outside the agent's tools |
+| `instrument` | string | The project-relative program that records the answer |
+| `record` | identifier | The record (4.11) where the answer is kept, one row per answer |
+| `covers` | string-list | Globs of the files this yes is about; `{unit}` allowed, a leading `!` excludes |
+| `signed` | `ed25519` | The answer row carries a signature the public key verifies |
+| `key` | string | Project-relative path of the **public** key |
+
+`answered-by`, `instrument`, `record`, `covers`, `signed` and `key` are parsed and kept (each is in the JSON export). Their rules, the check that reads the answer row and the two grade lines are not built yet. A human step with none of them behaves as before.
 
 ---
 

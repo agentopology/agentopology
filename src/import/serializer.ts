@@ -53,6 +53,11 @@ function q(s: string): string {
   return s;
 }
 
+/** Always quote (a path reads as a path), escaping as {@link q} does. */
+function qq(s: string): string {
+  return `"${s.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
 /** Format a list inline: [a, b, c] */
 function inlineList(items: string[]): string {
   return `[${items.map(q).join(", ")}]`;
@@ -336,6 +341,12 @@ function serializeHuman(node: HumanNode): string {
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
+  if (node.answeredBy) lines.push(`    answered-by: ${node.answeredBy}`);
+  if (node.instrument) lines.push(`    instrument: ${qq(node.instrument)}`);
+  if (node.record) lines.push(`    record: ${node.record}`);
+  if (node.covers) lines.push(`    covers: [${node.covers.map(qq).join(", ")}]`);
+  if (node.signed) lines.push(`    signed: ${node.signed}`);
+  if (node.key) lines.push(`    key: ${qq(node.key)}`);
   lines.push("  }");
   return lines.join("\n");
 }
@@ -838,7 +849,18 @@ function serializeArtifacts(artifacts: ArtifactDef[]): string | null {
 function serializeRecords(records: RecordDef[] | undefined): string | null {
   if (!records?.length) return null;
   const lines: string[] = ["  records {"];
-  for (const r of records) lines.push(`    record ${r.id} { path: "${r.path}" }`);
+  for (const r of records) {
+    const more: string[] = [];
+    if (r.writtenBy) more.push(`written-by: [${r.writtenBy.map(qq).join(", ")}]`);
+    if (r.appendOnly !== undefined) more.push(`append-only: ${r.appendOnly}`);
+    if (r.guard) more.push(`guard: ${inlineList(r.guard)}`);
+    if (r.description) more.push(`description: ${qq(r.description)}`);
+    if (!more.length) {
+      lines.push(`    record ${r.id} { path: "${r.path}" }`);
+      continue;
+    }
+    lines.push(`    record ${r.id} {`, `      path: "${r.path}"`, ...more.map((m) => `      ${m}`), "    }");
+  }
   lines.push("  }");
   return lines.join("\n");
 }
@@ -891,6 +913,11 @@ export function serializeAST(ast: TopologyAST): string {
   if (ast.pinModels !== undefined) {
     sections.push("");
     sections.push(`  pin-models: ${ast.pinModels}`);
+  }
+
+  if (ast.pinImports !== undefined) {
+    sections.push("");
+    sections.push(`  pin-imports: ${ast.pinImports}`);
   }
 
   for (const p of ast.persons ?? []) {

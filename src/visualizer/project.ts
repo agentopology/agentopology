@@ -85,7 +85,10 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
   },
   human: {
     legend: { label: "Human", shape: "pill", color: "cyan" },
-    carry: [...BASE, "description", "timeout", "onTimeout"],
+    carry: [
+      ...BASE, "description", "timeout", "onTimeout",
+      "answeredBy", "instrument", "record", "covers", "signed", "key",
+    ],
   },
   group: {
     legend: { label: "Group", shape: "round", color: "blue" },
@@ -93,6 +96,19 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
       ...BASE, "members", "speakerSelection", "maxRounds", "termination", "description",
       "timeout",
     ],
+  },
+};
+
+/**
+ * Rows for things the page lists that are not nodes (no legend, no shape): the
+ * `records` (Spec B) and the `imports` a master composes (Spec A).
+ */
+export const LIST_RULES: Readonly<Record<"record" | "import", NodeRule>> = {
+  record: {
+    carry: ["id", "path", "writtenBy", "appendOnly", "guard", "description"],
+  },
+  import: {
+    carry: ["alias", "source", "sha256", "params", "registry", "registryPackage", "registryVersion"],
   },
 };
 
@@ -206,6 +222,7 @@ export function project(ast: TopologyAST, facts?: ProjectFacts): Record<string, 
       patterns: ast.topology.patterns,
       foundations: ast.topology.foundations || [],
       advanced: ast.topology.advanced || [],
+      ...(ast.pinImports !== undefined ? { pinImports: ast.pinImports } : {}),
     },
     nodes: ast.nodes.map(projectNode),
     edges: ast.edges.map(projectEdge),
@@ -224,6 +241,8 @@ export function project(ast: TopologyAST, facts?: ProjectFacts): Record<string, 
     metering: ast.metering,
     skills: ast.skills,
     toolDefs: ast.toolDefs,
+    records: (ast.records ?? []).map((r) => projectWith(LIST_RULES.record, r as unknown as Record<string, any>)),
+    imports: ast.imports.map((i) => projectWith(LIST_RULES.import, i as unknown as Record<string, any>)),
     runs: [],
     legend: Object.entries(NODE_RULES).filter(([, r]) => r.legend).map(([kind, r]) => ({ kind, ...r.legend })),
     grades: GUARD_GRADES,

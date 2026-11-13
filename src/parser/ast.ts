@@ -442,13 +442,21 @@ export interface RetrievalNode {
 
 /**
  * A record in the top-level `records` block: a project-relative JSON Lines
- * file a step's own script appends to. agentopology only reads it.
- * (`append-only` and `written-by` are reserved, not implemented.)
+ * file that only named programs write. agentopology only reads it (Spec B).
+ * SP-1 parses and keeps the fields; their rules are SP-6 and later.
  */
 export interface RecordDef {
   id: string;
   /** Project-relative path; may contain `{unit}`. */
   path: string;
+  /** `written-by: [...]`: the programs allowed to write it (project-relative paths, or a node id). */
+  writtenBy?: string[];
+  /** `append-only: true|false`: the file only grows. */
+  appendOnly?: boolean;
+  /** `guard: [hook ids]`: declared hooks that already protect it in a hand-built project. */
+  guard?: string[];
+  /** Free text. */
+  description?: string;
 }
 
 /** An artifact definition in the top-level `artifacts` block. */
@@ -855,6 +863,21 @@ export interface HumanNode extends BaseNode {
   who?: string;
   /** Window `"YYYY-MM-DD..YYYY-MM-DD"` this human's approval holds; `step check` refuses a guarded step after it. */
   valid?: string;
+  /**
+   * `answered-by:` who creates the record of the answer: `relay`, `session` or
+   * `instrument` (Spec C). Kept as written; its values are checked in SP-10.
+   */
+  answeredBy?: string;
+  /** `instrument:` the project-relative program that records the answer. */
+  instrument?: string;
+  /** `record:` the record id where the answer is kept. */
+  record?: string;
+  /** `covers: [globs]` the files this yes is about; `{unit}` allowed, `!` excludes. */
+  covers?: string[];
+  /** `signed:` the signature scheme of the answer row (`ed25519`). */
+  signed?: string;
+  /** `key:` the project-relative path of the public key. */
+  key?: string;
 }
 
 /** A person from a top-level `person <id> { away: "YYYY-MM-DD..YYYY-MM-DD" }` block. */
@@ -1162,6 +1185,8 @@ export interface TopologyAST {
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
+  /** `pin-imports: true` at the top level: every local import must carry a sha256 (Spec A; the rule is SP-3). */
+  pinImports?: boolean;
   /**
    * Absolute path of the file the CLI parsed this from. Set (non-enumerable, so
    * it never reaches `export --format json`) by the CLI; `validate` uses it to

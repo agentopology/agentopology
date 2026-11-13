@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Records, the signed human gate and compose: the grammar is read and kept (SP-1)
+
+- A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).
+- Grammar only: no rule reads these fields yet, and nothing is generated from them. `src/compose`, `src/records` and `src/human` are rule modules that `validate` calls and that find nothing yet. `alias.node` (a lane's node, named from the importing file) is kept whole in a flow edge and a gate anchor and is documented, but still reported undeclared (V3, V13) until the resolver lands.
+
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
 - Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.

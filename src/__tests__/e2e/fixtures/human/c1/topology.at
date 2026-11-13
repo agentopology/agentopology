@@ -1,0 +1,45 @@
+topology human-c1 : [pipeline, human-gate] {
+  meta {
+    version: "1.0.0"
+    description: "SP-1 C1: a human step with the signed-gate fields (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [publish]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the kit"
+  }
+
+  human approve {
+    description: "One yes per unit covers the whole package."
+    answered-by: instrument
+    instrument: "scripts/approve.py"
+    record: approvals
+    covers: ["work/kits/{unit}/*", "!work/kits/{unit}/kit.json"]
+    signed: ed25519
+    key: "keys/approve.pub"
+    timeout: 1d
+    on-timeout: halt
+  }
+
+  action publish {
+    kind: inline
+    description: "Publishes the kit"
+  }
+
+  flow {
+    maker -> approve -> publish
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      written-by: ["scripts/approve.py"]
+      append-only: true
+    }
+  }
+}
