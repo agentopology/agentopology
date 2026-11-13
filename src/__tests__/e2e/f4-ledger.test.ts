@@ -228,3 +228,15 @@ describe.skipIf(!hasJq)("[F-4] the ledger guard never runs the ledger path as co
     }
   });
 });
+
+describe.skipIf(!hasJq)("[SP-7][F-4] a gate ledger that cites a hand-built guard keeps the 0.11.0 protection", () => {
+  // Spec B piece 5 leaves a record that cites `guard:` to that guard. A gate ledger was protected in 0.11.0
+  // whatever it cites, so a cited guard is a second layer here, never a replacement.
+  const cited = SRC.replace('record trace { path: "logs/{unit}/trace.jsonl" }', 'record trace {\n      path: "logs/{unit}/trace.jsonl"\n      guard: [my-lock]\n    }');
+  it.each(TARGETS)("[SP-7][F-4] %s: a write to the cited-guard ledger is still refused by the generated guards", (target) => {
+    scaffold(target, cited);
+    expect(hook(target, "before-action.sh", bash("echo '{\"ok\":true}' >> logs/ep1/trace.jsonl")).status).toBe(2);
+    const edit = target === "codex" ? patch(`*** Add File: ${at("logs/ep1/trace.jsonl")}\n+x`) : write(at("logs/ep1/trace.jsonl"));
+    expect(hook(target, "before-edit.sh", edit).status).toBe(2);
+  });
+});

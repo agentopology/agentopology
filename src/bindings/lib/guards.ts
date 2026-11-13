@@ -24,7 +24,7 @@ import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { fileWriteMatcher } from "../../conformance/claude-code.js";
 import {
-  guardedRecords, recordEditGuardFunctions, recordEditGuardLines, recordGuardedElsewhere, recordShellGuardLines,
+  guardedRecords, recordEditGuardFunctions, recordEditGuardLines, isGuardedRecord, recordShellGuardLines,
 } from "../../records/guard.js";
 
 /** What differs between hosts when a guard script is written. */
@@ -513,8 +513,10 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     if (node.type !== "gate") continue;
     const rec = gateLedger(ast, node as GateNode);
     // SP-7: a ledger that is a guarded record is held by the record guard (its written-by programs may
-    // write it); one that cites a hand-built guard is left to that guard (Spec B piece 5).
-    if (rec && !recordGuardedElsewhere(rec)) paths.push(rec.path.replace(/^\.\//, ""));
+    // write it). A gate ledger that cites a hand-built guard keeps this 0.11.0 protection too: the cited
+    // guard is a second layer, never a replacement for one that shipped (Spec B piece 5 is for records
+    // that are not gate ledgers).
+    if (rec && !isGuardedRecord(rec)) paths.push(rec.path.replace(/^\.\//, ""));
   }
   if (!p.supportsAsk && hasHuman(ast)) paths.push(`${p.stateDir}/approvals.jsonl`);
   return [...new Set(paths)].map(ledgerPattern);

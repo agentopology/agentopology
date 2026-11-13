@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A gate ledger that cites a hand-built guard keeps the generated protection (SP-7)
+
+- Spec B leaves a record that cites `guard:` to that guard. For a gate ledger that would have removed the protection 0.11.0 ships (a command or an edit that writes the ledger is refused). A gate ledger now keeps it whatever it cites; the cited guard is a second layer.
+
 ### [feature] Records: generated guards refuse a tool or shell write to a record (SP-7)
 
 - A record with `written-by: [...]` and no `guard:` is now held by the generated guards, which extend the 0.11.0 ledger guards rather than add a second one. `before-edit.sh` refuses `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on the record's path (`{unit}` as one segment; `./records/../records/approvals.jsonl`, an absolute path and a capitalised path included) and on `.agentopology/records/` head files; empty or broken input exits 2. `before-action.sh` refuses a `Bash` command that names the record and writes it (`>`, `>>`, `tee`, `tee -a`, `sed -i`, `cp` onto, `mv` onto, `truncate`, a redirection onto an expansion), and lets through a command that only reads it, a here-document fed to a reader that only mentions it, and a run of one of its `written-by` programs by its project path. Planted tests B4, B5, B6 (45 tests, red before, green now).
