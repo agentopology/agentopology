@@ -444,6 +444,83 @@ describe("[F-7] a Codex matcher that is a regex naming Claude tools", () => {
   });
 });
 
+describe.skipIf(!hasJq)("[F-8/F-16] every Codex refuse PreToolUse hook goes through the guard launcher, with a deadline", () => {
+  const plainRefuse = HOOKED(hookDef("guard", "Bash", "scripts/guard.sh", "      strength: refuse\n"));
+  const ifRefuse = HOOKED(hookDef("guard", "Bash", "scripts/guard.sh", '      strength: refuse\n      if: "Bash(git push*)"\n'));
+  const push = bashPayload("git push origin main");
+  for (const [label, src] of [["plain", plainRefuse], ["if:", ifRefuse]] as const) {
+    const entry = () => hooksOf().PreToolUse[0].hooks[0];
+    it(`[F-8] ${label}: the handler has a hook timeout and the command a deadline below it`, () => {
+      scaffoldInto(src);
+      const e = entry();
+      expect(e.timeout).toBeGreaterThan(0);
+      const m = /-k \d+ (\d+) /.exec(e.command);
+      expect(m, e.command).not.toBeNull();
+      expect(Number(m![1])).toBeLessThan(e.timeout!);
+    });
+    it(`[F-8] ${label}: with the script deleted the call is blocked (exit 2), not 127`, () => {
+      scaffoldInto(src);
+      fs.rmSync(at(".codex/scripts/guard.sh"));
+      const r = runHook(entry().command, root, push);
+      expect(r.status, r.stderr).toBe(2);
+    });
+    it(`[F-8] ${label}: from a nested git repository the script is still found and refuses (exit 2)`, () => {
+      scaffoldInto(src);
+      blockScript(".codex/scripts/guard.sh");
+      fs.mkdirSync(at("vendor/lib"), { recursive: true });
+      spawnSync("git", ["init", "-q", at("vendor/lib")]);
+      const r = runHook(entry().command, at("vendor/lib"), push);
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toContain("refused by hook");
+    });
+    it(`[F-8] ${label}: a slow refuse script is cut at the deadline (3 s here) with exit 2`, () => {
+      scaffoldInto(src);
+      fs.writeFileSync(at(".codex/scripts/guard.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
+      const cmd = entry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ").replace(/AT_D=\d+/, "AT_D=3");
+      const t0 = Date.now();
+      const r = runHook(cmd, root, push);
+      expect(r.status, r.stderr).toBe(2);
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      expect(r.stderr).toMatch(/deadline/);
+    });
+  }
+  it("[F-8] a passing refuse script still lets the call run (exit 0)", () => {
+    scaffoldInto(plainRefuse);
+    fs.writeFileSync(at(".codex/scripts/guard.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    expect(runHook(hooksOf().PreToolUse[0].hooks[0].command, root, push).status).toBe(0);
+  });
+});
+
+describe("[F-26] a Codex hook that is not refuse finds its script from a nested repository", () => {
+  const note = HOOKED(hookDef("note", "Bash", "scripts/note.sh"));
+  const cmd = () => hooksOf().PreToolUse[0].hooks[0].command;
+  it("[F-26] from a nested git repository it runs (exit 0) and does its work", () => {
+    scaffoldInto(note);
+    fs.writeFileSync(at(".codex/scripts/note.sh"), `#!/usr/bin/env bash\ntouch "${root}/ran"\nexit 0\n`, { mode: 0o755 });
+    fs.mkdirSync(at("vendor/lib"), { recursive: true });
+    spawnSync("git", ["init", "-q", at("vendor/lib")]);
+    const r = runHook(cmd(), at("vendor/lib"), bashPayload("ls"));
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(at("ran"))).toBe(true);
+  });
+  it("[F-26] with its script missing it exits 1 (not a block, not 127) with a reason", () => {
+    scaffoldInto(note);
+    fs.rmSync(at(".codex/scripts/note.sh"));
+    const r = runHook(cmd(), root, bashPayload("ls"));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("note.sh");
+  });
+  it("[F-26] an if: hook that is not refuse also finds its script from a nested repository", () => {
+    scaffoldInto(HOOKED(hookDef("note", "Bash", "scripts/note.sh", '      if: "Bash(ls*)"\n')));
+    fs.writeFileSync(at(".codex/scripts/note.sh"), `#!/usr/bin/env bash\ntouch "${root}/ran"\nexit 0\n`, { mode: 0o755 });
+    fs.mkdirSync(at("vendor/lib"), { recursive: true });
+    spawnSync("git", ["init", "-q", at("vendor/lib")]);
+    const r = runHook(cmd(), at("vendor/lib"), bashPayload("ls -la"));
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(at("ran"))).toBe(true);
+  });
+});
+
 /** A PATH with every tool from /usr/bin and /bin except timeout and gtimeout (stock macOS). */
 function pathWithoutTimeout(): string {
   const bin = fs.mkdtempSync(join(os.tmpdir(), "at-f9-path-"));

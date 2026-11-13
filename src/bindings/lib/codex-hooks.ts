@@ -238,8 +238,13 @@ export function hookIsRegistered(hook: HookDef): boolean {
   return !codexHookProblems(hook).some((p) => p.skipped);
 }
 
-/** The script file a command hook runs: `.codex/scripts/<name>`, or the user's own path. */
-interface ScriptPlan { command: string; file?: GeneratedFile }
+/**
+ * What a command hook runs: an inline shell command, or a script (`.codex/scripts/<name>`, the user's
+ * project path, or an absolute path) with its interpreter and arguments, and the stub to write for it.
+ */
+type ScriptPlan =
+  | { kind: "shell"; command: string }
+  | { kind: "script"; interp: string; rel: string; args: string[]; file?: GeneratedFile };
 
 /** Shell-quote one word for a command line. */
 function q(word: string): string {
@@ -248,10 +253,10 @@ function q(word: string): string {
 
 function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   const run = hook.run.trim();
-  if (isShellCommand(run)) return { command: run };
+  if (isShellCommand(run)) return { kind: "shell", command: run };
   const { interpreter, script, args } = runParts(run);
   const interp = interpreterFor(script, interpreter);
-  if (script.startsWith("/")) return { command: [interp, script, ...args].join(" ") };
+  if (script.startsWith("/")) return { kind: "script", interp, rel: script, args };
   if (isProjectPath(script)) {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
@@ -261,7 +266,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
       executable: true,
       createOnly: true,
     };
-    return { command: `${interp} "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/${rel}"${args.length ? " " + args.join(" ") : ""}`, file: stub };
+    return { kind: "script", interp, rel, args, file: stub };
   }
   let name = scriptNameFromRun(script) ?? "hook.sh";
   // Two hooks whose scripts share a basename must not share a file.
@@ -274,7 +279,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
     category: "script",
     executable: true,
   };
-  return { command: `${interp} "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/scripts/${name}"${args.length ? " " + args.join(" ") : ""}`, file };
+  return { kind: "script", interp, rel: `.codex/scripts/${name}`, args, file };
 }
 
 /** The filter script that runs a hook's command only when the tool call matches its `if:`. */
@@ -505,17 +510,31 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
       handler = { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout };
     } else {
       const plan = planCommand(hook, used);
-      if (plan.file) scripts.push(plan.file);
-      let command = plan.command;
+      if (plan.kind === "script" && plan.file) scripts.push(plan.file);
+      // F-8, F-16: a refuse hook on PreToolUse is held like a guard: a script not found, a launcher
+      // failure or a run past its deadline blocks (exit 2), and it always carries a hook timeout.
+      // F-26: every other hook climbs to its script the same way, and a script not found exits 1.
+      const refuse = hook.strength === "refuse";
+      const held = refuse && event === "PreToolUse";
+      const hookTimeout = held ? hook.timeout ?? GUARD_TIMEOUT : hook.timeout;
+      const deadline = held ? deadlineUnder(hookTimeout!) : undefined;
       const cond = hook.if ? parseIf(hook.if) : null;
+      let command: string;
       if (cond) {
         usesFilter = true;
-        // R-7: the command goes to the filter as argv; an inline shell command is one `sh -c` word.
-        const refuse = hook.strength === "refuse";
-        const inner = isShellCommand(hook.run.trim()) ? `sh -c ${q(hook.run.trim())}` : command;
-        command = launchCommand("bash", IF_FILTER_PATH, [...(refuse ? ["--refuse"] : []), q(cond.tool), q(cond.glob), inner], refuse);
+        // R-7: the command goes to the filter as argv; an inline shell command is one `sh -c` word. The
+        // filter's launcher sets $AT_ROOT, so the hook's own script is found from a nested repository too.
+        const inner = plan.kind === "shell"
+          ? `sh -c ${q(plan.command)}`
+          : [plan.interp, plan.rel.startsWith("/") ? plan.rel : `"$AT_ROOT/${plan.rel}"`, ...plan.args].join(" ");
+        command = launchCommand("bash", IF_FILTER_PATH, [...(refuse ? ["--refuse"] : []), q(cond.tool), q(cond.glob), inner], refuse, deadline);
+      } else if (plan.kind === "shell") {
+        // An inline command has no script to find; a refuse hook still turns any failure into a block.
+        command = held ? `sh -c ${q(plan.command)} || exit 2` : plan.command;
+      } else {
+        command = launchCommand(plan.interp, plan.rel, plan.args, held, deadline);
       }
-      handler = { type: "command", command, ...timeout };
+      handler = { type: "command", command, ...(hookTimeout ? { timeout: hookTimeout } : {}) };
     }
     const entry: Record<string, unknown> = { hooks: [handler] };
     if (hook.matcher && !NO_MATCHER_EVENTS.has(event)) entry.matcher = codexMatcher(hook.matcher).matcher!;

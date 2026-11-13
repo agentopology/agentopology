@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex refuse hook blocks when its script is missing, the cwd is a nested repo, or it runs too long (F-8, F-16, F-26)
+
+- A `strength: refuse` hook that was not one of the built-in guards, with or without `if:`, ran its script by `$(git rev-parse --show-toplevel)/…`: from a nested repository, or with the script deleted, it exited 127 and Codex let the call run. It also had no hook timeout and no deadline, and a timed-out hook lets the call run too. Every refuse `PreToolUse` hook now goes through the guard launcher: it climbs to its script, a missing script or any launcher failure is exit 2, and it carries a hook timeout (its own, else 120 s) with the R-3 deadline under it. The `if:` filter is launched the same way and runs the hook's script from the root it found.
+- Hooks that are not refuse had the same 127 from a nested repository. They now climb to their script the same way, and a missing script exits 1, which does not block.
+
 ### [fix] Fixed: the Codex guard deadline frees the hook's output pipe on time (F-9, F-20b)
 
 - The deadline returned exit 2 on time, but a check that ignored SIGTERM, or left a background process, kept the hook's stdout and stderr open 9 to 15 s past it; Codex reads to EOF and could reach its own hook timeout, which lets the call run. Both the GNU `timeout` path and the POSIX watchdog now send the run's output to temp files and copy them out after the run ends or is cut. When the deadline fires, the watchdog's KILL stage runs to its end, and the watchdog's own `sleep` is killed with it, so it never outlives the hook. In the GNU path a KILL after `-k` (137) also reports the deadline, and any non-zero exit is exit 2. An absolute script path is run where it is, with no climb.
