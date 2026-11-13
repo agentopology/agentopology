@@ -16,7 +16,7 @@
 import type { AgentNode, GateNode, HookDef, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
-import { HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
+import { BLOCKING_EVENTS, HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
 import type { GeneratedFile } from "../types.js";
 import { scriptStub } from "./stub.js";
 import {
@@ -154,7 +154,11 @@ export function codexMatcher(matcher: string): { matcher: string | null; dropped
   // F-7: an alternation may sit in one group, `(…)` or `(?:…)`, between `^` and `$`; the names are
   // rewritten and the anchors and group kept. Anything else is a real regex and is kept as written
   // (codexRegexMisses says which Claude tools it then never sees).
-  const m = /^(\^?)(?:(\((?:\?:)?)([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*)\)|([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*))(\$?)$/.exec(matcher);
+  // D-5: a list written with spaces (`Edit | Write`, `Edit , Write`) is the same list: its items are trimmed.
+  const listed = /^\s*[A-Za-z0-9_]+(?:\s*[|,]\s*[A-Za-z0-9_]+)*\s*$/.test(matcher) && /[\s,]/.test(matcher)
+    ? matcher.trim().split(/\s*[|,]\s*/).join("|")
+    : matcher;
+  const m = /^(\^?)(?:(\((?:\?:)?)([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*)\)|([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*))(\$?)$/.exec(listed);
   if (!m) return { matcher, dropped: [] };
   const [, caret, open = "", grouped, bare, dollar] = m;
   const out: string[] = [];
@@ -174,8 +178,27 @@ export function codexMatcher(matcher: string): { matcher: string | null; dropped
  * (`Ed.*` matches Edit) and not the Codex name of the same tool (apply_patch).
  * Empty for a plain alternation (rewritten) or a regex that does not compile.
  */
+/** True when codexMatcher reads the matcher as a list of names (rewritten), not a regex kept as written. */
+function isNameList(matcher: string): boolean {
+  return codexMatcher(matcher).matcher !== matcher || /^[A-Za-z0-9_|]*$/.test(matcher);
+}
+
+/** The tool names a Codex hook sees: its three built-in tools (an MCP tool is mcp__server__tool). */
+const CODEX_TOOLS = ["Bash", "apply_patch", "collaborationspawn_agent"];
+
+/**
+ * D-5: true when a matcher regex kept as written can match no Codex tool: none of the built-in names,
+ * and it names no MCP tool (a regex with `mcp` in it may match one, so it is left alone).
+ */
+export function codexRegexMatchesNothing(matcher: string): boolean {
+  if (isNameList(matcher) || /mcp/i.test(matcher)) return false;
+  let re: RegExp;
+  try { re = new RegExp(matcher); } catch { return false; }
+  return !CODEX_TOOLS.some((t) => re.test(t));
+}
+
 export function codexRegexMisses(matcher: string): string[] {
-  if (codexMatcher(matcher).matcher !== matcher || /^[A-Za-z0-9_|]*$/.test(matcher)) return [];
+  if (isNameList(matcher)) return [];
   let re: RegExp;
   try { re = new RegExp(matcher); } catch { return []; }
   return Object.entries(CLAUDE_TO_CODEX_TOOL)
@@ -192,11 +215,16 @@ export function parseIf(filter: string): { tool: string; glob: string } | null {
 /** Everything wrong with one hook on Codex. */
 export function codexHookProblems(hook: HookDef): CodexHookProblem[] {
   const out: CodexHookProblem[] = [];
-  const add = (rule: CodexHookProblem["rule"], message: string, skipped: boolean) => out.push({ rule, hook: hook.name, message, skipped });
+  const refuse = hook.strength === "refuse";
+  const add = (rule: CodexHookProblem["rule"], message: string, skipped: boolean, error = false) =>
+    out.push({ rule, hook: hook.name, message, skipped, ...(error ? { level: "error" as const } : {}) });
   const type = hook.type ?? "command";
   const event = codexHookEvent(hook.on);
   if (!event) {
     add("CX8-event", `hook "${hook.name}" is on "${hook.on}", which is not a Codex hook event, so it would never fire and gets no entry`, true);
+  } else if (refuse && !BLOCKING_EVENTS.has(event)) {
+    // D-5d: only PreToolUse and UserPromptSubmit block on Codex; a refuse hook elsewhere only reports.
+    add("CX8-event", `hook "${hook.name}" declares strength: refuse on ${event}, which cannot block a call on Codex (only PreToolUse and UserPromptSubmit do), so it can never refuse. Move it to PreToolUse, or say strength: detect`, false, true);
   }
   if (!RUNNING_HANDLERS.has(type)) {
     add("CX8-handler", `hook "${hook.name}" is type: ${type}; Codex runs only command and mcp_tool handlers and skips the rest, so it gets no entry`, true);
@@ -211,7 +239,15 @@ export function codexHookProblems(hook: HookDef): CodexHookProblem[] {
       const names = dropped.map((d) => `"${d}"`).join(", ");
       add("CX8-tool", matcher === null
         ? `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks, so it would never fire and gets no entry`
-        : `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks; the entry matches "${matcher}" only`, matcher === null);
+        : `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks; the entry matches "${matcher}" only`, matcher === null, refuse);
+    }
+    if (codexRegexMisses(hook.matcher).length === 0 && codexRegexMatchesNothing(hook.matcher)) {
+      // D-5a: a regex kept as written that matches none of Codex's tools (`Web.*`).
+      add("CX8-regex", `hook "${hook.name}" has the matcher regex "${hook.matcher}", which matches none of Codex's tools (${CODEX_TOOLS.join(", ")}, mcp__server__tool), so on Codex it would never fire`, false, refuse);
+    }
+    if (/\(\?<?[=!]/.test(hook.matcher)) {
+      // D-5e
+      add("CX8-regex", `hook "${hook.name}" has the matcher regex "${hook.matcher}" with lookaround; Codex's regex engine may not support lookaround, so the matcher may fail or match nothing. Write the tools as a list ("Bash|apply_patch")`, false);
     }
     const misses = codexRegexMisses(hook.matcher);
     if (misses.length > 0) {
@@ -224,8 +260,12 @@ export function codexHookProblems(hook: HookDef): CodexHookProblem[] {
     }
   }
   if (hook.if) {
-    if (parseIf(hook.if)) {
-      /* expressed through the if-filter script */
+    const cond = parseIf(hook.if);
+    if (cond) {
+      // D-5c: the filter runs the hook only for its tool; a Claude tool Codex lacks never comes, so it never fires.
+      if (cond.tool in CLAUDE_TO_CODEX_TOOL && CLAUDE_TO_CODEX_TOOL[cond.tool] === null) {
+        add("CX8-tool", `hook "${hook.name}" has if: "${hook.if}", but Codex has no "${cond.tool}" tool behind its hooks, so the filter would pass every call and the hook would never fire; it gets no entry`, true, refuse);
+      }
     } else {
       add("CX8-if", `hook "${hook.name}" has if: "${hook.if}", which is not Tool(pattern); Codex has no such filter, so it gets no entry rather than firing on every call`, true);
     }

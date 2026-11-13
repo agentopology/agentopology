@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex refuse hook that can never fire, or never block, is a validate error (D-5)
+
+- Five hook shapes compiled for Codex with no error and then never refused: a regex over tools Codex lacks (`Web.*`), a list with spaces (`Edit , Write`, kept as written), `if: "Read(secrets/**)"` with no matcher (the filter passes every call), `on: PostToolUse` with `strength: refuse`, and a regex with lookaround. Now a list with spaces is trimmed and rewritten (`apply_patch`); for `strength: refuse`, a regex matching no Codex tool (`CX8-regex`), a plain list or an `if:` naming a tool Codex lacks (`CX8-tool`; the `if:` hook gets no entry) and an event that cannot block (`CX8-event`) are `validate --target codex` ERRORs, warnings on other hooks; lookaround is a `CX8-regex` warning.
+
 ### [fix] Fixed: two approval steps before one agent make one ask decision (D-4)
 
 - With two `human` steps before one agent, `before-agent.sh` printed two `ask` JSON objects, which is not one JSON document, so Claude Code could ignore the decision and launch the agent. The script now collects each step's reason and prints a single decision whose reason joins them. Every Claude Code `before-agent.sh` with an approval step changes.

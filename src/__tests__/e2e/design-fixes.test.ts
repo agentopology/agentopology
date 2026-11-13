@@ -309,3 +309,85 @@ describe.skipIf(!hasJq)("[D-4] Claude Code: two approval steps before one agent 
     expect(run("general-purpose").stdout).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-5
+// ---------------------------------------------------------------------------
+
+/** design.VKjX/mx.at shape: one hook, named h, on a Codex-model topology. */
+const MX = (hook: string) => `topology mx : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Matchers"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [w]
+  }
+  agent w {
+    model: gpt-5.2
+    description: "W"
+    invocation: manual
+  }
+  hooks {
+    hook h {
+${hook}
+      run: "scripts/s1.sh"
+    }
+  }
+  flow { w }
+}
+`;
+const refuseOn = (lines: string) => MX(`${lines}\n      strength: refuse`);
+
+describe("[D-5] Codex: a refuse hook that can never fire, or never block, is a validate error", () => {
+  const codexIssues = async (src: string) => {
+    const { validate } = await import("../../parser/validator.js");
+    return validate(parse(src), { target: "codex" }).filter((r) => r.rule.startsWith("CX8"));
+  };
+  it("[D-5a] a regex over tools Codex lacks (Web.*) is a CX8-regex error for refuse, a warning otherwise", async () => {
+    const errs = (await codexIssues(refuseOn('      on: PreToolUse\n      matcher: "Web.*"'))).filter((r) => r.rule === "CX8-regex");
+    expect(errs.map((r) => r.level)).toEqual(["error"]);
+    expect(errs[0].message).toMatch(/never fire/);
+    const warns = (await codexIssues(MX('      on: PreToolUse\n      matcher: "Web.*"'))).filter((r) => r.rule === "CX8-regex");
+    expect(warns.map((r) => r.level)).toEqual(["warning"]);
+    // a regex naming an MCP server, or matching a Codex tool, is not flagged
+    expect((await codexIssues(refuseOn('      on: PreToolUse\n      matcher: "mcp__github__.*"'))).filter((r) => r.rule === "CX8-regex")).toEqual([]);
+    expect((await codexIssues(refuseOn('      on: PreToolUse\n      matcher: "B.sh"'))).filter((r) => r.rule === "CX8-regex")).toEqual([]);
+  });
+  it("[D-5b] a list with spaces (Edit , Write) is rewritten to apply_patch", () => {
+    const src = refuseOn('      on: PreToolUse\n      matcher: "Edit , Write"');
+    const files = quiet(() => codexBinding.scaffold(parse(src)));
+    const hooks = JSON.parse(files.find((f) => f.path === ".codex/hooks.json")!.content);
+    expect(hooks.hooks.PreToolUse[0].matcher).toBe("apply_patch");
+    const bar = refuseOn('      on: PreToolUse\n      matcher: " Edit | Bash "');
+    const hooks2 = JSON.parse(quiet(() => codexBinding.scaffold(parse(bar))).find((f) => f.path === ".codex/hooks.json")!.content);
+    expect(hooks2.hooks.PreToolUse[0].matcher).toBe("apply_patch|Bash");
+  });
+  it("[D-5c] if: Read(secrets/**) with no matcher is a CX8-tool error for refuse and gets no entry", async () => {
+    const src = refuseOn('      on: PreToolUse\n      if: "Read(secrets/**)"');
+    const errs = (await codexIssues(src)).filter((r) => r.rule === "CX8-tool");
+    expect(errs.map((r) => r.level)).toEqual(["error"]);
+    expect(errs[0].message).toContain('"Read"');
+    const hooks = JSON.parse(quiet(() => codexBinding.scaffold(parse(src))).find((f) => f.path === ".codex/hooks.json")?.content ?? "{\"hooks\":{}}");
+    expect(hooks.hooks.PreToolUse ?? []).toEqual([]);
+    expect((await codexIssues(MX('      on: PreToolUse\n      if: "Read(secrets/**)"'))).filter((r) => r.rule === "CX8-tool").map((r) => r.level)).toEqual(["warning"]);
+  });
+  it("[D-5d] on: PostToolUse with strength: refuse is a CX8-event error", async () => {
+    const errs = (await codexIssues(refuseOn('      on: PostToolUse\n      matcher: "Bash"'))).filter((r) => r.rule === "CX8-event");
+    expect(errs.map((r) => r.level)).toEqual(["error"]);
+    expect(errs[0].message).toMatch(/cannot block/);
+    expect((await codexIssues(MX('      on: PostToolUse\n      matcher: "Bash"'))).filter((r) => r.rule === "CX8-event")).toEqual([]);
+  });
+  it("[D-5e] a regex with lookaround is a CX8-regex warning", async () => {
+    for (const m of ["^(?!Bash).*$", "(?<=x)Bash"]) {
+      const w = (await codexIssues(refuseOn(`      on: PreToolUse\n      matcher: "${m}"`))).filter((r) => /lookaround/.test(r.message));
+      expect(w.map((r) => [r.rule, r.level])).toEqual([["CX8-regex", "warning"]]);
+    }
+  });
+  it("[D-5] a plain list naming a tool Codex lacks is an ERROR for refuse, a warning otherwise", async () => {
+    expect((await codexIssues(refuseOn('      on: PreToolUse\n      matcher: "Read"'))).filter((r) => r.rule === "CX8-tool").map((r) => r.level)).toEqual(["error"]);
+    expect((await codexIssues(refuseOn('      on: PreToolUse\n      matcher: "Bash|Read"'))).filter((r) => r.rule === "CX8-tool").map((r) => r.level)).toEqual(["error"]);
+    expect((await codexIssues(MX('      on: PreToolUse\n      matcher: "Read"'))).filter((r) => r.rule === "CX8-tool").map((r) => r.level)).toEqual(["warning"]);
+  });
+});
