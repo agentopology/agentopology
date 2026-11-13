@@ -324,6 +324,25 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
 }
 
+/** A placeholder word in a step's command: ALL-CAPS (`EP`, `PID`, `OUT.mp4`), or holding < > { } [ ] (E-3). */
+export function isPlaceholderWord(word: string): boolean {
+  return /^[A-Z0-9_]*[A-Z][A-Z0-9_]*(\.[A-Za-z0-9]+)*$/.test(word) || /[<>{}[\]]/.test(word);
+}
+
+/**
+ * The words a guard matches a step's command on (E-3): the command with quotes
+ * dropped and spaces made single, cut before its first placeholder word, since
+ * the real call fills those in (`./media episode render EP.json OUT.mp4` is
+ * matched as `./media episode render`). `cut` is true when a placeholder was
+ * dropped. A command whose program itself is a placeholder is kept whole.
+ */
+export function stepMatchWords(command: string): { words: string; cut: boolean } {
+  const all = command.trim().replace(/["'\\]/g, "").split(/\s+/).filter(Boolean);
+  const at = all.findIndex(isPlaceholderWord);
+  if (at <= 0) return { words: all.join(" "), cut: false };
+  return { words: all.slice(0, at).join(" "), cut: true };
+}
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -418,8 +437,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     '  [ "$C" != "  " ] || continue',
   ];
   for (const { action, gates } of guards) {
-    // Each command is normalized the same way as the segment (one space between words).
-    const tests = (action.commands ?? []).map((c) => `has_step "$C" ${shellQuote(c.trim().replace(/["'\\]/g, "").replace(/\s+/g, " "))}`);
+    // Each command is normalized the same way as the segment (one space between words), and cut before
+    // its first placeholder (E-3): the real call fills EP.json, OUT.mp4 and the like in.
+    const tests = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))].map((w) => `has_step "$C" ${shellQuote(w)}`);
     lines.push(`  # step ${action.id}`, `  if ${tests.join(" || ")}; then`, "    UNIT=''");
     if (action.unitFrom) {
       lines.push(

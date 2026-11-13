@@ -686,3 +686,66 @@ describe("[E-1] every generated stub fails, so a gate that runs one blocks", () 
     expect(passed, `stubs that exit 0: ${passed.join(", ")}`).toEqual([]);
   });
 });
+
+const MEDIA = `topology show : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Render after review"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [review, render]
+  }
+  action review {
+    kind: external
+    commands: ["./media episode review EP.json"]
+  }
+  action render {
+    kind: external
+    commands: ["./media episode render EP.json OUT.mp4"]
+  }
+  records {
+    record trace { path: "logs/trace.jsonl" }
+  }
+  gates {
+    gate reviewed {
+      after: review
+      before: render
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { review -> render }
+}
+`;
+
+describe.skipIf(!hasJq)("[E-3] a step's command with placeholders matches on the words before them", () => {
+  const platforms: Array<[string, () => Promise<{ script: string; env: Record<string, string> }>]> = [
+    ["Codex", async () => { scaffoldInto(MEDIA); return { script: at(".codex/scripts/show/before-action.sh"), env: {} }; }],
+    ["Claude Code", async () => {
+      const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+      const f = generateBeforeActionScript(parse(MEDIA), CLAUDE_CODE_GUARDS)!;
+      fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+      fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+      return { script: at(f.path), env: { CLAUDE_PROJECT_DIR: root } };
+    }],
+  ];
+  for (const [name, setup] of platforms) {
+    it(`[E-3] ${name}: the filled-in call blocks (exit 2) and an unrelated subcommand does not`, async () => {
+      const { script, env: extra } = await setup();
+      const env = { ...process.env, ...extra } as Record<string, string>;
+      if (!extra.CLAUDE_PROJECT_DIR) delete env.CLAUDE_PROJECT_DIR;
+      const run = (c: string) => spawnSync("bash", [script], { cwd: root, input: bashPayload(c), env, encoding: "utf8" });
+      const r = run("./media episode render show/ep7/ep.json out.mp4");
+      expect(r.status, r.stderr).toBe(2);
+      expect(run("./media episode list").status).toBe(0);
+      expect(run("./media episode review show/ep7/ep.json").status).toBe(0);
+    });
+  }
+
+  it("[E-3] validate warns that a guarded command with placeholders is matched on the words before them", () => {
+    const w = validate(parse(MEDIA)).filter((r) => r.rule === "AG-placeholder");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain('"./media episode render"');
+  });
+});

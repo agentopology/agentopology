@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a guarded step's command with placeholders matches the real call (E-3)
+
+- `before-action.sh` (both targets) compared a step's command literally, so `commands: ["./media episode render EP.json OUT.mp4"]` never matched the real call `./media episode render show/ep7/ep.json out.mp4`, and the gate never held. Now the command is matched on its words before the first placeholder: an ALL-CAPS word (`EP`, `PID`, `OUT.mp4`) or a word holding `< > { } [ ]`, and everything after it. `validate` warns with `AG-placeholder` and names the words matched. The Claude Code `before-action.sh` of such a topology changes too.
+
 ### [fix] Fixed: every generated stub fails closed; 0.10.1 and earlier graded an unwritten tool stub "refuse" while its gate passed (E-1)
 
 - In 0.10.1 and earlier, a tool's script stub (and the hook, metering and workflow-seam stubs) printed a TODO line and exited 0. A gate whose check was such an unwritten stub therefore passed, and `before-action.sh` let the step run, while `guard --check` graded the gate `refuse` and said the stub "blocks every run". In 0.11.0 every generated stub, on both targets and in every language (bash, python, node), carries the `AGENTOPOLOGY_STUB` marker and fails closed: a check that must refuse exits 2, every other stub exits 1 (an error that does not block a stop event), so a gate that runs it blocks. Codex tool stubs now carry the marker too. This changes the Claude Code stub scripts; `guards-golden.json` is re-blessed in its own commit.

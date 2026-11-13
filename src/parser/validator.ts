@@ -32,6 +32,7 @@ import { isClaudeModelName } from "../conformance/codex.js";
 import { planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
+import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4073,6 +4074,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v127PersonWindows(ast),
     ...v128InventoryRoots(ast),
     ...v129NeedsOutside(ast),
+    ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4334,6 +4336,27 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
   }
   return results;
+}
+
+/**
+ * AG-placeholder (E-3): a guarded step's command holds placeholder words
+ * (`EP.json`, `OUT.mp4`, `<id>`), so its guard matches on the words before
+ * them. Said once per command, so the author knows what is matched.
+ */
+function stepPlaceholderWarnings(ast: TopologyAST): ValidationResult[] {
+  const out: ValidationResult[] = [];
+  const guarded = new Set<string>();
+  for (const n of ast.nodes) {
+    if (n.type === "gate" && checkableActionGate(ast, n as GateNode)) for (const a of guardedActions(ast, n as GateNode)) guarded.add(a.id);
+  }
+  for (const n of ast.nodes) {
+    if (n.type !== "action" || !guarded.has(n.id)) continue;
+    for (const c of (n as ActionNode).commands ?? []) {
+      const { words, cut } = stepMatchWords(c);
+      if (cut) out.push({ rule: "AG-placeholder", level: "warning", node: n.id, message: `action "${n.id}" command "${c}" holds placeholder words, so its guard matches any command containing "${words}" (the words before the first placeholder).` });
+    }
+  }
+  return out;
 }
 
 /**
