@@ -40,6 +40,7 @@ export const NOT_EXPRESSIBLE: readonly NotExpressible[] = [
   { scope: "agent", field: "rateLimit", reason: "Codex has no rate-limit key" },
   { scope: "agent", field: "circuitBreaker", reason: "Codex has no circuit breaker" },
   { scope: "agent", field: "background", reason: "Codex has no background-agent switch" },
+  { scope: "agent", field: "hooks", reason: "Codex hooks are project-wide; an agent file cannot scope a hook to one agent" },
   { scope: "agent", field: "isolation", reason: "Codex agent files cannot set a sandbox or worktree per agent" },
   { scope: "defaults", field: "temperature", reason: SAMPLING },
   { scope: "defaults", field: "maxTokens", reason: SAMPLING },

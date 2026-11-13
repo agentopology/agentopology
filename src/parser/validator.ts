@@ -29,6 +29,7 @@ import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
+import { codexHookProblems } from "../bindings/lib/codex-hooks.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4354,6 +4355,9 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
     if (agent.mcpServers && agent.mcpServers.length > 0) {
       warn("CX5-mcp", agent.id, `agent "${agent.id}" lists mcp-servers; a Codex agent file cannot scope MCP servers, so they are written once in config.toml for every agent.`);
     }
+  }
+  for (const hook of ast.hooks) {
+    for (const p of codexHookProblems(hook)) warn(p.rule, hook.name, p.message);
   }
   for (const id of writingJobsWithoutSandbox(ast)) {
     warn("CX20", id, `schedule job "${id}" runs an agent that writes, but no sandbox is set, and exec is read-only by default; the job runs with --sandbox read-only and cannot write. Set sandbox: workspace-write.`);

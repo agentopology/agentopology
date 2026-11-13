@@ -4,6 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Hooks compile to .codex/hooks.json (CX-8)
+
+- On `--target codex`, the topology's `hooks {}` block is now registered in `.codex/hooks.json` in the shape Codex reads. Before, the scaffold wrote no hook file at all. A hook with `run: "exit 2"` is written as that command; it no longer becomes a stub file named `exit` that exits 0.
+- Every hook command finds the repository root at run time, so it works from a subfolder. Scripts are written executable, and a stub for a `strength: refuse` hook exits 2 until it is written. Two scripts with the same file name no longer collide.
+- A hook's `if: "Tool(pattern)"` is kept through a small `at-if.sh` filter, so a hook meant for `rm -rf *` does not block every shell call. Without `jq` the filter blocks.
+- Hooks Codex cannot run get a warning and no entry: an event Codex lacks (for example `Error` or `Notification`), a `prompt`, `agent`, `http` or `mod` handler, an `if:` that is not `Tool(pattern)`, or run text that is prose. A matcher on an event that ignores it warns. Per-agent hooks are listed as not expressible, since Codex hooks are project-wide. Codex skips a new hook until it is trusted with `/hooks`, and scaffold says so.
+
 ### [feature] Scheduled jobs that run Codex (CX-20)
 
 - On `--target codex`, a schedule job with `carrier: cron` (or none) that runs an agent now scaffolds an executable `scripts/schedule-<id>.sh` and a `crontab.fragment` line. The script runs `codex -a never exec --sandbox <mode>` with an explicit sandbox: the agent's, the project's, or `read-only`.
