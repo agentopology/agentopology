@@ -603,3 +603,60 @@ describe("[F-9/F-17] the deadline frees the hook's output pipe on time", async (
     expect(left).toEqual([]);
   });
 });
+
+const CC_THREE = (after: string) => `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Write, edit, review"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [writer, editor, reviewer]
+  }
+  agent writer {
+    model: sonnet
+    description: "Writes"
+  }
+  agent editor {
+    model: sonnet
+    description: "Edits"
+  }
+  agent reviewer {
+    model: sonnet
+    description: "Reviews"
+  }
+  gates {
+    gate checked {
+      after: ${after}
+      before: reviewer
+      run: "scripts/check.sh"
+      on-fail: halt
+    }
+  }
+  flow { writer -> editor -> reviewer }
+}
+`;
+
+describe("[F-13] Claude Code: a rescaffold replaces the topology's own SubagentStop group, in the form the generator writes", () => {
+  it("[F-13] after: writer -> after: editor leaves exactly one group for the gate; the user's group stays", () => {
+    const f = join(root, "review.at");
+    fs.writeFileSync(f, CC_THREE("writer"));
+    expect(cli(["scaffold", f, "--target", "claude-code", "--dir", root]).status).toBe(0);
+    const first = ccHooksOf().SubagentStop;
+    const gen = first.find((g) => g.hooks[0].command.includes("gate-checked.sh"))!;
+    // the generator's real command form
+    expect(gen.hooks[0].command).toContain('"$CLAUDE_PROJECT_DIR/.claude/skills/review/scripts/gate-checked.sh"');
+    // a user's own SubagentStop group on the same agent
+    const settings = JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8"));
+    settings.hooks.SubagentStop.push({ matcher: "writer", hooks: [{ type: "command", command: 'bash "$CLAUDE_PROJECT_DIR/my-hooks/on-stop.sh"' }] });
+    fs.writeFileSync(at(".claude/settings.json"), JSON.stringify(settings, null, 2) + "\n");
+
+    fs.writeFileSync(f, CC_THREE("editor"));
+    const r = cli(["scaffold", f, "--target", "claude-code", "--dir", root]);
+    expect(r.status, r.out).toBe(0);
+    const after = ccHooksOf().SubagentStop;
+    const gates = after.filter((g) => g.hooks.some((h) => h.command.includes("gate-checked.sh")));
+    expect(gates.map((g) => g.matcher)).toEqual(["editor"]);
+    expect(after.filter((g) => g.hooks.some((h) => h.command.includes("my-hooks/on-stop.sh"))).map((g) => g.matcher)).toEqual(["writer"]);
+  });
+});

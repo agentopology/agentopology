@@ -314,9 +314,14 @@ function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
     // R-8: a Codex command names its script after a root expression,
     // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
     // whitespace token equals the path. Read every `.codex/scripts/…` path in it.
-    // Claude Code commands carry no such path, so their ownership is unchanged.
     for (const m of h.command.matchAll(/(?:^|[\s"'/])(\.codex\/scripts\/[^\s"'`;|&)]+)/g)) {
       if (scripts.includes(m[1])) return true;
+    }
+    // F-13: the Claude Code scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`,
+    // which no whitespace token equals either. Only a path right after the variable counts, so a
+    // user's `bash ./mine/.claude/skills/...` is still not claimed.
+    for (const m of h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s"'`;|&)]+)/g)) {
+      if (scripts.includes(m[1].replace(/^\.\//, ""))) return true;
     }
     return false;
   });

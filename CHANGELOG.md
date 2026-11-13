@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Claude Code rescaffold replaces a gate's old SubagentStop group (F-13)
+
+- R-8 ownership read a Claude Code command as whitespace tokens equal to a script path, but scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`, which has no such token. After a gate's `after:` moved, the rescaffold kept the stale group next to the new one, and the gate ran on both agents. A path right after `$CLAUDE_PROJECT_DIR/` is now read too. The new test scaffolds with the CLI, moves `after: writer` to `after: editor`, rescaffolds, and finds exactly one group for the gate, with the user's own group untouched; the old test fed a form the generator never writes.
+
 ### [fix] Fixed: three mutants of the Codex guards no longer survive the suite (F-17)
 
 - Deleting the watchdog's KILL stage, the `if:` filter no longer reading `*** Delete File:`, and the GNU `timeout` path returning a check's raw exit code instead of 2 each left every test green. New tests fail under each: a TERM-ignoring check must free the hook's pipe within deadline + 3 s on the POSIX path; a patch that updates one file and deletes `.env` must be refused; a check that exits 3 must come out as exit 2. Each was proven by applying the mutation in a copy of the tree and seeing that test fail.
