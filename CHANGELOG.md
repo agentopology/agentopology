@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex `if: "Bash(...)"` filter reads the command the way the step guard does (F-11)
+
+- `if: "Bash(git push*)"` on a refuse hook matched the whole command against the glob only, so ` git push`, `cd . && git push`, `git  push`, `git -C . push`, `command git push`, `true; git push`, `GIT_TRACE=1 git push` and `/usr/bin/git push` all ran. The filter now shares the step guard's reading: the glob's literal words (`git`, then `push`) are found in any segment, behind a prefix, at any path, in any case, with flags between them; the whole-command glob test still holds; and a refuse hook treats a mention of the tool it cannot read (an expansion or glob) as a match.
+
 ### [fix] Fixed: Codex's `AGENTS.md` no longer hands the model a ready-to-run approval line (F-10)
 
 - R-11 took the approval command out of the hook's stderr but put it in `AGENTS.md`, which Codex loads into the model's context, so the model could still run it and approve itself. `AGENTS.md` now describes the record (`step`, `ok`, `at`, one JSON line, the last one counts) for the person, with no `mkdir`/`printf ... >>` line. The test asserts that no such line appears in `AGENTS.md` or on stderr.

@@ -959,3 +959,25 @@ describe.skipIf(!hasJq)("[F-1] before-action.sh refuses a guarded step it cannot
     }
   });
 });
+
+describe.skipIf(!hasJq)("[F-11] the Codex if: filter reads a shell command the way the step guard does", () => {
+  const forms = [" git push", "cd . && git push", "git  push", "git -C . push", "command git push", "true; git push", "GIT_TRACE=1 git push", "sudo git push origin main", "/usr/bin/git push", "git \\\npush", "git push>/dev/null", "GIT push"];
+  const setup = () => {
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')));
+    fs.writeFileSync(at(".codex/scripts/no-push.sh"), "#!/usr/bin/env bash\necho 'no push' >&2\nexit 2\n", { mode: 0o755 });
+    return hooksOf().PreToolUse[0].hooks[0].command;
+  };
+  it.each(forms)("[F-11] Bash(git push*) refuses %j", (command) => {
+    const r = runHook(setup(), root, bashPayload(command));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("no push");
+  });
+  it.each(["git status", "git pull", "echo push", "ls -la", "git log --oneline"])("[F-11] Bash(git push*) lets %j run", (command) => {
+    const r = runHook(setup(), root, bashPayload(command));
+    expect(r.status, r.stderr).toBe(0);
+  });
+  it("[F-11] a refuse hook treats an unreadable mention of the tool as a match", () => {
+    const r = runHook(setup(), root, bashPayload("g$()it push"));
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
