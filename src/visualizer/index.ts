@@ -1526,6 +1526,8 @@ function renderLegend() {
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#5858a0"></div><span class="legend-label">Conditional</span></div>';
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#f87171"></div><span class="legend-label">Failure</span></div>';
   h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#fb923c"></div><span class="legend-label">Loop (max N)</span></div>';
+  h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#22d3ee"></div><span class="legend-label">Wait (dotted, "wait 30s")</span></div>';
+  h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#f87171"></div><span class="legend-label">Error (dash-dot, "error")</span></div>';
   if (data.stores && data.stores.length > 0) {
     h += '<div class="legend-row"><div class="legend-line dashed" style="border-color:#14b8a6"></div><span class="legend-label">Memory</span></div>';
   }

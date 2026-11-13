@@ -4,6 +4,32 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Flow lens: what sits on the flow is drawn where it sits (VZ-5)
+
+- A gate is a chip on the edge it guards, with its grade (shape and word) beside it. Human steps sit in one "seats" lane, stores sit on a rail with a read tick and a write tick per agent, and jobs and triggers carry flags on the step they start.
+- Loop, wait and error edges differ by dash pattern and by a word ("loop max 3", "wait 30s", "error"), not only by color. Agents that share a phase open collapsed into one stage block; a click opens it.
+- Every label in the page is at least 11 px. `kitchen-sink.at` opens with 13 blocks and no overlapping boxes.
+
+### [feature] Sessions lens (VZ-6)
+
+- Places are titled boxes holding their session agents, with subagents nested under the session that spawns them. Each talk edge carries its message kind as a chip, `talk: hub` draws the hub, `decides:` shows a badge, and a session with no talk guard on disk is hatched "unguarded". The send and spawn guard grades come from the embedded facts.
+
+### [feature] Seats lens (VZ-8)
+
+- One row per human step and per declared decision: where it sits, what it releases, its timeout and on-timeout, and its grade from `guard --check`.
+
+### [feature] Coverage lens (VZ-9)
+
+- Mapped, unmapped and missing by kind, read from `validate --inventory` (including `inventory { roots }`, the `--user` tree and `needs`). A click on a number lists the items. With no project folder the lens reads "not checked". The embedded inventory facts now carry the per-kind lists, the roots, the user tree and the outside needs.
+
+### [feature] Index lens with the source embedded (VZ-10)
+
+- Every node, edge, store, command, hook, job, skill, tool and decision is a row with its line in the `.at`. The `.at` text is embedded in the page (escaped like the rest of the data) with an anchor per line, and a click on a row, or `#lens=index&line=12`, jumps to it.
+
+### [fix] A visualizer test no longer depends on the installed Claude Code version (VZ-7)
+
+- The check that the page counts `unverified` guards ran under the verified version, where nothing reads unverified. It now loads the facts under a version that is not the verified one.
+
 ### [feature] Verified on Claude Code 2.1.323 (VO-323)
 
 - The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.
