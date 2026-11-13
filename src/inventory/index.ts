@@ -396,7 +396,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
   // contributes nothing: its files, if present, then show as unmapped.
   let codexGenerated: Array<{ path: string; content: string }> = [];
   try { codexGenerated = codexBinding.scaffold(ast); } catch { /* not scaffoldable for Codex */ }
-  const generated = [...claudeCodeBinding.scaffold(ast), ...codexGenerated];
+  const claudeGenerated = claudeCodeBinding.scaffold(ast);
+  const generated = [...claudeGenerated, ...codexGenerated];
   const genPaths = new Set(generated.map((f) => norm(f.path)));
   const genHooks = new Set<string>();
   const genSettings = generated.find((f) => f.path === ".claude/settings.json");
@@ -476,7 +477,10 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
       from: o.kind === "memory" ? "needs memory:" : "needs user-skills:",
     })),
   ].filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
-  const notScaffolded = [...genPaths].filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
+  // Codex files count as "not scaffolded" only in a project that already has a Codex tree.
+  const isCodexPath = (p: string) => codexGenerated.some((f) => norm(f.path) === p) && !claudeGenerated.some((f) => norm(f.path) === p);
+  const hasCodexTree = fs.existsSync(path.join(root, ".codex")) || fs.existsSync(path.join(root, ".agents"));
+  const notScaffolded = [...genPaths].filter((p) => hasCodexTree || !isCodexPath(p)).filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
   const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => i.id.slice(9)));
   const unmappedIds = new Set(unmapped.map((i) => i.id));
   const rootStats = roots.map((r) => {
