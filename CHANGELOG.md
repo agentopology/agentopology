@@ -11,6 +11,10 @@ All notable changes to agentopology are documented here.
 - The shell path is graded detect: a path built at run time passes (planted test B6), and every record carries the line "a program running as the same OS user can still write this file; only a signature or another OS user closes that" (`recordWaysIn`, for `guard --check` in SP-9).
 - Codex gets the same guards: its `before-edit.sh` (on `apply_patch`) and `before-action.sh` are built by the same library and carry the same record lines.
 - A record whose writers are not named, or that cites a hand-built guard, gets no generated guard. No existing fixture declares one, so no generated output changed (the CX-10 golden is untouched).
+### [feature] Records: validate checks who may write a record (SP-6)
+
+- Four new rules read the record fields SP-1 parses. **V130** (error): a `written-by` program that is missing on disk, looked for beside the .at file (e.g. `Record "approvals" has written-by: "nope.py", which is missing`), or an entry that is not a project-relative path; an entry that names a node of the topology (`"maker"`) is a writer, not a file. Without a file path (a topology validated from a string) the disk is not read. **V131** (warning): a record with no `written-by`, "anyone may write this record". **V132** (warning): a record id equal to a store id, "declared as a store agents write and as a record only programs write". **V133**: a `guard:` id that is no declared hook (error), and cited hooks whose PreToolUse matchers together miss a file-writing tool (warning naming the tool, e.g. `NotebookEdit`).
+- The file-writing tool list (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) is one export of the conformance facts, `FILE_WRITING_TOOLS` in `src/conformance/claude-code.ts`, for the record rules and the record guards; no binding types its own. Validate has 133 rules (V1-V133).
 
 ### [feature] Records, the signed human gate and compose: the grammar is read and kept (SP-1)
 

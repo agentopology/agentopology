@@ -95,7 +95,7 @@ who works, when they work, and what they know when they work. One file, two ways
                         ┌────────────┐
       ┌──────────────┐  │  Parser &  │   scaffold ──▶ Platform configs
       │   .at file   │─▶│  Validator │──┤                ├── .claude/agents/
-      │  (you write) │  │  129 rules  │  │                ├── <topology>.workflow.js
+      │  (you write) │  │  133 rules  │  │                ├── <topology>.workflow.js
       └──────────────┘  └────────────┘  │                ├── .codex/  .cursor/rules/
                                         │                └── …
                                         │
@@ -233,7 +233,7 @@ In Claude Code, type `/agentopology` — or just ask naturally:
 Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
 
 1. Generates the `.at` file with the right syntax
-2. Validates it against 129 rules
+2. Validates it against 133 rules
 3. Scaffolds it to Claude Code (or an experimental target: Codex, Cursor)
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
@@ -561,7 +561,7 @@ import { parse, validate, bindings } from "agentopology";
 // Parse
 const ast = parse(atSource);
 
-// Validate (129 built-in rules, V1-V129)
+// Validate (133 built-in rules, V1-V133)
 const issues = validate(ast);
 
 // Scaffold — generate platform files
@@ -619,7 +619,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |
 | **See the architecture** | Read YAML, JSON, TOML, Markdown across 6 dirs | One `.at` file. Or `visualize` it. |
-| **Validate** | Hope for the best | 129 built-in rules catch errors before deploy |
+| **Validate** | Hope for the best | 133 built-in rules catch errors before deploy |
 | **Onboard someone** | "Read these 15 files and figure it out" | "Read this `.at` file" |
 | **Version control** | Diff 47 generated files | Diff one `.at` file |
 | **Move to a new tool** | Start over | `--target new-tool` |
@@ -641,7 +641,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 ## CLI Reference
 
 ```
-agentopology validate <file>              Validate an .at file (129 rules)
+agentopology validate <file>              Validate an .at file (133 rules)
 agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at

@@ -285,7 +285,8 @@ describe("[SP-1] three empty rule modules, called by validate", () => {
   it("[SP-1] validate calls each module (a call site per module)", () => {
     const src = fs.readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../parser/validator.ts"), "utf8");
     expect(src).toMatch(/\.\.\.composeRules\(ast, opts\)/);
-    expect(src).toMatch(/\.\.\.recordRules\(ast\)/);
+    // SP-6 filled the records module: validate spreads its four rules by name (spec-sync counts them there).
+    expect(src).toMatch(/\.\.\.v130RecordWriters\(ast, opts\)/);
     expect(src).toMatch(/\.\.\.humanRules\(ast\)/);
   });
 });

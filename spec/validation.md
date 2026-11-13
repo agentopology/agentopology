@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 129 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 133 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -803,6 +803,10 @@ through the validator like any other rule.
 | V127 | error | A human's `who:` is no `person` block, or a person's `away:` or a human's `valid:` is not a real `YYYY-MM-DD..YYYY-MM-DD` window |
 | V128 | error | An `inventory { roots }` entry is an absolute path, a home path (`~`) or holds `..`; a root must be a folder inside the project |
 | V129 | error | `needs memory:` is not a `~/<path>` under the user's home (an absolute path or `..` is refused), or a `user-skills` or `connectors` entry is a path instead of a bare name |
+| V130 | error | A record's `written-by` program is missing: no such file beside the .at (read only when validate knows the file's path), or the entry is not a project-relative path. An entry that names a node of the topology is a writer, not a file, and is not looked for |
+| V131 | warning | A record has no `written-by`: anyone may write this record |
+| V132 | warning | A record id equals a store id: declared as a store agents write and as a record only programs write |
+| V133 | error / warning | A record's `guard:` names no declared hook (error); or the cited hooks on PreToolUse / PermissionRequest together leave a file-writing tool of the conformance facts (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) unmatched, and the warning names the tool. `append-only: true` on a record no gate reads is not a finding |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an
