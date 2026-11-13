@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A gate between two agents holds the second agent on Codex (R-1)
+
+- A gate `after: writer, before: reviewer` compiled only to a `SubagentStop` hook on `writer`. Codex cannot block a `SubagentStop`, so `reviewer` was spawned whether the gate passed or failed, while `AGENTS.md` said "Enforcement: hook". Now `before-agent.sh`, a `PreToolUse` hook on `collaborationspawn_agent`, refuses to spawn `reviewer` (exit 2) until the gate script passes. The `SubagentStop` hook still runs and only reports. A gate after the last agent, with no agent after it, is now described as reported only. The Codex gate wrapper also changes to the project root first, so its check is found from the session's folder.
+
 ### [fix] A Codex rescaffold removes the topology's stale hook groups (R-8)
 
 - When `.codex/hooks.json` was merged, a group counted as the topology's only when a whitespace-separated word of its command equalled a generated script path. A Codex command names the script after a root expression (`"$(git rev-parse …)/.codex/scripts/<t>/x.sh"`), so no group was ever recognized: moving a gate's anchor left both `SubagentStop` groups, and a removed gate kept firing. Now any `.codex/scripts/…` path in the command counts, the stale group is replaced, and the user's own groups stay. Claude Code ownership is unchanged.

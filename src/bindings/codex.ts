@@ -44,7 +44,7 @@ import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
 import { buildCodexHooks } from "./lib/codex-hooks.js";
-import { checkableActionGate, gateWiring } from "./lib/guards.js";
+import { CODEX_GUARDS, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
 
@@ -1194,7 +1194,12 @@ function gateEnforcementNote(ast: TopologyAST, gate: GateNode): string {
   if (checkableActionGate(ast, gate)) return "hook — `.codex/scripts/" + ast.topology.name + "/before-action.sh` refuses the step's command until the ledger shows the gate held (active once you trust the hook with `/hooks`)";
   const wiring = gateWiring(ast, gate);
   if (wiring.kind === "before-agent") return "hook — `before-agent.sh` refuses to start the agent until the gate script passes (active once you trust the hook with `/hooks`)";
-  if (wiring.kind === "subagent-stop") return "hook — `gate-" + gate.id + ".sh` runs when the agent stops (active once you trust the hook with `/hooks`)";
+  if (wiring.kind === "subagent-stop") {
+    // R-1: Codex cannot block a SubagentStop, so the hold is at the next agent's spawn.
+    const held = spawnHeldAgents(ast, gate, CODEX_GUARDS);
+    if (held.length > 0) return "hook — `before-agent.sh` refuses to start " + held.map((a) => `\`${a}\``).join(", ") + " until the gate script passes; `gate-" + gate.id + ".sh` also runs when the agent stops, which only reports (active once you trust the hook with `/hooks`)";
+    return "reported only — `gate-" + gate.id + ".sh` runs when the agent stops, but Codex cannot block a stop and no agent follows; run `.codex/scripts/" + ast.topology.name + "/gate-" + gate.id + ".sh` before the next step";
+  }
   return "script-level — run `.codex/scripts/" + ast.topology.name + "/gate-" + gate.id + ".sh` between the steps";
 }
 

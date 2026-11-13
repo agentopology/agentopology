@@ -232,7 +232,8 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
     scripts.push(beforeAction);
     entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [{ type: "command", command: guardCommand(ast, "before-action.sh"), timeout: GUARD_TIMEOUT }] } });
   }
-  // A gate after an agent runs when that agent stops (SubagentStop; the matcher is the agent type, probe P4).
+  // A gate after an agent also runs when that agent stops (SubagentStop; the matcher is the agent type,
+  // probe P4). That hook cannot block on Codex; what holds is before-agent.sh at the next agent's spawn (R-1).
   if (getDelegationMode(ast) !== "inline") {
     for (const node of ast.nodes) {
       if (node.type !== "gate") continue;

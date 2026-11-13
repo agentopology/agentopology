@@ -212,3 +212,39 @@ describe("[R-8] ownership reads the Codex command form wherever the script path 
     expect(out.hooks.SubagentStop.map((g: { matcher: string }) => g.matcher)).toEqual(["a", "b"]);
   });
 });
+
+describe.skipIf(!hasJq)("[R-1] a gate between two agents holds the second agent's spawn on Codex", () => {
+  const S = ".codex/scripts/review";
+  const check = (code: number) => fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\nexit ${code}\n`, { mode: 0o755 });
+
+  it("[R-1] hooks.json has a PreToolUse entry on collaborationspawn_agent for before-agent.sh", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    const spawn = hooksOf().PreToolUse?.find((e) => e.matcher === "collaborationspawn_agent");
+    expect(spawn?.hooks[0].command).toContain(`${S}/before-agent.sh`);
+  });
+
+  it("[R-1] before-agent.sh holds reviewer (exit 2) while the gate script fails, and lets it start when it passes", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.mkdirSync(at("src/deep"), { recursive: true });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    check(1);
+    const held = runHook(cmd, at("src/deep"), spawnPayload("reviewer"));
+    expect(held.status, held.stderr).toBe(2);
+    expect(runHook(cmd, at("src/deep"), spawnPayload("editor")).status).toBe(0);
+    check(0);
+    const open = runHook(cmd, at("src/deep"), spawnPayload("reviewer"));
+    expect(open.status, open.stderr).toBe(0);
+  });
+
+  it("[R-1] AGENTS.md says the spawn of reviewer is what holds, not the stop of writer", () => {
+    const files = scaffoldInto(AGENT_GATE("writer"));
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toMatch(/before-agent\.sh[^\n]*reviewer|reviewer[^\n]*before-agent\.sh/);
+  });
+
+  it("[R-1] a gate after the last agent, with no agent after it, is not called a blocking hook", () => {
+    const files = scaffoldInto(AGENT_GATE("reviewer").replace("      before: reviewer\n", ""));
+    const line = files.find((f) => f.path === "AGENTS.md")!.content.split("\n").find((l) => l.includes("**Enforcement:**"))!;
+    expect(line).toMatch(/cannot block/);
+  });
+});

@@ -47,6 +47,12 @@ export interface GuardPlatform {
   payload: { command: string; subagentType: string };
   /** True when a PreToolUse hook can answer "ask". */
   supportsAsk: boolean;
+  /**
+   * True when exit 2 from a SubagentStop hook keeps the agent working. On Codex
+   * it does not (only PreToolUse and UserPromptSubmit block), so a gate between
+   * two agents is held at the second agent's spawn instead (R-1).
+   */
+  stopCanBlock: boolean;
 }
 
 export const CLAUDE_CODE_GUARDS: GuardPlatform = {
@@ -61,6 +67,7 @@ export const CLAUDE_CODE_GUARDS: GuardPlatform = {
   sessionsFile: ".claude/sessions.md",
   payload: { command: ".tool_input.command", subagentType: ".tool_input.subagent_type" },
   supportsAsk: true,
+  stopCanBlock: true,
 };
 
 /**
@@ -82,6 +89,7 @@ export const CODEX_GUARDS: GuardPlatform = {
   // Probe P3/P4: the spawn tool is collaborationspawn_agent and its agent_type is the agent file's name.
   payload: { command: ".tool_input.command", subagentType: ".tool_input.agent_type" },
   supportsAsk: false,
+  stopCanBlock: false,
 };
 
 /** Single-quote a string for bash. */
@@ -188,6 +196,20 @@ export function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
   return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
 }
 
+/**
+ * The agents whose launch a gate holds on platform `p`: the before-agent
+ * wiring's agents, and, where a SubagentStop hook cannot block (Codex), the
+ * registered agents in a subagent-stop gate's `before:` (R-1).
+ */
+export function spawnHeldAgents(ast: TopologyAST, gate: GateNode, p: GuardPlatform): string[] {
+  const wiring = gateWiring(ast, gate);
+  if (wiring.kind === "before-agent") return wiring.agents;
+  if (wiring.kind === "subagent-stop" && !p.stopCanBlock) {
+    return gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b));
+  }
+  return [];
+}
+
 function hasHuman(ast: TopologyAST): boolean {
   return ast.nodes.some((n) => n.type === "human" && approvalTargets(ast, n as HumanNode).length > 0);
 }
@@ -214,9 +236,7 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (!gate.run || gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) continue;
-    const wiring = gateWiring(ast, gate);
-    if (wiring.kind !== "before-agent") continue;
-    for (const agent of wiring.agents) {
+    for (const agent of spawnHeldAgents(ast, gate, p)) {
       add(agent, [
         `    # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`,
         `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
@@ -443,6 +463,7 @@ export function generateGateWrapperScripts(
     const inlineMode = getDelegationMode(ast) === "inline";
     const wiring = gateWiring(ast, gate);
     const wiredAsHook = wiring.kind === "subagent-stop";
+    const held = spawnHeldAgents(ast, gate, p);
     let enforcementNote: string;
     let enforcementNote2: string;
     if (checkableActionGate(ast, gate)) {
@@ -454,6 +475,14 @@ export function generateGateWrapperScripts(
     } else if (inlineMode) {
       enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (orchestrator.delegation is "inline").`;
       enforcementNote2 = `#              Invoke this script from your /${ast.topology.name} playbook at the right step.`;
+    } else if (wiredAsHook && !p.stopCanBlock) {
+      // R-1: a SubagentStop hook on this platform reports and cannot block.
+      enforcementNote = held.length > 0
+        ? `# Enforcement: PreToolUse hook (before-agent.sh) before ${p.label} launches "${held.join('", "')}"; exit 2 blocks the launch.`
+        : `# Enforcement: NONE that blocks. ${p.label} runs this when "${gateAnchors(gate, "after").join('", "')}" stops, but a SubagentStop hook cannot block there.`;
+      enforcementNote2 = held.length > 0
+        ? `#              The SubagentStop hook on "${gateAnchors(gate, "after").join('", "')}" only reports: ${p.label} cannot block a stop.`
+        : `#              Invoke this script from your orchestrator playbook before the next step.`;
     } else if (wiredAsHook) {
       enforcementNote = `# Enforcement: SubagentStop hook on agent "${gateAnchors(gate, "after").join('", "')}". Exit 2 blocks the subagent`;
       enforcementNote2 = `#              from stopping (${p.label} prevents stop and surfaces stderr to ${p.modelName}).`;
@@ -470,6 +499,8 @@ export function generateGateWrapperScripts(
       enforcementNote2,
       "set -euo pipefail",
       ...FAIL_CLOSED,
+      // A platform with no project-dir variable runs the hook in the session's folder; the check path is root-relative.
+      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : []),
       "",
       "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
       "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),
