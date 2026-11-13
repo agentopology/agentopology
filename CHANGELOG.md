@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: three mutants of the Codex guards no longer survive the suite (F-17)
+
+- Deleting the watchdog's KILL stage, the `if:` filter no longer reading `*** Delete File:`, and the GNU `timeout` path returning a check's raw exit code instead of 2 each left every test green. New tests fail under each: a TERM-ignoring check must free the hook's pipe within deadline + 3 s on the POSIX path; a patch that updates one file and deletes `.env` must be refused; a check that exits 3 must come out as exit 2. Each was proven by applying the mutation in a copy of the tree and seeing that test fail.
+
 ### [fix] Fixed: a Codex refuse hook blocks when its script is missing, the cwd is a nested repo, or it runs too long (F-8, F-16, F-26)
 
 - A `strength: refuse` hook that was not one of the built-in guards, with or without `if:`, ran its script by `$(git rev-parse --show-toplevel)/…`: from a nested repository, or with the script deleted, it exited 127 and Codex let the call run. It also had no hook timeout and no deadline, and a timed-out hook lets the call run too. Every refuse `PreToolUse` hook now goes through the guard launcher: it climbs to its script, a missing script or any launcher failure is exit 2, and it carries a hook timeout (its own, else 120 s) with the R-3 deadline under it. The `if:` filter is launched the same way and runs the hook's script from the root it found.

@@ -309,6 +309,11 @@ describe.skipIf(!hasJq)("[F-12] the at-if apply_patch path check canonicalizes p
     blockScript(".codex/scripts/no-env.sh");
     const r = runHook(cmd(), root, patchPayload(`*** Begin Patch\n*** Delete File: ${root}/.env\n*** End Patch\n`));
     expect(r.status, r.stderr).toBe(2);
+    // with another file in the same patch, the delete must be read itself (F-17b: an unread delete passed here)
+    const both = `*** Begin Patch\n*** Update File: ${root}/src/a.ts\n@@\n-a\n+b\n*** Delete File: ${root}/.env\n*** End Patch\n`;
+    const r2 = runHook(cmd(), root, patchPayload(both));
+    expect(r2.status, r2.stderr).toBe(2);
+    expect(r2.stderr).toContain("refused by hook");
   });
 });
 describe.skipIf(!hasJq)("[F-12] a path holding a glob character is not expanded", () => {
@@ -578,6 +583,11 @@ describe("[F-9/F-17] the deadline frees the hook's output pipe on time", async (
       const r = runHook(cmd, root, "{}", 30_000, e);
       expect(r.status, r.stderr).toBe(0);
       expect(Date.now() - t0).toBeLessThan(3000);
+    });
+    it(`[F-17c] ${label}: a check that fails with exit 3 (not 124) comes out as exit 2, not 3`, () => {
+      const r = runHook(check("exit 3"), root, "{}", 30_000, env());
+      expect(r.status).toBe(2);
+      expect(r.stderr).not.toMatch(/deadline/);
     });
     it(`[F-9] ${label}: the payload still reaches the check on stdin`, () => {
       const r = runHook(check('[ "$(cat)" = "{\\"x\\":1}" ] || exit 1'), root, '{"x":1}', 30_000, env());

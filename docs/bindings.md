@@ -309,6 +309,8 @@ Until a live run proves a guard holds under those conditions, none is graded `re
 
 ### Conformance tests for Codex
 
+`src/__tests__/e2e/f-batch-b.test.ts` holds tests that kill three mutants of the guards: no KILL stage in the watchdog, an `if:` filter that skips `*** Delete File:`, and a GNU `timeout` path that passes a check's own exit code through.
+
 `src/__tests__/e2e/codex-conformance.test.ts` checks every example and fixture, with no model call: **A** the generated `config.toml` and agent files against the key list in `spec/codex/config-keys.json`; **B** `hooks.json` against the hook contract (events, matchers, handler types, timeouts, anchored script paths); **C** every generated command hook run from a subfolder with Codex's hook payload; **D** `codex execpolicy check` for each generated rule, `codex sandbox` for a write outside the workspace, and `--strict-config` on the generated config. Tier D is skipped, with a message, when `codex` is not installed.
 
 ---
