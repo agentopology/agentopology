@@ -295,3 +295,48 @@ describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook t
     expect(w[0].message).toContain("checked");
   });
 });
+
+const HOOKED = (hooks: string) => `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "t"
+  }
+  agent worker {
+    description: "Does work"
+    model: gpt-5.2
+    permissions: autonomous
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+  flow { intake -> worker }
+  hooks {
+${hooks}
+  }
+}
+`;
+const refuseHook = (name: string, matcher: string, extra = "") => `    hook ${name} {
+      on: PreToolUse
+      matcher: "${matcher}"
+      run: "scripts/${name}.sh"
+      type: command
+      strength: refuse
+${extra}    }`;
+
+describe("[R-5] Claude tool names in a matcher become their Codex names", () => {
+  it("[R-5] Edit|Write becomes apply_patch and Task becomes collaborationspawn_agent; Bash stays", () => {
+    scaffoldInto(HOOKED([refuseHook("files", "Edit|Write"), refuseHook("spawn", "Task"), refuseHook("sh", "Bash")].join("\n")));
+    const matchers = hooksOf().PreToolUse.map((e) => e.matcher);
+    expect(matchers).toEqual(["apply_patch", "collaborationspawn_agent", "Bash"]);
+  });
+
+  it("[R-5] a name with no Codex equivalent gets a warning", () => {
+    const w = validate(parse(HOOKED(refuseHook("reads", "Read|Edit"))), { target: "codex" }).filter((r) => r.rule === "CX8-tool");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain('"Read"');
+    scaffoldInto(HOOKED(refuseHook("reads", "Read|Edit")));
+    expect(hooksOf().PreToolUse[0].matcher).toBe("apply_patch");
+  });
+});

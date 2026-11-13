@@ -85,11 +85,43 @@ export const IF_FILTER_PATH = ".codex/scripts/at-if.sh";
 
 /** One thing that stops a hook from being registered as written. */
 export interface CodexHookProblem {
-  rule: "CX8-event" | "CX8-handler" | "CX8-matcher" | "CX8-if" | "CX8-async" | "CX8-run";
+  rule: "CX8-event" | "CX8-handler" | "CX8-matcher" | "CX8-if" | "CX8-async" | "CX8-run" | "CX8-tool";
   hook: string;
   message: string;
   /** True when the hook gets no entry at all. */
   skipped: boolean;
+}
+
+/**
+ * Claude Code tool names and what Codex calls the same tool (R-5): a Codex hook
+ * sees a file edit as `apply_patch` and a subagent spawn as
+ * `collaborationspawn_agent`, so a matcher "Edit|Write" or "Task" never fires.
+ * null: Codex has no such tool behind its hook layer.
+ */
+export const CLAUDE_TO_CODEX_TOOL: Readonly<Record<string, string | null>> = {
+  Bash: "Bash",
+  Edit: "apply_patch", Write: "apply_patch", MultiEdit: "apply_patch",
+  Task: "collaborationspawn_agent", Agent: "collaborationspawn_agent",
+  Read: null, Glob: null, Grep: null, LS: null, NotebookEdit: null, NotebookRead: null,
+  WebFetch: null, WebSearch: null, TodoWrite: null, BashOutput: null, KillShell: null,
+  SendMessage: null, Skill: null, ExitPlanMode: null,
+};
+
+/**
+ * A matcher with Claude tool names rewritten to Codex names. Only a plain
+ * alternation of names (`Edit|Write`) is rewritten; a real regex is kept as
+ * written. `dropped` lists Claude names Codex has no tool for.
+ */
+export function codexMatcher(matcher: string): { matcher: string | null; dropped: string[] } {
+  if (!/^[A-Za-z0-9_]+(\|[A-Za-z0-9_]+)*$/.test(matcher)) return { matcher, dropped: [] };
+  const out: string[] = [];
+  const dropped: string[] = [];
+  for (const name of matcher.split("|")) {
+    const mapped = name in CLAUDE_TO_CODEX_TOOL ? CLAUDE_TO_CODEX_TOOL[name] : name;
+    if (mapped === null) dropped.push(name);
+    else if (!out.includes(mapped)) out.push(mapped);
+  }
+  return { matcher: out.length > 0 ? out.join("|") : null, dropped };
 }
 
 /** `Tool(glob)` parsed from an `if:`, or null. */
@@ -114,6 +146,14 @@ export function codexHookProblems(hook: HookDef): CodexHookProblem[] {
   }
   if (event && NO_MATCHER_EVENTS.has(event) && hook.matcher) {
     add("CX8-matcher", `hook "${hook.name}" has a matcher on ${event}, which ignores it; the hook fires on every ${event}`, false);
+  } else if (event && hook.matcher) {
+    const { matcher, dropped } = codexMatcher(hook.matcher);
+    if (dropped.length > 0) {
+      const names = dropped.map((d) => `"${d}"`).join(", ");
+      add("CX8-tool", matcher === null
+        ? `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks, so it would never fire and gets no entry`
+        : `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks; the entry matches "${matcher}" only`, matcher === null);
+    }
   }
   if (hook.if) {
     if (parseIf(hook.if)) {
@@ -344,7 +384,7 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
       handler = { type: "command", command, ...timeout };
     }
     const entry: Record<string, unknown> = { hooks: [handler] };
-    if (hook.matcher && !NO_MATCHER_EVENTS.has(event)) entry.matcher = hook.matcher;
+    if (hook.matcher && !NO_MATCHER_EVENTS.has(event)) entry.matcher = codexMatcher(hook.matcher).matcher!;
     (hooks[event] ??= []).push(entry);
   }
   if (usesFilter) scripts.push(ifFilterScript());

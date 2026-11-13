@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Claude tool names in a Codex hook matcher are rewritten (R-5)
+
+- A hook with `matcher: "Edit|Write"` or `"Task"` was written to `.codex/hooks.json` as is. Codex calls those tools `apply_patch` and `collaborationspawn_agent`, so the hook, a `strength: refuse` one included, never fired, with no warning. Now `Edit`, `Write` and `MultiEdit` become `apply_patch`, `Task` and `Agent` become `collaborationspawn_agent`, and `Bash` stays. A Claude tool Codex has no hook-visible tool for (`Read`, `Grep`, `WebFetch` and others) gets a `CX8-tool` warning; a matcher left with no name gets no entry.
+
 ### [fix] A slow gate check cannot outlast the Codex hook timeout (R-3)
 
 - Every guard was registered with a 120 second hook timeout and the gate wrapper had no deadline of its own. A check longer than that, or a gate with `timeout: 10m retry: 2`, was cut off by Codex, and Codex lets a timed-out call run. Now a guard's hook timeout is never below its gates' worst case (timeout x attempts, plus the pauses, plus a margin), and the hook command cuts the run 10 seconds before that timeout and exits 2 ("ran past its deadline"). `validate --target codex` warns (`CX9-timeout`) when a gate's worst case raises the hook timeout. The deadline needs GNU `timeout` (or Homebrew's `gtimeout`); without either, the raised hook timeout is the only bound.
