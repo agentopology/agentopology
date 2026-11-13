@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the Codex guard deadline frees the hook's output pipe on time (F-9, F-20b)
+
+- The deadline returned exit 2 on time, but a check that ignored SIGTERM, or left a background process, kept the hook's stdout and stderr open 9 to 15 s past it; Codex reads to EOF and could reach its own hook timeout, which lets the call run. Both the GNU `timeout` path and the POSIX watchdog now send the run's output to temp files and copy them out after the run ends or is cut. When the deadline fires, the watchdog's KILL stage runs to its end, and the watchdog's own `sleep` is killed with it, so it never outlives the hook. In the GNU path a KILL after `-k` (137) also reports the deadline, and any non-zero exit is exit 2. An absolute script path is run where it is, with no climb.
+
 ### [fix] Fixed: a Codex refuse hook whose matcher is a regex of Claude tool names no longer goes silent (F-7)
 
 - A matcher such as `(Write|Edit)`, `^Write$`, `Ed.*` or `Task.*` was written to `.codex/hooks.json` unchanged with no warning, so it never fired on Codex, which calls those tools `apply_patch` and `collaborationspawn_agent`. Names inside one group or between `^` and `$` are now rewritten (`(apply_patch)`, `^apply_patch$`). A real regex that matches a Claude tool but not its Codex name gets `CX8-regex` from `validate --target codex`: an ERROR for `strength: refuse`, a warning for any other strength.

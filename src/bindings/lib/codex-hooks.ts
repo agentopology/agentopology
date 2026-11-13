@@ -53,42 +53,64 @@ export const REPO_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"'
  * repository, or `pwd` outside git, is not the project root, and a path that is
  * not found exits 127, which lets the call run (probe P10). So the launcher
  * starts at the repository root (else the current directory) and climbs until
- * the script is there. With `guard`, a script that is not found, or any
- * non-zero exit of the run itself, comes out as exit 2: the call is blocked.
+ * the script is there; `$AT_ROOT` is that folder, for the arguments to use. An
+ * absolute `rel` is run where it is. With `guard`, a script that is not found,
+ * or any non-zero exit of the run itself, comes out as exit 2: the call is
+ * blocked. Without it, a script that is not found exits 1 (an error that does
+ * not block) and the run's own exit code is kept.
  */
 export function launchCommand(interp: string, rel: string, args: string[], guard: boolean, deadline?: number): string {
   const tail = args.length ? " " + args.join(" ") : "";
+  const abs = rel.startsWith("/");
+  const file = abs ? rel : `$AT_ROOT/${rel}`;
+  const find = abs
+    ? []
+    : [`AT_ROOT=${REPO_ROOT}`, `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`];
+  const where = abs ? "" : " from $PWD or any folder above it";
+  const missing = guard
+    ? `{ echo "agentopology: ${rel} is not found${where}, so this call is blocked" >&2; exit 2; }`
+    : `{ echo "agentopology: ${rel} is not found${where}" >&2; exit 1; }`;
   if (deadline !== undefined) {
     // R-3: the run is cut a few seconds before Codex's own hook timeout, which would let the call through.
-    // GNU `timeout` (or Homebrew's `gtimeout`) kills the whole group and exits 124. With neither (stock
-    // macOS) a POSIX watchdog does it: the payload is read first, because a background job's stdin is
-    // /dev/null in a non-interactive shell, then piped in; the watchdog kills the run at the deadline.
+    // GNU `timeout` (or Homebrew's `gtimeout`) kills the whole group; with neither (stock macOS) a POSIX
+    // watchdog does it: the payload is read first, because a background job's stdin is /dev/null in a
+    // non-interactive shell, then piped in; the watchdog TERMs the run at the deadline and KILLs it after.
+    // F-9: the run writes to temp files, never to the hook's own pipes, so a check that ignores TERM or
+    // leaves a process behind cannot hold the pipe Codex reads; the files are copied out after the run.
     const late = `echo "agentopology: ${rel} ran past its ${deadline}s deadline, so this call is blocked" >&2; exit 2`;
     return [
-      `AT_ROOT=${REPO_ROOT}`,
-      `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`,
-      `[ -f "$AT_ROOT/${rel}" ] || { echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`,
+      ...find,
+      `[ -f "${file}" ] || ${missing}`,
+      `AT_O="$(mktemp)" && AT_E="$(mktemp)" && AT_F="$(mktemp)" || { echo "agentopology: no temp file for ${rel}, so this call is blocked" >&2; exit 2; }`,
+      `at_out() { cat "$AT_O"; cat "$AT_E" >&2; rm -f "$AT_O" "$AT_E" "$AT_F"; }`,
       `AT_T="$(command -v timeout || command -v gtimeout || true)"`,
-      `if [ -n "$AT_T" ]; then "$AT_T" -k ${DEADLINE_KILL} ${deadline} ${interp} "$AT_ROOT/${rel}"${tail} || { AT_RC=$?; [ "$AT_RC" != 124 ] || { ${late}; }; exit 2; }; ` +
-        `else AT_D=${deadline}; AT_IN="$(cat)"; AT_F="$(mktemp)"; ` +
-        // kill the run and everything it started: a grandchild left alive holds the hook's output open
+      // GNU path: 124 (TERM) and 137 (KILL after -k) are the deadline; any other non-zero exit blocks too.
+      `if [ -n "$AT_T" ]; then "$AT_T" -k ${DEADLINE_KILL} ${deadline} ${interp} "${file}"${tail} >"$AT_O" 2>"$AT_E"; AT_RC=$?; at_out; ` +
+        `case "$AT_RC" in 0) ;; 124|137) ${late} ;; *) exit 2 ;; esac; ` +
+        `else AT_D=${deadline}; AT_IN="$(cat)"; ` +
+        // kill the run and everything it started: a grandchild left alive would keep running
         `at_kill() { for at_c in $(pgrep -P "$2" 2>/dev/null); do at_kill "$1" "$at_c"; done; kill "-$1" "$2" 2>/dev/null; }; ` +
-        `printf '%s' "$AT_IN" | ${interp} "$AT_ROOT/${rel}"${tail} & AT_P=$!; ` +
-        `( sleep "$AT_D"; kill -0 "$AT_P" 2>/dev/null && { echo late > "$AT_F"; at_kill TERM "$AT_P"; sleep ${DEADLINE_KILL}; at_kill KILL "$AT_P"; } ) >/dev/null 2>&1 & AT_W=$!; ` +
-        `wait "$AT_P"; AT_RC=$?; kill "$AT_W" 2>/dev/null; ` +
-        `if [ -s "$AT_F" ]; then rm -f "$AT_F"; ${late}; fi; rm -f "$AT_F"; ` +
+        `printf '%s' "$AT_IN" | ${interp} "${file}"${tail} >"$AT_O" 2>"$AT_E" & AT_P=$!; ` +
+        // the watchdog's own sleep is killed with it (F-20b), so it never outlives the hook
+        `( sleep "$AT_D" & AT_S=$!; trap 'kill "$AT_S" 2>/dev/null; exit 0' TERM; wait "$AT_S"; ` +
+        `kill -0 "$AT_P" 2>/dev/null && { echo late > "$AT_F"; at_kill TERM "$AT_P"; sleep ${DEADLINE_KILL}; at_kill KILL "$AT_P"; } ) >/dev/null 2>&1 & AT_W=$!; ` +
+        `wait "$AT_P"; AT_RC=$?; ` +
+        // after the deadline fired, the watchdog's KILL stage runs to its end; otherwise it is stopped now
+        `if [ -s "$AT_F" ]; then wait "$AT_W"; at_out; ${late}; fi; ` +
+        `kill "$AT_W" 2>/dev/null; wait "$AT_W" 2>/dev/null; at_out; ` +
         `[ "$AT_RC" = 0 ] || exit 2; fi`,
     ].join("; ");
   }
-  const missing = guard
-    ? `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`
-    : `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it" >&2; exit 1; }`;
   return [
-    `AT_ROOT=${REPO_ROOT}`,
-    `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`,
-    `[ -f "$AT_ROOT/${rel}" ] || ${missing}`,
-    `${interp} "$AT_ROOT/${rel}"${tail}${guard ? " || exit 2" : ""}`,
+    ...find,
+    `[ -f "${file}" ] || ${missing}`,
+    `${interp} "${file}"${tail}${guard ? " || exit 2" : ""}`,
   ].join("; ");
+}
+
+/** The deadline under a hook timeout: DEADLINE_MARGIN before it, or less for a short timeout, never below 1 s. */
+export function deadlineUnder(timeout: number): number {
+  return timeout > DEADLINE_MARGIN + 5 ? timeout - DEADLINE_MARGIN : Math.max(1, timeout - DEADLINE_KILL - 2);
 }
 
 /** Where the `if:` filter script is written. */

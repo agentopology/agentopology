@@ -443,3 +443,76 @@ describe("[F-7] a Codex matcher that is a regex naming Claude tools", () => {
     for (const m of [".*", "apply_.*|Bash"]) expect(validate(parse(refuse(m)), { target: "codex" }).filter((r) => r.rule === "CX8-regex")).toEqual([]);
   });
 });
+
+/** A PATH with every tool from /usr/bin and /bin except timeout and gtimeout (stock macOS). */
+function pathWithoutTimeout(): string {
+  const bin = fs.mkdtempSync(join(os.tmpdir(), "at-f9-path-"));
+  for (const d of ["/usr/bin", "/bin"]) {
+    for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+      if (f === "timeout" || f === "gtimeout" || fs.existsSync(join(bin, f))) continue;
+      try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
+    }
+  }
+  for (const tool of ["jq", "git", "bash", "node", "setsid", "pgrep"]) {
+    const w = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+    if (w && !fs.existsSync(join(bin, tool))) fs.symlinkSync(w, join(bin, tool));
+  }
+  return bin;
+}
+const hasTimeout = spawnSync("/bin/sh", ["-c", "command -v timeout || command -v gtimeout"]).status === 0;
+const hasSetsid = spawnSync("/bin/sh", ["-c", "command -v setsid"]).status === 0;
+
+describe("[F-9/F-17] the deadline frees the hook's output pipe on time", async () => {
+  const { launchCommand } = await import("../../bindings/lib/codex-hooks.js");
+  const D = 3;
+  const check = (body: string) => {
+    fs.mkdirSync(at(".codex/scripts"), { recursive: true });
+    fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\n${body}\n`, { mode: 0o755 });
+    return launchCommand("bash", ".codex/scripts/check.sh", [], true, D);
+  };
+  const paths: Array<[string, Record<string, string>]> = [];
+  if (hasTimeout) paths.push(["GNU timeout", {}]);
+  paths.push(["POSIX watchdog", { PATH: "" }]);
+  const background = hasSetsid ? "setsid sleep 9 & sleep 30" : "sleep 9 & disown; sleep 30";
+  for (const [label, env0] of paths) {
+    let bin: string | undefined;
+    const env = () => (env0.PATH === "" ? { PATH: (bin ??= pathWithoutTimeout()) } : env0);
+    for (const body of ['trap "" TERM; sleep 12', background]) {
+      it(`[F-9] ${label}: a check doing \`${body}\` is cut, exits 2, and its output pipe reaches EOF within deadline + 3 s`, () => {
+        const cmd = check(`echo started; echo to-stderr >&2; ${body}`);
+        const e = env();
+        // WSL2 timers wake up to ~3 s late now and then, for GNU timeout alone too (2 of 12 runs of
+        // `timeout -s KILL 3 sleep 12` took 5.9 s, measured 2026-11-13); the better of two runs is the bound.
+        const once = () => { const t0 = Date.now(); const r = runHook(cmd, root, "{}", 30_000, e); return { r, took: Date.now() - t0 }; };
+        let { r, took } = once();
+        if (took >= (D + 3) * 1000) ({ r, took } = once());
+        expect(r.status, r.stderr).toBe(2);
+        expect(took, `${took} ms`).toBeLessThan((D + 3) * 1000);
+        expect(r.stderr).toMatch(/deadline/);
+        // the run's own output still reaches the hook's stdout and stderr, after the run
+        expect(r.stdout).toContain("started");
+        expect(r.stderr).toContain("to-stderr");
+      });
+    }
+    it(`[F-9] ${label}: a check that leaves a background process and exits 0 passes, and the pipe is not held`, () => {
+      const cmd = check(hasSetsid ? "setsid sleep 9 & exit 0" : "sleep 9 & disown; exit 0");
+      const e = env();
+      const t0 = Date.now();
+      const r = runHook(cmd, root, "{}", 30_000, e);
+      expect(r.status, r.stderr).toBe(0);
+      expect(Date.now() - t0).toBeLessThan(3000);
+    });
+    it(`[F-9] ${label}: the payload still reaches the check on stdin`, () => {
+      const r = runHook(check('[ "$(cat)" = "{\\"x\\":1}" ] || exit 1'), root, '{"x":1}', 30_000, env());
+      expect(r.status, r.stderr).toBe(0);
+    });
+  }
+  it("[F-9] the POSIX watchdog's sleep does not outlive the hook (F-20b)", () => {
+    const bin = pathWithoutTimeout();
+    const cmd = check("exit 0").replace(/AT_D=\d+/, "AT_D=47");
+    const r = runHook(cmd, root, "{}", 30_000, { PATH: bin });
+    expect(r.status).toBe(0);
+    const left = spawnSync("ps", ["-eo", "args"], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.trim() === "sleep 47");
+    expect(left).toEqual([]);
+  });
+});
