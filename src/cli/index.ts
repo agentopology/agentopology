@@ -56,6 +56,7 @@ import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
+import { checkRecords, renderRecordCheck, parseRecordArgs } from "../records/head.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
@@ -118,7 +119,13 @@ ${c.bold("Usage:")}
                        Exit 0 when every gate before <step-id> holds (its ledger shows the
                        after: step ok for the unit; its run: exits 0 from D), else 1,
                        naming each failing gate. Call it at the start of a script step.
-                       Reads and runs check scripts; never writes.
+                       Reads and runs check scripts; writes no record. An append-only
+                       ledger is checked first (as record check): rewritten or cut short, the gate fails.
+  agentopology record check <file.at> [record-id] [--unit U] [--dir D]
+                       Each append-only record only grows: keeps a head file per record
+                       (line count, sha256 of those lines) under .agentopology/records/.
+                       Exit 1 when earlier lines changed or the file was cut short;
+                       else exit 0 and move the head forward. First run sets the head.
   agentopology stubs [<project-dir>]
   agentopology targets
   agentopology docs [topic]
@@ -1722,6 +1729,20 @@ function main(): void {
       }
       const report = checkStep(parse(readFile(a.file)), a.step, { unit: a.unit, dir: a.dir ?? "." });
       for (const line of renderStepReport(report)) (report.ok ? console.log : console.error)(line);
+      process.exit(report.ok ? 0 : 1);
+    }
+
+    case "record": {
+      // `agentopology record check <file.at> [record-id] [--unit U] [--dir D]`
+      const rest = process.argv.slice(2);
+      const sub = rest[rest.indexOf("record") + 1];
+      const a = parseRecordArgs(rest.slice(rest.indexOf("record") + 2));
+      if (sub !== "check" || !a.file) {
+        console.error(c.red("Usage: agentopology record check <file.at> [record-id] [--unit U] [--dir D]"));
+        process.exit(1);
+      }
+      const report = checkRecords(parse(readFile(a.file)), { id: a.id, unit: a.unit, dir: a.dir ?? "." });
+      for (const line of renderRecordCheck(report)) (report.ok ? console.log : console.error)(line);
       process.exit(report.ok ? 0 : 1);
     }
 

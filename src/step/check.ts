@@ -13,7 +13,10 @@
  * - a gate with both needs both; a gate with neither is unsatisfiable
  *   ("nothing to check", the case V110 warns about).
  *
- * It reads ledgers and runs check scripts. It never writes.
+ * It reads ledgers and runs check scripts. It writes no record. Before it
+ * reads a ledger declared `append-only: true` it runs `record check` on it
+ * (SP-8): a rewritten or truncated ledger fails the gate, whatever its last
+ * line says, and an intact one moves its head file forward.
  *
  * @module
  */
@@ -27,6 +30,7 @@ import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.j
 import { scriptNameFromRun } from "../parser/run.js";
 import { parseWindow, today as todayDate } from "../parser/window.js";
 import { hookCommand } from "../bindings/claude-code.js";
+import { checkRecordHead } from "../records/head.js";
 
 export interface StepCheckOptions {
   /** The unit (an episode id, a ticket); filters ledger records. */
@@ -72,8 +76,11 @@ function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string,
       reasons.push(`the unit "${unit}" is not a safe file name`);
     } else {
       const rel = ledgerPath(ledger, unit);
+      // A damaged ledger never opens a gate: check the head before reading it.
+      const head = ledger.appendOnly === true ? checkRecordHead(ledger, unit, root) : undefined;
       const text = (() => { try { return fs.readFileSync(join(root, rel), "utf8"); } catch { return null; } })();
-      for (const step of gateAnchors(gate, "after")) {
+      if (head && !head.ok) reasons.push(head.message);
+      else for (const step of gateAnchors(gate, "after")) {
         if (text === null) {
           reasons.push(`step "${step}"${unit ? ` for unit "${unit}"` : ""} has no ok record: the ledger ${rel} does not exist`);
           continue;

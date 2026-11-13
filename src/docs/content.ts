@@ -485,7 +485,7 @@ gates {
 {"step": "render", "unit": "ep42", "ok": true, "at": "2026-01-01T00:00:00Z"}
 \`\`\`
 
-\`unit\` is omitted when the step has none. A hook covers Claude Code sessions only: a step run from a terminal or a scheduler should call \`agentopology step check FILE.at STEP [--unit U] [--dir D]\` at its start (\`by: code\`). It exits 0 when every gate before STEP is satisfied, 1 otherwise, naming each failing gate and why.
+\`unit\` is omitted when the step has none. A hook covers Claude Code sessions only: a step run from a terminal or a scheduler should call \`agentopology step check FILE.at STEP [--unit U] [--dir D]\` at its start (\`by: code\`). It exits 0 when every gate before STEP is satisfied, 1 otherwise, naming each failing gate and why. A ledger declared \`append-only: true\` is checked first, as \`agentopology record check FILE.at [ID] [--unit U] [--dir D]\` does: a head file per record under \`.agentopology/records/\` keeps the line count and the sha256 of those lines; earlier lines changed or the file cut short exits 1 (and fails the gate), else the head moves forward. Commit the head files: git history is the outside witness.
 
 ## Validation Rules
 
