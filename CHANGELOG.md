@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a generated action script finds its gate check from where it sits, not from CLAUDE_PROJECT_DIR (D-10)
+
+- `action-<step>.sh` located the project, and with it the `before-action.sh` it asks, through `CLAUDE_PROJECT_DIR` when set. A caller could point that at another folder. The script now uses only its own location (`.claude/skills/<topology>/scripts/`, four folders below the project). Found in the second design review (rated plausible, read only); a reproduction was not run, so this is hardening, pinned by a test of the property.
+
 ### [fix] Fixed: a Codex gate held by cited code grades unverified, not refuse (D-9)
 
 - `guard --check --target codex` gave a gate with an `at:` citation its declared strength, so a cited refusal read `refuse` on Codex, where release 1 grades every guard `unverified` or `none`. It now reads `unverified`, with the citation ("cited, not proven") and the bypass kept in the notes; a broken citation still reads `none`.

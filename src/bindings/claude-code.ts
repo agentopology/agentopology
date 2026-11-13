@@ -451,7 +451,8 @@ function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
         ]
       : ["# hand does not skip a gate. The step has no unit, so its arguments are not part of the check.", 'AT_UNIT_ARG=""']),
     'AT_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"',
-    'AT_PROJECT="${CLAUDE_PROJECT_DIR:-$AT_HERE}"',
+    // The check is found from where this script sits, never from a variable the caller can set.
+    'AT_PROJECT="$AT_HERE"',
     "at_gate() {",
     `  command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check the gates of step ${action.id}, so it does not run" >&2; exit 2; }`,
     `  jq -n --arg c "$*" '{tool_name: "Bash", tool_input: {command: $c}}' | AT_NO_USAGE=1 CLAUDE_PROJECT_DIR="$AT_PROJECT" bash "$AT_PROJECT/.claude/skills/${name}/scripts/before-action.sh" \\`,

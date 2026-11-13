@@ -85,6 +85,17 @@ describe.skipIf(!hasJq)("[D-1] Claude Code: the action script's gate check gets 
       expect(fs.existsSync(at("ran.txt"))).toBe(false);
     });
   }
+  it("[D-1] the check lives where the script does: CLAUDE_PROJECT_DIR pointing elsewhere cannot swap it", () => {
+    setup();
+    // a folder holding a stand-in check that always passes
+    const fake = fs.mkdtempSync(join(os.tmpdir(), "at-design-fake-"));
+    fs.mkdirSync(join(fake, ".claude/skills/ship/scripts"), { recursive: true });
+    fs.writeFileSync(join(fake, ".claude/skills/ship/scripts/before-action.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    const e = { ...process.env, CLAUDE_PROJECT_DIR: fake } as Record<string, string>;
+    const r = spawnSync("bash", [".claude/skills/ship/scripts/action-publish.sh", "ep1"], { cwd: root, env: e, encoding: "utf8" });
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(fs.existsSync(at("ran.txt"))).toBe(false);
+  });
   it("[D-1] with no argument it does not run either (no unit)", () => {
     setup();
     expect(run([]).status).not.toBe(0);
