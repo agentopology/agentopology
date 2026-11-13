@@ -79,23 +79,21 @@
   "scripts/collect-metrics.sh": "03048a9212b91d74c41110d8d2ffec4e5e5e007a0c7247f23c405fde6120c752",
   ".claude/rules/data-processing.md": "0c1dad6aa2aa0dc52ccb2bc86cd338a2c1c19435b74245e1195c5ca840951953"
  },
- "examples/matchmat-ship.at": {
-  ".claude/skills/matchmat-ship/scripts/action-intake.sh": "f77627083690d93bb30816b8195cc30444dc82b4788ebbeba36a97c67114b31e",
-  ".claude/skills/matchmat-ship/scripts/action-ship-report.sh": "fa3d60f1184bad85e445ec6f537550eab272fb4c7a084194a1f29340a86eaf02",
-  ".claude/agents/contract-scout/AGENT.md": "f73e9f597e53cb8227c5c61d6bd48eb3d8bca0748e1af32058d09868da7eba7f",
-  ".claude/agents/blast-radius-mapper/AGENT.md": "5eb2b90104ff8e753afca868b6c782f7b181ba7cab92189dbbde59391fbe7e90",
-  ".claude/agents/boundary-drafter/AGENT.md": "cce3831e1f795af315cabcff156219c72c42ce95b890a46d0876ee7fdddf1b29",
-  ".claude/agents/security-verifier/AGENT.md": "64a196dd2894bdc3403336f41d2cfc956878f6753c7a721e94219d34b0ac8385",
-  ".claude/agents/contract-verifier/AGENT.md": "4c92b7e6e755e6cacbb8acf8f990860e889832073bb1e04562b04b79c19e3311",
-  ".claude/agents/closed-loop-verifier/AGENT.md": "33533a8b7c0b98d1a660fdc471ff6fd70e3eb2322d0de7c7db2ddd4d91f4f7ae",
-  ".claude/skills/matchmat-ship/SKILL.md": "c59322fd0261d240a244f7cc281f0715f8cc32cdceb29f881a7052af0308b7d0",
-  ".claude/skills/matchmat-ship/runs/.gitkeep": "61d1954b9aba0c9aedb8d1338804e817c7262cfc36da94161dab8e3ed7a3a43a",
-  ".claude/skills/matchmat-ship/scripts/verify-gate.sh": "8cc523798658ac681de4302d98583a6a8a84d901b9e3a01f5e73e0c508d518ea",
-  ".claude/skills/matchmat-ship/scripts/gate-verify-gate.sh": "78f296ef461e764315cb72bbef268b8e0c809fb298e4fae9ef003c20e14e3bc8",
-  ".claude/skills/matchmat-ship/scripts/launch-builder-workflow.sh": "f4d2e892682a04a8cb53713887a4fd34c44abbfd038c622deefef8a3626d301a",
-  ".claude/skills/matchmat-ship/scripts/observe-blackboard.sh": "df3c6a24273c1c789b3c1a17714135c25a9b8b757a8b28e5680143fd17955831",
-  ".claude/settings.json": "a189d7d490c94be8e298fb99cc10fb5152c0ea0c5cfca39e94ef36c35d54269b",
-  ".claude/rules/matchmat-ship.md": "c6e077a13e3fc3877f95e6574af9114914ce54d969c476ca16147b88d7134234"
+ "examples/hybrid-release.at": {
+  ".claude/skills/hybrid-release/scripts/action-collect-changes.sh": "6a5164dda0eca9e15fd8b12cdd1aeabc04f0866fbc8df67bdc5a2b99c44ba7b4",
+  ".claude/skills/hybrid-release/scripts/action-release-notes.sh": "ad8a2fad12e78fc2df7981a5f0f5721c2cb6d12dd8a16cce5a5d3323e151c172",
+  ".claude/agents/change-lister/AGENT.md": "4ff40af8bea0cd4b26be89e5fed7202322ee62f7ae74f1ad89bf51c379ead8c2",
+  ".claude/agents/dependency-auditor/AGENT.md": "a4dc419977e20c74c85f75136d418032da673b723fdac0c6deb9e2f8042b4f0a",
+  ".claude/agents/smoke-tester/AGENT.md": "bd910040f492159be4f6358b71084535280c551a81cd337fdc9e90935015a0dc",
+  ".claude/agents/license-checker/AGENT.md": "94f56a5f9dbf26786675897725bb83fe304e3e7400a411e770b3653c987c6a66",
+  ".claude/skills/hybrid-release/SKILL.md": "e3b29f71a130a412de7a1010ad89d438583d4da96923fb8e54a9478cf85cb35e",
+  ".claude/skills/hybrid-release/runs/.gitkeep": "61d1954b9aba0c9aedb8d1338804e817c7262cfc36da94161dab8e3ed7a3a43a",
+  ".claude/skills/hybrid-release/scripts/release-check.sh": "93a389dea79befad5d002756d02b9bc424cd14bc52b0690eb00b2f1d1b29221b",
+  ".claude/skills/hybrid-release/scripts/gate-release-check.sh": "3d3310be3a859667fa9cfdc12eb551d36ce7a61d519d865baa7a5b1e71c59028",
+  ".claude/skills/hybrid-release/scripts/launch-packager-workflow.sh": "dcc1de0e2f182dd078b5e1ca099b5cd6d12b59f309853f31f61e8312f9335308",
+  ".claude/skills/hybrid-release/scripts/observe-blackboard.sh": "df3c6a24273c1c789b3c1a17714135c25a9b8b757a8b28e5680143fd17955831",
+  ".claude/settings.json": "4657e079afaef9b56dd1ff6cb7dcabf5f48ffbd925ee0b90ec34c0866b9add42",
+  ".claude/rules/hybrid-release.md": "e3be98c0e5694efdc3a036f9c2f2867470760d642ca0c928a1b988cf3e1a6b3a"
  },
  "examples/memory-system.at": {
   ".claude/skills/knowledge-assistant/scripts/action-research.sh": "fee018a10956feb6fde81e265c05a53ecb2a5e10320cab5d9509855be85ba31c",
