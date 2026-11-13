@@ -320,3 +320,20 @@ describe.skipIf(!hasJq)("[F-12] a path holding a glob character is not expanded"
     expect(r.status, r.stderr).toBe(2);
   });
 });
+
+const SPELLINGS = ["reviewer", " Reviewer ", "REVIEWER", "re​viewer", "﻿reviewer", "review­er", "⁦reviewer⁩", "./reviewer", "agents/reviewer", "./agents/Reviewer", "reviewer:", "reviewer: ", "\treviewer\n"];
+describe.skipIf(!hasJq)("[F-15] Codex before-agent.sh normalizes agent_type before it compares", () => {
+  for (const name of SPELLINGS) {
+    it(`[F-15] agent_type ${JSON.stringify(name)} is held like reviewer`, () => {
+      scaffoldInto(AGENT_GATE("scripts/review.sh"));
+      const r = runHook(spawnCommand(), root, spawnPayload(name));
+      expect(r.status, r.stderr).toBe(2);
+    });
+  }
+  it("[F-15] a missing or null agent_type is a default spawn and is let through; another agent too", () => {
+    scaffoldInto(AGENT_GATE("scripts/review.sh"));
+    expect(runHook(spawnCommand(), root, spawnPayload(undefined)).status).toBe(0);
+    expect(runHook(spawnCommand(), root, spawnPayload(null)).status).toBe(0);
+    expect(runHook(spawnCommand(), root, spawnPayload("writer")).status).toBe(0);
+  });
+});

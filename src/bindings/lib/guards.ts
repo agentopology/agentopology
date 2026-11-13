@@ -275,8 +275,9 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     // A platform whose hooks let a failed hook through (Codex, probe P10) must not read bad input as "no agent".
     p.supportsAsk
       ? `AGENT=$(jq -r '${p.payload.subagentType} // ""')`
-      // R-12: trimmed and lowercased like spawn-guard, so " Reviewer " is still reviewer.
-      : `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
+      // R-12, F-15: normalized (format characters, case, space, a leading path, trailing punctuation), so
+      // " Reviewer ", "re\u200bviewer" and "agents/reviewer:" are still reviewer.
+      : `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
     "",
     ...(p.supportsAsk
       ? [
@@ -603,6 +604,16 @@ export function generateGateWrapperScripts(
 
 /** jq: trim, lowercase, drop a "<prefix>:" namespace. */
 const JQ_NORM = String.raw`gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
+
+/**
+ * The agent name a spawn's payload carries, made comparable with an agent id
+ * (F-15): zero-width and other format characters dropped (\p{Cf}: U+200B,
+ * U+FEFF, U+00AD, bidi marks), surrounding space trimmed, lowercased, trailing
+ * punctuation (`reviewer:`) dropped, a leading path (`./`, `agents/`) and a
+ * `plugin:` prefix dropped. An empty result (no agent_type, or null) is a
+ * default spawn, which no case matches.
+ */
+const JQ_AGENT_NORM = String.raw`gsub("\\p{Cf}"; "") | gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("[\\s:;.,!?]+\\z"; "") | sub("\\A.*/"; "") | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
 
 function appendLines(p: GuardPlatform): string[] {
   return [

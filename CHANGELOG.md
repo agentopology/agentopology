@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex `before-agent.sh` holds an agent however its name is spelled (F-15)
+
+- The spawn guard compared `agent_type` after trimming and lowercasing only, so `re\u200bviewer`, `\ufeffreviewer`, `./reviewer`, `agents/reviewer` and `reviewer:` started a gated agent. It now drops format characters (`\p{Cf}`), a leading path, trailing punctuation and a `plugin:` prefix too. A missing or `null` `agent_type` is still let through: it is Codex's default agent, and the docs now say so.
+
 ### [fix] Fixed: the Codex `if:` filter sees `.env` however an `apply_patch` spells its path (F-12)
 
 - `at-if.sh` compared a patch's paths as written, so `$ROOT/./.env`, `$ROOT//.env`, `sub/../.env`, `./.env` and `/proc/self/cwd/.env` passed a `strength: refuse` hook with `if: "Write(.env*)"`. Each path is now made canonical by its letters (relative paths from the current folder, `/proc/self/cwd` as the project root, `.`, `..` and `//` resolved, the root stripped; glob characters in a path are not expanded). A pattern with no slash, such as `.env*`, now also matches the file's name at any depth.
