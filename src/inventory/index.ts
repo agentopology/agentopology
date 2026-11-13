@@ -20,6 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+import * as os from "node:os";
 import { spawnSync } from "node:child_process";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
@@ -35,13 +36,15 @@ export type InventoryTag = "h" | "instrument" | "e";
 export interface InventoryItem {
   /** Stable id, `<kind>:<name>`. */
   id: string;
-  kind: "launchd" | "cron" | "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script";
+  kind: "launchd" | "cron" | "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script" | "file";
   /** Project-relative file, for things that are files. */
   path?: string;
   /** sha256 of the file's bytes. */
   fingerprint?: string;
   /** Suggested by the collector, settled by the owner in a committed inventory.json. */
   tag?: InventoryTag;
+  /** `user` for things under the user's home (`inventory --user`); counted apart from the project. */
+  scope?: "user";
 }
 
 export interface Inventory {
@@ -112,6 +115,64 @@ export interface CollectOptions {
   launchAgentsDir?: string;
   /** The crontab text; default the output of `crontab -l`. */
   crontab?: string;
+  /** Project-relative folders from the .at's `inventory { roots }`: every file under them is listed, kind `file`. */
+  roots?: string[];
+  /** Also list the user-level tree: ~/.claude/agents, skills, commands and the hooks in ~/.claude/settings.json. */
+  user?: boolean;
+  /** The home folder to read for `user`; default `$HOME`. Tests point it at a temp dir. */
+  home?: string;
+}
+
+/** A root the .at declares, made safe to join to the project: relative, no `..`. */
+const cleanRoot = (r: string): string | null => {
+  const t = r.replace(/^\.\//, "").replace(/\/+$/, "");
+  return !t || path.isAbsolute(t) || t.startsWith("~") || t.split(/[\\/]/).includes("..") ? null : t;
+};
+
+/** Every file under a declared root, as `file:<path>`. A folder that is not there lists nothing. */
+function rootFiles(root: string, roots: string[]): InventoryItem[] {
+  const items: InventoryItem[] = [];
+  const visit = (dir: string) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!SKIP.has(e.name)) visit(full); }
+      else if (e.isFile()) {
+        const rel = path.relative(root, full).split(path.sep).join("/");
+        items.push({ id: `file:${rel}`, kind: "file", path: rel, fingerprint: sha256(full) });
+      }
+    }
+  };
+  for (const r of roots) { const c = cleanRoot(r); if (c) visit(path.join(root, c)); }
+  return items;
+}
+
+/** The user-level tree under `home`, each id prefixed `user:`. Reads only the folders a run reads. */
+function userItems(home: string): InventoryItem[] {
+  const items: InventoryItem[] = [];
+  const base = path.join(home, ".claude");
+  const relOf = (full: string) => path.relative(home, full).split(path.sep).join("/");
+  for (const sub of ["agents", "skills", "commands"]) {
+    const tree = walk(path.join(base, sub), [sub]);
+    for (const full of tree.files) {
+      const rel = relOf(full);
+      const c = classify(rel);
+      items.push({ ...c, id: `user:${c.id}`, path: `~/${rel}`, fingerprint: sha256(full), scope: "user" });
+    }
+    for (const full of tree.dirs) {
+      const rel = relOf(full);
+      items.push({ id: `user:skill-dir:${rel.split("/").slice(2).join("/")}`, kind: "skill-dir", path: `~/${rel}`, scope: "user" });
+    }
+  }
+  const s = readJson(path.join(base, "settings.json"));
+  for (const [event, entries] of Object.entries(s?.hooks ?? {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries as Array<Record<string, any>>)
+      for (const h of (entry.hooks ?? []) as Array<Record<string, any>>)
+        items.push({ id: `user:${hookId(event, entry.matcher, h)}`, kind: "hook", path: "~/.claude/settings.json", scope: "user" });
+  }
+  return items;
 }
 
 /** launchd plists and crontab lines whose command points into the project dir. Tagged e: the machine's, not the harness's. */
@@ -142,6 +203,8 @@ function scheduled(root: string, opts: CollectOptions): InventoryItem[] {
 /** List every live thing under `root`, sorted by id. Reads only. */
 export function collectInventory(root: string, opts: CollectOptions = {}): InventoryItem[] {
   const items: InventoryItem[] = [...scheduled(path.resolve(root), opts)];
+  if (opts.roots?.length) items.push(...rootFiles(root, opts.roots));
+  if (opts.user) items.push(...userItems(opts.home ?? process.env.HOME ?? os.homedir()));
   const tree = walk(path.join(root, ".claude"));
   const relOf = (full: string) => path.relative(root, full).split(path.sep).join("/");
   for (const full of tree.files) {
@@ -194,6 +257,40 @@ export interface CoverageReport {
   notScaffolded: string[];
   /** Tools a refuse hook leaves open on a server it guards, counting the inventory's tool names. */
   gaps: MatcherGap[];
+  /** Per declared inventory root: the files under it and how many the .at maps. */
+  roots?: Array<{ root: string; total: number; mapped: number }>;
+  /** `--user`: the user-level tree, counted apart from the project numbers above. */
+  user?: { total: number; mapped: number; unmapped: InventoryItem[] };
+  /** What the .at declares outside the repo (`needs`), with its local status. */
+  outside?: OutsideCheck[];
+}
+
+export type OutsideStatus = "declared" | "mapped" | "missing" | "not checked (account connector)";
+export interface OutsideCheck {
+  kind: "memory" | "connector" | "user-skill";
+  name: string;
+  status: OutsideStatus;
+}
+
+export interface CoverageOptions {
+  /** Check what `needs` declares against the user's home. */
+  user?: boolean;
+  /** The home folder to check; default `$HOME`. Giving it turns the check on. */
+  home?: string;
+}
+
+const homePath = (p: string, home: string) => path.join(home, p.replace(/^~\//, ""));
+
+/** What `needs` declares, checked against `home` when asked; otherwise just listed as declared. */
+export function outsideChecks(ast: TopologyAST, check: boolean, home: string): OutsideCheck[] {
+  const n = ast.needs;
+  if (!n) return [];
+  const out: OutsideCheck[] = [];
+  const exists = (p: string) => (check ? (fs.existsSync(p) ? "mapped" : "missing") : "declared") as OutsideStatus;
+  if (n.memory !== undefined) out.push({ kind: "memory", name: n.memory, status: exists(homePath(n.memory, home)) });
+  for (const c of n.connectors ?? []) out.push({ kind: "connector", name: c, status: "not checked (account connector)" });
+  for (const sk of n.userSkills ?? []) out.push({ kind: "user-skill", name: sk, status: exists(path.join(home, ".claude", "skills", sk)) });
+  return out;
 }
 
 const norm = (p: string) => p.replace(/^\.\//, "").replace(/^\$\{?CLAUDE_PROJECT_DIR\}?\//, "");
@@ -233,7 +330,11 @@ function runScripts(ast: TopologyAST): string[] {
 }
 
 /** Match live things to the .at, both ways. */
-export function coverage(ast: TopologyAST, items: InventoryItem[], root: string): CoverageReport {
+export function coverage(ast: TopologyAST, items: InventoryItem[], root: string, opts: CoverageOptions = {}): CoverageReport {
+  const home = opts.home ?? process.env.HOME ?? os.homedir();
+  const checkUser = opts.user ?? opts.home !== undefined;
+  const outside = outsideChecks(ast, checkUser, home);
+  const userSkills = new Set(outside.filter((o) => o.kind === "user-skill" && o.status === "mapped").map((o) => o.name));
   const generated = claudeCodeBinding.scaffold(ast);
   const genPaths = new Set(generated.map((f) => norm(f.path)));
   const genHooks = new Set<string>();
@@ -288,16 +389,42 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
     }
   };
 
-  const external = items.filter((i) => i.tag === "e");
-  const counted = items.filter((i) => i.tag !== "e");
+  // A user-level skill is mapped when the .at declares it under `needs user-skills` and it exists.
+  const isUserMapped = (i: InventoryItem): boolean => {
+    const m = i.id.match(/^user:skill(?:-file|-dir)?:([^/]+)/);
+    return !!m && userSkills.has(m[1]);
+  };
+  const userItems = items.filter((i) => i.scope === "user");
+  const projectItems = items.filter((i) => i.scope !== "user");
+  const external = projectItems.filter((i) => i.tag === "e");
+  const counted = projectItems.filter((i) => i.tag !== "e");
   const unmapped = counted.filter((i) => !isMapped(i));
   const seen = new Set<string>();
-  const missing = declared
-    .filter((d) => !fs.existsSync(path.join(root, d.path)))
-    .filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
+  const roots = (ast.inventoryRoots ?? []).map((r) => cleanRoot(r)).filter((r): r is string => r !== null);
+  const rootPointers: MissingPointer[] = roots.map((r) => ({ path: `${r}/`, from: "inventory roots:" }));
+  const isDir = (p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+  const missing = [
+    ...declared.filter((d) => !fs.existsSync(path.join(root, d.path))),
+    ...rootPointers.filter((d) => !isDir(path.join(root, d.path))),
+    ...outside.filter((o) => o.status === "missing").map((o) => ({
+      path: o.kind === "memory" ? o.name : `~/.claude/skills/${o.name}`,
+      from: o.kind === "memory" ? "needs memory:" : "needs user-skills:",
+    })),
+  ].filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
   const notScaffolded = [...genPaths].filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
   const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => i.id.slice(9)));
-  return { total: counted.length, mapped: counted.length - unmapped.length, unmapped, external, missing, notScaffolded, gaps };
+  const unmappedIds = new Set(unmapped.map((i) => i.id));
+  const rootStats = roots.map((r) => {
+    const mine = counted.filter((i) => i.kind === "file" && i.path?.startsWith(`${r}/`));
+    return { root: `${r}/`, total: mine.length, mapped: mine.filter((i) => !unmappedIds.has(i.id)).length };
+  });
+  const userUnmapped = userItems.filter((i) => !isUserMapped(i));
+  return {
+    total: counted.length, mapped: counted.length - unmapped.length, unmapped, external, missing, notScaffolded, gaps,
+    ...(rootStats.length ? { roots: rootStats } : {}),
+    ...(checkUser ? { user: { total: userItems.length, mapped: userItems.length - userUnmapped.length, unmapped: userUnmapped } } : {}),
+    ...(outside.length ? { outside } : {}),
+  };
 }
 
 /** The coverage section validate prints. */
@@ -316,7 +443,55 @@ export function renderCoverage(r: CoverageReport): string[] {
     lines.push(`  matcher gaps (${r.gaps.length}), a refuse hook guards the server but not this tool:`);
     for (const g of r.gaps) lines.push(`    ${g.tool}  ← hook ${g.hook}`);
   }
+  if (r.user) {
+    lines.push(`user-level: ${r.user.mapped} of ${r.user.total} live things in ~/.claude are in the .at (counted apart from the project)`);
+    if (r.user.unmapped.length) {
+      lines.push(`  unmapped user-level (${r.user.unmapped.length}):`);
+      for (const i of r.user.unmapped) lines.push(`    ${i.id}${i.path ? `  (${i.path})` : ""}`);
+    }
+  }
+  for (const k of r.roots ?? []) {
+    const p = k.total ? Math.round((k.mapped / k.total) * 100) : 100;
+    lines.push(`  root ${k.root}: ${k.mapped} of ${k.total} files are in the .at (${p}%)`);
+  }
+  if (r.outside?.length) lines.push(...renderOutside(r.outside));
   if (r.external.length) lines.push(`  external (${r.external.length}), tagged e, not required: ${r.external.map((i) => i.id).join(", ")}`);
   if (r.notScaffolded.length) lines.push(`  not scaffolded (${r.notScaffolded.length}): scaffold would write these and they are not on disk; rerun scaffold`);
   return lines;
+}
+
+/** The `needs` section: what the .at declares outside the repo, each with its local status. */
+export function renderOutside(checks: OutsideCheck[]): string[] {
+  const lines = [`  declared outside the repo (${checks.length}):`];
+  for (const o of checks) lines.push(`    ${o.kind} ${o.name}${o.status === "declared" ? "" : `  ${o.status}`}`);
+  return lines;
+}
+
+/**
+ * One number for several .at files over the same project: a live thing is
+ * mapped when any file maps it. Pointers are unioned, not averaged.
+ */
+export function unionCoverage(reports: CoverageReport[]): CoverageReport {
+  const first = reports[0];
+  const ids = (xs: InventoryItem[]) => new Set(xs.map((i) => i.id));
+  const unmappedIds = reports.map((r) => ids(r.unmapped)).reduce((a, b) => new Set([...a].filter((x) => b.has(x))));
+  const unmapped = first.unmapped.filter((i) => unmappedIds.has(i.id));
+  const dedupe = <T,>(xs: T[], key: (x: T) => string) => { const seen = new Set<string>(); return xs.filter((x) => (seen.has(key(x)) ? false : (seen.add(key(x)), true))); };
+  const roots = dedupe(reports.flatMap((r) => r.roots ?? []), (k) => k.root).map((k) => ({
+    root: k.root, total: k.total, mapped: k.total - unmapped.filter((i) => i.kind === "file" && i.path?.startsWith(k.root)).length,
+  }));
+  const userAll = reports.map((r) => r.user).filter((u): u is NonNullable<CoverageReport["user"]> => !!u);
+  const userUnmappedIds = userAll.length ? userAll.map((u) => ids(u.unmapped)).reduce((a, b) => new Set([...a].filter((x) => b.has(x)))) : new Set<string>();
+  const userUnmapped = userAll.length ? userAll[0].unmapped.filter((i) => userUnmappedIds.has(i.id)) : [];
+  const outside = dedupe(reports.flatMap((r) => r.outside ?? []), (o) => `${o.kind}:${o.name}`);
+  // A declared thing another file does not mention is still checked: mapped in any file wins over missing.
+  const missing = dedupe(reports.flatMap((r) => r.missing), (m) => m.path);
+  return {
+    total: first.total, mapped: first.total - unmapped.length, unmapped, external: first.external, missing,
+    notScaffolded: [...new Set(reports.flatMap((r) => r.notScaffolded))].sort(),
+    gaps: dedupe(reports.flatMap((r) => r.gaps), (g) => `${g.hook}:${g.tool}`),
+    ...(roots.length ? { roots } : {}),
+    ...(userAll.length ? { user: { total: userAll[0].total, mapped: userAll[0].total - userUnmapped.length, unmapped: userUnmapped } } : {}),
+    ...(outside.length ? { outside } : {}),
+  };
 }

@@ -4,6 +4,18 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Inventory covers folders a run reads, other .at files, and the user's home (T-08)
+
+- A top-level `inventory { roots: ["harness/", "scripts/"] }` block lists extra project folders. `inventory --at <file.at>` and `validate --inventory` list every file under them (kind `file`) and report a root that does not exist as missing. An absolute path, a home path or `..` in a root is a validate error (V128).
+- `inventory --user` and `validate --inventory ... --user` add `~/.claude/agents`, `skills`, `commands` and the hooks in `~/.claude/settings.json`, tagged user-level and counted apart from the project.
+- `validate --inventory DIR a.at b.at` prints the per-file numbers, then one union number in which a live thing is mapped when any file maps it. With one file the output is unchanged.
+
+### [feature] Declare what lives outside the repo (L-4)
+
+- A top-level `needs { memory: "~/path"  connectors: [name]  user-skills: [name] }` block parses, round-trips and is listed by `validate` under "declared outside the repo". A bad memory path or a path used as a name is a validate error (V129).
+- With `validate --inventory ... --user`, a declared user skill (`~/.claude/skills/<name>`) and a declared memory path count as mapped when they exist and as missing (exit 1) when they do not. Connectors cannot be checked locally and print `not checked (account connector)`.
+- README and spec now say 129 rules (V1-V129).
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).

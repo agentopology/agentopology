@@ -897,6 +897,20 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push(`  person ${p.id} {${p.away ? ` away: ${q(p.away)} ` : ""}}`);
   }
 
+  if (ast.inventoryRoots?.length) {
+    sections.push("");
+    sections.push(`  inventory { roots: ${inlineList(ast.inventoryRoots)} }`);
+  }
+
+  if (ast.needs) {
+    sections.push("");
+    sections.push("  needs {");
+    if (ast.needs.memory !== undefined) sections.push(`    memory: ${q(ast.needs.memory)}`);
+    if (ast.needs.connectors?.length) sections.push(`    connectors: ${inlineList(ast.needs.connectors)}`);
+    if (ast.needs.userSkills?.length) sections.push(`    user-skills: ${inlineList(ast.needs.userSkills)}`);
+    sections.push("  }");
+  }
+
   if (ast.machines) {
     sections.push("");
     sections.push("  machines {");

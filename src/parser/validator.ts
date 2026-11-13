@@ -4063,6 +4063,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v125SessionCronSurvives(ast),
     ...v126AwayWaits(ast),
     ...v127PersonWindows(ast),
+    ...v128InventoryRoots(ast),
+    ...v129NeedsOutside(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4291,6 +4293,37 @@ function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
     if (n.who && !people.has(n.who))
       results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message: `Human "${n.id}" has who: ${n.who}, which is not a person block.` });
     if (n.valid !== undefined && !parseWindow(n.valid)) bad(n.id, `Human "${n.id}" valid:`, n.valid);
+  }
+  return results;
+}
+
+const hasDotDot = (p: string) => p.split(/[\\/]/).includes("..");
+const isAbsolute = (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\");
+
+/** V128 (T-08): an inventory root is a project-relative folder: no absolute path, no `..`. */
+function v128InventoryRoots(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const r of ast.inventoryRoots ?? []) {
+    if (!r || isAbsolute(r) || r.startsWith("~") || hasDotDot(r))
+      results.push({ rule: "V128", level: "error", message: `Inventory root "${r}" must be a path inside the project: relative, with no ".." and no absolute or home path.` });
+  }
+  return results;
+}
+
+/** V129 (L-4): `needs` names things outside the repo: memory is a path under the home folder (`~/...`, no `..`), skills and connectors are bare names. */
+function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const n = ast.needs;
+  if (!n) return results;
+  const err = (message: string) => results.push({ rule: "V129", level: "error", message });
+  if (n.memory !== undefined) {
+    if (!n.memory || hasDotDot(n.memory) || (isAbsolute(n.memory)) || (n.memory.startsWith("~") && !n.memory.startsWith("~/")))
+      err(`needs memory: "${n.memory}" must be a path under the user's home, written ~/<path> (no "..", no other absolute path).`);
+  }
+  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors]] as const) {
+    for (const name of list ?? [])
+      if (!name || /[\\/]/.test(name) || name === "." || name === "..")
+        err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
   }
   return results;
 }

@@ -56,7 +56,7 @@ import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
-import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
+import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -84,13 +84,17 @@ ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
-  agentopology validate <file.at> [--inventory <project-dir|inventory.json>] [--dir <project-dir>]
+  agentopology validate <file.at> [more.at ...] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user]
                        With --inventory: how many live things in the project the .at
                        accounts for (unmapped warns), and what it points at that is not
-                       on disk (missing, exits 1).
-  agentopology inventory [<project-dir>]
+                       on disk (missing, exits 1). Folders the .at lists in
+                       inventory { roots: [...] } are listed too. With several .at files
+                       the per-file numbers print first, then one union number. --user
+                       adds ~/.claude (counted apart) and checks the needs block.
+  agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
+                       --at adds the roots that .at declares; --user adds ~/.claude.
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--allow-invalid] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
   agentopology visualize [file.at] [--dir <project>] [--output <dir>] [--no-open] [--no-check] [--print-summary]
@@ -223,6 +227,12 @@ interface ParsedArgs {
   noCheck: boolean;
   printSummary: boolean;
   inventory: string | undefined;
+  /** `--user`: add the user-level tree (inventory) and check what `needs` declares (validate --inventory). */
+  user: boolean;
+  /** `inventory --at <file.at>` (repeatable): topologies whose `inventory { roots }` are listed. */
+  at: string[];
+  /** More .at files after the first: `validate --inventory DIR a.at b.at`. */
+  more: string[];
   help: boolean;
 }
 
@@ -253,6 +263,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     noCheck: false,
     printSummary: false,
     inventory: undefined,
+    user: false,
+    at: [],
+    more: [],
     help: false,
   };
 
@@ -298,6 +311,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       i += 2;
       continue;
     }
+    if (arg === "--user") { result.user = true; i++; continue; }
+    if (arg === "--at" && i + 1 < args.length) { result.at.push(args[i + 1]); i += 2; continue; }
     if (arg === "--all") {
       result.all = true;
       i++;
@@ -369,6 +384,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.command = arg;
     } else if (!result.file) {
       result.file = arg;
+    } else if (result.command === "validate") {
+      result.more.push(arg);
     }
     i++;
   }
@@ -380,7 +397,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
+function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = []): void {
+  if (more.length) return cmdValidateMany([filePath, ...more], inventory, dir, user);
   const source = readFile(filePath);
 
   let ast;
@@ -397,7 +415,8 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   const { results, errors: errorCount, warnings: warningCount } = validateResult(ast, path.resolve(filePath));
-  const covered = inventory ? printCoverage(ast, inventory, dir) : true;
+  if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
+  const covered = inventory ? printCoverage(ast, inventory, dir, user) : true;
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -408,6 +427,16 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
     return;
   }
 
+  printFindings(results, errorCount, warningCount);
+  printInstalledMark();
+  console.log(c.dim(verifiedOnLine()));
+
+  if (errorCount > 0 || !covered) {
+    process.exit(1);
+  }
+}
+
+function printFindings(results: ReturnType<typeof validateResult>["results"], errorCount: number, warningCount: number): void {
   for (const result of results) {
     const prefix =
       result.level === "error"
@@ -425,12 +454,46 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   printLessons(results.map((r) => r.rule));
+}
+
+/**
+ * Several .at files over one project: each is validated on its own, then with
+ * --inventory the per-file coverage numbers print, then one union number (a
+ * live thing is mapped when any of the files maps it).
+ */
+function cmdValidateMany(files: string[], inventory?: string, dir?: string, user = false): void {
+  const asts: TopologyAST[] = [];
+  let failed = false;
+  for (const f of files) {
+    let ast: TopologyAST;
+    try { ast = parseAt(readFile(f), f); } catch (err) {
+      console.error(c.red(`Parse error: ${f}: ${(err as Error).message}`));
+      process.exit(1);
+    }
+    asts.push(ast);
+    console.log(c.bold(`Validating ${path.basename(f)} (${ast.topology.name} v${ast.topology.version})`));
+    console.log("");
+    if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
+    const { results, errors, warnings } = validateResult(ast, path.resolve(f));
+    if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
+    else printFindings(results, errors, warnings);
+    if (errors > 0) failed = true;
+  }
+  if (inventory) {
+    const { items, root } = loadInventory(inventory, dir, [...new Set(asts.flatMap((a) => a.inventoryRoots ?? []))], user);
+    const reports = asts.map((a) => coverageResult(a, items, root, user));
+    const pct = (r: CoverageReport) => (r.total ? Math.round((r.mapped / r.total) * 100) : 100);
+    reports.forEach((r, i) => console.log(`  ${path.basename(files[i])}: coverage: ${r.mapped} of ${r.total} live things are in the .at (${pct(r)}%)`));
+    const u = unionCoverage(reports);
+    const lines = renderCoverage(u);
+    lines[0] = lines[0].replace("coverage:", `coverage (union of ${files.length} files):`);
+    for (const line of lines) console.log(`  ${line}`);
+    console.log("");
+    if (u.missing.length) failed = true;
+  }
   printInstalledMark();
   console.log(c.dim(verifiedOnLine()));
-
-  if (errorCount > 0 || !covered) {
-    process.exit(1);
-  }
+  if (failed) process.exit(1);
 }
 
 /**
@@ -439,7 +502,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
  * against --dir, else the directory given, else the current directory.
  * Returns false when something the .at points at is missing.
  */
-function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boolean {
+function loadInventory(inventory: string, dir: string | undefined, roots: string[], user: boolean): { items: InventoryItem[]; root: string } {
   const target = path.resolve(inventory);
   if (!fs.existsSync(target)) {
     console.error(c.red(`Error: --inventory ${inventory} not found.`));
@@ -448,7 +511,7 @@ function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boole
   const isDir = fs.statSync(target).isDirectory();
   const root = path.resolve(dir ?? (isDir ? target : "."));
   let items: InventoryItem[];
-  if (isDir) items = collectInventory(target);
+  if (isDir) items = collectInventory(target, { roots, user });
   else {
     try { items = JSON.parse(fs.readFileSync(target, "utf-8")).items; } catch (err) {
       console.error(c.red(`Error: ${inventory} is not an inventory.json (${(err as Error).message}).`));
@@ -456,7 +519,12 @@ function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boole
     }
     if (!Array.isArray(items)) { console.error(c.red(`Error: ${inventory} has no items list.`)); process.exit(1); }
   }
-  const r = coverageResult(ast, items, root);
+  return { items, root };
+}
+
+function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefined, user: boolean): boolean {
+  const { items, root } = loadInventory(inventory, dir, ast.inventoryRoots ?? [], user);
+  const r = coverageResult(ast, items, root, user);
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
   return r.missing.length === 0;
@@ -1430,11 +1498,19 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file, args.inventory, args.dir);
+      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more);
       break;
 
     case "inventory":
-      console.log(JSON.stringify({ version: 1, items: collectInventory(path.resolve(args.file ?? args.dir ?? ".")) }, null, 2));
+      {
+        const roots = args.at.flatMap((f) => {
+          try { return parseAt(readFile(f), f).inventoryRoots ?? []; } catch (err) {
+            console.error(c.red(`Parse error: ${f}: ${(err as Error).message}`));
+            process.exit(1);
+          }
+        });
+        console.log(JSON.stringify({ version: 1, items: collectInventory(path.resolve(args.file ?? args.dir ?? "."), { roots, user: args.user }) }, null, 2));
+      }
       break;
 
     case "scaffold":

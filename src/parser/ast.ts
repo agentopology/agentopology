@@ -864,6 +864,16 @@ export interface PersonDef {
   away?: string;
 }
 
+/** The top-level `needs { memory: "<path under home>" connectors: [..] user-skills: [..] }` block (L-4). */
+export interface NeedsDef {
+  /** A path under the user's home (`~/...`). */
+  memory?: string;
+  /** Account connectors; they cannot be checked locally. */
+  connectors?: string[];
+  /** Skills expected at `~/.claude/skills/<name>`. */
+  userSkills?: string[];
+}
+
 /** Topology-level defaults for sampling params and shared agent config. */
 export interface DefaultsDef {
   /** Sampling temperature (0-2). */
@@ -1162,6 +1172,10 @@ export interface TopologyAST {
   machines?: MachineDef[];
   /** People from the top-level `person` blocks (T-09). */
   persons?: PersonDef[];
+  /** Extra project folders whose files count as live things, from `inventory { roots: [...] }` (T-08). */
+  inventoryRoots?: string[];
+  /** What the topology needs from outside the repo, from the top-level `needs` block (L-4). */
+  needs?: NeedsDef;
 }
 
 // ---------------------------------------------------------------------------

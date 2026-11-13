@@ -38,8 +38,8 @@ export function validateResult(ast: TopologyAST, filePath?: string): ValidateRes
 }
 
 /** What `validate --inventory` found, as data (the report plus the items read). */
-export function coverageResult(ast: TopologyAST, items: InventoryItem[], root: string): CoverageReport {
-  return coverage(ast, items, root);
+export function coverageResult(ast: TopologyAST, items: InventoryItem[], root: string, user = false): CoverageReport {
+  return coverage(ast, items, root, { user });
 }
 
 export interface ItemFacts {
