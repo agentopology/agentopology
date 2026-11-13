@@ -1,0 +1,22 @@
+guard --check examples/data-processing.at (project: empty)
+
+  gate schema-validation  none    by: hook      SubagentStop on synthesizer → gate-schema-validation.sh
+                          ✗ no SubagentStop entry for synthesizer running gate-schema-validation.sh in .claude/settings.json
+                          ✗ .claude/skills/data-processing/scripts/gate-schema-validation.sh is missing
+  deny Bash(rm -rf *)     none    by: settings  permissions.deny in .claude/settings.json
+                          ✗ .claude/settings.json has no deny rule Bash(rm -rf *)
+  ask Bash(aws s3 *)      none    by: settings  permissions.ask in .claude/settings.json
+                          ✗ .claude/settings.json has no ask rule Bash(aws s3 *)
+
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+3 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check examples/data-processing.at (project: proj)
+
+  gate schema-validation  refuse  by: hook      SubagentStop on synthesizer → gate-schema-validation.sh · Claude Code not installed
+                          ⚠ its check script .claude/skills/data-processing/scripts/validate-schema.sh is still a stub, so it blocks every run until it is written
+  deny Bash(rm -rf *)     refuse  by: settings  permissions.deny in .claude/settings.json · Claude Code not installed
+  ask Bash(aws s3 *)      refuse  by: settings  permissions.ask in .claude/settings.json · Claude Code not installed
+
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+--- exit 0
