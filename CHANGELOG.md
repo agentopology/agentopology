@@ -62,6 +62,16 @@ All notable changes to agentopology are documented here.
 - Snapshots of the hook contract, the config keys and the feature flags are committed under `spec/codex/`. A test holds the constants to them, and `scripts/codex-drift.mjs` compares the snapshot with the live hooks page and prints each difference.
 - The four URL keys that a project config may not set are not yet listed, because the page that names them could not be read when this was written.
 
+### [feature] Codex probe pack (CX-3)
+
+- `spec/codex/probes.json` and `spec/codex/probes.md` record ten facts about Codex CLI 0.156.1 that its docs do not state, each with its evidence and the date it was measured.
+- Exit 2 from a `PreToolUse` hook blocks a shell command in `codex exec`. Exit 1, exit 127 and a timeout let the command run, with no warning.
+- File edits reach hooks as `apply_patch`, and a subagent spawn as `collaborationspawn_agent`. A subagent's `agent_type` is the `name` in its agent file.
+- Project hooks do not run without hook trust, and Codex does not say it skipped them. `.codex/` is read-only to the agent under `workspace-write`.
+- `codex exec --strict-config` is the one command that rejects unknown config keys before any model call. A message sent with `codex queue` reaches an interactive session as a plain `UserPromptSubmit`, and never reaches a `codex exec` session.
+- `scripts/codex-probes.sh` reruns the probes in temp repos. It is off unless `CODEX_LIVE=1`.
+- A `[CX-3]` test fails unless every probe P1 to P10 has a dated record with a Codex version.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
