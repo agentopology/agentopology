@@ -372,3 +372,38 @@ describe.skipIf(!hasJq)("[R-6] the if: filter reads the paths of an apply_patch"
     expect(runHook(cmd(), root, "").status).toBe(2);
   });
 });
+
+describe.skipIf(!hasJq)("[R-7] the if: filter runs its command as argv, so a path with a space works", () => {
+  it("[R-7] in a project folder named \"fx 3\", a guarded git push exits 2", () => {
+    const spaced = join(root, "fx 3");
+    fs.mkdirSync(spaced);
+    spawnSync("git", ["init", "-q", spaced]);
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')), spaced);
+    fs.writeFileSync(join(spaced, ".codex/scripts/no-push.sh"), "#!/usr/bin/env bash\necho 'no push' >&2\nexit 2\n", { mode: 0o755 });
+    const cmd = hooksOf(spaced).PreToolUse[0].hooks[0].command;
+    const r = runHook(cmd, spaced, bashPayload("git push origin main"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("no push");
+    expect(runHook(cmd, spaced, bashPayload("git status")).status).toBe(0);
+  });
+
+  it("[R-7] a refuse hook whose command is not found (127) blocks with exit 2", () => {
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')));
+    fs.rmSync(at(".codex/scripts/no-push.sh"));
+    const r = runHook(hooksOf().PreToolUse[0].hooks[0].command, root, bashPayload("git push origin main"));
+    expect(r.status).toBe(2);
+  });
+
+  it("[R-7] an inline shell command still runs through the filter", () => {
+    scaffoldInto(HOOKED(`    hook g {
+      on: PreToolUse
+      matcher: "Bash"
+      if: "Bash(rm -rf *)"
+      run: "exit 2"
+      type: command
+    }`));
+    const cmd = hooksOf().PreToolUse[0].hooks[0].command;
+    expect(runHook(cmd, root, bashPayload("rm -rf /tmp/x")).status).toBe(2);
+    expect(runHook(cmd, root, bashPayload("ls")).status).toBe(0);
+  });
+});

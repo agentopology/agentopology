@@ -55,15 +55,15 @@ describe("[CX-8] hooks compile to .codex/hooks.json", () => {
 
   it("[CX-8] the kitchen-sink `exit 2` hook on PreToolUse and Bash is that inline command, and no file named exit is written", () => {
     const pre = json.hooks.PreToolUse;
-    const entry = pre.find((e: any) => e.hooks.some((h: any) => /\bexit 2$/.test(h.command)));
+    const entry = pre.find((e: any) => e.hooks.some((h: any) => /\bexit 2'?$/.test(h.command)));
     expect(entry).toBeDefined();
     expect(entry.matcher).toBe("Bash");
     expect(files.some((f) => f.path.replace(/^.*\//, "") === "exit")).toBe(false);
   });
 
   it("[CX-8] the `if:` on that hook is kept: the command runs only when the tool call matches", () => {
-    const entry = json.hooks.PreToolUse.find((e: any) => /exit 2$/.test(e.hooks[0].command));
-    expect(entry.hooks[0].command).toContain("at-if.sh\" Bash 'rm -rf *' exit 2");
+    const entry = json.hooks.PreToolUse.find((e: any) => /exit 2'?$/.test(e.hooks[0].command));
+    expect(entry.hooks[0].command).toContain("at-if.sh\" Bash 'rm -rf *' sh -c 'exit 2'");
     expect(files.find((f) => f.path === ".codex/scripts/at-if.sh")?.executable).toBe(true);
   });
 

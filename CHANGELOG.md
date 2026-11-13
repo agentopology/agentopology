@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] The Codex if: filter runs its command as argv (R-7)
+
+- `at-if.sh` ran the hook's command with `sh -c "$*"`, which joins the words again: in a project whose path holds a space ("fx 3") the script path split, the run exited 127, and Codex let the call run. The filter now runs the command as given (`"$@"`); an inline shell command such as `exit 2` is passed as one `sh -c` word. On a `strength: refuse` hook, a command that cannot be found or run (126, 127) blocks with exit 2, and the filter itself is found the way the guards are (R-2).
+
 ### [fix] The Codex if: filter reads the paths of an apply_patch (R-6)
 
 - On `apply_patch`, `.codex/scripts/at-if.sh` read `.tool_input.file_path` / `.path`. Codex sends the patch text in `.tool_input.command`, with absolute paths, so `if: "Write(.env*)"` never fired; input that was not JSON also passed (exit 0). Now every `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` path in the patch is made relative to the project root and matched. On a `strength: refuse` hook, input that is empty, not JSON, or a patch with no readable path blocks (exit 2).
