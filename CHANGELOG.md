@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex's `AGENTS.md` no longer hands the model a ready-to-run approval line (F-10)
+
+- R-11 took the approval command out of the hook's stderr but put it in `AGENTS.md`, which Codex loads into the model's context, so the model could still run it and approve itself. `AGENTS.md` now describes the record (`step`, `ok`, `at`, one JSON line, the last one counts) for the person, with no `mkdir`/`printf ... >>` line. The test asserts that no such line appears in `AGENTS.md` or on stderr.
+
 ### [fix] Fixed: the step guard refuses what it cannot read, and reads interpreter steps by their script (F-1, F-2, F-3, F-5, F-19, F-21)
 
 - An adversarial review of the 0.11.0 candidate ran guarded steps past `before-action.sh` (both targets) in ordinary shell forms: a backslash line continuation, a redirect glued to or between the words (`./tool publish>/dev/null ep1`, `./tool 2>&1 publish ep1`), an expansion or glob inside the words (`${IFS}`, `$'...'`, `{publish,}`, `pub*lish`, `./to?l`), upper case (`./TOOL`, a bypass on a case-insensitive disk), and a second step in the same command riding the first step's ok record. A step run through an interpreter (`python3 harness/bin/post.py`) passed as `python3 ./harness/bin/post.py`, by an absolute path, or as `python post.py`.
