@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [0.11.1] - UNRELEASED
 
+
+### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
+
+- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
+
 ### [fix] Fixed: the step and ledger guards fire for PowerShell and Monitor
 
 - Fixed: the step and ledger guards fire for PowerShell and Monitor. On PowerShell setups (Windows without Git Bash, or pwsh enabled), 0.11.0's step and ledger guards did not fire; on Claude Code before 2.1.314 a Bash hook does not fire for Monitor, and guard --check now says so.
