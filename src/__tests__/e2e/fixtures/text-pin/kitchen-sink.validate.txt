@@ -1,11 +1,8 @@
 Validating kitchen-sink.at (incident-response v2.0.0)
 
-  WARN  [V23] Duplicate "env" block detected (found 3) — only the first occurrence is used
-  WARN  [V23] Duplicate "observability" block detected (found 2) — only the first occurrence is used
-  WARN  [V23] Duplicate "interface" block detected (found 2) — only the first occurrence is used
   WARN  [V93] line 296: Edge "verifier -> fixer" declares no handoff — "verifier" writes [workspace/verification/] and "fixer" reads [workspace/triage/], which do not overlap. Add a shared path to "fixer" reads, or the receiver runs after the sender with none of its output (fixer)
 
-  0 error(s), 4 warning(s)
+  0 error(s), 1 warning(s)
 
   ── how to write it ──────────────────────────────────
 

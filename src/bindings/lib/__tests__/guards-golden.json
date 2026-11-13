@@ -74,7 +74,7 @@
   ".claude/commands/process.md": "6363fc72073f810aad11f64fd64585d6e5da34659ce28918d14a2e1ce3348c7b",
   ".claude/commands/status.md": "09d474bee7b38197dfb0aef9e7c8b754855812ab2510dcfcef62dc06178f8408",
   ".claude/skills/data-processing/workspace-protocol.md": "bc1e199e0d71ed55ff4b2c7b9721721932330359bae89c61a2cefbd9155bab47",
-  ".claude/settings.json": "cacc0f36901f3c3fa186e1f45e4bdc507f702037e048049bb70e7972d9bcdce5",
+  ".claude/settings.json": "b9f2ae5f9b26f1bb9179f87efa8143af75553bd159cbc6cddb800fcc424c346a",
   ".mcp.json": "c565353c602c7079125a231a26c1c74c2f49e16b7b749ef2449823f22a6639aa",
   "scripts/collect-metrics.sh": "03048a9212b91d74c41110d8d2ffec4e5e5e007a0c7247f23c405fde6120c752",
   ".claude/rules/data-processing.md": "0c1dad6aa2aa0dc52ccb2bc86cd338a2c1c19435b74245e1195c5ca840951953"

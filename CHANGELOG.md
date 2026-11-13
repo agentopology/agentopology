@@ -4,6 +4,22 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
+
+- The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.
+
+### [fix] Fixed: V23 counts only top-level blocks of the whole keyword (S-13)
+
+- V23 ("Duplicate `env` block") counted a block of the same name at any depth, and any word that starts with the keyword. An imported `.mcp.json` server with `env: {}` made every such import warn, and `kitchen-sink.at` warned three times for nothing (`environments {` counted as `env`, `observability-platform {` inside `mcp-servers` as `observability`, `interfaces {` as `interface`). V23 now counts only blocks at the topology's top level whose keyword is the whole word. Two real top-level `env` blocks still warn.
+
+### [fix] Fixed: an action a topology .at with no orchestrator puts in the flow is handled (S-13)
+
+- When `import` takes flow from a project's `.at` that states no orchestrator (a plain pipeline ending in a `report` action) and the project also has a topology skill with one, the action came in through the flow but not into `handles`, and failed V9. Every action in the imported flow is now in the orchestrator's `handles`, after the ones the author listed.
+
+### [fix] Fixed: a project with several topology skills imports one orchestrator that handles all their actions (S-13)
+
+- `import` kept the flow of every topology skill in `.claude/skills/*/SKILL.md` but only the first skill's `Handles:` line, so each action another skill's flow uses failed V9 ("used in flow but not in orchestrator.handles"). The one orchestrator now handles the union of every topology skill's `Handles:`, first skill first.
+
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
 - Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.
