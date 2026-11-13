@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Full MCP tables for Codex (CX-14)
+
+- A Codex `[mcp_servers.<id>]` table now carries every field of the server: `env` as its own table, `args` and tool lists as arrays, `startup_timeout_sec` as a number, and `bearer_token_env_var` for a URL server. The Claude Code `type` key is left out.
+- A new `matcherProblem` for Codex hooks flags the dotted `mcp.server.tool` matcher (a Codex hook sees `mcp__server__tool`) and a matcher on an event that ignores it.
+
 ### [feature] Honest Codex agent files and model names (CX-5)
 
 - `scaffold --target codex` now refuses a Claude model name (`opus`, `sonnet`, `haiku`, `fable` or any `claude-*`) on an agent or the orchestrator. It prints which agent uses which name, exits 1 and writes nothing. It does not pick a Codex model for you; set one such as `gpt-5.2`.

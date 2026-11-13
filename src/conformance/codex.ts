@@ -115,6 +115,26 @@ export const CODEX_HOOKS_PROVEN = {
   bash: false, applyPatch: false, mcp: false, spawn: false, queue: false, subagentStop: false,
 } as const;
 
+/**
+ * Why a hook matcher can never match what it seems meant to, or null.
+ * A Codex hook sees an MCP tool as `mcp__<server>__<tool>`; the .at's dotted
+ * `mcp.server.tool` never matches. On the events that ignore a matcher, any
+ * matcher is dead text. Otherwise a matcher is a regex.
+ */
+export function matcherProblem(event: string, matcher: string | undefined): string | null {
+  const m = matcher ?? "";
+  if (m === "" || m === "*") return null;
+  if (NO_MATCHER_EVENTS.has(event)) return `${event} ignores its matcher "${m}", so it narrows nothing`;
+  if (/^mcp\./.test(m)) {
+    const [server, ...tool] = m.slice(4).split(".");
+    const t = tool.join(".");
+    const fix = !t || t === "*" ? `mcp__${server}__.*` : `mcp__${server}__${t}`;
+    return `"${m}" is the .at's dotted form, but a Codex hook sees mcp__<server>__<tool>, so it never matches; write matcher: "${fix}"`;
+  }
+  try { new RegExp(m); } catch (err) { return `"${m}" is read as a regex and does not compile (${(err as Error).message}), so it never matches`; }
+  return null;
+}
+
 /** A planted-check finding. */
 export interface Violation { check: string; where: string; message: string }
 

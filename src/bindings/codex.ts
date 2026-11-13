@@ -137,6 +137,21 @@ function codexWarn(message: string): void {
 /** MCP keys Codex does not have; dropped. `type` is a Claude Code key. */
 const MCP_DROPPED_KEYS = new Set(["type"]);
 
+const MCP_NUMBER_KEYS = new Set(["startup_timeout_sec", "tool_timeout_sec"]);
+const MCP_BOOLEAN_KEYS = new Set(["enabled", "required"]);
+const MCP_LIST_KEYS = new Set(["args", "enabled_tools", "disabled_tools", "env_vars"]);
+
+/** The parser reads every MCP field as text; give Codex the type it expects for the keys it types. */
+function mcpValue(key: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (MCP_NUMBER_KEYS.has(key) && /^\d+(\.\d+)?$/.test(value.trim())) return Number(value);
+  if (MCP_BOOLEAN_KEYS.has(key) && /^(true|false)$/.test(value.trim())) return value.trim() === "true";
+  if (MCP_LIST_KEYS.has(key) && /^\[.*\]$/s.test(value.trim())) {
+    return value.trim().slice(1, -1).split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter((x) => x !== "");
+  }
+  return value;
+}
+
 /** An extension or config key written the way Codex spells it (snake_case). */
 function snakeKey(key: string): string {
   return key.replace(/-/g, "_");
@@ -222,7 +237,7 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
       for (const [ck, cv] of Object.entries(config as Record<string, unknown>)) {
         const key = snakeKey(ck);
         if (MCP_DROPPED_KEYS.has(key)) continue;
-        server[key] = cv;
+        server[key] = mcpValue(key, cv);
       }
       tables.push(...tomlTable(["mcp_servers", name], server));
     }
