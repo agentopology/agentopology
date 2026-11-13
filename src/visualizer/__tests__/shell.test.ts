@@ -66,7 +66,7 @@ describe("[VZ-4] one file, no network", () => {
     expect(html).toContain('id="theme-toggle"');
     expect(html).toContain("dataset.theme");
   });
-  it("[VZ-4] has a lens bar with six lenses; only Flow and Guards are active", () => {
+  it("[VZ-4] has a lens bar with six lenses; each active one renders and none shows a coming panel", () => {
     const html = plain();
     for (const l of ["flow", "sessions", "guards", "seats", "coverage", "index"]) {
       expect(html).toContain(`data-lens="${l}"`);
@@ -74,7 +74,14 @@ describe("[VZ-4] one file, no network", () => {
     const page = drawPage(plain());
     const lenses = page.read<Array<{ id: string; active: boolean }>>("LENSES");
     expect(lenses.map((l) => l.id)).toEqual(["flow", "sessions", "guards", "seats", "coverage", "index"]);
-    expect(lenses.filter((l) => l.active).map((l) => l.id)).toEqual(["flow", "guards"]);
+    // Flow and Guards were first (V1); each 0.12 lens joins as it lands (V2).
+    const active = lenses.filter((l) => l.active).map((l) => l.id);
+    expect(active.slice(0, 1)).toEqual(["flow"]);
+    expect(active).toContain("guards");
+    for (const id of active.filter((x) => x !== "flow")) {
+      page.run(`setLens(${JSON.stringify(id)}, true)`);
+      expect(page.run("document.getElementById('lens-view').innerHTML")).not.toContain('class="coming"');
+    }
   });
   it("[VZ-4] the headline strip has 7 facts computed from the projection and the facts", () => {
     const page = drawPage(checked());

@@ -16,6 +16,7 @@ import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { project } from "./project.js";
 import type { Facts } from "./facts.js";
+import { LENS_CSS, LENS_JS_COMMON, LENS_JS_SESSIONS } from "./lenses.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -572,7 +573,7 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
   .topo-name{font-size:11px}
   #header{padding:6px 8px;gap:6px}
 }
-`;
+` + LENS_CSS;
 
 // ---------------------------------------------------------------------------
 // Inline JS  (the full advanced viewer logic)
@@ -2403,7 +2404,7 @@ function toggleIssuesPanel() {
 
 var LENSES = [
   { id: 'flow', label: 'Flow', active: true },
-  { id: 'sessions', label: 'Sessions', active: false },
+  { id: 'sessions', label: 'Sessions', active: true },
   { id: 'guards', label: 'Guards', active: true },
   { id: 'seats', label: 'Seats', active: false },
   { id: 'coverage', label: 'Coverage', active: false },
@@ -2609,6 +2610,9 @@ function renderLens() {
   if (currentLens === 'flow') { view.style.display = 'none'; view.innerHTML = ''; return; }
   view.style.display = 'block';
   if (currentLens === 'guards') { view.innerHTML = renderGuardsView(); return; }
+  var renderers = { sessions: 'renderSessionsView', seats: 'renderSeatsView', coverage: 'renderCoverageView', index: 'renderIndexView' };
+  var rf = renderers[currentLens];
+  if (rf && typeof globalThis[rf] === 'function') { view.innerHTML = globalThis[rf](); return; }
   var l = LENSES.find(function(x) { return x.id === currentLens; });
   view.innerHTML = '<div class="coming"><h3>' + esc(l ? l.label : currentLens) + '</h3>coming</div>';
 }
@@ -2630,6 +2634,10 @@ function initShell() {
   window.addEventListener('hashchange', applyHash);
 }
 
+// ═══════════════════════════════════════════════════════════════
+// SECTION: Lenses (Sessions, Seats, Coverage, Index)
+// ═══════════════════════════════════════════════════════════════
+` + LENS_JS_COMMON + LENS_JS_SESSIONS + `
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Init
 // ═══════════════════════════════════════════════════════════════
