@@ -84,10 +84,20 @@ export interface VisualizationOptions {
   brains?: BrainLinkRef[];
 }
 
+/**
+ * JSON for inlining in a `<script>` block. `<`, `>` and `&` are written as
+ * \uXXXX escapes (so `</script>` or `<!--` in a field cannot end or confuse the
+ * script), and so are U+2028 and U+2029 (line terminators in older JS). The
+ * escaped text parses to the same value.
+ */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
+}
+
 export function generateVisualization(ast: TopologyAST, opts: VisualizationOptions = {}): string {
-  const dataJson = JSON.stringify(project(ast));
+  const dataJson = jsonForScript(project(ast));
   const issues = validate(ast);
-  const issuesJson = JSON.stringify(issues);
+  const issuesJson = jsonForScript(issues);
   return buildHtml(dataJson, ast.topology.name, issuesJson, opts.brains ?? []);
 }
 

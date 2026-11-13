@@ -136,3 +136,37 @@ describe("[N44e] every CLI path that validates resolves imports", () => {
     });
   }
 });
+
+import { generateVisualization, jsonForScript } from "../../visualizer/index.js";
+
+describe("[N44e] the visualizer escapes inlined page data", () => {
+  it("[N44e] an initial-prompt with </script><script>alert(1)</script> cannot break out of the data script", () => {
+    const evil = "</script><script>alert(1)</script> & <!--";
+    const src = `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "x" }
+  orchestrator { model: sonnet
+    handles: [a, b] }
+  agent a { model: sonnet
+    description: "a"
+    initial-prompt: "${evil}" }
+  agent b { model: sonnet
+    description: "b" }
+  flow { a -> b }
+}
+`;
+    const html = generateVisualization(parse(src));
+    const m = /const DEFAULT_DATA = (.*);\n/.exec(html)!;
+    expect(m).not.toBeNull();
+    expect(m[1]).not.toMatch(/[<>&\u2028\u2029]/);
+    expect(JSON.stringify(JSON.parse(m[1]))).toContain("alert(1)"); // still decodes to the original text
+    expect((html.match(/<\/script>/gi) ?? []).length).toBe((html.match(/<script\b/gi) ?? []).length);
+    expect(html).not.toContain("<script>alert(1)");
+  });
+  it("[N44e] jsonForScript escapes <, >, &, U+2028 and U+2029 and round-trips", () => {
+    const v = { a: "</script> <!-- & \u2028 \u2029 >" };
+    const out = jsonForScript(v);
+    expect(out).not.toMatch(/[<>&\u2028\u2029]/);
+    expect(JSON.parse(out)).toEqual(v);
+  });
+});
