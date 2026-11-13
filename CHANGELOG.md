@@ -4,9 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: only a top-level `env` block is the topology env (S-13)
+
+- The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.
+
 ### [fix] Fixed: V23 counts only top-level blocks of the whole keyword (S-13)
 
-- V23 ("Duplicate `env` block") counted a block of the same name at any depth, and any word that starts with the keyword. An imported `.mcp.json` server with `env: {}` made every such import warn, and `kitchen-sink.at` warned three times for nothing (`environments {` counted as `env`, `observability-platform {` inside `mcp-servers` as `observability`, `interfaces {` as `interface`). V23 now counts only blocks at the topology's top level whose keyword is the whole word. Two real top-level `env` blocks still warn. Not yet changed: the parser still takes the first `env`-named block at any depth as the topology env, so an MCP server's env, or an `environments` entry when no `env` comes first, can fill it (held: fixing it changes the scaffold of `examples/data-processing.at`).
+- V23 ("Duplicate `env` block") counted a block of the same name at any depth, and any word that starts with the keyword. An imported `.mcp.json` server with `env: {}` made every such import warn, and `kitchen-sink.at` warned three times for nothing (`environments {` counted as `env`, `observability-platform {` inside `mcp-servers` as `observability`, `interfaces {` as `interface`). V23 now counts only blocks at the topology's top level whose keyword is the whole word. Two real top-level `env` blocks still warn.
 
 ### [fix] Fixed: an action a topology .at with no orchestrator puts in the flow is handled (S-13)
 

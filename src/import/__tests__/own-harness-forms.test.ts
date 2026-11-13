@@ -117,11 +117,7 @@ describe("[S-13] V23: an MCP server's env is not a second top-level env block", 
     expect(warnings).toEqual([]);
   });
 
-  // Held: the parser still reads the first `env`-named block at any depth as
-  // the topology env (an MCP server's env, or `environments`). Fixing it
-  // changes the CX-10 golden (examples/data-processing.at settings.json), so
-  // it waits for a decision on that golden.
-  it.skip("a server's env stays the server's: the topology env is not filled from it", () => {
+  it("a server's env stays the server's: the topology env is not filled from it", () => {
     const ast = parse(importFromPlatform([agent("solo-agent"), mcp], "claude-code", "servers"));
     expect(ast.env).toEqual({});
     expect((ast.mcpServers["store-one"] as { env?: Record<string, string> }).env).toEqual({ STORE_PATH: "data/one" });
@@ -160,5 +156,22 @@ describe("[S-13] V23: an MCP server's env is not a second top-level env block", 
 `;
     expect(validate(parse(src)).filter((r) => r.rule === "V23")).toEqual([]);
     expect(parse(src).env).toEqual({ A: "1" });
+  });
+});
+
+describe("[S-13] the topology env is only a top-level env block", () => {
+  it("an environments block does not fill the topology env", () => {
+    const src = `topology envs-only : [pipeline] {
+  environments {
+    production {
+      bucket: "prod-bucket"
+    }
+  }
+  agent one {
+    model: sonnet
+  }
+}
+`;
+    expect(parse(src).env).toEqual({});
   });
 });
