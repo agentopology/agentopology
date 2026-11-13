@@ -57,6 +57,7 @@ import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
+import { platformConformance } from "../conformance/index.js";
 import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -608,6 +609,14 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   if (targetName === "claude-code") {
     console.log(c.dim(`  ${verifiedOnLine()}`));
     console.log("");
+  } else {
+    const conf = platformConformance(targetName);
+    if (conf) {
+      const mark = conf.installedMark();
+      if (mark) console.log(c.dim(`  ${mark}`));
+      console.log(c.dim(`  ${conf.verifiedOnLine()}`));
+      console.log("");
+    }
   }
 
   let files: ReturnType<typeof binding.scaffold>;
@@ -1338,7 +1347,9 @@ function cmdTargets(): void {
   console.log("");
   for (const [name, binding] of Object.entries(bindings)) {
     const label = binding.experimental ? c.yellow(" (experimental)") : "";
-    const verified = name === "claude-code" ? c.dim(` — ${verifiedOnLine()}`) : "";
+    const conf = platformConformance(name);
+    const mark = name !== "claude-code" ? conf?.installedMark() : null;
+    const verified = conf ? c.dim(` — ${conf.verifiedOnLine()}${mark ? `; ${mark}` : ""}`) : "";
     console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}${verified}`);
   }
   console.log("");

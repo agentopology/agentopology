@@ -652,7 +652,7 @@ agentopology export <file> --format <fmt> Export as markdown, mermaid, json, asc
 agentopology info <file>                  Topology analysis and suggestions
 agentopology guard <file> --check [--dir <d>]   What the project enforces today: refuse / none / hope per gate
 agentopology guard <file> --target claude-code [--dir <d>] [--dry-run]   Write only the guards (hook scripts, gates, checks, settings hooks and permissions) into a hand-built project
-agentopology inventory [<dir>] [--at <file>] [--user]  What is live in the project, as JSON (writes nothing); --at adds the folders the .at lists in `inventory { roots }`, --user adds ~/.claude
+agentopology inventory [<dir>] [--at <file>] [--user]  What is live in the project (the .claude tree, and for Codex the .codex agents, hooks.json entries, rules, config.toml MCP servers and .agents/skills), as JSON (writes nothing); --at adds the folders the .at lists in `inventory { roots }`, --user adds ~/.claude
 agentopology validate <file> --inventory <dir>  Coverage: live things the .at accounts for; unmapped, missing
 agentopology validate --inventory <dir> a.at b.at  Per-file coverage, then one union number (mapped when any file maps it)
 agentopology validate <file> --inventory <dir> --user  Also counts ~/.claude apart, and checks the `needs` block (user skills, memory path) against the home folder

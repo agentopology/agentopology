@@ -45,6 +45,16 @@ All notable changes to agentopology are documented here.
 - Providers are no longer written as `[[providers]]` tables: Codex has no such key, and a project config may not set `model_providers`. Scaffold warns that they are dropped. The keys `disable_response_storage`, `history.max_conversations` and `max_depth` are no longer written either, and `[agents]` uses `max_concurrent_threads_per_session`.
 - Extension keys now sit at the top of the file instead of inside the last MCP table, MCP `env` maps are written as `[mcp_servers.<id>.env]`, and the Claude Code `type` key is no longer copied into MCP tables.
 
+### [feature] The version line and installed mark per target (CX-1)
+
+- `targets` and `scaffold --target codex` now print the Codex line ("checked against Codex CLI ...") and, when the installed `codex` is not the checked version, a mark such as "installed 0.999.0: unverified". The Claude Code output is unchanged.
+- The line and the mark come from one per-target seam, `src/conformance/index.ts`, so a new target adds one entry instead of another branch in the CLI.
+
+### [feature] Inventory and coverage for a Codex project (CX-18)
+
+- `inventory` and `validate --inventory` now read a Codex project: the agent files under `.codex/agents`, the skills under `.agents/skills`, each entry in `.codex/hooks.json`, the files under `.codex/rules`, and the MCP servers in `.codex/config.toml`. Before, only the `.claude` tree was walked, so a Codex project counted 0.
+- Coverage maps them to the `.at` the same way as Claude Code files. A hook added by hand shows as unmapped.
+
 ### [feature] Verified on Claude Code 2.1.323 (VO-323)
 
 - The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.
