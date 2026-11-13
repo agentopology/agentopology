@@ -25,7 +25,7 @@ import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
-import { checkImports } from "./imports.js";
+import { checkImports, type ImportCache } from "./imports.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -524,7 +524,7 @@ function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationRe
   if (!filePath) {
     return [...results, { rule: "V8", level: "warning", message: "imports not checked" }];
   }
-  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack)];
+  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack, opts.importCache)];
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */
@@ -3999,6 +3999,8 @@ export interface ValidateOptions {
   filePath?: string;
   /** Files already being resolved (cycle detection); set by import resolution. */
   importStack?: string[];
+  /** Files already read and checked (set by import resolution; shared across a run). */
+  importCache?: ImportCache;
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {

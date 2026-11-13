@@ -22,7 +22,19 @@ export interface ImportResult {
 }
 
 type Parse = (src: string) => TopologyAST;
-type Validate = (ast: TopologyAST, opts?: { filePath?: string; importStack?: string[] }) => Array<{ rule: string; level: "error" | "warning"; message: string }>;
+type Result = { rule: string; level: "error" | "warning"; message: string };
+type Validate = (ast: TopologyAST, opts?: { filePath?: string; importStack?: string[]; importCache?: ImportCache }) => Result[];
+
+/** What was learned about one resolved file; shared by every import that reaches it. */
+type Loaded = { bytes: Buffer; parseError?: string; errors: Result[] } | { missing: true };
+export type ImportCache = Map<string, Loaded>;
+
+/**
+ * Rules an imported `fragment` is held to: parse-level problems and its own
+ * names. A fragment is a part, not a whole topology, so rules such as V3/V4
+ * (flow, orphans), V7 (model) and V91 (meta) do not apply to it.
+ */
+const FRAGMENT_RULES = new Set(["V1", "V2", "V8", "V12", "V23", "V24", "V89", "V90", "V92", "V98", "V102"]);
 
 /**
  * Check every local import of `ast`, which was read from `filePath`.
@@ -34,6 +46,7 @@ export function checkImports(
   parse: Parse,
   validate: Validate,
   stack: string[] = [],
+  cache: ImportCache = new Map(),
 ): ImportResult[] {
   const results: ImportResult[] = [];
   const self = resolve(filePath);
@@ -46,32 +59,52 @@ export function checkImports(
       results.push({ rule: "V8", level: "error", node: imp.alias, message: `import "${imp.source}": import cycle (${loop})` });
       continue;
     }
-    let bytes: Buffer;
-    try {
-      bytes = readFileSync(target);
-    } catch {
+    // Each file is read, parsed and validated once, however many paths reach
+    // it. The cycle check above stays per path.
+    let cached = cache.get(target);
+    if (!cached) {
+      let bytes: Buffer | undefined;
+      try {
+        bytes = readFileSync(target);
+      } catch {
+        cached = { missing: true };
+      }
+      if (bytes) {
+        let sub: TopologyAST | undefined;
+        let parseError: string | undefined;
+        try {
+          sub = parse(bytes.toString("utf8"));
+        } catch (err) {
+          parseError = (err as Error).message;
+        }
+        let errors: Result[] = [];
+        if (sub) {
+          const all = validate(sub, { filePath: target, importStack: chain, importCache: cache }).filter((r) => r.level === "error");
+          errors = sub.isFragment ? all.filter((r) => FRAGMENT_RULES.has(r.rule)) : all;
+        }
+        cached = { bytes, parseError, errors };
+      }
+      cache.set(target, cached!);
+    }
+    const loaded: Loaded = cached!;
+    if ("missing" in loaded) {
       results.push({ rule: "V8", level: "error", node: imp.alias, message: `import "${imp.source}": file not found (${target})` });
       continue;
     }
     if (imp.sha256) {
       const want = imp.sha256.replace(/^sha256:/i, "").toLowerCase();
-      const got = createHash("sha256").update(bytes).digest("hex");
+      const got = createHash("sha256").update(loaded.bytes).digest("hex");
       if (want !== got) {
         results.push({ rule: "V8", level: "error", node: imp.alias, message: `import "${imp.source}": sha256 does not match (declared ${want}, file is ${got})` });
         continue;
       }
     }
-    let sub: TopologyAST;
-    try {
-      sub = parse(bytes.toString("utf8"));
-    } catch (err) {
-      results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: parse error: ${(err as Error).message}` });
+    if (loaded.parseError !== undefined) {
+      results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: parse error: ${loaded.parseError}` });
       continue;
     }
-    for (const r of validate(sub, { filePath: target, importStack: chain })) {
-      if (r.level === "error") {
-        results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: [${r.rule}] ${r.message}` });
-      }
+    for (const r of loaded.errors) {
+      results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: [${r.rule}] ${r.message}` });
     }
   }
   return results;

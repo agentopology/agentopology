@@ -187,3 +187,64 @@ describe("[N44e] parseImportsDetailed ignores braces in strings and comments", (
     expect(parseImportsDetailed(text).imports).toEqual([]);
   });
 });
+
+describe("[N44e] import resolution cost and fragments", () => {
+  const top = (imp: string) => `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "x" }
+  ${imp}
+  orchestrator { model: sonnet
+    handles: [a, b] }
+  agent a { model: sonnet
+    description: "a" }
+  agent b { model: sonnet
+    description: "b" }
+  flow { a -> b }
+}
+`;
+  const leaf = `topology leaf : [pipeline] {
+  meta { version: "1.0.0"
+    description: "x" }
+  orchestrator { model: sonnet
+    handles: [a, b] }
+  agent a { model: sonnet
+    description: "a" }
+  agent b { model: sonnet
+    description: "b" }
+  flow { a -> b }
+}
+`;
+
+  it("[N44e] a 15-level diamond of imports validates in under 2 s", () => {
+    const N = 15;
+    for (let i = 0; i < N; i++) {
+      fs.writeFileSync(join(root, `l${i}.at`), top(`import left from "./l${i + 1}.at"\n  import right from "./l${i + 1}.at"`));
+    }
+    fs.writeFileSync(join(root, `l${N}.at`), leaf);
+    const file = join(root, "l0.at");
+    const started = Date.now();
+    const r = validate(parse(fs.readFileSync(file, "utf8")), { filePath: file });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(r.filter((x) => x.level === "error")).toEqual([]);
+  });
+
+  it("[N44e] a cycle is still reported with the memo in place", () => {
+    fs.writeFileSync(join(root, "a.at"), top(`import b from "./b.at"`));
+    fs.writeFileSync(join(root, "b.at"), top(`import a from "./a.at"`));
+    const file = join(root, "a.at");
+    const r = validate(parse(fs.readFileSync(file, "utf8")), { filePath: file });
+    expect(r.some((x) => x.rule === "V8" && /cycle/.test(x.message))).toBe(true);
+  });
+
+  it("[N44e] an imported fragment is not held to whole-topology rules (V4, V7) but its own unknown names are caught", () => {
+    const file = join(root, "main.at");
+    fs.writeFileSync(file, top(`import frag from "./frag.at"`));
+    fs.writeFileSync(join(root, "frag.at"), `fragment frag {\n  agent lonely {\n    description: "no model, in no flow"\n  }\n}\n`);
+    const ok = validate(parse(fs.readFileSync(file, "utf8")), { filePath: file });
+    expect(ok.filter((x) => x.level === "error"), JSON.stringify(ok)).toEqual([]);
+
+    fs.writeFileSync(join(root, "frag.at"), `fragment frag {\n  agent lonely {\n    description: "x"\n    bogus-field: 1\n  }\n}\n`);
+    const bad = validate(parse(fs.readFileSync(file, "utf8")), { filePath: file });
+    expect(bad.some((x) => x.rule === "V8" && x.level === "error" && /frag\.at/.test(x.message) && /bogus/.test(x.message))).toBe(true);
+  });
+});
