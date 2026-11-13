@@ -1,0 +1,33 @@
+topology records-b2 : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-6 B2: a written-by program that is not on disk (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [record-step]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  action record-step {
+    kind: inline
+    description: "Records the approval"
+  }
+
+  flow {
+    record-step -> maker
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      written-by: ["nope.py"]
+      append-only: true
+    }
+  }
+}

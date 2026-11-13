@@ -1,0 +1,33 @@
+topology records-guard-unknown : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-6: a guard: id that is not a declared hook (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [record-step]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  action record-step {
+    kind: inline
+    description: "Records the approval"
+  }
+
+  flow {
+    record-step -> maker
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      written-by: ["scripts/approve.py"]
+      guard: [protect-records]
+    }
+  }
+}

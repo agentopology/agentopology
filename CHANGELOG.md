@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Records: validate checks who may write a record (SP-6)
+
+- Four new rules read the record fields SP-1 parses. **V130** (error): a `written-by` program that is missing on disk, looked for beside the .at file (e.g. `Record "approvals" has written-by: "nope.py", which is missing`), or an entry that is not a project-relative path; an entry that names a node of the topology (`"maker"`) is a writer, not a file. Without a file path (a topology validated from a string) the disk is not read. **V131** (warning): a record with no `written-by`, "anyone may write this record". **V132** (warning): a record id equal to a store id, "declared as a store agents write and as a record only programs write". **V133**: a `guard:` id that is no declared hook (error), and cited hooks whose PreToolUse matchers together miss a file-writing tool (warning naming the tool, e.g. `NotebookEdit`).
+- The file-writing tool list (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) is one export of the conformance facts, `FILE_WRITING_TOOLS` in `src/conformance/claude-code.ts`, for the record rules and the record guards; no binding types its own. Validate has 133 rules (V1-V133).
+
 ### [feature] Records, the signed human gate and compose: the grammar is read and kept (SP-1)
 
 - A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).

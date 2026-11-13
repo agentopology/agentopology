@@ -1,0 +1,40 @@
+topology records-same-id : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-6: a record id equal to a store id (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [record-step]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  action record-step {
+    kind: inline
+    description: "Records the approval"
+  }
+
+  flow {
+    record-step -> maker
+  }
+
+  memory {
+    store notes {
+      type: semantic
+      backend: sqlite
+      path: "notes/"
+    }
+  }
+
+  records {
+    record notes {
+      path: "records/notes.jsonl"
+      written-by: ["scripts/approve.py"]
+    }
+  }
+}

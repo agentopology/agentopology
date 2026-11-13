@@ -36,7 +36,7 @@ import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import { composeRules } from "../compose/index.js";
-import { recordRules } from "../records/index.js";
+import { v130RecordWriters, v131RecordNoWriter, v132RecordStoreSameId, v133RecordGuards } from "../records/index.js";
 import { humanRules } from "../human/index.js";
 import type {
   HookDef,
@@ -4110,7 +4110,11 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v129NeedsOutside(ast),
     // Spec A/B/C rule modules (SP-1: empty; filled by SP-2/3, SP-6, SP-10).
     ...composeRules(ast, opts),
-    ...recordRules(ast),
+    // Spec B records (SP-6): src/records/validate.ts, spread by name so spec-sync counts them.
+    ...v130RecordWriters(ast, opts),
+    ...v131RecordNoWriter(ast),
+    ...v132RecordStoreSameId(ast),
+    ...v133RecordGuards(ast),
     ...humanRules(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),

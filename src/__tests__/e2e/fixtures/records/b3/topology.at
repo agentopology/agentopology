@@ -1,0 +1,32 @@
+topology records-b3 : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-6 B3: a record that names no writer (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [record-step]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  action record-step {
+    kind: inline
+    description: "Records the approval"
+  }
+
+  flow {
+    record-step -> maker
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      append-only: true
+    }
+  }
+}

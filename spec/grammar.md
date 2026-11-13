@@ -1076,12 +1076,12 @@ records {
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `path` | string | yes | Project-relative; `{unit}` stands for one path segment (V112) |
-| `written-by` | string-list | no | The programs allowed to write it: project-relative paths |
+| `written-by` | string-list | no | The programs allowed to write it: project-relative paths, or the id of a node of the topology. A path not on disk is an error (V130) |
 | `append-only` | `true` / `false` | no | The file only grows |
-| `guard` | name-list | no | Ids of declared hooks that already protect it in a hand-built project |
+| `guard` | name-list | no | Ids of declared hooks that already protect it in a hand-built project. An id that is no hook is an error; cited hooks that miss a file-writing tool get a warning naming it (V133) |
 | `description` | string | no | Free text |
 
-`written-by`, `append-only`, `guard` and `description` are parsed and kept (each is in the JSON export); the rules that check them and the guards built from them are not built yet. A store is memory agents read and write; a record is a file only named programs write.
+`written-by`, `append-only`, `guard` and `description` are parsed and kept (each is in the JSON export). `validate` checks them: a `written-by` program that is missing on disk is an error (V130; looked for beside the .at, and only when validate knows its path); a record with no `written-by` is a warning, "anyone may write this record" (V131); a record id equal to a store id is a warning (V132); a `guard:` id that is no declared hook is an error, and cited hooks whose PreToolUse matchers together miss a file-writing tool from the conformance facts get a warning naming the tool (V133). `append-only: true` on a record no gate reads is not a finding. The guards built from these fields are not built yet. A store is memory agents read and write; a record is a file only named programs write.
 
 **Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
 

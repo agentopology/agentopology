@@ -406,3 +406,12 @@ export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level
     message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook cannot start or times out. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
   }];
 }
+
+/**
+ * The tools that write a file, as a PreToolUse hook sees their names. The
+ * record guards and the record rules read this list; no binding types its own
+ * (Spec B). Whether the installed Claude Code still has `MultiEdit` is not
+ * checked: a hook that matches a tool that no longer exists costs nothing,
+ * one that misses a tool that does leaves a way in.
+ */
+export const FILE_WRITING_TOOLS: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
