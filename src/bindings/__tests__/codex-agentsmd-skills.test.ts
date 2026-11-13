@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { parse } from "../../parser/index.js";
+import { codexSource } from "./codex-models.js";
 import { codexBinding } from "../codex.js";
 import { syncFromPlatform } from "../../sync/index.js";
 import { mergeAgentFile } from "../../scaffold/merge.js";
@@ -43,7 +44,7 @@ ${agents.join("\n")}
 `;
 }
 
-const scaffold = (src: string): GeneratedFile[] => codexBinding.scaffold(parse(src));
+const scaffold = (src: string): GeneratedFile[] => codexBinding.scaffold(parse(codexSource(src)));
 
 describe("CX-6 small merged AGENTS.md", () => {
   it("[CX-6] 40 agents scaffold an AGENTS.md under 24 KiB with no agent prompt in it", () => {

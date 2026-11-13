@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parse } from "../../parser/index.js";
+import { codexSource } from "./codex-models.js";
 import { validate } from "../../parser/validator.js";
 import { bindings } from "../index.js";
 
@@ -56,7 +57,7 @@ describe("thinking accepts the full effort ladder", () => {
 describe("codex maps every level to a DISTINCT value", () => {
   const effortOf = (thinking: string) => {
     const f = bindings["codex"]
-      .scaffold(parse(at(thinking)))
+      .scaffold(parse(codexSource(at(thinking))))
       .find((x) => x.path.endsWith("agents/a.toml"))!;
     return /model_reasoning_effort = "(\w+)"/.exec(f.content)?.[1];
   };

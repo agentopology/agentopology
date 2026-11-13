@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "../../parser/index.js";
+import { codexSource, CODEX_TEST_MODEL } from "./codex-models.js";
 import {
   bindings,
   claudeCodeBinding,
@@ -131,7 +132,8 @@ const ast = parse(TOPOLOGY_SOURCE);
 function scaffoldBinding(name: string): GeneratedFile[] {
   const binding = bindings[name];
   if (!binding) throw new Error(`Unknown binding: ${name}`);
-  return binding.scaffold(ast);
+  // [CX-5] Codex refuses a Claude model name, so it scaffolds the same topology with a Codex model.
+  return binding.scaffold(name === "codex" ? parse(codexSource(TOPOLOGY_SOURCE)) : ast);
 }
 
 /** Assert standard structural invariants on scaffold output. */
@@ -976,17 +978,16 @@ describe("codex binding", () => {
     expect(agentsMd!.content).toContain("Enforcement:");
   });
 
-  it("passes model values through without mapping", () => {
+  it("[CX-5] passes a Codex model through verbatim and never writes a Claude name", () => {
+    // Was "passes model values through without mapping" and asserted "opus" was written:
+    // no Codex model has that name, so the old assertion held the bug (W5) in place.
     const toml = files.find((f) => f.path === ".codex/config.toml");
-    // Model should be the raw value from the .at file, not mapped
-    expect(toml!.content).toContain('"opus"');
-    // Should NOT contain any OpenAI model IDs (no mapping)
-    expect(toml!.content).not.toContain("gpt-");
+    expect(toml!.content).toContain(`model = "${CODEX_TEST_MODEL}"`);
+    expect(toml!.content).not.toMatch(/"(opus|sonnet|haiku)"/);
 
     const agentsMd = files.find((f) => f.path === "AGENTS.md");
-    // Agent models should appear verbatim
-    expect(agentsMd!.content).toContain("**Model:** sonnet");
-    expect(agentsMd!.content).toContain("**Model:** opus");
+    expect(agentsMd!.content).toContain(`**Model:** ${CODEX_TEST_MODEL}`);
+    expect(agentsMd!.content).not.toMatch(/\*\*Model:\*\* (opus|sonnet|haiku)/);
   });
 });
 

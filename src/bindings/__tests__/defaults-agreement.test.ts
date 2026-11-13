@@ -15,6 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parse } from "../../parser/index.js";
+import { codexSource } from "./codex-models.js";
 import { resolveDefaults } from "../../resolve/defaults.js";
 import { bindings } from "../index.js";
 import type { AgentNode } from "../../parser/ast.js";
@@ -48,7 +49,7 @@ describe("bindings agree with the spec's defaults table", () => {
 
     // Codex maps `supervised` → `untrusted` and `autonomous` → `on-request`.
     // An omitted field must not silently become the strictest setting.
-    const codexFiles = bindings["codex"].scaffold(ast);
+    const codexFiles = bindings["codex"].scaffold(parse(codexSource(BARE)));
     const toml = codexFiles.find((f) => f.path.endsWith(".toml"));
     expect(toml, "codex should emit a config.toml").toBeDefined();
     expect(toml!.content).toContain('approval_policy = "on-request"');
@@ -58,8 +59,10 @@ describe("bindings agree with the spec's defaults table", () => {
   it("every binding scaffolds a bare topology without throwing", () => {
     const ast = parse(BARE);
     for (const [name, binding] of Object.entries(bindings)) {
-      expect(() => binding.scaffold(ast), name).not.toThrow();
-      expect(binding.scaffold(ast).length, name).toBeGreaterThan(0);
+      // [CX-5] Codex refuses a Claude model name; it gets a Codex model.
+      const a = name === "codex" ? parse(codexSource(BARE)) : ast;
+      expect(() => binding.scaffold(a), name).not.toThrow();
+      expect(binding.scaffold(a).length, name).toBeGreaterThan(0);
     }
   });
 
@@ -69,7 +72,7 @@ describe("bindings agree with the spec's defaults table", () => {
       '    description: "does the work"\n    permissions: supervised'
     );
     const toml = bindings["codex"]
-      .scaffold(parse(src))
+      .scaffold(parse(codexSource(src)))
       .find((f) => f.path.endsWith(".toml"));
     // [CX-4] Codex 0.156.1 does not take `untrusted`; a declared `supervised`
     // maps to `on-request`, the policy that still asks.

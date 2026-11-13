@@ -45,6 +45,18 @@ export function deduplicateFiles(files: GeneratedFile[]): GeneratedFile[] {
   return Array.from(seen.values());
 }
 
+/**
+ * A binding refuses a topology it cannot compile honestly (for example a
+ * Claude model name on Codex). The CLI prints the message and exits 1;
+ * nothing is written.
+ */
+export class BindingRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BindingRefusal";
+  }
+}
+
 /** A binding target that can scaffold project structure from a TopologyAST. */
 export interface BindingTarget {
   /** Machine-readable name (e.g. "claude-code", "codex"). */

@@ -4,6 +4,12 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Honest Codex agent files and model names (CX-5)
+
+- `scaffold --target codex` now refuses a Claude model name (`opus`, `sonnet`, `haiku`, `fable` or any `claude-*`) on an agent or the orchestrator. It prints which agent uses which name, exits 1 and writes nothing. It does not pick a Codex model for you; set one such as `gpt-5.2`.
+- A Codex agent file no longer holds `sandbox_mode`, `mcp_servers` or `nickname_candidates`: Codex ignores the first two in an agent file and does not document the third. An agent that sets `sandbox` or `mcp-servers` gets a warning naming it, and `validate` with a Codex target gives the same warnings. MCP servers are written once in `config.toml`.
+- A prompt with `"""`, backslashes or quotes now survives in the agent file: it is written as a literal TOML string, or escaped when it holds `'''` or a control character, and `sync` reads it back either way.
+
 ### [fix] A Codex config.toml that Codex 0.156.1 accepts (CX-4)
 
 - `approval_policy` is now `on-request` or `never`. The words `supervised`, `plan`, `confirm`, `interactive` and `suggest` used to become `untrusted`, which Codex no longer takes. With agents that differ in `permissions`, the strictest policy applies to the project and scaffold warns.

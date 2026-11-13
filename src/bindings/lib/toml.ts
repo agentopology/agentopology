@@ -41,14 +41,22 @@ export function tomlString(value: string): string {
 }
 
 /**
- * A multi-line basic string. Backslashes and every quote are escaped, so
- * `"""` inside the text cannot end the string early; line breaks stay real.
+ * A multi-line string for free text such as a prompt.
+ *
+ * A literal string (`'''`) holds backslashes, quotes and `"""` exactly as
+ * written, so the text reads back unchanged. It cannot hold `'''` or a
+ * control character other than a tab; for those the text is written as an
+ * escaped basic string instead (`"""` with `\\`, `\"` and `\uXXXX`).
  */
 export function tomlMultiline(value: string): string {
-  const body = value
-    .replace(/\r\n/g, "\n")
+  const text = value.replace(/\r\n/g, "\n");
+  // eslint-disable-next-line no-control-regex
+  const plainLiteral = !text.includes("'''") && !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text) && !text.endsWith("'");
+  if (plainLiteral) return `'''\n${text}\n'''`;
+  const body = text
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
   return `"""\n${body}\n"""`;
 }

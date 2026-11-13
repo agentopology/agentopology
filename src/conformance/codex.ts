@@ -105,6 +105,11 @@ export const PROJECT_FORBIDDEN_KEYS: readonly string[] = [
   "model_provider", "model_providers", "notify", "profile", "profiles", "otel",
 ];
 
+/** True for a Claude model name: opus, sonnet, haiku, fable or anything starting `claude-`. Codex runs none of them. */
+export function isClaudeModelName(model: string): boolean {
+  return /^(opus|sonnet|haiku|fable)(\b|[-_.\d])/i.test(model) || /^claude[-_]/i.test(model);
+}
+
 /** What a live run has proven. All false until tier E records a dated run. */
 export const CODEX_HOOKS_PROVEN = {
   bash: false, applyPatch: false, mcp: false, spawn: false, queue: false, subagentStop: false,

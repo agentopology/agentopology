@@ -39,7 +39,9 @@ import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
 import { tomlString, tomlStringArray, tomlTable, tomlKey, tomlMultiline } from "./lib/toml.js";
-import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES } from "../conformance/codex.js";
+import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES, isClaudeModelName } from "../conformance/codex.js";
+import { codexWarnings } from "../parser/validator.js";
+import { BindingRefusal } from "./types.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -1551,23 +1553,15 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
       ?? toTitle(agent.id);
     lines.push(`description = ${tomlString(desc)}`);
 
-    // developer_instructions — use prompt if available, otherwise construct
-    const instructions = agent.prompt ?? buildDeveloperInstructions(agent, ast);
-    // A written prompt sits between the prompt markers so sync can read it back.
-    lines.push(
-      agent.prompt
-        ? `developer_instructions = """\n${PROMPT_FENCE_OPEN}\n${agent.prompt}\n${PROMPT_FENCE_CLOSE}\n"""`
-        : `developer_instructions = """\n${instructions}\n"""`,
-    );
+    // developer_instructions — the written prompt sits between the prompt markers so sync can read it back.
+    const instructions = agent.prompt
+      ? `${PROMPT_FENCE_OPEN}\n${agent.prompt}\n${PROMPT_FENCE_CLOSE}`
+      : buildDeveloperInstructions(agent, ast);
+    lines.push(`developer_instructions = ${tomlMultiline(instructions)}`);
 
-    // model
+    // model — only the agent's own, and never a Claude name (scaffold refused those).
     if (agent.model) {
       lines.push(`model = ${tomlString(agent.model)}`);
-    }
-
-    // sandbox_mode
-    if (agent.sandbox != null) {
-      lines.push(`sandbox_mode = ${tomlString(mapAgentSandbox(agent.sandbox))}`);
     }
 
     // model_reasoning_effort
@@ -1578,34 +1572,9 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
       }
     }
 
-    // nickname_candidates — derive from agent id
-    const nickname = agent.id
-      .split(/[-_]/)
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join("");
-    lines.push(`nickname_candidates = [${tomlString(nickname)}]`);
-
-    // MCP servers — include sections for agent-specific MCP servers
-    if (agent.mcpServers && agent.mcpServers.length > 0 && ast.mcpServers) {
-      lines.push("");
-      for (const serverName of agent.mcpServers) {
-        const config = ast.mcpServers[serverName];
-        if (!config) continue;
-        lines.push(`[mcp_servers.${serverName}]`);
-        for (const [ck, cv] of Object.entries(config)) {
-          if (typeof cv === "string") {
-            lines.push(`${ck} = ${tomlString(cv)}`);
-          } else if (typeof cv === "boolean") {
-            lines.push(`${ck} = ${cv}`);
-          } else if (typeof cv === "number") {
-            lines.push(`${ck} = ${cv}`);
-          } else if (Array.isArray(cv)) {
-            lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
-          }
-        }
-        lines.push("");
-      }
-    }
+    // Not written: sandbox_mode, approval_policy, model_provider and mcp_servers cannot
+    // be overridden from an agent file (Codex ignores them there); nickname_candidates
+    // is not a documented key. Scaffold warns about the first and the last-but-one.
 
     files.push({
       path: `.codex/agents/${agent.id}.toml`,
@@ -1621,6 +1590,20 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
 // Binding export
 // ---------------------------------------------------------------------------
 
+/** Refuse a topology that names a Claude model: Codex runs none, and no Codex model is invented in its place. */
+function refuseClaudeModels(ast: TopologyAST): void {
+  const bad: string[] = [];
+  for (const n of ast.nodes) {
+    const model = (n as { model?: string }).model;
+    if (model && isClaudeModelName(model)) bad.push(`${n.type} "${n.id}" uses the Claude model "${model}"`);
+  }
+  if (bad.length > 0) {
+    throw new BindingRefusal(
+      `Codex runs no Claude model: ${bad.join("; ")}. Set a Codex model on each (for example gpt-5.2). Nothing was written.`,
+    );
+  }
+}
+
 /** OpenAI Codex CLI binding — full implementation. */
 export const codexBinding: BindingTarget = {
   name: "codex",
@@ -1629,7 +1612,9 @@ export const codexBinding: BindingTarget = {
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     warnSessionsNotCompiled(ast, "codex");
+    refuseClaudeModels(ast);
     pendingWarnings = [];
+    for (const w of codexWarnings(ast)) codexWarn(w.message);
     const files: GeneratedFile[] = [];
 
     // 1. .codex/config.toml — main configuration

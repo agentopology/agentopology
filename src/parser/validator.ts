@@ -28,6 +28,7 @@ import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
+import { isClaudeModelName } from "../conformance/codex.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -3996,10 +3997,13 @@ export interface ValidateOptions {
   importStack?: string[];
   /** Files already read and checked (set by import resolution; shared across a run). */
   importCache?: ImportCache;
+  /** Binding target being compiled for. Target-specific warnings (rule ids CX*) appear only when it is set. */
+  target?: string;
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
   return [
+    ...(opts.target === "codex" ? codexWarnings(ast) : []),
     ...v1UniqueNames(ast),
     ...v2NoKeywordNames(ast),
     ...v3FlowResolves(ast),
@@ -4324,6 +4328,31 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
     for (const name of list ?? [])
       if (!name || /[\\/]/.test(name) || name === "." || name === "..")
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
+  }
+  return results;
+}
+
+/**
+ * Codex warnings (CX-5): what a `--target codex` scaffold drops or refuses.
+ * They run only when `validate` is given `target: "codex"`, so a Claude Code
+ * user never sees them.
+ */
+export function codexWarnings(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const warn = (rule: string, node: string, message: string) => results.push({ rule, level: "warning", node, message: `[codex] ${message}` });
+  for (const n of ast.nodes) {
+    const model = (n as { model?: string }).model;
+    if (model && isClaudeModelName(model)) {
+      warn("CX5-model", n.id, `agent "${n.id}" uses the Claude model "${model}"; Codex runs no Claude model, so scaffold refuses it. Set a Codex model (for example gpt-5.2).`);
+    }
+    if (n.type !== "agent") continue;
+    const agent = n as AgentNode;
+    if (agent.sandbox != null) {
+      warn("CX5-sandbox", agent.id, `agent "${agent.id}" sets sandbox; a Codex agent file cannot override the parent sandbox_mode, so it is not written. Set sandbox_mode in config.toml for the whole project.`);
+    }
+    if (agent.mcpServers && agent.mcpServers.length > 0) {
+      warn("CX5-mcp", agent.id, `agent "${agent.id}" lists mcp-servers; a Codex agent file cannot scope MCP servers, so they are written once in config.toml for every agent.`);
+    }
   }
   return results;
 }
