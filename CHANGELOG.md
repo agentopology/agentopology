@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: inventory on a Codex-only scaffold counts nothing scaffold wrote as unmapped (F-28)
+
+- `validate --inventory` on a project scaffolded only with `--target codex` listed `.codex/.scaffold-manifest.json` as unmapped and every Claude Code file as "not scaffolded". The scaffold manifest (either target, shared or per topology) is now mapped, and a project with a Codex tree and no `.claude/` is not told to scaffold the Claude Code files.
+
 ### [fix] Fixed: `validate --target codex` names the Codex version, not Claude Code's (F-20, F-27)
 
 - `agentopology validate <file> --target codex`, with or without `--inventory`, ended with `checked against Claude Code 2.1.323`. It now prints the target's own line (`checked against Codex CLI 0.156.1 ...`); with no `--target` it still prints the Claude Code line, and a target with no conformance facts prints none.

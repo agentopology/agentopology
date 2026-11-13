@@ -460,6 +460,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
         // The generated talk guard appends to this log whenever session agents exist.
         if (p === ".claude/state/talk.jsonl" && hasSessions) return true;
         if (genPaths.has(p) || handPaths.has(p)) return true;
+        // F-28: scaffold's own record of what it wrote (one per target, or per topology).
+        if (/^\.(?:claude|codex)\/\.scaffold-manifest(?:\.[^/]+)?\.json$/.test(p)) return true;
         if (storeDirs.some((d) => p.startsWith(d))) return true;
         const folder = p.match(/^\.(?:claude|agents)\/skills\/([^/]+)\//)?.[1];
         return !!folder && skillDirs.has(folder);
@@ -489,10 +491,16 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
       from: o.kind === "memory" ? "needs memory:" : "needs user-skills:",
     })),
   ].filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
-  // Codex files count as "not scaffolded" only in a project that already has a Codex tree.
+  // Codex files count as "not scaffolded" only in a project that already has a Codex tree, and
+  // Claude Code files only in one that has a Claude tree or no tree of either (F-28).
   const isCodexPath = (p: string) => codexGenerated.some((f) => norm(f.path) === p) && !claudeGenerated.some((f) => norm(f.path) === p);
+  const isClaudePath = (p: string) => claudeGenerated.some((f) => norm(f.path) === p) && !codexGenerated.some((f) => norm(f.path) === p);
   const hasCodexTree = fs.existsSync(path.join(root, ".codex")) || fs.existsSync(path.join(root, ".agents"));
-  const notScaffolded = [...genPaths].filter((p) => hasCodexTree || !isCodexPath(p)).filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
+  const hasClaudeTree = fs.existsSync(path.join(root, ".claude"));
+  const notScaffolded = [...genPaths]
+    .filter((p) => hasCodexTree || !isCodexPath(p))
+    .filter((p) => hasClaudeTree || !hasCodexTree || !isClaudePath(p))
+    .filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
   const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => i.id.slice(9)));
   const unmappedIds = new Set(unmapped.map((i) => i.id));
   const rootStats = roots.map((r) => {
