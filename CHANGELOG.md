@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a hook or gate stub run through `sh` no longer blocks every call on a fresh scaffold (F-24)
+
+- A `run: "sh harness/bin/gate ..."` hook got a stub with a bash body (`set -euo pipefail`). Where `sh` is dash, the stub died at `pipefail` with exit 2, so on a fresh scaffold every Bash call was blocked by accident, on both targets. When the run names `sh` or `dash`, the stub is now POSIX (`#!/bin/sh`, `set -eu`): a hook stub that is not a refuse guard exits 1 as designed, and a gate or refuse stub exits 2 on purpose.
+
 ### [fix] Fixed: Codex writes a gate's check stub where the gate runs it, in the file's language (F-22, F-25)
 
 - F-22: the Codex scaffold wrote every gate-check stub to `.codex/scripts/<basename>`, while the gate wrapper ran the declared project path (`tools/checks/ready.sh`). A user who filled in the stub never saw the gate pass. The stub now goes at the declared project path, created once and never overwritten (as Claude Code does); a bare name still goes to `.codex/scripts/`.

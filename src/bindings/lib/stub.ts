@@ -69,6 +69,20 @@ export function shellStub(description: string, opts: { fail?: boolean } = {}): s
 }
 
 /**
+ * A bash stub made runnable by the interpreter a `run:` names (F-24). A run
+ * such as `sh harness/bin/gate ...` runs the stub with sh; on dash a bash
+ * body fails at `set -o pipefail` with exit 2, which blocked every Bash call
+ * on a fresh scaffold. For `sh` or `dash` the shebang becomes `#!/bin/sh` and
+ * `set -euo pipefail` becomes `set -eu`; the stubs use nothing else from bash.
+ * Any other interpreter gets the content unchanged.
+ */
+export function forInterpreter(content: string, interpreter: string | undefined): string {
+  const name = (interpreter ?? "").replace(/^.*\//, "");
+  if (name !== "sh" && name !== "dash") return content;
+  return content.replace(/^#!\/usr\/bin\/env bash$/m, "#!/bin/sh").replace(/^set -euo pipefail$/m, "set -eu");
+}
+
+/**
  * A check or hook stub in the language its file name says (F-25): Python for
  * `.py`, node for `.js`/`.mjs`/`.cjs`, else {@link shellStub}. A `.py` check
  * with a bash body failed through a SyntaxError instead of on purpose. The

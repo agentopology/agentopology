@@ -127,3 +127,46 @@ describe.skipIf(!hasPython)("[F-25] a check stub is written in its file's langua
     expect(files.find((f) => f.path === "tools/pre.js")!.content.split("\n")[0]).toBe("#!/usr/bin/env node");
   });
 });
+
+/** A topology whose only hook runs a project script through `sh`, the RC's harness/bin/gate form. */
+const SH_HOOK = (model: string, strength = "") => `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "t"
+  }
+  agent worker {
+    description: "Does work"
+    model: ${model}
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+  flow { intake -> worker }
+  hooks {
+    hook lock-bash {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "sh harness/bin/gate harness/lock/hook.py bash"
+      type: command
+${strength}    }
+  }
+}
+`;
+
+describe("[F-24] a hook stub run through sh has a body sh can run", () => {
+  const cases = [
+    { target: "codex", model: "gpt-5.2", scaffold: scaffoldCodex, command: () => codexHooks().PreToolUse[0].hooks[0].command, env: {} as Record<string, string> },
+    { target: "claude-code", model: "sonnet", scaffold: scaffoldCc, command: () => (JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8")).hooks as Hooks).PreToolUse[0].hooks[0].command, env: { CLAUDE_PROJECT_DIR: "" } as Record<string, string> },
+  ];
+  for (const c of cases) {
+    it(`[F-24] ${c.target}: on a fresh scaffold a Bash call meets the unwritten stub's exit 1, not a dash error's exit 2`, () => {
+      c.scaffold(SH_HOOK(c.model));
+      const r = runHook(c.command(), root, bashPayload("ls"), c.target === "claude-code" ? { CLAUDE_PROJECT_DIR: root } : {});
+      expect(r.stderr).not.toMatch(/Illegal option|pipefail/);
+      expect(r.stderr).toMatch(/TODO/);
+      expect(r.status, r.stderr).toBe(1);
+    });
+  }
+});

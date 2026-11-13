@@ -799,3 +799,163 @@ describe("[E-6] validate --target codex adds the Codex warnings", () => {
     expect(plain.stdout).not.toContain("CX23");
   });
 });
+
+// F-batch (Fable attack on d66864e, RC e2e): the matcher refuses what it cannot read (deny-on-doubt).
+// Inputs are the attacker's exact strings (attack-inputs.json, rows 1, 2, 3, 5, 19) plus the RC e2e's
+// interpreter forms (F-21). Both targets run the same generated matcher.
+const INTERP_AT = `topology post : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "post"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [check, post]
+  }
+  action check {
+    kind: external
+    commands: ["python3 harness/bin/check.py"]
+  }
+  action post {
+    kind: external
+    commands: ["python3 harness/bin/post-ig.py upload"]
+    unit-from: "post-ig.py upload (\\\\S+)"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate post-ready {
+      after: check
+      before: post
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { check -> post }
+}
+`;
+describe.skipIf(!hasJq)("[F-1] before-action.sh refuses a guarded step it cannot read (deny-on-doubt)", () => {
+  const BLOCK: string[] = [
+    // F-1: backslash line continuation
+    "./tool \\\npublish ep1",
+    "./tool pub\\\nlish ep1",
+    // F-2: redirects glued to or between the words
+    "./tool publish>/dev/null ep1",
+    "./tool >/dev/null publish ep1",
+    "./tool 2>&1 publish ep1",
+    "./tool publish<<<x ep1",
+    "./tool < /dev/null publish ep1",
+    "./tool publish ep1 2>&1 | tee out.log",
+    // F-3: expansions, quoting and globs inside the step
+    "./tool pu$()blish ep1",
+    "./tool ${IFS}publish ep1",
+    "./tool publish${X} ep1",
+    "./tool publish$X ep1",
+    "./tool $'publish' ep1",
+    "./tool $'\\x70ublish' ep1",
+    "./tool {publish,x} ep1",
+    "./tool {publish,} ep1",
+    "./tool p{ublish,} ep1",
+    "./tool pub*lish ep1",
+    "./tool pub?ish ep1",
+    "./tool pub[l]ish ep1",
+    "./to?l publish ep1",
+    "./tool `echo publish` ep1",
+    "./tool $(echo publish) ep1",
+    "{./tool,publish,ep1}",
+    // F-19: case on a case-insensitive disk; a flag between the words
+    "./TOOL publish ep1",
+    "./tool -v publish ep1",
+    "./tool --verbose=1 publish ep1",
+  ];
+  const PASS: string[] = [
+    "ls -la", "git status", "./tool render ep1", "./tool publisher ep1", "echo done",
+    "ls *.txt", "cat src/*.ts | wc -l", "echo $HOME", "./tool publish --help", "./tool --version",
+    "for f in a b; do echo $f; done",
+  ];
+  const ast = () => parse(fs.readFileSync(FIXTURE, "utf8"));
+  const platforms = [
+    { name: "Codex", setup: () => { scaffoldInto(fs.readFileSync(FIXTURE, "utf8")); fs.mkdirSync(at("src/deep"), { recursive: true }); return at(".codex/scripts/ship/before-action.sh"); } },
+    {
+      name: "Claude Code",
+      setup: async () => {
+        const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+        const f = generateBeforeActionScript(ast(), CLAUDE_CODE_GUARDS)!;
+        fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+        fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+        fs.mkdirSync(at("src/deep"), { recursive: true });
+        return at(f.path);
+      },
+    },
+  ];
+  const ledger = (unit: string) => {
+    fs.mkdirSync(at(`logs/${unit}`), { recursive: true });
+    fs.writeFileSync(at(`logs/${unit}/trace.jsonl`), JSON.stringify({ step: "render", unit, ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+  };
+  for (const p of platforms) {
+    const run = (script: string, command: string) => {
+      const env = { ...process.env } as Record<string, string>;
+      if (p.name === "Claude Code") env.CLAUDE_PROJECT_DIR = root; else delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("bash", [script], { cwd: at("src/deep"), input: bashPayload(command), env, encoding: "utf8" });
+    };
+    it.each(BLOCK)(`[F-1] ${p.name}: %j exits 2 while the gate's ledger has no ok record`, async (command) => {
+      const r = run(await p.setup(), command);
+      expect(r.status, r.stderr).toBe(2);
+    });
+    it.each(PASS)(`[F-1] ${p.name}: %j is no guarded step and passes`, async (command) => {
+      const r = run(await p.setup(), command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+    it(`[F-5] ${p.name}: a second step in the same command needs its own ok record`, async () => {
+      const script = await p.setup();
+      ledger("ok1");
+      expect(run(script, "./tool publish ok1").status).toBe(0);
+      for (const c of ["env A=\"./tool publish ok1\" ./tool publish ep2", "true ./tool publish ok1 ./tool publish ep2"]) {
+        const r = run(script, c);
+        expect(r.status, `${c}: ${r.stderr}`).toBe(2);
+      }
+      ledger("ep2");
+      expect(run(script, "true ./tool publish ok1 ./tool publish ep2").status).toBe(0);
+    });
+    it(`[F-1] ${p.name}: with an ok record a plain step passes, and an unreadable one is still refused`, async () => {
+      const script = await p.setup();
+      ledger("ep1");
+      expect(run(script, "./tool publish ep1").status).toBe(0);
+      expect(run(script, "./tool  publish  ep1 > out.log 2>&1").status).toBe(0);
+      const r = run(script, "./tool pub*lish ep1");
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/cannot read|plain command/);
+    });
+  }
+  // F-21: the step runs through an interpreter; the tool is the script.
+  const interp = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(INTERP_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const runCC = (script: string, command: string) =>
+    spawnSync("bash", [script], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it.each([
+    "python3 harness/bin/post-ig.py upload ep7",
+    "python3 ./harness/bin/post-ig.py upload ep7",
+    "python3 /abs/elsewhere/harness/bin/post-ig.py upload ep7",
+    "python harness/bin/post-ig.py upload ep7",
+    "python post-ig.py upload ep7",
+    "env python3 harness/bin/post-ig.py upload ep7",
+    "/usr/bin/python3 -u harness/bin/post-ig.py upload ep7",
+    "cd harness/bin && python3 post-ig.py upload ep7",
+  ])("[F-21] the interpreter step %j exits 2 while the gate's ledger has no ok record", async (command) => {
+    const r = runCC(await interp(), command);
+    expect(r.status, r.stderr).toBe(2);
+  });
+  it("[F-21] other scripts under the same interpreter pass", async () => {
+    const script = await interp();
+    for (const c of ["python3 harness/bin/check.py", "python3 -m pytest", "python3 harness/bin/post-ig.py --help"]) {
+      const r = runCC(script, c);
+      expect(r.status, `${c}: ${r.stderr}`).toBe(0);
+    }
+  });
+});

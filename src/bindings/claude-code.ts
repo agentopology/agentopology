@@ -29,7 +29,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, stubFor, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { forInterpreter, shellStub, stubFor, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
   CLAUDE_CODE_GUARDS,
@@ -1893,7 +1893,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const gate = node as GateNode;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
-    const { script } = runParts(gate.run!);
+    const { script, interpreter } = runParts(gate.run!);
     // The user's own script, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     // A project path names the user's script: a stub only fills the gap until
@@ -1902,7 +1902,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const path = project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`;
     files.push({
       path,
-      content: stubFor(path, `Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      content: forInterpreter(stubFor(path, `Gate: ${gate.id} — ${gate.run}`, { fail: true }), interpreter),
       category: "script",
       ...(project ? { createOnly: true } : {}),
     });
@@ -2099,7 +2099,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
     if (proseInRun(runPath)) continue; // V96: prose in run names no script
-    const { script } = runParts(runPath);
+    const { script, interpreter } = runParts(runPath);
     // An absolute script is the user's own, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     const scoped = scriptNameFromRun(script);
@@ -2112,7 +2112,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
 
     files.push({
       path: filePath,
-      content: observabilityStub(hook.name, hook.on, hook.matcher ?? ""),
+      content: forInterpreter(observabilityStub(hook.name, hook.on, hook.matcher ?? ""), interpreter),
       category: "script",
       executable: true,
       // A run that names its own path names the user's script: a stub only

@@ -18,7 +18,7 @@ import { gateAnchors } from "../../parser/ast.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
 import { HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
 import type { GeneratedFile } from "../types.js";
-import { shellStub } from "./stub.js";
+import { forInterpreter, shellStub } from "./stub.js";
 import {
   CODEX_GUARDS,
   checkableActionGate,
@@ -202,7 +202,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
       path: rel,
-      content: shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }),
+      content: forInterpreter(shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }), interpreter),
       category: "script",
       executable: true,
       createOnly: true,
@@ -216,7 +216,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   used.set(name, script);
   const file: GeneratedFile = {
     path: `.codex/scripts/${name}`,
-    content: shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }),
+    content: forInterpreter(shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }), interpreter),
     category: "script",
     executable: true,
   };
