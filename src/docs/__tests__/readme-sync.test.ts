@@ -38,7 +38,7 @@ describe("README stays honest", () => {
     const src = read("src/parser/validator.ts");
     const body = src.slice(src.indexOf("export function validate("));
     const count = new Set(
-      [...body.matchAll(/\.\.\.v(\d+)[A-Za-z0-9_]*\(ast\)/g)].map((m) => m[1])
+      [...body.matchAll(/\.\.\.v(\d+)[A-Za-z0-9_]*\(ast[,)]/g)].map((m) => m[1])
     ).size;
     const claims = [...readme.matchAll(/(\d+)\s+(?:built-in\s+)?rules/g)].map((m) =>
       Number(m[1])

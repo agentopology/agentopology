@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 112 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 120 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -681,7 +681,7 @@ through the validator like any other rule.
 | V5 | error/warning | Every `[when x.y]` must reference a declared output |
 | V6 | error/warning | Every back-edge must have `max N` |
 | V7 | error/warning | Every agent and orchestrator must have a model |
-| V8 | error/warning | Import references should resolve (warning only -- we cannot check the filesystem) |
+| V8 | error/warning | A local import is read relative to the importing file: a missing file, a `sha256` that does not match, an import cycle, or an error inside the imported file is an error; validating a string with no file path skips this and warns `imports not checked` |
 | V9 | error/warning | Every action referenced in flow must appear in orchestrator.handles |
 | V10 | error/warning | Prompt content should not be empty if a prompt block is declared |
 | V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
@@ -774,7 +774,7 @@ through the validator like any other rule.
 | V98 | error | A `gate`, `hook`, `tool`, `job`, `command` or `level` block must sit inside its container (`gates`, `hooks`, `tools`, `schedule`, `triggers`, `depth`) — written beside it, it was dropped with no message and validate passed |
 | V99 | warning | An agent's `skills:` and `mcp-servers:`, and a skill's `agent:`, should name something the topology declares (or a built-in agent) — a misspelled name compiled to a reference Claude Code could not resolve, with no message |
 | V100 | error | A hook has what its type needs (command/prompt/agent: `run`; http: `url`; mcp_tool: `server` and `tool`; `async` only on a command), and a prompt or agent judge sits on an event Claude Code runs judges for |
-| V101 | error | An agent's `runs:` is `subagent`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
+| V101 | error | An agent's `runs:` is `subagent`, `session`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
 | V102 | error | Every field and block name in a node, `meta`, a hook, job, artifact, tool or skill, and every topology section, is one the parser reads — a typo, a field of another node type or an unknown block vanished from the AST while validate passed. Contents of free-form blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, ...) are not checked yet |
 | V103 | error | An agent's or gate's `behavior:` is `advisory` or `blocking` — any other value was kept and emitted into the scaffold unchecked |
 | V104 | error | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` |
@@ -786,6 +786,14 @@ through the validator like any other rule.
 | V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
 | V111 | error | An action's `unit-from` is not a valid regex, or has no capture group |
 | V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
+| V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `bypassPermissions` or `auto`; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
+| V114 | warning | Two or more session agents and no flow edge between any two of them: `talk not declared: unguarded` |
+| V115 | warning | With the `hub` pattern, a session-to-session edge that does not touch the hub node |
+| V116 | warning | Two agents claim one decision with `decides:`, or a decision listed in the topology's `decisions: [...]` has no agent claiming it |
+| V117 | warning | A `runs: session` agent sets `background`, `skills` or `permissions`, which are ignored when run as a session (one warning per field) |
+| V118 | warning | A talk edge joins two session agents that declare different `permission-mode`s: a session in another permission mode holds incoming messages for its user, so the edge may not arrive |
+| V119 | warning | `model:` is a bare alias (`opus`, `sonnet`, `haiku`, `fable`) while the topology sets `pin-models: true`: an alias resolves differently over time, so use the exact id for a pinned run |
+| V120 | warning | An agent with `decides:` has an incoming talk edge: a decision can arrive there as a message from another session. The binding logs each prompt as `typed` or `arrived` in `.claude/state/talk.jsonl` instead of refusing messages by keyword |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

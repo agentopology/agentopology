@@ -527,6 +527,11 @@ export function parseAgent(
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
   if (fields.runs) node.runs = fields.runs;
+  if (fields.place) node.place = unquote(fields.place);
+  if (fields["permission-mode"]) node.permissionMode = fields["permission-mode"];
+  const decides = parseMultilineList(body, "decides");
+  if (decides.length) node.decides = decides;
+  else if (fields.decides) node.decides = parseList(fields.decides);
   if (fields.independent) node.independent = fields.independent === "true";
   if (fields.color) node.color = unquote(fields.color);
   if (fields["initial-prompt"]) node.initialPrompt = unquote(fields["initial-prompt"]);
@@ -880,12 +885,13 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let strength: string | undefined;
     let at: string | undefined;
     let guard: string[] | undefined;
+    let message: string | undefined;
     let flowPart = trimmed;
 
     // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
     // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
     const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?)\]\s*$/
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?)\]\s*$/
     );
     // V92: two bracket groups on one edge. The grammar defines ONE annotation
     // with comma-separated attributes (`[when ..., max N]`). Written as
@@ -895,7 +901,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     // Count only ANNOTATION brackets. A fan-out list is also bracketed —
     // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
     // `] [` alone flagged valid topologies.
-    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at)\b/g;
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message)\b/g;
     const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
     if (annotationBrackets > 1 && _edgeAttributeErrors) {
       _edgeAttributeErrors.push({
@@ -922,7 +928,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -965,6 +971,8 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (strengthMatch) strength = strengthMatch[1];
       const atMatch = annotation.match(/(?:^|,)\s*at\s*:\s*"([^"]*)"/);
       if (atMatch) at = atMatch[1];
+      const messageMatch = annotation.match(/\bmessage\s*:\s*([A-Za-z0-9_-]+)/);
+      if (messageMatch) message = messageMatch[1];
       const guardMatch = annotation.match(/\bguard\s*:\s*(\[[^\]]*\]|[A-Za-z0-9_-]+)/);
       if (guardMatch) {
         guard = guardMatch[1].replace(/^\[|\]$/g, "").split(",").map((g) => g.trim()).filter(Boolean);
@@ -1048,6 +1056,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && strength) baseEdge.strength = strength;
       if (isLastSegment && at !== undefined) baseEdge.at = at;
       if (isLastSegment && guard) baseEdge.guard = guard;
+      if (isLastSegment && message) baseEdge.message = message;
 
       if (fanOutMatch) {
         const targets = fanOutMatch[1].split(",").map((s) => s.trim());
@@ -1066,6 +1075,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
             ...(baseEdge.reflection ? { reflection: true } : {}),
             ...enforcement(baseEdge),
+            ...(baseEdge.message ? { message: baseEdge.message } : {}),
           });
         }
       } else {
@@ -1083,12 +1093,58 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
           ...(baseEdge.reflection ? { reflection: true } : {}),
           ...enforcement(baseEdge),
+          ...(baseEdge.message ? { message: baseEdge.message } : {}),
         });
       }
     }
   }
 
   return edges;
+}
+
+/**
+ * Expand `talk:` shorthand lines of a flow body into plain edges.
+ *
+ * `talk: all` makes an edge each way between every pair of session agents;
+ * `talk: hub <name>` makes `<name> <-> x` for every other session agent.
+ * An optional `[message: ticket]` marks every edge the line makes. An edge the
+ * flow already declares in that direction is kept as written, so one edge of a
+ * hub can carry its own `[message:]`. Expansion happens here, so the AST (and
+ * `export --format json`) only ever holds plain edges.
+ */
+export function expandTalk(flowBody: string, nodes: NodeDef[], edges: EdgeDef[], talkErrors?: string[]): EdgeDef[] {
+  const sessions = nodes.filter((n) => n.type === "agent" && (n as AgentNode).runs === "session").map((n) => n.id);
+  const out = [...edges];
+  const have = new Set(out.map((e) => `${e.from}\u0000${e.to}`));
+  const add = (from: string, to: string, message?: string) => {
+    if (from === to || have.has(`${from}\u0000${to}`)) return;
+    have.add(`${from}\u0000${to}`);
+    out.push({ from, to, condition: null, maxIterations: null, per: null, ...(message ? { message } : {}) });
+  };
+  for (const line of flowBody.split("\n")) {
+    const trimmed = line.trim();
+    if (!/^talk\s*:/.test(trimmed)) continue;
+    const m = trimmed.match(/^talk\s*:\s*(all|hub\s+([A-Za-z0-9_-]+))\s*(?:\[\s*message\s*:\s*([A-Za-z0-9_-]+)\s*\])?\s*$/);
+    if (!m) {
+      talkErrors?.push(`"${trimmed}" is not a talk form: write "talk: all" or "talk: hub <session-agent>", each optionally followed by [message: ticket|report|ask].`);
+      continue;
+    }
+    const message = m[3];
+    if (m[1] === "all") {
+      for (const a of sessions) for (const b of sessions) add(a, b, message);
+    } else {
+      const hub = m[2];
+      if (!sessions.includes(hub)) {
+        talkErrors?.push(`"talk: hub ${hub}": "${hub}" is not a session agent (runs: session), so no talk edges were made.`);
+        continue;
+      }
+      for (const x of sessions) {
+        add(hub, x, message);
+        add(x, hub, message);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -2268,78 +2324,127 @@ function parseInterfaceBlock(topBody: string): InterfaceEndpoints | null {
 }
 
 /**
- * Parse import statements from a topology body.
+ * Parse import statements from a topology body (or file top level).
  *
- * Syntax:
- *   import "./path.at" as alias
- *   import "./path.at" as alias with { key: value ... }
+ * Forms:
+ *   import alias from ./path.at
+ *   import alias from "./path.at"
+ *   import alias from registry:@org/pkg@1.2.0
+ *   import alias from ./path.at sha256 "<hex>"      (or `sha256: "<hex>"`)
+ *   import "./path.at" as alias                     (older form)
+ * Any of them may be followed by `with { key: value ... }`.
  *
- * Import statements are parsed from the raw body text since they are
- * not brace-delimited blocks in the usual sense.
+ * Only lines at brace depth zero are read. A line starting with `import` that
+ * matches no form is returned in `errors`, never dropped (T02b).
  */
-export function parseImports(body: string): ImportDef[] {
+export function parseImportsDetailed(text: string): { imports: ImportDef[]; errors: string[] } {
   const imports: ImportDef[] = [];
-
-  // Regex: import "source" as alias (captures everything after for optional with block)
-  const importRe = /(?:^|\n)\s*import\s+"([^"]+)"\s+as\s+([a-zA-Z][a-zA-Z0-9_-]*)/g;
+  const errors: string[] = [];
+  const lineRe = /^[ \t]*import\b([^\n]*)/gm;
+  const aliasRe = "([a-zA-Z][a-zA-Z0-9_-]*)";
   let m: RegExpExecArray | null;
+  let depth = 0;
+  let scanned = 0;
+  // Braces inside a quoted string or a # comment do not count toward depth.
+  // A string ends at its closing quote or at the end of its line.
+  let inString = false;
+  let inComment = false;
 
-  while ((m = importRe.exec(body)) !== null) {
-    const source = m[1];
-    const alias = m[2];
+  while ((m = lineRe.exec(text)) !== null) {
+    for (; scanned < m.index; scanned++) {
+      const ch = text[scanned];
+      if (ch === "\n") {
+        inString = false;
+        inComment = false;
+      } else if (inComment) {
+        continue;
+      } else if (inString) {
+        if (ch === "\\") scanned++;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') inString = true;
+      else if (ch === "#") inComment = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    if (depth > 0) continue;
+    const lineEnd = m.index + m[0].length;
+    const rest = m[1];
+
+    let source: string | undefined;
+    let alias: string | undefined;
+    let tail = "";
+    const legacy = rest.match(new RegExp(`^\\s+"([^"]+)"\\s+as\\s+${aliasRe}(.*)$`));
+    const from = rest.match(new RegExp(`^\\s+${aliasRe}\\s+from\\s+(?:"([^"]+)"|([^\\s"]+))(.*)$`));
+    if (legacy) {
+      [, source, alias, tail] = legacy;
+    } else if (from) {
+      alias = from[1];
+      source = from[2] ?? from[3];
+      tail = from[4];
+    }
+    if (source === undefined || alias === undefined) {
+      errors.push(`unrecognized import form: "${m[0].trim()}" (use: import <alias> from <path> [sha256 "<hex>"])`);
+      continue;
+    }
+
     const params: Record<string, string | number | boolean> = {};
+    const importDef: ImportDef = { source, alias, params };
 
-    // Check for `with { ... }` block following the import
-    const afterImport = body.slice(m.index! + m[0].length);
-    const withMatch = afterImport.match(/^\s*with\s*\{([^}]*)\}/);
-
-    if (withMatch) {
-      const withBody = withMatch[1];
+    let sha: string | undefined;
+    let withBody: string | undefined;
+    const sm = tail.match(/^\s+sha256\s*:?\s*"([^"]+)"/);
+    if (sm) {
+      sha = sm[1];
+      tail = tail.slice(sm[0].length);
+    }
+    let fullTail = tail + text.slice(lineEnd);
+    const wm = fullTail.match(/^\s*with\s*\{([^}]*)\}/);
+    if (wm) {
+      withBody = wm[1];
+      fullTail = fullTail.slice(wm[0].length);
+    } else if (tail.trim() !== "") {
+      errors.push(`unrecognized import form: "${m[0].trim()}" (unexpected "${tail.trim()}")`);
+      continue;
+    }
+    if (withBody !== undefined) {
       for (const line of withBody.split("\n")) {
         const kv = parseKV(line);
         if (!kv) continue;
         const [key, rawVal] = kv;
         const val = unquote(rawVal);
-        // Try number
-        if (/^-?\d+(\.\d+)?$/.test(val)) {
-          params[key] = parseFloat(val);
-        } else if (val === "true" || val === "false") {
-          params[key] = val === "true";
-        } else {
-          params[key] = val;
-        }
+        if (/^-?\d+(\.\d+)?$/.test(val)) params[key] = parseFloat(val);
+        else if (val === "true" || val === "false") params[key] = val === "true";
+        else params[key] = val;
       }
     }
+    if (!sha) {
+      // older form: sha256 after the with block
+      const after = fullTail.match(/^\s*sha256\s*:\s*"([^"]+)"/);
+      if (after) sha = after[1];
+    }
+    if (sha) importDef.sha256 = sha;
 
-    const importDef: ImportDef = { source, alias, params };
-
-    // Detect registry imports (not starting with ./ or ../)
-    const isRegistry = !source.startsWith("./") && !source.startsWith("../");
-    if (isRegistry) {
+    // Registry: explicit `registry:` prefix, or (older form) not a relative path.
+    const explicit = source.startsWith("registry:");
+    const pkg = explicit ? source.slice("registry:".length) : source;
+    if (explicit || (!source.startsWith("./") && !source.startsWith("../") && !source.startsWith("/"))) {
       importDef.registry = true;
-      // Parse package@version format
-      const atIdx = source.lastIndexOf("@");
+      const atIdx = pkg.lastIndexOf("@");
       if (atIdx > 0) {
-        importDef.registryPackage = source.slice(0, atIdx);
-        importDef.registryVersion = source.slice(atIdx + 1);
+        importDef.registryPackage = pkg.slice(0, atIdx);
+        importDef.registryVersion = pkg.slice(atIdx + 1);
       } else {
-        importDef.registryPackage = source;
+        importDef.registryPackage = pkg;
       }
     }
-
-    // Check for sha256 after the with block (or after alias if no with block)
-    const afterWithOrAlias = withMatch
-      ? afterImport.slice(withMatch[0].length)
-      : afterImport;
-    const sha256Match = afterWithOrAlias.match(/^\s*sha256\s*:\s*"([^"]+)"/);
-    if (sha256Match) {
-      importDef.sha256 = sha256Match[1];
-    }
-
     imports.push(importDef);
   }
+  return { imports, errors };
+}
 
-  return imports;
+/** Parse import statements; see {@link parseImportsDetailed}. */
+export function parseImports(body: string): ImportDef[] {
+  return parseImportsDetailed(body).imports;
 }
 
 /**
@@ -2475,7 +2580,17 @@ export function parse(source: string): TopologyAST {
   // --- Edges (flow) ---
   const flowBlock = extractBlock(topBody, "flow");
   const edgeAttributeErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
-  const edges = flowBlock ? parseFlow(flowBlock.body, edgeAttributeErrors) : [];
+  const talkErrors: string[] = [];
+  const edges = flowBlock
+    ? expandTalk(flowBlock.body, nodes, parseFlow(flowBlock.body, edgeAttributeErrors), talkErrors)
+    : [];
+
+  // --- Decisions (topology-level `decisions: [...]`) ---
+  const decisionsField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*decisions[ \t]*:[ \t]*(\[[^\]]*\]|[^\n]*)/);
+  const decisions = decisionsField ? parseList(decisionsField[1]) : undefined;
+
+  const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
+  const pinModels = pinField ? pinField[1] === "true" : undefined;
 
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
@@ -2616,7 +2731,14 @@ export function parse(source: string): TopologyAST {
   const interfaceEndpoints = parseInterfaceBlock(topBody);
 
   // --- Imports ---
-  const imports = parseImports(topBody);
+  // Read the file top level too: an import above the `topology` line used to
+  // be dropped with no message (T02b).
+  const topImports = parseImportsDetailed(stripComments(source).replace(/(?:^|\n)[ \t]*(?:topology|fragment)\b[^{\n]*\{[\s\S]*$/, "\n"));
+  const bodyImports = parseImportsDetailed(topBody);
+  const imports = [...topImports.imports, ...bodyImports.imports];
+  const importErrors = [...topImports.errors, ...bodyImports.errors].map((message) => ({
+    rule: "V8", level: "error" as const, message,
+  }));
 
   // --- Includes ---
   const includes = parseIncludes(topBody);
@@ -2667,6 +2789,7 @@ export function parse(source: string): TopologyAST {
   const ast: TopologyAST & {
     _unknownNameErrors?: typeof unknownNameErrors;
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
+    _talkErrors?: string[];
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
     _misplacedBlockErrors?: typeof misplacedBlockErrors;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
@@ -2706,8 +2829,12 @@ export function parse(source: string): TopologyAST {
     checkpoint,
     artifacts,
     records,
+    ...(decisions ? { decisions } : {}),
+    ...(pinModels !== undefined ? { pinModels } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
+
+  if (talkErrors.length > 0) ast._talkErrors = talkErrors;
 
   // Attach V12 parse-time errors for the validator to consume.
   if (edgeAttributeErrors.length > 0) {
@@ -2722,6 +2849,10 @@ export function parse(source: string): TopologyAST {
   // Attach V24 unknown memory sub-block warnings for the validator to consume.
   if (unknownMemorySubBlockWarnings.length > 0) {
     ast._unknownMemorySubBlockWarnings = unknownMemorySubBlockWarnings;
+  }
+
+  if (importErrors.length > 0) {
+    (ast as TopologyAST & { _importErrors?: typeof importErrors })._importErrors = importErrors;
   }
 
   // Attach V89 block-vs-KV field misuse errors for the validator to consume.

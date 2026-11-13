@@ -39,7 +39,7 @@ const AGENT: BlockSchema = {
     "on-fail", "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
-    "custodian-of", "sandbox", "fallback-chain", "rate-limit", "max-turns",
+    "custodian-of", "place", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],
@@ -95,7 +95,7 @@ const NODE_SCHEMAS = {
 
 /** The topology body: the sections it takes. Fields are not allowed there. */
 const TOPOLOGY: BlockSchema = {
-  fields: [],
+  fields: ["decisions", "pin-models"],
   blocks: {
     meta: NODE_SCHEMAS.meta,
     orchestrator: NODE_SCHEMAS.orchestrator,

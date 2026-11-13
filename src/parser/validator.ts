@@ -25,6 +25,9 @@ import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
+import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
+import { checkImports, type ImportCache } from "./imports.js";
+import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
   TopologyAST,
@@ -456,7 +459,10 @@ function v5OutputsExist(ast: TopologyAST): ValidationResult[] {
 function v6BoundedLoops(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const ids = allNodeIds(ast);
-  const backEdges = findBackEdges(ast.edges, ids);
+  // Talk edges between session agents are conversations, not loops: they run
+  // both ways by design, so they are left out of the loop check.
+  const talk = new Set(talkEdges(ast));
+  const backEdges = findBackEdges(ast.edges.filter((e) => !talk.has(e)), ids);
 
   for (const edge of backEdges) {
     if (edge.maxIterations === null) {
@@ -501,15 +507,25 @@ function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
- * V8: Import references should resolve (warning only -- we cannot check the filesystem).
- *
- * NOTE: This is a placeholder. The import system is not yet implemented in the
- * parser, so this rule always returns [] and is effectively skipped. It is
- * retained for completeness so the rule numbering stays consistent with the
- * spec. A future CLI extension can provide actual filesystem resolution.
+ * V8: Imports resolve (N43, T-02). With a file path, each local import is read
+ * relative to the importing file: a missing file, a wrong sha256, an import
+ * cycle or an error inside the imported file is an error. Without a file path
+ * (validating a string) nothing can be resolved, so say so.
  */
-function v8ImportsResolve(_ast: TopologyAST): ValidationResult[] {
-  return [];
+function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [
+    ...((ast as TopologyASTWithParseErrors)._importErrors ?? []),
+  ];
+  for (const imp of ast.imports.filter((i) => i.registry)) {
+    results.push({ rule: "V8", level: "warning", node: imp.alias, message: `import "${imp.source}": registry import not checked` });
+  }
+  const local = ast.imports.filter((i) => !i.registry);
+  if (local.length === 0) return results;
+  const filePath = opts.filePath ?? ast.sourcePath;
+  if (!filePath) {
+    return [...results, { rule: "V8", level: "warning", message: "imports not checked" }];
+  }
+  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack, opts.importCache)];
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */
@@ -680,6 +696,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _unknownMemorySubBlockWarnings?: ValidationResult[];
   _blockFieldMisuseWarnings?: ValidationResult[];
   _unknownNameErrors?: ValidationResult[];
+  _importErrors?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
@@ -1220,7 +1237,7 @@ function v100HookTypeFields(ast: TopologyAST): ValidationResult[] {
  * fork (a skill in a fresh forked context). An independent critic running
  * inline would read the author's reasoning, which is what independent forbids.
  */
-const RUN_MODES = ["subagent", "inline", "fork"];
+const RUN_MODES = ["subagent", "session", "inline", "fork"];
 
 function v101RunMode(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -1239,6 +1256,153 @@ function v101RunMode(ast: TopologyAST): ValidationResult[] {
         message: `Agent "${agent.id}" is independent but runs inline, in its caller's context, where it reads the author's reasoning. Use runs: fork or runs: subagent.`,
       });
     }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Session agents (V113 - V118)
+// ---------------------------------------------------------------------------
+
+const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions", "auto"];
+const MESSAGE_KINDS = ["ticket", "report", "ask"];
+const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+const sessionAgents = sessionAgentsOf;
+const talkEdges = talkEdgesOf;
+
+/**
+ * V113: the forms session agents take. A session agent's id is its agent file
+ * name, its session name (`claude -n <id>`), its SendMessage address and what
+ * talk edges point at, so it is kebab-case. `place:` is a plain name,
+ * `permission-mode:` is one Claude Code has, `[message:]` is ticket, report or
+ * ask, and a `talk: hub` names a session agent.
+ */
+function v113SessionForms(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const sessions = sessionAgents(ast);
+  for (const a of sessions) {
+    const at = { node: a.id, line: lookupLine(ast, a.id) };
+    if (!KEBAB.test(a.id)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Session agent "${a.id}" is not kebab-case: its id is also its session name and its message address, so write it like "lane-build".` });
+    }
+  }
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    const a = n as AgentNode;
+    const at = { node: a.id, line: lookupLine(ast, a.id) };
+    if (a.place !== undefined && !/^[a-z][a-z0-9-]*$/.test(a.place)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has place: ${a.place} — a place is a lowercase name like "ops" (a-z, 0-9 and "-", starting with a letter), because it names a herdr tab and a heading in sessions.md.` });
+    }
+    if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has permission-mode: ${a.permissionMode} — use ${PERMISSION_MODES.join(", ")}.` });
+    }
+  }
+  for (const msg of (ast as TopologyAST & { _talkErrors?: string[] })._talkErrors ?? []) {
+    results.push({ rule: "V113", level: "error", message: `flow: ${msg}` });
+  }
+  for (const e of ast.edges) {
+    if (e.message !== undefined && !MESSAGE_KINDS.includes(e.message)) {
+      results.push({ rule: "V113", level: "error", message: `Edge ${e.from} -> ${e.to} has [message: ${e.message}] — what crosses is ${MESSAGE_KINDS.join(", ")}.` });
+    }
+  }
+  return results;
+}
+
+/** V114: sessions with no declared way to talk are unguarded. */
+function v114TalkDeclared(ast: TopologyAST): ValidationResult[] {
+  if (sessionAgents(ast).length < 2) return [];
+  if (talkEdges(ast).length > 0) return [];
+  return [{ rule: "V114", level: "warning", message: "talk not declared: unguarded" }];
+}
+
+/** V115: with the `hub` pattern, every session-to-session edge touches one node. */
+function v115HubHolds(ast: TopologyAST): ValidationResult[] {
+  if (!ast.topology.patterns.includes("hub")) return [];
+  const edges = talkEdges(ast);
+  if (edges.length === 0) return [];
+  // The hub is the node every edge touches; with none, the busiest node stands in.
+  const count = new Map<string, number>();
+  for (const e of edges) for (const id of new Set([e.from, e.to])) count.set(id, (count.get(id) ?? 0) + 1);
+  const hub = [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const e of edges) {
+    if (e.from === hub || e.to === hub) continue;
+    const key = [e.from, e.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({ rule: "V115", level: "warning", message: `Topology has the hub pattern, but the edge ${e.from} -> ${e.to} between two sessions does not touch the hub "${hub}".` });
+  }
+  return results;
+}
+
+/** V116: a decision has one seat; a decision the topology lists has one at all. */
+function v116DecisionSeats(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const holders = new Map<string, string[]>();
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    for (const d of (n as AgentNode).decides ?? []) holders.set(d, [...(holders.get(d) ?? []), n.id]);
+  }
+  for (const [d, ids] of holders) {
+    if (ids.length > 1) {
+      results.push({ rule: "V116", level: "warning", message: `Decision "${d}" is claimed by more than one agent: ${ids.join(", ")}. A decision has one seat.` });
+    }
+  }
+  for (const d of ast.decisions ?? []) {
+    if (!holders.has(d)) {
+      results.push({ rule: "V116", level: "warning", message: `Decision "${d}" is listed in decisions: but no agent claims it with decides:.` });
+    }
+  }
+  return results;
+}
+
+/** V117 (T-03): fields a session ignores, one warning per field. */
+function v117SessionIgnoredFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const a of sessionAgents(ast)) {
+    const set: string[] = [];
+    if (a.background !== undefined) set.push("background");
+    if (a.skills !== undefined) set.push("skills");
+    if (a.permissions !== undefined) set.push("permissions");
+    for (const f of set) {
+      results.push({ rule: "V117", level: "warning", node: a.id, line: lookupLine(ast, a.id), message: `Agent "${a.id}" sets ${f}:, which is ignored when run as a session.` });
+    }
+  }
+  return results;
+}
+
+/** V118 (L-1): a talk edge between sessions in different permission modes. */
+function v118TalkPermissionModes(ast: TopologyAST): ValidationResult[] {
+  const mode = new Map(sessionAgents(ast).map((a) => [a.id, a.permissionMode]));
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const e of talkEdges(ast)) {
+    const a = mode.get(e.from);
+    const b = mode.get(e.to);
+    if (a === undefined || b === undefined || a === b) continue;
+    const key = [e.from, e.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({ rule: "V118", level: "warning", message: `Edge ${e.from} -> ${e.to} joins permission-mode ${a} and ${b}: a session in another permission mode holds incoming messages for its user, so this edge may not arrive.` });
+  }
+  return results;
+}
+
+const MODEL_ALIASES = ["opus", "sonnet", "haiku", "fable"];
+
+/** V119 (L-3): with `pin-models: true`, a bare model alias drifts; warn once per alias. */
+function v119ModelAliases(ast: TopologyAST): ValidationResult[] {
+  if (!ast.pinModels) return [];
+  const users = new Map<string, string[]>();
+  for (const n of ast.nodes) {
+    const m = (n as { model?: string }).model;
+    if (m && MODEL_ALIASES.includes(m)) users.set(m, [...(users.get(m) ?? []), n.id]);
+  }
+  const results: ValidationResult[] = [];
+  for (const [alias, ids] of users) {
+    results.push({ rule: "V119", level: "warning", message: `model: ${alias} (${ids.join(", ")}) — alias resolves differently over time; use the exact id for a pinned run.` });
   }
   return results;
 }
@@ -3823,7 +3987,17 @@ function v95HookEventKnown(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-export function validate(ast: TopologyAST): ValidationResult[] {
+/** Where the topology was read from, so imports can be resolved (N43). */
+export interface ValidateOptions {
+  /** Path of the file `ast` was parsed from. Omit when validating a string. */
+  filePath?: string;
+  /** Files already being resolved (cycle detection); set by import resolution. */
+  importStack?: string[];
+  /** Files already read and checked (set by import resolution; shared across a run). */
+  importCache?: ImportCache;
+}
+
+export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
   return [
     ...v1UniqueNames(ast),
     ...v2NoKeywordNames(ast),
@@ -3832,7 +4006,7 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v5OutputsExist(ast),
     ...v6BoundedLoops(ast),
     ...v7ModelRequired(ast),
-    ...v8ImportsResolve(ast),
+    ...v8ImportsResolve(ast, opts),
     ...v9ActionsHandled(ast),
     ...v10PromptsExist(ast),
     ...v11ReadWriteConsistency(ast),
@@ -3873,6 +4047,14 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v110ActionGateChecksNothing(ast),
     ...v111UnitFromRegex(ast),
     ...v112Ledgers(ast),
+    ...v113SessionForms(ast),
+    ...v114TalkDeclared(ast),
+    ...v115HubHolds(ast),
+    ...v116DecisionSeats(ast),
+    ...v117SessionIgnoredFields(ast),
+    ...v118TalkPermissionModes(ast),
+    ...v119ModelAliases(ast),
+    ...v120DecisionArrives(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -3938,4 +4120,24 @@ export function validate(ast: TopologyAST): ValidationResult[] {
     ...v87OrchestratorDelegation(ast),
     ...v88CustodyRefsValid(ast),
   ];
+}
+
+/**
+ * V120 (T-04c): an agent with `decides:` that a talk edge points at. A
+ * decision can arrive there as a message from another session rather than
+ * from the person at the seat. The warning names it; the binding writes a
+ * prompt log (typed or arrived) rather than refusing messages by keyword.
+ */
+function v120DecisionArrives(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const incoming = new Map<string, string[]>();
+  for (const e of talkEdges(ast)) incoming.set(e.to, [...(incoming.get(e.to) ?? []), e.from]);
+  for (const a of sessionAgents(ast)) {
+    if (!a.decides?.length || !incoming.has(a.id)) continue;
+    results.push({
+      rule: "V120", level: "warning", node: a.id, line: lookupLine(ast, a.id),
+      message: `Agent "${a.id}" holds ${a.decides.join(", ")} and ${[...new Set(incoming.get(a.id))].join(", ")} can message it: a decision can arrive here as a message.`,
+    });
+  }
+  return results;
 }

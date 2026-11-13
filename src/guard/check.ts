@@ -25,12 +25,17 @@ import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { installedMark, SESSION_HOOKS_PROVEN, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
-export type Strength = "refuse" | "detect" | "hope" | "none";
+export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
+
+/** Every strength word, so the report can pad its column to the longest. */
+const STRENGTH_WORDS: Strength[] = ["refuse", "detect", "hope", "none", "unverified"];
+const STRENGTH_WIDTH = Math.max(...STRENGTH_WORDS.map((w) => w.length));
 
 export interface GuardItem {
-  kind: "gate" | "human" | "permission" | "edge";
+  kind: "gate" | "human" | "permission" | "edge" | "session";
   id: string;
   strength: Strength;
   by: "hook" | "settings" | "code" | "gate" | "prose";
@@ -60,6 +65,12 @@ interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?:
 
 function readJson(path: string): Record<string, any> | null {
   try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
+}
+
+/** True when a session guard still has a real `exit 2` line and a `jq -e` read (comments do not count). */
+function holdsGeneratedLines(text: string): boolean {
+  const code = text.split("\n").filter((l) => !/^\s*#/.test(l));
+  return code.some((l) => /^\s*exit 2\s*$/.test(l)) && code.some((l) => /\bjq -er\b/.test(l));
 }
 
 function readText(path: string): string | null {
@@ -228,6 +239,35 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
   }
 
+  // Session agents: the spawn guard and the talk guard. Both are PreToolUse
+  // hooks; until the conformance facts mark them proven they grade
+  // "unverified", never "refuse".
+  if (sessionAgentsOf(ast).length > 0) {
+    const sessionGuard = (id: string, file: string, matcher: string, event: string, proven: boolean, extra: string[]) => {
+      const problems: string[] = [];
+      const hooks = findHooks(settings, "PreToolUse", file, (m) => m === matcher);
+      if (hooks.length === 0) problems.push(`no PreToolUse entry on ${matcher} for ${file} in .claude/settings.json`);
+      else { const bad = commandProblem(hooks[0].command); if (bad) problems.push(bad); }
+      const text = readText(join(root, scriptsDir, file));
+      if (text === null) problems.push(`${scriptsDir}/${file} is missing`);
+      else if (!holdsGeneratedLines(text)) problems.push(`${scriptsDir}/${file} no longer holds its generated lines (the exit 2 path and the jq read); regenerate it`);
+      if (id === "talk guard" && readText(join(root, ".claude/sessions.md")) === null) problems.push("no .claude/sessions.md, so no session was started with AT_SESSION and every send is unguarded");
+      const where = `PreToolUse on ${matcher} → ${file}`;
+      const notes = [...extra];
+      if (problems.length) return items.push({ kind: "session", id, strength: "none", by: "hook", where, notes: [...problems, ...notes] });
+      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift('the entry has no onFailure: "block", so the step goes through if the hook cannot start');
+      if (!proven) notes.unshift(`${event} is not proven to stop a call in the installed Claude Code (conformance facts), so this is unverified`);
+      items.push({ kind: "session", id, strength: proven ? "refuse" : "unverified", by: "hook", where, notes });
+    };
+    sessionGuard("spawn guard", "spawn-guard.sh", "Agent|Task", "PreToolUse on Agent", SESSION_HOOKS_PROVEN.agent, []);
+    if (talkEdgesOf(ast).length > 0) {
+      sessionGuard("talk guard", "talk-guard.sh", "SendMessage", "PreToolUse on SendMessage", SESSION_HOOKS_PROVEN.sendMessage, [
+        "a send through a terminal command, a shared file or a session outside this repo is not seen",
+        ".claude/state/talk.jsonl is a trail, not evidence: whoever can write files can edit it",
+      ]);
+    }
+  }
+
   for (const key of ["deny", "ask"] as const) {
     for (const raw of (ast.settings?.[key] as string[] | undefined) ?? []) {
       const rule = convertMcpToolName(raw);
@@ -338,8 +378,10 @@ export function renderGuardReport(report: GuardReport): string[] {
   const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
   const lines: string[] = [];
+  // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
+  const mark = installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(6)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(STRENGTH_WIDTH)}  by: ${i.by.padEnd(8)}  ${i.where}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
@@ -349,5 +391,5 @@ export function renderGuardReport(report: GuardReport): string[] {
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
-  return lines;
+  return mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
 }

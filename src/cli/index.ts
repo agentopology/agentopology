@@ -53,7 +53,7 @@ import { renderBriefMarkdown } from "../plan/render.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
-import { verifiedOnLine } from "../conformance/claude-code.js";
+import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
 import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +164,17 @@ function readFile(filePath: string): string {
     process.exit(1);
   }
   return fs.readFileSync(resolved, "utf-8");
+}
+
+/**
+ * Parse a topology read from `filePath`. The path is recorded on the AST
+ * (non-enumerable, so exports do not carry it) so every later `validate(ast)`
+ * resolves imports relative to the file, as `validate` does.
+ */
+function parseAt(source: string, filePath: string): ReturnType<typeof parse> {
+  const ast = parse(source);
+  Object.defineProperty(ast, "sourcePath", { value: path.resolve(filePath), enumerable: false, writable: true, configurable: true });
+  return ast;
 }
 
 /** Recursively create directories and write a file. */
@@ -357,7 +368,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -368,12 +379,13 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   );
   console.log("");
 
-  const results = validate(ast);
+  const results = validate(ast, { filePath: path.resolve(filePath) });
   const covered = inventory ? printCoverage(ast, inventory, dir) : true;
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
+    printInstalledMark();
     console.log(c.dim(verifiedOnLine()));
     if (!covered) process.exit(1);
     return;
@@ -399,6 +411,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   console.log("");
 
   printLessons(results.map((r) => r.rule));
+  printInstalledMark();
   console.log(c.dim(verifiedOnLine()));
 
   if (errors.length > 0 || !covered) {
@@ -467,7 +480,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -677,7 +690,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -901,7 +914,7 @@ function cmdExport(filePath: string, formatName: string, outputDir?: string): vo
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -952,7 +965,7 @@ function cmdPlan(
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -1055,7 +1068,7 @@ function cmdInfo(filePath: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -1222,6 +1235,12 @@ function cmdTargets(): void {
   console.log("");
 }
 
+/** What the installed Claude Code is, when it is not the version the output was checked against. */
+function printInstalledMark(): void {
+  const mark = installedMark();
+  if (mark) console.log(c.dim(mark));
+}
+
 /**
  * Scan a scaffolded project directory for unimplemented stub scripts.
  *
@@ -1232,7 +1251,7 @@ function cmdTargets(): void {
  */
 function cmdGuardCheck(filePath: string, dirPath: string): void {
   const source = fs.readFileSync(path.resolve(filePath), "utf-8");
-  const ast = parse(source);
+  const ast = parseAt(source, filePath);
   const root = path.resolve(dirPath);
   const report = checkGuards(ast, root);
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
@@ -1254,7 +1273,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   const source = readFile(filePath);
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);

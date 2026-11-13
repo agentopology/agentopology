@@ -12,6 +12,8 @@
  * @module
  */
 
+import { spawnSync } from "node:child_process";
+
 /** The Claude Code version this contract was last checked against. */
 export const VERIFIED_ON = "2.1.319";
 
@@ -25,6 +27,42 @@ export const MINIMUM_VERSION = "2.1.295";
  */
 export function verifiedOnLine(): string {
   return `checked against Claude Code ${VERIFIED_ON} (supports ${MINIMUM_VERSION} and later)`;
+}
+
+export type InstalledStatus =
+  | { state: "verified"; version: string }
+  | { state: "different"; version: string }
+  | { state: "unknown" }
+  | { state: "not-installed" };
+
+let installedCache: InstalledStatus | undefined;
+
+/**
+ * What `claude --version` says (first x.y.z in stdout, 3 s timeout), read at
+ * most once per process. A timeout or unparsable output is "unknown", never
+ * an error. No `claude` on PATH is "not-installed".
+ */
+export function installedStatus(): InstalledStatus {
+  if (installedCache) return installedCache;
+  const r = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
+  let status: InstalledStatus;
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") status = { state: "not-installed" };
+  else {
+    const m = r.error || r.status !== 0 ? null : /\b(\d+\.\d+\.\d+)\b/.exec(r.stdout ?? "");
+    status = !m ? { state: "unknown" } : m[1] === VERIFIED_ON ? { state: "verified", version: m[1] } : { state: "different", version: m[1] };
+  }
+  return (installedCache = status);
+}
+
+/** The line validate and guard --check add about the installed Claude Code; null when it is VERIFIED_ON. */
+export function installedMark(): string | null {
+  const s = installedStatus();
+  switch (s.state) {
+    case "verified": return null;
+    case "different": return `installed ${s.version}: unverified`;
+    case "unknown": return "unknown version: unverified";
+    case "not-installed": return "Claude Code not installed";
+  }
 }
 
 /** Every hook event the docs list (33). A hook on any other name never fires. */
@@ -232,3 +270,10 @@ export function matcherGaps(ast: GapSource, extra: string[] = []): MatcherGap[] 
   }
   return gaps;
 }
+
+/**
+ * Whether a PreToolUse hook on these tools is proven to refuse a call in the
+ * installed Claude Code (N44b). Until a conformance run proves it, `guard
+ * --check` grades the talk and spawn guards `unverified`, never `refuse`.
+ */
+export const SESSION_HOOKS_PROVEN = { sendMessage: false, agent: false } as const;

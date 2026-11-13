@@ -24,6 +24,7 @@
  * @module
  */
 
+import { warnSessionsNotCompiled } from "./lib/session.js";
 import type {
   TopologyAST,
   AgentNode,
@@ -771,6 +772,7 @@ export const claudeWorkflowBinding: BindingTarget = {
     "Claude Workflow tool — compiles the deterministic fan-out phases (execution: workflow) into a <topology>.workflow.js, plus the Blackboard seam contract and a loud LOSSY report. The embedded half of the hybrid host+workflow model.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
+    warnSessionsNotCompiled(ast, "claude-workflow");
     const ledger = new LossLedger();
     const files: GeneratedFile[] = [];
 

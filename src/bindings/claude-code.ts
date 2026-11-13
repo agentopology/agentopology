@@ -30,6 +30,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
@@ -2728,6 +2729,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
+  for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
+    if (!hooksByEvent[event]) hooksByEvent[event] = [];
+    hooksByEvent[event].push(...entries);
+  }
+
   const observeHook = buildHybridObserveHook(ast, topologyName);
   if (observeHook) {
     if (!hooksByEvent[observeHook.event]) hooksByEvent[observeHook.event] = [];
@@ -3744,6 +3751,9 @@ export const claudeCodeBinding: BindingTarget = {
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = generateBeforeActionScript(ast);
     if (beforeAction) files.push(beforeAction);
+
+    // Session agents: sessions.md, the launcher, the guards
+    files.push(...generateSessionFiles(ast));
 
     // Hook scripts (global)
     files.push(...generateHookScripts(ast));

@@ -1,0 +1,62 @@
+# session-ops.at: four session agents and one human who talk to each other.
+# Used by src/__tests__/e2e/session-agents.test.ts (N44a).
+
+topology session-ops : [hub] {
+
+  meta {
+    version: "1.0.0"
+    description: "Session agents that message each other through a manager"
+  }
+
+  decisions: [package-yes]
+
+  orchestrator {
+    model: sonnet
+    handles: [lane-manager]
+  }
+
+  agent lane-manager {
+    model: sonnet
+    description: "Hands tickets to the lanes and decides what ships"
+    runs: session
+    place: ops
+    decides: [package-yes]
+  }
+
+  agent lane-build {
+    model: sonnet
+    description: "Builds what a ticket asks for"
+    runs: session
+    place: ops
+  }
+
+  agent lane-video {
+    model: sonnet
+    description: "Makes the video cut"
+    runs: session
+    place: makers
+  }
+
+  agent lane-text {
+    model: sonnet
+    description: "Writes the copy"
+    runs: session
+    place: makers
+  }
+
+  agent helper {
+    model: sonnet
+    description: "A short-lived subagent that lane-build spawns"
+  }
+
+  human owner {
+    description: "The owner reads the final package"
+  }
+
+  flow {
+    lane-manager -> lane-build [message: ticket]
+    talk: hub lane-manager
+    lane-build -> helper
+    lane-manager -> owner
+  }
+}
