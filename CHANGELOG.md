@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a project with several topology skills imports one orchestrator that handles all their actions (S-13)
+
+- `import` kept the flow of every topology skill in `.claude/skills/*/SKILL.md` but only the first skill's `Handles:` line, so each action another skill's flow uses failed V9 ("used in flow but not in orchestrator.handles"). The one orchestrator now handles the union of every topology skill's `Handles:`, first skill first.
+
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
 - Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.

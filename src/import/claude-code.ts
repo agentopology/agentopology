@@ -1060,8 +1060,12 @@ export function importClaudeCode(
   }
 
   // 7. Build orchestrator
-  if (topologyMeta?.orchestrator) {
-    nodes.unshift(topologyMeta.orchestrator);
+  const orchestrator = otherTopologies.find((m) => m.orchestrator)?.orchestrator;
+  if (orchestrator) {
+    // S-13: one orchestrator handles every topology skill's actions; the
+    // others' handles used to be dropped while their flows were kept (V9).
+    orchestrator.handles = [...new Set(otherTopologies.flatMap((m) => m.orchestrator?.handles ?? []))];
+    nodes.unshift(orchestrator);
   }
 
   // 8. Add gates from SKILL.md
