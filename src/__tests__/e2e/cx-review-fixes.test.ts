@@ -916,11 +916,14 @@ describe.skipIf(!hasJq)("[F-1] before-action.sh refuses a guarded step it cannot
       const script = await p.setup();
       ledger("ok1");
       expect(run(script, "./tool publish ok1").status).toBe(0);
-      for (const c of ["env A=\"./tool publish ok1\" ./tool publish ep2", "true ./tool publish ok1 ./tool publish ep2"]) {
+      // `true ./tool publish ok1 ./tool publish ep2` runs nothing (true ignores its arguments), so it is no step (P1-d);
+      // the forms below do run the tool, and each unit they name needs its own ok record.
+      for (const c of ["env A=\"./tool publish ok1\" ./tool publish ep2", "sudo ./tool publish ok1 ./tool publish ep2"]) {
         const r = run(script, c);
         expect(r.status, `${c}: ${r.stderr}`).toBe(2);
       }
       ledger("ep2");
+      expect(run(script, "sudo ./tool publish ok1 ./tool publish ep2").status).toBe(0);
       expect(run(script, "true ./tool publish ok1 ./tool publish ep2").status).toBe(0);
     });
     it(`[F-1] ${p.name}: with an ok record a plain step passes, and an unreadable one is still refused`, async () => {
@@ -983,6 +986,86 @@ describe.skipIf(!hasJq)("[F-11] the Codex if: filter reads a shell command the w
   });
   it("[F-11] a refuse hook treats an unreadable mention of the tool as a match", () => {
     const r = runHook(setup(), root, bashPayload("g$()it push"));
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
+
+// P1-d (RC e2e round 2): the guard looks for the tool where bash would run it, so reading or naming
+// the script is no step. Programs that can run their arguments are still scanned (deny on doubt).
+const READS_AT = `topology rd : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "rd"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [check, register, kit]
+  }
+  action check {
+    kind: external
+    commands: ["python3 docs/check.py"]
+  }
+  action register {
+    kind: external
+    commands: ["python3 docs/deliver.py JOB"]
+    unit-from: "deliver.py (\\\\S+)"
+  }
+  action kit {
+    kind: external
+    commands: ["./media kit SLUG"]
+    unit-from: "media kit (\\\\S+)"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate reg-ready {
+      after: check
+      before: register
+      ledger: trace
+      on-fail: halt
+    }
+    gate kit-ready {
+      after: check
+      before: kit
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { check -> register -> kit }
+}
+`;
+describe.skipIf(!hasJq)("[P1-d] the guard looks for the tool where bash would run it", () => {
+  const script = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(READS_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it.each([
+    "git diff docs/deliver.py", "git log docs/deliver.py", "git add docs/deliver.py", "git commit -m \"deliver.py fix\"",
+    "git commit -m \"media kit flag\"", "ls docs/deliver.py", "cat docs/deliver.py", "head docs/deliver.py",
+    "grep -n x docs/deliver.py", "wc -l docs/deliver.py", "ls docs/*/*.py", "ls docs/media-engine/*.py",
+    "echo media kit", "echo $HOME immediately", "find . -name '*.py'", "cat tool media",
+    "echo \"run ./media kit s1 later\"", "rg \"media kit\" docs", "echo ${PWD}/media", "ls media*",
+  ])("[P1-d] %j reads or names the step and passes", async (command) => {
+    const r = run(await script(), command);
+    expect(r.status, r.stderr).toBe(0);
+  });
+  it.each([
+    "python3 docs/deliver.py J1", "python docs/deliver.py J1", "./media kit s1", "sudo ./media kit s1",
+    "echo s1 | xargs ./media kit", "find . -maxdepth 0 -exec ./media kit s1 \;", "timeout 5 ./media kit s1",
+    "git -c alias.k='!./media kit s1' k", "rg --pre ./media kit docs", "env FOO=1 python3 docs/deliver.py J1",
+    "X=./media; $X kit s1", "`echo ./media` kit s1", "./media kit $S", "./med?a kit s1", "{./media,kit,s1}",
+    "python3 -m runpy docs/deliver.py J1", "watch -n1 ./media kit s1", "nohup ./media kit s1 &",
+    // found by the differential fuzzer: a wrapper between -exec and the tool
+    "find . -maxdepth 0 -exec nohup ./media kit s1 \\;", "find . -exec env -i PATH=/bin ./media kit s1 \\;",
+    "find . -maxdepth 0 -exec timeout 5 ./media kit s1 \\;", "find . -ok stdbuf -o0 ./media kit s1 \\;",
+  ])("[P1-d] %j runs the step (or may) and exits 2", async (command) => {
+    const r = run(await script(), command);
     expect(r.status, r.stderr).toBe(2);
   });
 });

@@ -298,12 +298,12 @@ describe.skipIf(!hasJq)("[N42] before-action.sh sees a step inside a chained com
     expect(r.stderr).toContain("ep2");
   });
 
-  it("[N42] AG23 the step's words anywhere in a segment count: it over-blocks, never under-blocks (R-4)", () => {
-    // Since R-4 a prefix (`if`, `sudo`, `nice -n 5`, `bash -c`) no longer hides the step, so the step's
-    // words are matched anywhere in a segment. An echo of them is refused while the gate is unmet.
-    expect(hook(bash("echo ./tool publish ep1")).status).toBe(2);
-    expect(hook(bash("cd sub && echo ./tool publish ep1")).status).toBe(2);
-    expect(hook(bash("echo ./tool publisher ep1")).status).toBe(0);
+  it("[N42] AG23 the step is looked for where bash runs a program: an echo of it is no step, a wrapper still is (P1-d)", () => {
+    // A program that only prints or reads its arguments runs no step; one that can run them is scanned.
+    expect(hook(bash("echo ./tool publish ep1")).status).toBe(0);
+    expect(hook(bash("cd sub && echo ./tool publish ep1")).status).toBe(0);
+    expect(hook(bash("sudo ./tool publish ep1")).status).toBe(2);
+    expect(hook(bash("bash -c './tool publish ep1'")).status).toBe(2);
   });
 
   it("[N42] AG24 two guarded steps in one command need both gates", () => {

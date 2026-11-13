@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the step guard looks for the tool where bash runs it, so reading a script is no step (P1-d)
+
+- The deny-on-doubt matcher refused 18 of 42 ordinary commands on a real topology while a gate was unmet: `cat`, `ls`, `grep`, `git diff`/`log`/`add`/`commit` on the step's script, and commands whose letters merely held the tool's name (`docs/media-engine/*.py`, `echo $HOME immediately`). The guard now looks for the tool where bash runs a program, or as an interpreter's script; a program that only reads or prints its arguments runs no step unless a flag can make it run one; a program that can run its arguments, or one it does not know, is still scanned; doubt comes from an expansion or glob among the tool's own words, not from letters anywhere in the command. `echo ./tool publish ep1` is no step again ([N42] AG23).
+- Measured by a differential fuzzer (`scripts/guard-fuzz.py`): 0 bypasses in 20,000 commands on each target, each allowed command run with real bash against a logging stand-in tool. The fuzzer found the one gap of this change before release (a wrapper between `find -exec` and the tool) and a test pins it.
+
 ### [fix] Fixed: a gate's code citation (`at`, `match`, `bypass`) reaches the Codex output and `guard --check` (F-23)
 
 - On Codex, `gate.at`, `gate.match` and `gate.bypass` were dropped with no warning, and `guard --check --target codex` ignored them while the Claude Code check reported them. `AGENTS.md` now names the cited code, the text expected there and the bypass, and the Codex check reads the citation on disk the way the Claude Code one does. The Codex zero-drop test has a gate that sets all three.
