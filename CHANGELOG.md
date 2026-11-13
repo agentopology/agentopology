@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] The Codex human gate does not hand the model its own approval (R-11)
+
+- When an approval step blocked a spawn, `before-agent.sh` printed the exact `printf … >> .codex/state/approvals.jsonl` command to stderr, which Codex shows the model. With `permissions: unrestricted` (so `sandbox_mode = "danger-full-access"`), or no sandbox and `approval_policy = "never"`, the model could run it and approve itself. Now stderr says a person must add the record and the model must not; the record format and the command are in `AGENTS.md` under Human Checkpoints. `validate --target codex` (and scaffold) warns with `CX11-forgeable` when a human step stands before an agent and the sandbox lets the model write `.codex/`.
+
 ### [fix] before-action.sh sees a guarded step however the command is written; Claude Code guard scripts changed (R-4)
 
 - `before-action.sh` (shared by Claude Code and Codex) compared each segment's start with the step's command after stripping a few prefixes. With no ledger record, these ran the step with exit 0: two spaces or a tab between words, `if …; then`, `while …; do`, `! …`, `$(…)`, backticks, a `command` / `nice -n 5` / `sudo -u x` / `env -i` / `xargs` prefix, `"./tool" publish`, `./tool 'publish'`, and the tool named by an absolute path. Now the command is also cut at `(`, `)`, `$(` and backticks, each segment has its quotes and backslashes dropped and its whitespace made single spaces, and the step's words are found anywhere in the segment, its program also by any path ending in its name. `bash -c '…'` and `eval …` with the step written out are refused too. This over-blocks on purpose: `echo ./tool publish ep1` is now refused while the gate is unmet (it used to pass). A step named through a variable, an alias, a function or another script is still not seen.

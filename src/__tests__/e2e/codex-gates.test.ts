@@ -167,14 +167,15 @@ describe.skipIf(!hasJq)("[CX-11] the human gate without ask", () => {
     fs.mkdirSync(at(".codex/scripts"), { recursive: true });
     fs.writeFileSync(at(".codex/scripts/render-check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   });
-  it("[CX-11] a spawn behind a human step exits 2 with the reason and the command the person runs; after an approval record it exits 0", () => {
+  it("[CX-11] a spawn behind a human step exits 2 with the reason; the command the person runs (in AGENTS.md, R-11) works; after it the spawn exits 0", () => {
     const r = hook(`${S}/before-agent.sh`, spawnAgent("editor"));
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("approve");
     expect(r.stderr).toContain("The editor approves before editing");
     expect(r.stderr).toContain(".codex/state/approvals.jsonl");
-    // the command printed is the one that works
-    const cmd = r.stderr.split("\n").find((l) => l.includes(">> .codex/state/approvals.jsonl"))!.replace(/^.*?with:\s*/, "").trim();
+    // the command AGENTS.md gives the person is the one that works (stderr, which the model reads, names none: R-11)
+    expect(r.stderr).not.toContain(">> .codex/state/approvals.jsonl");
+    const cmd = fs.readFileSync(at("AGENTS.md"), "utf8").split("\n").find((l) => l.includes(">> .codex/state/approvals.jsonl"))!.trim();
     expect(spawnSync("/bin/sh", ["-c", cmd], { cwd: root, encoding: "utf8" }).status).toBe(0);
     expect(hook(`${S}/before-agent.sh`, spawnAgent("editor")).status).toBe(0);
   });

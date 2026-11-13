@@ -44,8 +44,9 @@ import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
 import { buildCodexHooks } from "./lib/codex-hooks.js";
-import { CODEX_GUARDS, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
+import { CODEX_GUARDS, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
+import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
 import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
@@ -64,30 +65,6 @@ function toTitle(id: string): string {
     .split(/[-_]/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-/** Permission words that mean "never ask": Codex `never`. */
-const NEVER_ASK = new Set(["never", "unrestricted", "full-auto", "bypassPermissions"]);
-
-/**
- * Map topology permission strings to Codex approval_policy values.
- *
- * Codex 0.156.1 takes `on-request` and `never` (and a `granular` table).
- * `untrusted` is unsupported and `on-failure` is deprecated, so every word
- * that is not "never ask" becomes `on-request`, the policy that still asks.
- */
-function mapApprovalPolicy(perm: string): string {
-  return NEVER_ASK.has(perm) ? "never" : "on-request";
-}
-
-/**
- * One approval policy for the whole project: Codex has one per config, not
- * one per agent. The strictest agent wins (`on-request` over `never`).
- */
-function projectApprovalPolicy(agents: AgentNode[]): string {
-  const policies = agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous"));
-  if (policies.length === 0) return "on-request";
-  return policies.includes("on-request") ? "on-request" : "never";
 }
 
 /** Generate an empty directory marker (a .gitkeep file). */
@@ -194,10 +171,7 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   const ext = getTopologyExtensions(ast);
 
   // Sandbox — first-class AST field, then extension, then derived.
-  const topSandbox = ast.settings?.sandbox;
-  const sandboxType = topSandbox != null
-    ? (typeof topSandbox === "boolean" ? (topSandbox ? "read-only" : "danger-full-access") : mapSandboxMode(String(topSandbox)))
-    : ext?.sandbox_type ?? ext?.["sandbox-type"] ?? deriveSandboxType(ast);
+  const sandboxType = projectSandboxMode(ast);
   if (sandboxType) scalars.sandbox_mode = String(sandboxType);
 
   // Extension keys: scalars at the top level (an extension wins over a derived value),
@@ -273,32 +247,6 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
 }
 
 /**
- * Map generic sandbox mode strings to Codex sandbox values.
- * Codex supports: "read-only", "workspace-write", "danger-full-access"
- */
-function mapSandboxMode(mode: string): string {
-  // Pass through native Codex values
-  const nativeValues = ["read-only", "workspace-write", "danger-full-access"];
-  if (nativeValues.includes(mode)) return mode;
-
-  switch (mode) {
-    case "docker":
-    case "container":
-    case "strict":
-      return "read-only";
-    case "write":
-    case "workspace":
-      return "workspace-write";
-    case "none":
-    case "disabled":
-    case "off":
-      return "danger-full-access";
-    default:
-      return "read-only"; // safe default
-  }
-}
-
-/**
  * Map agent sandbox values to Codex sandbox_mode for per-agent TOML.
  * true/"docker"/"strict" → "read-only", "write"/"workspace" → "workspace-write",
  * false/"none" → "danger-full-access", "network-only" → "read-only"
@@ -351,40 +299,6 @@ function mapReasoningEffort(thinking: string): string | null {
     default:
       return null;
   }
-}
-
-/**
- * Derive sandbox type from topology permissions.
- * More restrictive permissions suggest sandboxing.
- */
-function deriveSandboxType(ast: TopologyAST): string | null {
-  const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  const hasUnrestricted = agents.some(
-    (a) =>
-      a.permissions === "unrestricted" ||
-      a.permissions === "full-auto" ||
-      a.permissions === "bypassPermissions"
-  );
-  // If any agent is unrestricted, no sandbox (user opted out of restrictions)
-  if (hasUnrestricted) return "danger-full-access";
-  // Default: no explicit sandbox section needed
-  return null;
-}
-
-/**
- * Extract codex-specific extension fields from the topology level.
- * Checks settings.extensions["codex"] and any top-level extension block.
- */
-function getTopologyExtensions(
-  ast: TopologyAST
-): Record<string, unknown> | null {
-  const settingsExt = ast.settings?.extensions as
-    | Record<string, Record<string, unknown>>
-    | undefined;
-  if (settingsExt?.codex) return settingsExt.codex;
-  // Also check top-level ast.extensions["codex"]
-  if (ast.extensions?.codex) return ast.extensions.codex as Record<string, unknown>;
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +717,15 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push("");
       }
       sections.push(`- **Type:** Human pause point — requires manual input or approval`);
+      const targets = approvalTargets(ast, human);
+      if (targets.length > 0) {
+        // R-11: the record format lives here for the person, not in the hook's stderr, which the model reads.
+        sections.push(`- **Approval record:** Codex cannot ask, so ${targets.map((t) => `\`${t}\``).join(", ")} is not started until \`.codex/state/approvals.jsonl\` ends with an approval for \`${human.id}\`. A person, not the model, adds it from the project root:`);
+        sections.push("");
+        sections.push("  ```sh");
+        sections.push(`  mkdir -p .codex/state && printf '{"step":"${human.id}","ok":true,"at":"%s"}\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .codex/state/approvals.jsonl`);
+        sections.push("  ```");
+      }
       if (human.timeout) {
         sections.push(`- **Timeout:** ${human.timeout}`);
       }
