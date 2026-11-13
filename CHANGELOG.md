@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
+
+- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
+
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
 - Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.

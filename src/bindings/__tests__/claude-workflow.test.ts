@@ -182,12 +182,20 @@ describe("claude-workflow binding — Blackboard seam contract (hybrid-release)"
     expect(seam.content).toContain("claude-code");
   });
 
+  it("[O-006] the README and SEAM docs describe this topology only: no pipeline wording from another harness is built in", () => {
+    for (const f of [find("-SEAM.md")!, find("-README.md")!, find("-LOSSY-REPORT.md")!]) {
+      for (const w of ["contract research", "adversarial verify", "ship-report", "build-report", "build rung", "the human promotes"]) {
+        expect(f.content, `${f.path} holds "${w}"`).not.toContain(w);
+      }
+    }
+  });
+
   it("documents the strict run order: host phase 1 → launch workflow build → host phase 3/gate → human approval", () => {
     const seam = find("-SEAM.md")!;
     expect(seam.content).toContain("STRICT SEAM");
     // The workflow rung is the build; host runs the surrounding phases.
     expect(seam.content).toContain("Host launches `hybrid-release.workflow.js`");
-    expect(seam.content).toContain("build rung");
+    expect(seam.content).toContain("workflow rung");
     expect(seam.content).toContain("phase 1 (change-lister");
     expect(seam.content).toContain("phase 3 (smoke-tester");
     expect(seam.content).toContain("human `approve-release`");
