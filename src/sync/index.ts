@@ -132,13 +132,22 @@ export const CLAUDE_CODE_STRUCTURAL_HEADINGS = [
 ];
 
 /**
- * Extract prompts from Codex AGENTS.md file.
+ * Extract prompts from Codex agent files.
  *
- * Splits into per-agent sections by `### ` headings, then looks for
- * `#### Instructions` within each agent section.
+ * Current scaffolds keep each prompt in `.codex/agents/<id>.toml`, between the
+ * prompt markers inside `developer_instructions`. An AGENTS.md from before
+ * CX-6 still holds prompts under `#### Instructions`; it is read only for
+ * agents the TOML files did not give a prompt.
  */
 function extractCodexPrompts(files: PlatformFile[]): ExtractedPrompt[] {
   const prompts: ExtractedPrompt[] = [];
+
+  for (const file of files) {
+    const match = file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)\.toml$/);
+    if (!match) continue;
+    const content = fencedPrompt(file.content);
+    if (content) prompts.push({ agentId: match[1], content });
+  }
 
   const agentsFile = files.find(
     (f) => f.path.endsWith("AGENTS.md") || f.path === "AGENTS.md",
@@ -150,6 +159,7 @@ function extractCodexPrompts(files: PlatformFile[]): ExtractedPrompt[] {
   for (const [heading, body] of agentSections) {
     // Heading is the agent title — convert back to kebab-case id
     const agentId = heading.trim().toLowerCase().replace(/\s+/g, "-");
+    if (prompts.some((p) => p.agentId === agentId)) continue;
     const content = extractSubsectionContent(body, "#### Instructions");
     if (content) {
       prompts.push({ agentId, content });

@@ -4,6 +4,17 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] A small AGENTS.md for Codex that keeps your own text (CX-6)
+
+- The Codex `AGENTS.md` no longer holds agent prompts. Each prompt lives in `.codex/agents/<id>.toml`, between the prompt markers, so a 40-agent topology scaffolds an `AGENTS.md` well under Codex's size cap.
+- The generated part of `AGENTS.md` sits between `agentopology:begin` and `agentopology:end` markers. A re-scaffold replaces only that block and keeps any text you wrote above or below it.
+- `sync` reads prompts from the agent files. An `AGENTS.md` scaffolded earlier is still read for agents the files do not cover.
+
+### [fix] Codex skills are written where Codex reads them (CX-7)
+
+- Each skill is now `.agents/skills/<id>/SKILL.md` with `name` and `description` frontmatter. Nothing is written under `.codex/skills/` any more, since Codex never loaded those files.
+- A skill with `disable-model-invocation` also gets `agents/openai.yaml` with `policy.allow_implicit_invocation: false`.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
