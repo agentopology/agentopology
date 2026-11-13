@@ -426,6 +426,12 @@ function formatSchemaField(f: SchemaFieldDef): string {
  * (the words before any placeholder, then the script's arguments, which carry
  * the unit) to before-action.sh, the same check the hook makes, and exits 2
  * before running anything when that refuses. Empty for an ungated step.
+ *
+ * D-1: the check sees the commands the script runs, and the arguments only as
+ * the unit. A step with `unit-from` takes exactly one argument, a safe unit
+ * name (`--help`, two words or none are refused); a step without one ignores
+ * its arguments. The check runs with AT_NO_USAGE=1, so `<step> --help` is a
+ * step there, never the usage exemption the hook gives a typed command.
  */
 function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
   const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
@@ -435,15 +441,23 @@ function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
   return [
     "# Gate check (agentopology): this step runs only when its gates hold. Its commands go to",
     "# before-action.sh, the check the PreToolUse hook on Bash makes, so running this script by",
-    "# hand does not skip a gate. Arguments are added to each command (the unit, e.g. ep1).",
+    ...(action.unitFrom
+      ? [
+          "# hand does not skip a gate. The one argument is the unit (e.g. ep1), checked as the unit only.",
+          'if [ "$#" -ne 1 ] || ! [[ "$1" =~ ^[A-Za-z0-9_.@+][A-Za-z0-9_.@+-]*$ ]] || [[ "$1" == *..* ]]; then',
+          `  echo "agentopology: step ${action.id} takes one argument, its unit (a plain name such as ep1), so it does not run" >&2; exit 2`,
+          "fi",
+          'AT_UNIT_ARG="$1"',
+        ]
+      : ["# hand does not skip a gate. The step has no unit, so its arguments are not part of the check.", 'AT_UNIT_ARG=""']),
     'AT_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"',
     'AT_PROJECT="${CLAUDE_PROJECT_DIR:-$AT_HERE}"',
     "at_gate() {",
     `  command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check the gates of step ${action.id}, so it does not run" >&2; exit 2; }`,
-    `  jq -n --arg c "$*" '{tool_name: "Bash", tool_input: {command: $c}}' | CLAUDE_PROJECT_DIR="$AT_PROJECT" bash "$AT_PROJECT/.claude/skills/${name}/scripts/before-action.sh" \\`,
+    `  jq -n --arg c "$*" '{tool_name: "Bash", tool_input: {command: $c}}' | AT_NO_USAGE=1 CLAUDE_PROJECT_DIR="$AT_PROJECT" bash "$AT_PROJECT/.claude/skills/${name}/scripts/before-action.sh" \\`,
     `    || { echo "agentopology: step ${action.id} does not run: a gate before it is not met" >&2; exit 2; }`,
     "}",
-    ...words.map((w) => `at_gate ${shellQuote(w)} "$@"`),
+    ...words.map((w) => `at_gate ${shellQuote(w)} $AT_UNIT_ARG`),
     "",
   ];
 }
