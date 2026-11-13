@@ -30,8 +30,34 @@ const SCRIPT_EXT = /\.(?:py|sh|ts|mjs|js)$/;
  * a stub named `SLUG`, and `pxframes.py gate OUT/frames-critic.json` one named
  * `frames-critic.json`.
  */
+/**
+ * `$CLAUDE_PROJECT_DIR` as a word starts it, quoted or not, with or without
+ * braces or a default (`"$CLAUDE_PROJECT_DIR"/x`, `"${CLAUDE_PROJECT_DIR}/x"`,
+ * `${CLAUDE_PROJECT_DIR:-.}/x`): the form Claude Code's own docs give a hook.
+ */
+const PROJECT_DIR = /^"?\$(?:CLAUDE_PROJECT_DIR\b|\{CLAUDE_PROJECT_DIR(?::-[^}"]*)?\})"?(?=\/)/;
+
+/**
+ * A word that names a file through the project-dir variable, as the
+ * project-relative path it is (`./x`); any other word unchanged (S-01). V96
+ * read `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` as "not a command or path",
+ * and the script name of `node "$CLAUDE_PROJECT_DIR/a.mjs"` as `a.mjs"`.
+ */
+export function projectWord(word: string): string {
+  const m = word.match(PROJECT_DIR);
+  if (!m) return word;
+  let path = word.slice(m[0].length);
+  // `"$CLAUDE_PROJECT_DIR/x.sh"`: the quote opened before the variable closes at the end
+  const open = m[0].startsWith('"') && !m[0].endsWith('"');
+  if (open) {
+    if (!path.endsWith('"')) return word;
+    path = path.slice(0, -1);
+  }
+  return path.includes('"') ? word : `.${path}`;
+}
+
 export function runParts(run: string): { interpreter?: string; script: string; args: string[] } {
-  const words = run.trim().split(/\s+/);
+  const words = run.trim().split(/\s+/).map((w, i) => (i < 2 ? projectWord(w) : w));
   const first = words[0] ?? "";
   const named =
     words.length > 1 &&
@@ -75,7 +101,7 @@ export function proseInRun(run: string): string | null {
   if (text === "") return "it is empty";
   if (/\r|\n/.test(text)) return "it spans several lines";
 
-  const first = text.split(/\s+/)[0];
+  const first = projectWord(text.split(/\s+/)[0]);
   if (/[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
   if (!EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
 

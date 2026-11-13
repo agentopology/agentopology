@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: hook commands with quotes and variables survive import exactly (S-01)
+
+- The serializer wrote a `"` inside a value as `\"`, but the parser never decoded it, so `node "$CLAUDE_PROJECT_DIR/a.mjs"` came back as `node \"$CLAUDE_PROJECT_DIR/a.mjs\"`. A quoted value now decodes `\"` and `\\`, and the serializer escapes `\` as well as `"`, so import → serialize → parse gives the same command. A hand-written quoted value that held `\\` now reads as one backslash.
+- V96 read `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` as "not a command or path", and took the script of `node "$CLAUDE_PROJECT_DIR/x.mjs"` to be `x.mjs"`. A word that starts with the project-dir variable (quoted or not, `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PROJECT_DIR:-.}`) is now read as the project path `./…` by V96 and the bindings. Prose is still refused; other variables (`"$HOME"/x.sh`) are unchanged.
+
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)
 
 - `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.

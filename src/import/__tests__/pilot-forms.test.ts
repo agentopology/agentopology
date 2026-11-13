@@ -85,3 +85,29 @@ describe("S-02: an imported hook's id is a valid identifier", () => {
     expect(first.hooks).toHaveLength(entries.length);
   });
 });
+
+describe("S-01: hook commands with quotes and variables survive import exactly", () => {
+  const commands = [
+    'node "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.mjs"',
+    '"$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-main.sh',
+    '"${CLAUDE_PROJECT_DIR}/.claude/hooks/pre-commit.sh"',
+    'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/check.sh" --strict',
+    'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_edit.py" --protect-lockfiles',
+    '/bin/sh "${CLAUDE_PROJECT_DIR:-.}/scripts/tooling/dispatch.sh"',
+    "cd ${CLAUDE_PROJECT_DIR:-.} && npm test",
+    // a backslash, and a backslash before a quote, are data too
+    "jq -r '.tool_input.file_path' | { read -r f; echo \"$f\" | grep -qE '(^|/)\\.env$' && printf '{\\\"deny\\\":true}'; } || true",
+  ];
+  const entries: Entry[] = commands.map((c) => ["PreToolUse", "Bash", c]);
+
+  it("parses back to the same command, and again after serialize", () => {
+    const first = parse(importAt([settingsWith(entries)]));
+    expect(first.hooks.map((h) => h.run)).toEqual(commands);
+    const second = parse(serializeAST(first));
+    expect(second.hooks).toEqual(first.hooks);
+  });
+
+  it("validates with 0 errors: a quoted project-dir path is a path (V96)", () => {
+    expect(errors(importAt([settingsWith(entries)]))).toEqual([]);
+  });
+});
