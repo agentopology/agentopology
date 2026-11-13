@@ -154,3 +154,48 @@ function renderSessionsView() {
   return h;
 }
 `;
+
+export const LENS_JS_SEATS = String.raw`
+// --- Seats lens (VZ-8): one row per decision point ---
+function seatsModel() {
+  var rows = [];
+  var flowEdges = data.edges.filter(function(e) { return !e.isError; });
+  data.nodes.forEach(function(n) {
+    if (n.type !== 'human') return;
+    var before = [], after = [];
+    flowEdges.forEach(function(e) {
+      if (e.to === n.id && after.indexOf(e.from) < 0) after.push(e.from);
+      if (e.from === n.id && before.indexOf(e.to) < 0) before.push(e.to);
+    });
+    rows.push({ id: n.id, kind: 'human', where: { after: after, before: before }, releases: before.slice(), timeout: n.timeout || null, onTimeout: n.onTimeout || null, holder: null, grade: gradeOf(n.id) });
+  });
+  var declared = [];
+  (data.decisions || []).forEach(function(d) { if (declared.indexOf(d) < 0) declared.push(d); });
+  data.nodes.forEach(function(n) { (n.decides || []).forEach(function(d) { if (declared.indexOf(d) < 0) declared.push(d); }); });
+  declared.forEach(function(d) {
+    var holderNode = data.nodes.find(function(n) { return (n.decides || []).indexOf(d) >= 0; });
+    var rel = [];
+    if (holderNode) flowEdges.forEach(function(e) { if (e.from === holderNode.id && rel.indexOf(e.to) < 0) rel.push(e.to); });
+    rows.push({ id: d, kind: 'decision', where: holderNode ? { place: holderNode.place || null, session: holderNode.id } : null, releases: rel, timeout: null, onTimeout: null, holder: holderNode ? holderNode.id : null, grade: gradeOf(d) });
+  });
+  return { rows: rows };
+}
+function renderSeatsView() {
+  var m = seatsModel();
+  var h = lensHead('Seats', 'Every decision point: a human step or a decision a session holds. Where it sits, what it releases, how long it waits.');
+  if (!m.rows.length) return h + '<div class="lens-sub">No human steps or decisions are declared.</div>';
+  h += '<table class="ledger"><thead><tr><th>Seat</th><th>Kind</th><th>Where it sits</th><th>Releases</th><th>Timeout</th><th>On timeout</th><th>Grade</th></tr></thead><tbody>';
+  m.rows.forEach(function(r) {
+    if (!matchesSearch(r.id) && !(r.holder && matchesSearch(r.holder))) return;
+    var where = '';
+    if (r.kind === 'human') where = 'after ' + (r.where.after.join(', ') || '(start)') + ' · before ' + (r.where.before.join(', ') || '(end)');
+    else where = r.where ? 'held by ' + r.where.session + (r.where.place ? ' in ' + r.where.place : '') : 'nobody holds it';
+    var grade;
+    if (r.grade) grade = chipHtml(r.grade);
+    else grade = factsChecked() ? '<span class="seat-hold">not graded</span>' : chipHtml('');
+    var link = data.nodes.some(function(n) { return n.id === r.id; }) ? ' link" onclick="onNodeClick(\'' + esc(r.id) + '\')' : '';
+    h += '<tr class="seat-row" data-seat="' + esc(r.id) + '"><td class="idcell' + link + '">' + esc(r.id) + '</td><td>' + esc(r.kind) + '</td><td class="where">' + esc(where) + '</td><td>' + esc(r.releases.join(', ') || '—') + '</td><td>' + esc(r.timeout || '—') + '</td><td>' + esc(r.onTimeout || '—') + '</td><td>' + grade + '</td></tr>';
+  });
+  return h + '</tbody></table>';
+}
+`;
