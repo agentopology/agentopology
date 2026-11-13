@@ -1,0 +1,8 @@
+Validating openclaw-assistant.at (personal-assistant v1.0.0)
+
+  WARN  [V99] line 56: Agent "scheduler" uses skill "google-calendar", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill google-calendar { file: ".claude/skills/google-calendar/SKILL.md" }; otherwise check the name (scheduler)
+
+  0 error(s), 1 warning(s)
+
+checked against Claude Code 2.1.323 (supports 2.1.295 and later)
+--- exit 0

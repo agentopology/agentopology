@@ -1,0 +1,85 @@
+{
+  "description": "CX-3 probe pack: facts about Codex CLI that its docs do not state, measured by live runs of scripts/codex-probes.sh in temp git repos. Project trust was given with -c projects.<repo>.trust_level=\"trusted\" and hook trust with --dangerously-bypass-hook-trust, except where a record says otherwise. Paths, session ids and call ids in the evidence are replaced with <redacted>.",
+  "probes": [
+    {
+      "id": "P1",
+      "question": "Does exit 2 from a project PreToolUse hook with matcher Bash block the command in codex exec?",
+      "answer": "yes",
+      "evidence": "Hook stdin: {\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo PROBE_EXIT2 > out-exit2.txt\"},\"permission_mode\":\"bypassPermissions\"}. Hook exit 2. stderr: \"ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: probe: blocked with exit 2. Command: echo PROBE_EXIT2 > out-exit2.txt\". out-exit2.txt was not created, no PostToolUse fired for it, and the blocked command does not appear as a command_execution item in the --json stream. The model reported \"The PreToolUse hook blocked its command with exit code 2.\" codex exec exit code 0.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P2",
+      "question": "What tool name does apply_patch show in the hook payload?",
+      "answer": "apply_patch",
+      "evidence": "PreToolUse and PostToolUse stdin: {\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Begin Patch\\n*** Add File: <redacted>/hello.txt\\n+hello\\n*** End Patch\"}}. The patch text is in tool_input.command, with absolute paths. PostToolUse tool_response: \"Exit code: 0\\nWall time: 0 seconds\\nOutput:\\nSuccess. Updated the following files:\\nA <redacted>/hello.txt\". A project hook with matcher Bash would not see it.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P3",
+      "question": "What tool name and input does a subagent spawn show in the hook payload?",
+      "answer": "tool_name collaborationspawn_agent, tool_input {task_name, agent_type, message, fork_turns}",
+      "evidence": "PreToolUse stdin: {\"tool_name\":\"collaborationspawn_agent\",\"tool_input\":{\"task_name\":\"probe\",\"agent_type\":\"probe_reviewer\",\"message\":\"<encrypted blob, starts gAAAAA>\",\"fork_turns\":\"none\"}}. PostToolUse tool_response: \"{\\\"task_name\\\":\\\"/root/probe\\\"}\". The wait is a second tool: tool_name collaborationwait_agent, tool_input {\"timeout_ms\":10000}. The message text is encrypted, so a hook cannot read what the parent asked the subagent. In an --ephemeral exec session the spawn failed: \"collab spawn failed: no thread with id: <redacted>\"; without --ephemeral it worked.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P4",
+      "question": "Does agent_type equal the agent file's name?",
+      "answer": "yes",
+      "evidence": "Agent file .codex/agents/probe-file.toml with name = \"probe_reviewer\". SubagentStart stdin: {\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"<redacted>\",\"agent_type\":\"probe_reviewer\"}. SubagentStop stdin: {\"hook_event_name\":\"SubagentStop\",\"agent_type\":\"probe_reviewer\",\"agent_transcript_path\":\"<redacted>\",\"last_assistant_message\":\"PONG\",\"stop_hook_active\":false}. agent_type is the name field, not the file name, and the spawn's tool_input.agent_type carries the same value.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P5",
+      "question": "Does a message queued with codex queue fire UserPromptSubmit, and how is it marked in the payload?",
+      "answer": "yes in an interactive session, as a new turn after the running one, with no mark; no in codex exec",
+      "evidence": "Interactive codex session busy in `sleep 40`: `codex queue --thread <redacted> --message 'PROBE_QUEUED: reply with QUEUED-OK'` printed \"Queued message <redacted> for thread <redacted>.\" (exit 0). After the first turn's Stop, a second UserPromptSubmit fired: {\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"PROBE_QUEUED: reply with QUEUED-OK\",\"turn_id\":\"<redacted, new turn>\"}, then Stop with last_assistant_message \"QUEUED-OK\". Its key set equals a typed prompt's: cwd, hook_event_name, model, permission_mode, prompt, session_id, transcript_path, turn_id. Nothing marks it as queued. In codex exec the same queue call also printed \"Queued message ...\" with exit 0, but the message never arrived: exec finished after one UserPromptSubmit, and `codex exec resume` of that session listed no queued message either.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P6",
+      "question": "Does -c developer_instructions=... set a session's role?",
+      "answer": "yes",
+      "evidence": "codex exec -c 'developer_instructions=\"Your role code is ZEBRA-42. When asked for your role code, answer ZEBRA-42.\"' 'What is your role code? Answer with the code only. Do not run any tools.' -> agent_message \"ZEBRA-42\". The code appears nowhere else in the session.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P7",
+      "question": "Does a project hook run in codex exec without hook trust (no --dangerously-bypass-hook-trust)?",
+      "answer": "no",
+      "evidence": "Same hooks.json as the other probes (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop), project layer trusted, no bypass flag. The shell command ran (p7.txt created, command_execution exit_code 0) and no hook ran: hooks.jsonl was never created. Neither the --json stream nor stderr said that hooks were skipped. With the bypass flag the stream starts with two error items: \"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.\"",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P8",
+      "question": "Is .codex/ writable under workspace-write?",
+      "answer": "no",
+      "evidence": "No model: `codex sandbox -P :workspace -- sh -c 'touch .codex/w1; touch sub/w2; mkdir -p .codex/agents; touch .git/w3'` -> \"touch: .codex/w1: Operation not permitted\", \"sub-ok\", \"mkdir: .codex/agents: Operation not permitted\", \"touch: .git/w3: Operation not permitted\". Live check in codex exec -s workspace-write: PostToolUse for Bash `touch .codex/probe-write` had tool_response \"touch: .codex/probe-write: Operation not permitted\\n\". apply_patch could write hello.txt at the repo root in the same run. `-P workspace-write` is not a profile name (\"default_permissions requires a `[permissions]` table\").",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P9",
+      "question": "Which command that starts no model honors --strict-config?",
+      "answer": "codex exec --strict-config, which fails at config load (exit 1) before any model request; no other no-model command does",
+      "evidence": "`codex --strict-config features list` -> \"Error: `--strict-config` is not supported for `codex features`\" (exit 1); same message for `codex mcp` and `codex sandbox`; `codex features list --strict-config` -> \"unexpected argument\" (exit 2). `codex --strict-config -c bogus_probe_key=1 doctor` exits 0: config.load is only a warning, \"Codex is ignoring 1 unrecognized configuration setting ... `bogus_probe_key` is ignored.\" `codex exec --strict-config -c bogus_probe_key=1 ...` -> \"Error loading config.toml: unknown configuration field `bogus_probe_key` in -c/--config override\" (exit 1). With a trusted project .codex/config.toml holding bogus_probe_key: \"Error loading config.toml: <redacted>/.codex/config.toml:2:1: unknown configuration field `bogus_probe_key`\" (exit 1). To keep a valid config from reaching a model, point exec at a dead provider (-c model_provider=deadp -c model_providers.deadp.base_url=\"http://127.0.0.1:9/v1\"). An untrusted project layer is not loaded at all, so --strict-config does not see it. The quoted form -c 'projects.\"<path>\".trust_level=...' did not trust the project; the unquoted -c projects.<path>.trust_level=\"trusted\" did.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    },
+    {
+      "id": "P10",
+      "question": "What do exit 1, exit 127 and a timeout do on PreToolUse?",
+      "answer": "all three fail open: the command runs",
+      "evidence": "Hook with matcher Bash, timeout 3. Exit 1 (stderr \"probe: exit 1\"): `echo PROBE_EXIT1 > out-exit1.txt` ran, exit_code 0, PostToolUse fired. Exit 127: same, out-exit127.txt created. Timeout: the hook sleeps 20 s and would then exit 2; the command ran, the whole exec took 18 s, and the hook never wrote its after-sleep line, so Codex ended it at the timeout and allowed the command. None of the three produced a warning in the --json stream or on stderr. Only exit 2 blocked.",
+      "codex_version": "0.156.1",
+      "date": "2026-11-13"
+    }
+  ]
+}

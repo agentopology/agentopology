@@ -21,10 +21,11 @@
 import * as fs from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import type { GateNode, TopologyAST } from "../parser/ast.js";
+import type { ActionNode, GateNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.js";
 import { scriptNameFromRun } from "../parser/run.js";
+import { parseWindow, today as todayDate } from "../parser/window.js";
 import { hookCommand } from "../bindings/claude-code.js";
 
 export interface StepCheckOptions {
@@ -32,6 +33,8 @@ export interface StepCheckOptions {
   unit?: string;
   /** Project directory ledgers and check scripts are read from. Default ".". */
   dir?: string;
+  /** Today as YYYY-MM-DD; default the real date (or AT_TODAY). */
+  today?: string;
 }
 
 export interface GateResult {
@@ -53,15 +56,18 @@ export interface StepReport {
 /** Longest a gate's `run:` may take. */
 const RUN_TIMEOUT_MS = 5 * 60_000;
 
-function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string): GateResult {
+function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string, stepHasUnit: boolean): GateResult {
   const reasons: string[] = [];
   const ledger = gateLedger(ast, gate);
   const runnable = !!scriptNameFromRun(gate.run);
 
   if (ledger) {
-    const needsUnit = ledger.path.includes("{unit}");
+    // D-2: a step with unit-from needs a unit even on a flat ledger, or any unit's record would do.
+    const needsUnit = ledger.path.includes("{unit}") || stepHasUnit;
     if (needsUnit && unit === "") {
-      reasons.push(`ledger ${ledger.path} needs a unit: pass --unit`);
+      reasons.push(stepHasUnit && !ledger.path.includes("{unit}")
+        ? `the step has unit-from, so it needs a unit: pass --unit (ledger ${ledger.path})`
+        : `ledger ${ledger.path} needs a unit: pass --unit`);
     } else if (unit !== "" && unsafeUnit(unit)) {
       reasons.push(`the unit "${unit}" is not a safe file name`);
     } else {
@@ -98,6 +104,27 @@ function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string)
 }
 
 /**
+ * Humans that guard `step` (a flow edge from the human to it, or a gate before
+ * it that comes after the human) and whose `valid:` window has ended. Their
+ * approval is out of date, so the step is refused.
+ */
+function expiredHumans(ast: TopologyAST, step: string, now: string): GateResult[] {
+  const guards = new Set<string>();
+  for (const e of ast.edges) if (e.to === step) guards.add(e.from);
+  for (const g of ast.nodes) {
+    if (g.type !== "gate" || !gateAnchors(g as GateNode, "before").includes(step)) continue;
+    for (const a of gateAnchors(g as GateNode, "after")) guards.add(a);
+  }
+  const out: GateResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || !n.valid || !guards.has(n.id)) continue;
+    const w = parseWindow(n.valid);
+    if (w && now > w.end) out.push({ gate: n.id, ok: false, reasons: [`human ${n.id}'s approval is valid ${n.valid}, and today (${now}) is after it`] });
+  }
+  return out;
+}
+
+/**
  * Check every gate whose `before:` names `step`. An advisory gate reports and
  * never blocks, so it is left out. A step id that is no node of the topology
  * fails, so a typo cannot read as "nothing guards it".
@@ -106,10 +133,12 @@ export function checkStep(ast: TopologyAST, step: string, options: StepCheckOpti
   const unit = options.unit ?? "";
   const root = resolve(options.dir ?? ".");
   const known = ast.nodes.some((n) => n.id === step);
+  const stepHasUnit = ast.nodes.some((n) => n.id === step && n.type === "action" && (n as ActionNode).unitFrom !== undefined);
   const gates = ast.nodes
     .filter((n): n is GateNode => n.type === "gate")
     .filter((g) => g.behavior !== "advisory" && gateAnchors(g, "before").includes(step))
-    .map((g) => checkGate(ast, g, unit, root));
+    .map((g) => checkGate(ast, g, unit, root, stepHasUnit));
+  gates.push(...expiredHumans(ast, step, options.today ?? todayDate()));
   return { step, ...(unit ? { unit } : {}), known, gates, ok: known && gates.every((g) => g.ok) };
 }
 

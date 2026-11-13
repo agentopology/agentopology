@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
+import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
@@ -27,6 +28,25 @@ import { computeIncrementalPlan, executeActions, nextManifestFiles, type Execute
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 
 const SETTINGS = ".claude/settings.json";
+const CODEX_HOOKS = ".codex/hooks.json";
+
+/** The targets `guard --target` writes for. */
+export type GuardTargetName = "claude-code" | "codex";
+
+/** The paths of generated files a Codex hook command runs: the command names the path after the repository root. */
+function codexCommandRefs(command: string, known: Set<string>): string[] {
+  return [...known].filter((p) => command.includes(`/${p}`));
+}
+/**
+ * The generated paths a Codex script names by a bare root-relative path (R-9):
+ * a gate wrapper runs its check as `bash .codex/scripts/render-check.sh` after
+ * the guard has changed to the project root, with no variable in front. Missing
+ * those left the check unwritten, and the gate failed "exit code 127" forever.
+ */
+function bareRefs(text: string, known: Set<string>): string[] {
+  const esc = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...known].filter((p) => /\.(sh|py|js|mjs)$/.test(p) && new RegExp(`(^|[\\s"'=])${esc(p)}($|[\\s"';|&)])`, "m").test(text));
+}
 const VAR_PATH = /\$\{?([A-Za-z_]\w*)\}?\/([^\s"'`;|&)]+)/g;
 
 /**
@@ -65,22 +85,22 @@ function guardSettings(raw: string): string {
 }
 
 /** The guard subset of a binding's output: hook scripts, gates, checks, and settings.json cut to hooks and permissions. */
-export function guardFiles(files: GeneratedFile[]): GeneratedFile[] {
-  return discover(files).files;
+export function guardFiles(files: GeneratedFile[], target: GuardTargetName = "claude-code"): GeneratedFile[] {
+  return discover(files, target).files;
 }
 
 /** `checks` are the files two calls from a hook (the checks the gates run), for the "no longer a stub" rule. */
-function discover(files: GeneratedFile[]): { files: GeneratedFile[]; checks: Set<string> } {
+function discover(files: GeneratedFile[], target: GuardTargetName = "claude-code"): { files: GeneratedFile[]; checks: Set<string> } {
   const byPath = new Map(files.map((f) => [f.path, f]));
   const known = new Set(byPath.keys());
-  const settings = byPath.get(SETTINGS);
+  const settings = byPath.get(target === "codex" ? CODEX_HOOKS : SETTINGS);
   const picked = new Map<string, GeneratedFile>();
   const checks = new Set<string>();
   const queue: string[] = [];
   if (settings) {
     const hooks = (JSON.parse(settings.content) as { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> }).hooks ?? {};
     for (const groups of Object.values(hooks))
-      for (const g of groups) for (const h of g.hooks ?? []) if (h.command) queue.push(...refs(h.command, known));
+      for (const g of groups) for (const h of g.hooks ?? []) if (h.command) queue.push(...(target === "codex" ? codexCommandRefs(h.command, known) : refs(h.command, known)));
   }
   // depth 0: scripts hooks run; 1: gate wrappers they call; 2+: the checks the gates run
   const depth = new Map<string, number>(queue.map((p) => [p, 0]));
@@ -89,7 +109,8 @@ function discover(files: GeneratedFile[]): { files: GeneratedFile[]; checks: Set
     if (picked.has(p)) continue;
     const f = byPath.get(p)!;
     picked.set(p, f);
-    for (const r of refs(f.content, known)) {
+    const named = target === "codex" ? [...new Set([...refs(f.content, known), ...bareRefs(f.content, known)])] : refs(f.content, known);
+    for (const r of named) {
       if (r === p) continue;
       if (!depth.has(r)) depth.set(r, depth.get(p)! + 1);
       queue.push(r);
@@ -97,7 +118,7 @@ function discover(files: GeneratedFile[]): { files: GeneratedFile[]; checks: Set
   }
   for (const [p, d] of depth) if (d >= 2) checks.add(p);
   const out = [...picked.values()];
-  if (settings) out.push({ ...settings, content: guardSettings(settings.content) });
+  if (settings) out.push(target === "codex" ? settings : { ...settings, content: guardSettings(settings.content) });
   return { files: out, checks };
 }
 
@@ -113,13 +134,14 @@ export interface GuardTargetPlan {
 }
 
 /** Plan the guard write for a project. Reads the disk; writes nothing. */
-export function planGuardTarget(ast: TopologyAST, root: string, source: string): GuardTargetPlan {
-  const { files, checks } = discover(claudeCodeBinding.scaffold(ast));
-  const manifest = readManifest(root, "claude-code", source);
+export function planGuardTarget(ast: TopologyAST, root: string, source: string, target: GuardTargetName = "claude-code"): GuardTargetPlan {
+  const binding = target === "codex" ? codexBinding : claudeCodeBinding;
+  const { files, checks } = discover(binding.scaffold(ast), target);
+  const manifest = readManifest(root, target, source);
   const owned = new Set(files.map((f) => f.path));
   // The planner deletes manifest files the run no longer generates; this run
   // generates a subset on purpose, so only its own paths are planned.
-  const actions = computeIncrementalPlan(root, "claude-code", files, manifest).filter((a) => owned.has(a.path));
+  const actions = computeIncrementalPlan(root, target, files, manifest).filter((a) => owned.has(a.path));
   const skipped: GuardTargetPlan["skipped"] = [];
   const planned: FileAction[] = [];
   for (const a of actions) {
@@ -147,18 +169,18 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string):
  * entries of files this run did not touch (a full scaffold's agents, say), so
  * a later scaffold still knows what it owns. Nothing is pruned.
  */
-export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: string, sourceText: string): ExecuteResult {
-  const previous = readManifest(root, "claude-code", source);
+export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: string, sourceText: string, target: GuardTargetName = "claude-code"): ExecuteResult {
+  const previous = readManifest(root, target, source);
   const result = executeActions(root, plan.actions, { prune: false, force: false });
   const manifest: ScaffoldManifest = {
     source,
     sourceHash: hashContent(sourceText),
-    target: "claude-code",
+    target,
     generatedAt: new Date().toISOString(),
     files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, plan.actions, plan.files, previous, result) },
   };
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.
   const same = previous && previous.sourceHash === manifest.sourceHash && JSON.stringify(previous.files) === JSON.stringify(manifest.files);
-  if (!same) writeManifest(root, "claude-code", manifest);
+  if (!same) writeManifest(root, target, manifest);
   return result;
 }

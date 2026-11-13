@@ -29,6 +29,15 @@ export interface NodeRule {
   dropped?: Readonly<Record<string, string>>;
   /** Take every field as it is (the default rule). */
   carryAll?: boolean;
+  /** How the legend draws this kind: its name, shape and color. */
+  legend?: LegendEntry;
+}
+
+/** One legend row, built from the rules table. */
+export interface LegendEntry {
+  label: string;
+  shape: "box" | "diamond" | "pill" | "round";
+  color: "purple" | "blue" | "green" | "orange" | "gold" | "gray" | "cyan" | "red";
 }
 
 /** Facts about the topology that are not in the AST (check results, stamps). */
@@ -38,9 +47,11 @@ const BASE = ["id", "type", "label", "file"] as const;
 
 export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
   orchestrator: {
+    legend: { label: "Orchestrator", shape: "box", color: "gold" },
     carry: [...BASE, "model", "generates", "handles", "outputs", "delegation"],
   },
   agent: {
+    legend: { label: "Agent", shape: "box", color: "purple" },
     carry: [
       ...BASE,
       "phase", "model", "permissions", "prompt", "tools", "skills", "reads", "writes",
@@ -55,6 +66,7 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
     ],
   },
   gate: {
+    legend: { label: "Gate", shape: "diamond", color: "orange" },
     carry: [
       ...BASE,
       "run", "checks", "retry", "onFail", "behavior", "timeout", "description", "strength",
@@ -65,21 +77,47 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
     reshape: { after: ["after", "afterAll"], before: ["before", "beforeAll"] },
   },
   action: {
+    legend: { label: "Action", shape: "box", color: "gray" },
     carry: [
       ...BASE, "kind", "source", "description", "commands", "timeout", "onFail", "join",
       "unitFrom",
     ],
   },
   human: {
+    legend: { label: "Human", shape: "pill", color: "cyan" },
     carry: [...BASE, "description", "timeout", "onTimeout"],
   },
   group: {
+    legend: { label: "Group", shape: "round", color: "blue" },
     carry: [
       ...BASE, "members", "speakerSelection", "maxRounds", "termination", "description",
       "timeout",
     ],
   },
 };
+
+/**
+ * How a guard grade is drawn. Shape, word and color always go together, so a
+ * grade reads without color. `unverified` is the refuse shape with a "?".
+ */
+export interface GuardGrade {
+  id: "refuse" | "detect" | "hope" | "none" | "unverified";
+  word: string;
+  shape: "square-solid" | "diamond-solid" | "circle-hollow" | "outline-dashed";
+  color: "green" | "cyan" | "gold" | "red" | "gray";
+  mark?: "?";
+  /** Sort position in the ledger: worst first. */
+  rank: number;
+  meaning: string;
+}
+
+export const GUARD_GRADES: readonly GuardGrade[] = [
+  { id: "none", word: "none", shape: "outline-dashed", color: "red", rank: 0, meaning: "compiled to a hook or rule the project lacks: nothing stops the step" },
+  { id: "hope", word: "hope", shape: "circle-hollow", color: "gold", rank: 1, meaning: "only the playbook's prose asks for it" },
+  { id: "detect", word: "detect", shape: "diamond-solid", color: "cyan", rank: 2, meaning: "noticed after the fact, not refused" },
+  { id: "unverified", word: "unverified", shape: "square-solid", color: "gray", mark: "?", rank: 3, meaning: "would refuse, but the installed Claude Code is not the verified one" },
+  { id: "refuse", word: "refuse", shape: "square-solid", color: "green", rank: 4, meaning: "a hook or settings rule stops the step, and it is on disk" },
+];
 
 export const DEFAULT_RULE: NodeRule = { carry: BASE, carryAll: true };
 
@@ -179,6 +217,7 @@ export function project(ast: TopologyAST, facts?: ProjectFacts): Record<string, 
     environments: ast.environments,
     decisions: ast.decisions,
     triggers: ast.triggers,
+    schedules: ast.schedules,
     hooks: ast.hooks,
     settings: ast.settings,
     mcpServers: ast.mcpServers,
@@ -186,6 +225,8 @@ export function project(ast: TopologyAST, facts?: ProjectFacts): Record<string, 
     skills: ast.skills,
     toolDefs: ast.toolDefs,
     runs: [],
+    legend: Object.entries(NODE_RULES).filter(([, r]) => r.legend).map(([kind, r]) => ({ kind, ...r.legend })),
+    grades: GUARD_GRADES,
   };
   if (facts) data.facts = facts;
   return data;

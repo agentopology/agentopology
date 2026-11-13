@@ -1,7 +1,7 @@
 /**
  * Conformance v0: the claude-code binding's generated hooks, run against
  * Claude Code's hook contract (src/conformance/claude-code.ts, checked against
- * the docs for Claude Code 2.1.319).
+ * the docs for Claude Code 2.1.323).
  *
  * For every example and fixture: the settings.json hooks and each agent's
  * frontmatter hooks are checked statically, then every command hook is run
@@ -97,7 +97,7 @@ for (const file of CORPUS) {
       expect(loose).toEqual([]);
     });
 
-    it.skipIf(!hasJq)("[N28] [CF2] every command hook runs from a subfolder: found, exits 0 or 2, and its stdout is valid for its event", () => {
+    it.skipIf(!hasJq)("[N28] [CF2] every command hook runs from a subfolder: found, exits 0 or 2 (1 for an unwritten stub, E-1), and its stdout is valid for its event", () => {
       const results = hooks.map((h) => {
         const r = spawnSync("/bin/sh", ["-c", h.command], {
           cwd: sub,
@@ -106,7 +106,7 @@ for (const file of CORPUS) {
           encoding: "utf8",
           timeout: 20_000,
         });
-        const bad = r.status !== 0 && r.status !== 2 ? `exit ${r.status}: ${r.stderr.trim().split("\n").pop()}` : r.status === 0 ? checkStdout(h.event, r.stdout) : null;
+        const bad = r.status !== 0 && r.status !== 2 && !(r.status === 1 && /TODO: /.test(r.stderr)) ? `exit ${r.status}: ${r.stderr.trim().split("\n").pop()}` : r.status === 0 ? checkStdout(h.event, r.stdout) : null;
         return bad ? `${h.event} ${h.matcher ?? ""} ${h.command} → ${bad}` : null;
       });
       expect(results.filter(Boolean)).toEqual([]);

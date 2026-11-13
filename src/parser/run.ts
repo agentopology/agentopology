@@ -99,3 +99,15 @@ const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
 export function isShellCommand(run: string | undefined): boolean {
   return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
 }
+
+/**
+ * The interpreter a binding runs a script with (F-25): the one `run:` names,
+ * else the one its extension names (`.py` python3, `.js` / `.mjs` / `.cjs`
+ * node), else bash.
+ */
+export function interpreterFor(script: string, named?: string): string {
+  if (named) return named;
+  if (script.endsWith(".py")) return "python3";
+  if (/\.(?:m|c)?js$/.test(script)) return "node";
+  return "bash";
+}

@@ -2,6 +2,473 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [fix] Fixed: a generated action script finds its gate check from where it sits, not from CLAUDE_PROJECT_DIR (D-10)
+
+- `action-<step>.sh` located the project, and with it the `before-action.sh` it asks, through `CLAUDE_PROJECT_DIR` when set. A caller could point that at another folder. The script now uses only its own location (`.claude/skills/<topology>/scripts/`, four folders below the project). Found in the second design review (rated plausible, read only); a reproduction was not run, so this is hardening, pinned by a test of the property.
+
+### [fix] Fixed: a Codex gate held by cited code grades unverified, not refuse (D-9)
+
+- `guard --check --target codex` gave a gate with an `at:` citation its declared strength, so a cited refusal read `refuse` on Codex, where release 1 grades every guard `unverified` or `none`. It now reads `unverified`, with the citation ("cited, not proven") and the bypass kept in the notes; a broken citation still reads `none`.
+
+### [fix] Fixed: guard --check says on the grade line when a refuse fails open or sits on a stop event (D-8)
+
+- A `PreToolUse` guard entry without `"onFailure": "block"` kept the grade `refuse`, with only a ⚠ note below it, though Claude Code lets the call run when such a hook crashes. Its grade now reads `refuse, fails open on a crash (no onFailure: block)` (the before-action, before-agent, approval and session guards, and a cited hook). A gate held at `SubagentStop` reads `refuse, a stop event: it cannot block a call`, with a note that exit 2 keeps the agent working. The `guard --check` text pins for every example with a SubagentStop gate change.
+
+### [fix] Fixed: before-edit.sh refuses a ledger edit in any letter case (D-7)
+
+- `before-edit.sh` compared an edit's path with the ledger's pattern case-sensitively, so on a case-insensitive disk (macOS) a `Write` to `logs/ep1/TRACE.JSONL` reached the ledger. Path and pattern are now compared lower-cased, on both targets. Every `before-edit.sh` changes.
+
+### [fix] Fixed: the ledger note appears wherever a grade is shown (D-6)
+
+- The F-4 note (`ledger agent-writable until the signed gate`) was on the `guard --check` grade line and in the visualizer's node panel, but the Guards lens table showed a bare `refuse` chip, and the counts (`enforcement: N of M steps refuse`, the visualizer headline, `visualize --print-summary`) counted ledger gates unqualified. The Guards lens row now carries the note under the chip, and each refuse count adds `(K with an agent-writable ledger)` when K > 0.
+
+### [fix] Fixed: a Codex refuse hook that can never fire, or never block, is a validate error (D-5)
+
+- Five hook shapes compiled for Codex with no error and then never refused: a regex over tools Codex lacks (`Web.*`), a list with spaces (`Edit , Write`, kept as written), `if: "Read(secrets/**)"` with no matcher (the filter passes every call), `on: PostToolUse` with `strength: refuse`, and a regex with lookaround. Now a list with spaces is trimmed and rewritten (`apply_patch`); for `strength: refuse`, a regex matching no Codex tool (`CX8-regex`), a plain list or an `if:` naming a tool Codex lacks (`CX8-tool`; the `if:` hook gets no entry) and an event that cannot block (`CX8-event`) are `validate --target codex` ERRORs, warnings on other hooks; lookaround is a `CX8-regex` warning.
+
+### [fix] Fixed: two approval steps before one agent make one ask decision (D-4)
+
+- With two `human` steps before one agent, `before-agent.sh` printed two `ask` JSON objects, which is not one JSON document, so Claude Code could ignore the decision and launch the agent. The script now collects each step's reason and prints a single decision whose reason joins them. Every Claude Code `before-agent.sh` with an approval step changes.
+
+### [fix] Fixed: guard --check credits a cited hook's refuse only when it can block (D-3)
+
+- A gate credited by a hook its edge cites read `refuse` whenever that hook declared `strength: refuse` and sat in `.claude/settings.json`, whatever its event: a `PostToolUse`, `async: true` hook printed `refuse`. Now a cited hook gives `refuse` only as a non-async `command` hook on `PreToolUse`, `UserPromptSubmit` or `PermissionRequest`; on an event that cannot block a call, or async, the gate grades `none` with a note naming why; a `prompt`/`agent`/`http` hook grades `unverified`. `validate` warns (V104) for `strength: refuse` on an event that cannot block, or with `async: true`.
+
+### [fix] Fixed: a unit-from step on a flat ledger needs its own unit (D-2)
+
+- With `record trace { path: "logs/trace.jsonl" }` (no `{unit}`) and a step with `unit-from`, a command the guard saw as the step but read no unit from (`./tool -v publish ep1`) was checked with an empty unit, and the ledger filter then took the last record of any unit. An empty capture was dropped rather than denied. Now, on both targets, a `unit-from` step with no unit read, or an empty one, is refused whatever the ledger path; `agentopology step check` asks for `--unit` for such a step; and `validate` warns (V111) when a `unit-from` step's gate ledger path has no `{unit}`, naming the step, the gate and the path. Every `before-action.sh` with a `unit-from` step changes.
+
+### [fix] Fixed: a gated step's action script checks what it runs, with no usage exemption (D-1)
+
+- The F-6 gate check in `.claude/skills/<t>/scripts/action-<step>.sh` handed `before-action.sh` the step's words plus the script's arguments, then ran the declared commands without them. So `bash action-publish.sh --help` was checked as `./tool publish --help`, the usage exemption passed it, and the script ran `./tool publish` with no ledger. The check now runs with `AT_NO_USAGE=1` (honored by `before-action.sh`: no usage exemption), and the arguments count only as the unit: a step with `unit-from` takes exactly one plain unit name and refuses `--help`, `-h`, `--version`, no argument or two; a step without one leaves its arguments out of the check. The `action-<step>.sh` of every gated step changes.
+
+### [fix] Fixed: at a guard's deadline nothing the check started is left running (F-17)
+
+- A mutation pass on the release candidate found that no test checked the deadline's kill stage, and a new test showed why it mattered: a gate check that ignored TERM was still running after the hook returned, on both paths. GNU `timeout -k` sends its KILL only when its direct child survives, and the watchdog walked the process tree from a launcher that had already exited. The deadline now sends KILL at once (`timeout -s KILL`, which signals the whole process group; the watchdog kills the tree while the run is alive), so the hook returns only when every process the check started is gone. The call was refused in both cases; what changes is the leftover process.
+- New behaviour tests also kill three mutants that only the golden hash caught: `--help` inside a step's words (still a step), a second mention of the tool hidden in a command substitution, and a unit of `..`.
+
+### [fix] Known gap, narrowed: the agent can write a gate's ledger (F-4)
+
+- In 0.11.0 a gate's ledger (`records { record trace { path: "logs/{unit}/trace.jsonl" } }`) and the Codex approvals file (`.codex/state/approvals.jsonl`) are files in the workspace, and the agent could write an ok line into them. The guards now refuse commands and edits that name them: `before-action.sh` refuses a `Bash` command that names a ledger unless it only reads it (`cat` and `jq .` still run; `>`, `tee`, `cp`, `sed -i`, `python3 -c` and the like are refused), and a new `before-edit.sh` refuses a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` (Claude Code) or an `apply_patch` (Codex) that touches one. `guard --check` says so on the grade itself: `refuse, ledger agent-writable until the signed gate` on Claude Code, `unverified, ledger agent-writable until the signed gate` on Codex.
+- A determined agent can still write them through a path the guard can't see (a variable set elsewhere, another script). The signed gate in the next release closes this.
+
+- The visualizer's Guards lens and node panel show the same note on the grade (`refuse, ledger agent-writable until the signed gate`), as `guard --check` prints it.
+
+### [fix] Fixed: the step guard looks for the tool where bash runs it, so reading a script is no step (P1-d)
+
+- The deny-on-doubt matcher refused 18 of 42 ordinary commands on a real topology while a gate was unmet: `cat`, `ls`, `grep`, `git diff`/`log`/`add`/`commit` on the step's script, and commands whose letters merely held the tool's name (`docs/media-engine/*.py`, `echo $HOME immediately`). The guard now looks for the tool where bash runs a program, or as an interpreter's script; a program that only reads or prints its arguments runs no step unless a flag can make it run one; a program that can run its arguments, or one it does not know, is still scanned; doubt comes from an expansion or glob among the tool's own words, not from letters anywhere in the command. `echo ./tool publish ep1` is no step again ([N42] AG23).
+- Measured before release by a differential fuzzer (not shipped in the package): 0 bypasses in 20,000 commands on each target, each allowed command run with real bash against a logging stand-in tool. The fuzzer found the one gap of this change before release (a wrapper between `find -exec` and the tool) and a test pins it.
+
+### [fix] Fixed: a gate's code citation (`at`, `match`, `bypass`) reaches the Codex output and `guard --check` (F-23)
+
+- On Codex, `gate.at`, `gate.match` and `gate.bypass` were dropped with no warning, and `guard --check --target codex` ignored them while the Claude Code check reported them. `AGENTS.md` now names the cited code, the text expected there and the bypass, and the Codex check reads the citation on disk the way the Claude Code one does. The Codex zero-drop test has a gate that sets all three.
+
+### [fix] Fixed: a gated step's generated action script checks the gate itself (F-6)
+
+- Claude Code scaffold writes `.claude/skills/<t>/scripts/action-<step>.sh`, whose body runs the step's commands. Only the `PreToolUse` hook on Bash checked the gate, so `bash .claude/skills/ship/scripts/action-publish.sh ep1` reached `./tool publish` with no ledger at all. The script of a gated step now hands each command, with its arguments, to `before-action.sh` (the same check, reused, not copied) and exits 2 before running anything when a gate is not met. The `action-<step>.sh` of every gated step in the examples and fixtures changes.
+
+### [fix] Fixed: a Claude Code rescaffold replaces a gate's old SubagentStop group (F-13)
+
+- R-8 ownership read a Claude Code command as whitespace tokens equal to a script path, but scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`, which has no such token. After a gate's `after:` moved, the rescaffold kept the stale group next to the new one, and the gate ran on both agents. A path right after `$CLAUDE_PROJECT_DIR/` is now read too. The new test scaffolds with the CLI, moves `after: writer` to `after: editor`, rescaffolds, and finds exactly one group for the gate, with the user's own group untouched; the old test fed a form the generator never writes.
+
+### [fix] Fixed: three mutants of the Codex guards no longer survive the suite (F-17)
+
+- Deleting the watchdog's KILL stage, the `if:` filter no longer reading `*** Delete File:`, and the GNU `timeout` path returning a check's raw exit code instead of 2 each left every test green. New tests fail under each: a TERM-ignoring check must free the hook's pipe within deadline + 3 s on the POSIX path; a patch that updates one file and deletes `.env` must be refused; a check that exits 3 must come out as exit 2. Each was proven by applying the mutation in a copy of the tree and seeing that test fail.
+
+### [fix] Fixed: a Codex refuse hook blocks when its script is missing, the cwd is a nested repo, or it runs too long (F-8, F-16, F-26)
+
+- A `strength: refuse` hook that was not one of the built-in guards, with or without `if:`, ran its script by `$(git rev-parse --show-toplevel)/…`: from a nested repository, or with the script deleted, it exited 127 and Codex let the call run. It also had no hook timeout and no deadline, and a timed-out hook lets the call run too. Every refuse `PreToolUse` hook now goes through the guard launcher: it climbs to its script, a missing script or any launcher failure is exit 2, and it carries a hook timeout (its own, else 120 s) with the R-3 deadline under it. The `if:` filter is launched the same way and runs the hook's script from the root it found.
+- Hooks that are not refuse had the same 127 from a nested repository. They now climb to their script the same way, and a missing script exits 1, which does not block.
+
+### [fix] Fixed: the Codex guard deadline frees the hook's output pipe on time (F-9, F-20b)
+
+- The deadline returned exit 2 on time, but a check that ignored SIGTERM, or left a background process, kept the hook's stdout and stderr open 9 to 15 s past it; Codex reads to EOF and could reach its own hook timeout, which lets the call run. Both the GNU `timeout` path and the POSIX watchdog now send the run's output to temp files and copy them out after the run ends or is cut. When the deadline fires, the watchdog's KILL stage runs to its end, and the watchdog's own `sleep` is killed with it, so it never outlives the hook. In the GNU path a KILL after `-k` (137) also reports the deadline, and any non-zero exit is exit 2. An absolute script path is run where it is, with no climb.
+
+### [fix] Fixed: a Codex refuse hook whose matcher is a regex of Claude tool names no longer goes silent (F-7)
+
+- A matcher such as `(Write|Edit)`, `^Write$`, `Ed.*` or `Task.*` was written to `.codex/hooks.json` unchanged with no warning, so it never fired on Codex, which calls those tools `apply_patch` and `collaborationspawn_agent`. Names inside one group or between `^` and `$` are now rewritten (`(apply_patch)`, `^apply_patch$`). A real regex that matches a Claude tool but not its Codex name gets `CX8-regex` from `validate --target codex`: an ERROR for `strength: refuse`, a warning for any other strength.
+
+### [fix] Fixed: a Claude Code `strength: refuse` hook blocks when it cannot run (F-14)
+
+- Only the generated guards carried `"onFailure": "block"`. A user's `PreToolUse` hook with `strength: refuse`, in `hooks {}` or on an agent, had none, so a script that could not start or timed out let the call run. Every such hook now gets it; no existing `onFailure` is removed. `validate` warns with `CC-onfailure` when the installed Claude Code is older than 2.1.295, which ignores the field.
+- Claude Code `before-agent.sh` compared `subagent_type` as sent, so ` Reviewer `, `REVIEWER` or `agents/reviewer:` launched a gated agent. It now normalizes the name as Codex does (F-15). The Claude Code `before-agent.sh` of `codex-gates.at` and `compile.at` changes.
+
+### [fix] Fixed: Codex `before-agent.sh` holds an agent however its name is spelled (F-15)
+
+- The spawn guard compared `agent_type` after trimming and lowercasing only, so `re\u200bviewer`, `\ufeffreviewer`, `./reviewer`, `agents/reviewer` and `reviewer:` started a gated agent. It now drops format characters (`\p{Cf}`), a leading path, trailing punctuation and a `plugin:` prefix too. A missing or `null` `agent_type` is still let through: it is Codex's default agent, and the docs now say so.
+
+### [fix] Fixed: the Codex `if:` filter sees `.env` however an `apply_patch` spells its path (F-12)
+
+- `at-if.sh` compared a patch's paths as written, so `$ROOT/./.env`, `$ROOT//.env`, `sub/../.env`, `./.env` and `/proc/self/cwd/.env` passed a `strength: refuse` hook with `if: "Write(.env*)"`. Each path is now made canonical by its letters (relative paths from the current folder, `/proc/self/cwd` as the project root, `.`, `..` and `//` resolved, the root stripped; glob characters in a path are not expanded). A pattern with no slash, such as `.env*`, now also matches the file's name at any depth.
+
+### [fix] Fixed: a stub runs under the interpreter its hook or gate command uses (F-24, F-25)
+
+- A hook with `run: "sh scripts/x.sh"` got a bash stub (`set -euo pipefail`), and the hook command ran it with `sh`. Dash rejects `-o pipefail` and exits 2, so on both targets a fresh scaffold blocked every matching call by accident. A stub now has a POSIX sh body when `sh` runs it, and a hook stub that is not `strength: refuse` exits 1 as designed.
+- A gate whose `run:` names a `.py` file got a bash stub (a Python `SyntaxError`, exit 1), and a `.js` / `.mjs` one was run with bash. Gate and hook stubs are now written in the file's language (Python for `.py`, JavaScript for `.js` / `.mjs` / `.cjs`) and run by the matching interpreter. On Claude Code a non-project `.py` script is now run by python3, not bash. The Claude Code stub for `compile.at`'s `docs/tools/check.py` changes.
+
+### [fix] Fixed: a Codex gate's check stub is written where the gate runs it (F-22)
+
+- A gate with `run: "checks/review.sh"` got its stub at `.codex/scripts/review.sh`, while `gate-<id>.sh` runs `checks/review.sh`. Filling in the stub never let the gate pass. The stub is now written at the declared project path (created once, never overwritten), as on Claude Code; a bare name still goes to `.codex/scripts/`, and an absolute path is never stubbed.
+
+### [fix] Fixed: Codex `AGENTS.md` says what holds a gate in the words `guard --check` grades it (F-29)
+
+- A gate before a script step with a `run:` script and no ledger read "refuses the step's command until the ledger shows the gate held", though it has no ledger. The line now names what `before-action.sh` checks: the ledger of the `after:` step, the gate script, or both.
+- A gate no Codex event marks read "script-level" in `AGENTS.md` and `hope` in `guard --check`. It now reads `hope` in both, with the script to run by hand.
+
+### [fix] Fixed: Codex `AGENTS.md` no longer hands the model a command that approves a human step (F-10)
+
+- `AGENTS.md`, which Codex loads into the model's context, held a ready-to-run `printf ... >> .codex/state/approvals.jsonl` line under Human Checkpoints, so the model had its own approval one paste away. It now describes the record for the person in words (the file, the fields `step`, `ok`, `at` and what they mean) and holds no line that writes it. The R-11 test checks that neither `AGENTS.md` nor any guard's stderr has a `printf`, `echo`, `tee` or `>>` line naming `approvals.jsonl`.
+
+### [fix] Fixed: inventory on a Codex-only scaffold counts nothing scaffold wrote as unmapped (F-28)
+
+- `validate --inventory` on a project scaffolded only with `--target codex` listed `.codex/.scaffold-manifest.json` as unmapped and every Claude Code file as "not scaffolded". The scaffold manifest (either target, shared or per topology) is now mapped, and a project with a Codex tree and no `.claude/` is not told to scaffold the Claude Code files.
+
+### [fix] Fixed: `validate --target codex` names the Codex version, not Claude Code's (F-20, F-27)
+
+- `agentopology validate <file> --target codex`, with or without `--inventory`, ended with `checked against Claude Code 2.1.323`. It now prints the target's own line (`checked against Codex CLI 0.156.1 ...`); with no `--target` it still prints the Claude Code line, and a target with no conformance facts prints none.
+### [fix] Fixed: a Codex `if: "Bash(...)"` filter reads the command the way the step guard does (F-11)
+
+- `if: "Bash(git push*)"` on a refuse hook matched the whole command against the glob only, so ` git push`, `cd . && git push`, `git  push`, `git -C . push`, `command git push`, `true; git push`, `GIT_TRACE=1 git push` and `/usr/bin/git push` all ran. The filter now shares the step guard's reading: the glob's literal words (`git`, then `push`) are found in any segment, behind a prefix, at any path, in any case, with flags between them; the whole-command glob test still holds; and a refuse hook treats a mention of the tool it cannot read (an expansion or glob) as a match.
+
+### [fix] Fixed: the step guard refuses what it cannot read, and reads interpreter steps by their script (F-1, F-2, F-3, F-5, F-19, F-21)
+
+- An adversarial review of the 0.11.0 candidate ran guarded steps past `before-action.sh` (both targets) in ordinary shell forms: a backslash line continuation, a redirect glued to or between the words (`./tool publish>/dev/null ep1`, `./tool 2>&1 publish ep1`), an expansion or glob inside the words (`${IFS}`, `$'...'`, `{publish,}`, `pub*lish`, `./to?l`), upper case (`./TOOL`, a bypass on a case-insensitive disk), and a second step in the same command riding the first step's ok record. A step run through an interpreter (`python3 harness/bin/post.py`) passed as `python3 ./harness/bin/post.py`, by an absolute path, or as `python post.py`.
+- The guard now joins line continuations, drops redirections before it cuts the command, matches the tool in any case and at any path (for an interpreter step, the script under any interpreter), and lets flags sit between the step's words. What it cannot read it refuses: a command that holds an expansion or glob and names the tool more often than the step can be read plainly, or a glob or brace word that could expand to the tool, is refused for a step with a unit. Every unit a command names needs its own ok record. `<step> --help` alone is no step.
+- This over-blocks more than before while a gate is unmet: a command that mixes the tool with `$`, a glob or `~` is refused, as is a mention of the tool's name in a command with an expansion. The shipped Claude Code `before-action.sh` changes.
+
+### [feature] `validate --target <binding>` (E-6)
+
+- The Codex warnings (`CX5-*`, `CX8-*`, `CX9-*`, `CX11-*`, `CX13`, `CX20`, `CX23`) appeared only at scaffold, though the CX-23 entry says `validate` with a Codex target shows them. `agentopology validate <file> --target codex` now adds them; plain `validate` stays target-neutral.
+
+### [fix] Fixed: the Codex scaffold drops no gate description, gate behavior or tool script path (E-4)
+
+- The `AGENTS.md` gate section never printed a gate's `description` or `behavior`, and a tool's stub was written to `.codex/scripts/<id>.<ext>` instead of its declared `script:` path. Both gate fields are now printed, and the tool stub is written where `script:` says, as on Claude Code: a project path is created once and never overwritten, an absolute path is never touched. The Codex zero-drop test now also checks tool scripts, with a fixture that sets all three.
+
+### [fix] Fixed: a guarded step's command with placeholders matches the real call (E-3)
+
+- `before-action.sh` (both targets) compared a step's command literally, so `commands: ["./media episode render EP.json OUT.mp4"]` never matched the real call `./media episode render show/ep7/ep.json out.mp4`, and the gate never held. Now the command is matched on its words before the first placeholder: an ALL-CAPS word (`EP`, `PID`, `OUT.mp4`) or a word holding `< > { } [ ]`, and everything after it. `validate` warns with `AG-placeholder` and names the words matched. The Claude Code `before-action.sh` of such a topology changes too.
+
+### [fix] Fixed: every generated stub fails closed; 0.10.1 and earlier (0.9.x included) graded an unwritten tool stub "refuse" while its gate passed (E-1)
+
+- In 0.10.1 and earlier (0.9.x included: the Claude Code binding predates 0.10), a tool's script stub (and the hook, metering and workflow-seam stubs) printed a TODO line and exited 0. A gate whose check was such an unwritten stub therefore passed, and `before-action.sh` let the step run, while `guard --check` graded the gate `refuse` and said the stub "blocks every run". In 0.11.0 every generated stub, on both targets and in every language (bash, python, node), carries the `AGENTOPOLOGY_STUB` marker and fails closed: a check that must refuse exits 2, every other stub exits 1 (an error that does not block a stop event), so a gate that runs it blocks. Codex tool stubs now carry the marker too. This changes the Claude Code stub scripts; `guards-golden.json` is re-blessed in its own commit.
+
+### [fix] Fixed: Codex guards are graded unverified, and a gate with no blocking event reads none (R-1)
+
+- `AGENTS.md` called every Codex gate "Enforcement: hook". No live Codex run has proven a guard holds yet, and Codex skips an untrusted project's hooks silently, so every Codex guard on disk now reads `unverified` in `AGENTS.md`, in the gate wrapper's comment and in `guard --check`, never `hook` or `refuse`. A gate whose only event is `SubagentStop` (after the last agent, with nothing after it to hold) reads `none`, and `validate` / `scaffold` warn with `CX9-noblock`.
+
+### [fix] Fixed: `guard --check --target codex` wrote files (E-2)
+
+- With `--target`, `guard` took the write path before it looked at `--check`, so `guard <file> --check --target codex` wrote the guards into the project. `--check` now never writes, on any target.
+
+### [feature] `guard --check` grades a Codex project (E-5)
+
+- On a Codex scaffold `guard --check` graded `.claude/` only: it printed "0 of 4 refuse", listed missing `.claude` entries and exited 1. `guard --check --target codex`, or a project with `.codex/` and no `.claude/`, now reads `.codex/hooks.json` and `.codex/scripts/<topology>/`: a guard on disk reads `unverified`, a missing one `none` (exit 1), a gate with no blocking event `none` without failing, and the version line names Codex CLI. It exits 0 when nothing is missing.
+
+### [fix] The Codex human gate does not hand the model its own approval (R-11)
+
+- When an approval step blocked a spawn, `before-agent.sh` printed the exact `printf … >> .codex/state/approvals.jsonl` command to stderr, which Codex shows the model. With `permissions: unrestricted` (so `sandbox_mode = "danger-full-access"`), or no sandbox and `approval_policy = "never"`, the model could run it and approve itself. Now stderr says a person must add the record and the model must not; the record format and the command are in `AGENTS.md` under Human Checkpoints. `validate --target codex` (and scaffold) warns with `CX11-forgeable` when a human step stands before an agent and the sandbox lets the model write `.codex/`.
+
+### [fix] Fixed: the guard matcher refuses a gated step however the command is spaced, wrapped or quoted, and the shipped Claude Code hook scripts change (R-4)
+
+- `before-action.sh` (shared by Claude Code and Codex) let these run a gated step with exit 0 when the gate's ledger had no ok record: double spaces or a tab between words, `if …; then` / `while …; do` / `! …`, `$(…)` and backticks, a `command` / `nice -n 5` / `sudo -u x` / `env -i` / `xargs` prefix, quotes (`"./tool" publish`, `./tool 'publish'`), and the tool named by an absolute path. The matcher now refuses every one of those forms (exit 2). It also cuts the command at `(`, `)`, `$(` and backticks, drops quotes and backslashes, makes whitespace single spaces, and finds the step's words anywhere in a segment, its program also by any path ending in its name; `bash -c '…'` and `eval …` with the step written out are refused too. It over-blocks on purpose: `echo ./tool publish ep1` is now refused while the gate is unmet (it used to pass). A step named through a variable, an alias, a function or another script is still not seen.
+- **The shipped Claude Code hook scripts change:** every generated `.claude/skills/<t>/scripts/before-action.sh` is different. The fix wins over byte-identical output (decision 2026-11-13), because the old matcher let a gated step run; `guards-golden.json` is re-blessed in its own commit.
+
+### [fix] The Codex if: filter runs its command as argv (R-7)
+
+- `at-if.sh` ran the hook's command with `sh -c "$*"`, which joins the words again: in a project whose path holds a space ("fx 3") the script path split, the run exited 127, and Codex let the call run. The filter now runs the command as given (`"$@"`); an inline shell command such as `exit 2` is passed as one `sh -c` word. On a `strength: refuse` hook, a command that cannot be found or run (126, 127) blocks with exit 2, and the filter itself is found the way the guards are (R-2).
+
+### [fix] The Codex if: filter reads the paths of an apply_patch (R-6)
+
+- On `apply_patch`, `.codex/scripts/at-if.sh` read `.tool_input.file_path` / `.path`. Codex sends the patch text in `.tool_input.command`, with absolute paths, so `if: "Write(.env*)"` never fired; input that was not JSON also passed (exit 0). Now every `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` path in the patch is made relative to the project root and matched. On a `strength: refuse` hook, input that is empty, not JSON, or a patch with no readable path blocks (exit 2).
+
+### [fix] Claude tool names in a Codex hook matcher are rewritten (R-5)
+
+- A hook with `matcher: "Edit|Write"` or `"Task"` was written to `.codex/hooks.json` as is. Codex calls those tools `apply_patch` and `collaborationspawn_agent`, so the hook, a `strength: refuse` one included, never fired, with no warning. Now `Edit`, `Write` and `MultiEdit` become `apply_patch`, `Task` and `Agent` become `collaborationspawn_agent`, and `Bash` stays. A Claude tool Codex has no hook-visible tool for (`Read`, `Grep`, `WebFetch` and others) gets a `CX8-tool` warning; a matcher left with no name gets no entry.
+
+### [fix] A slow gate check cannot outlast the Codex hook timeout (R-3)
+
+- Every guard was registered with a 120 second hook timeout and the gate wrapper had no deadline of its own. A check longer than that, or a gate with `timeout: 10m retry: 2`, was cut off by Codex, and Codex lets a timed-out call run. Now a guard's hook timeout is never below its gates' worst case (timeout x attempts, plus the pauses, plus a margin), and the hook command cuts the run 10 seconds before that timeout and exits 2 ("ran past its deadline"). `validate --target codex` warns (`CX9-timeout`) when a gate's worst case raises the hook timeout.
+- Where neither GNU `timeout` nor `gtimeout` is installed (stock macOS), the deadline is kept by a shell watchdog: it stops the check and everything the check started, and the guard exits 2.
+
+### [fix] Codex before-agent.sh reads agent_type trimmed and lowercased (R-12)
+
+- `before-agent.sh` on Codex compared `agent_type` exactly, so `" Reviewer "` missed the `reviewer` case and the spawn went through. It is now trimmed and lowercased the way the spawn guard reads it.
+
+### [fix] A gate between two agents holds the second agent on Codex (R-1)
+
+- A gate `after: writer, before: reviewer` compiled only to a `SubagentStop` hook on `writer`. Codex cannot block a `SubagentStop`, so `reviewer` was spawned whether the gate passed or failed, while `AGENTS.md` said "Enforcement: hook". Now `before-agent.sh`, a `PreToolUse` hook on `collaborationspawn_agent`, refuses to spawn `reviewer` (exit 2) until the gate script passes. The `SubagentStop` hook still runs and only reports. A gate after the last agent, with no agent after it, is now described as reported only. The Codex gate wrapper also changes to the project root first, so its check is found from the session's folder.
+
+### [fix] A Codex rescaffold removes the topology's stale hook groups (R-8)
+
+- When `.codex/hooks.json` was merged, a group counted as the topology's only when a whitespace-separated word of its command equalled a generated script path. A Codex command names the script after a root expression (`"$(git rev-parse …)/.codex/scripts/<t>/x.sh"`), so no group was ever recognized: moving a gate's anchor left both `SubagentStop` groups, and a removed gate kept firing. Now any `.codex/scripts/…` path in the command counts, the stale group is replaced, and the user's own groups stay. Claude Code ownership is unchanged.
+
+### [fix] A Codex guard blocks when its script is not found (R-2)
+
+- A guard's hook command was `bash "$(git rev-parse --show-toplevel || pwd)/.codex/scripts/<t>/<guard>.sh"`. From a nested git repository, or from a subfolder of a project outside git, that path does not exist, bash exits 127, and Codex lets the call run. The command now starts at the repository root (else the current folder) and climbs until it finds the script; if it is nowhere above, it prints the reason and exits 2, and any other non-zero exit of the run becomes 2.
+
+### [fix] `guard --target codex` writes the gate's check script and names Codex (R-9)
+
+- `guard --target codex` did not write the check script a gate runs (such as `.codex/scripts/render-check.sh`): the gate wrapper names it by a bare root-relative path, which the discovery did not read, so in a fresh project the gate always failed with "exit code 127". It also printed "checked against Claude Code". Now the check is written as a failing stub when it is missing (an existing one is never overwritten) and the output carries the Codex CLI version line.
+
+### [fix] A verified-list entry counts only with a clean suite (R-10)
+
+- `spec/claude-code/verified.json` entries were checked for shape only, so an entry whose suite had `failed: 12`, or had no suite at all, made that Claude Code version read "verified". Now an entry counts only when its proof carries a suite with `failed: 0`; any other entry is reported as a problem and the version reads unverified.
+
+### [fix] The Codex surface map knows where the guards live (RW-2, CX-9)
+
+- Guard scripts are written to `.codex/scripts/<topology>/`. The surface map now reads that folder as a name (`.codex/scripts/*/*.sh`) and holds one entry for it, graded `check`: a guard that is not where `hooks.json` points exits 127, and Codex lets the call through.
+
+### [feature] Gates on Codex (CX-9)
+
+- On `--target codex`, gates are now enforced by hook scripts instead of a note to run them by hand. `before-action.sh` refuses a script step's command until the gate's ledger shows the step finished ok, also inside an `&&` chain. `before-agent.sh` runs the gates that stand before an agent when Codex spawns it, and `gate-<id>.sh` runs when the agent it follows stops. All are registered in `.codex/hooks.json` with a 120 second timeout.
+- Codex lets a command through when a hook exits 1, exits 127 or times out; only exit 2 blocks. Every generated guard turns its own failure into exit 2 with a reason: a missing `jq`, input that is not JSON, an unreadable ledger, a gate script that cannot start. A gate script nobody has written yet fails instead of passing.
+- A project hook is skipped until it is trusted, with no warning, so every Codex guard is unverified. `AGENTS.md` now names the `/hooks` step. agentopology never writes a trust entry.
+
+### [feature] The human gate on Codex, without "ask" (CX-11)
+
+- Codex cannot ask from a `PreToolUse` hook, so an approval step before an agent now blocks the spawn with exit 2 until `.codex/state/approvals.jsonl` ends with an approval record for that step. The message gives the person the command that writes it. No generated script prints `ask`.
+
+### [feature] `guard --target codex` (CX-17)
+
+- `agentopology guard <file.at> --target codex` writes only the guard scripts and their `.codex/hooks.json` entries into a project built by hand. The user's own hook entries and files stay, `AGENTS.md` is not touched, and a second run changes nothing. `hooks.json` now merges on a scaffold too, instead of being reported as a conflict.
+
+### [feature] Conformance tests for Codex, tiers A to D (CX-15)
+
+- A new test file checks every example and fixture against the Codex contract with no model call: the config and agent files against a key list, `hooks.json` against the hook contract (now including timeouts and anchored script paths), every generated command hook run from a subfolder, and, where `codex` is installed, `codex execpolicy`, `codex sandbox` and `--strict-config`.
+
+### [fix] Codex inventory test used Claude model names (CX-18)
+
+- The Codex inventory test scaffolded fixtures that name Claude models, which the Codex scaffold refuses; it now uses a Codex model name.
+
+### [feature] Surface map for Claude Code (RW-1)
+
+- `spec/surface/claude-code.surface.json` lists everything the Claude Code binding writes or relies on: hook events, handler fields, payload fields, frontmatter keys, settings keys, permission modes, written paths and CLI flags. Each entry names its contract page, where the binding uses it, the test that proves it, and what breaks if it changes. A test scaffolds `kitchen-sink.at` and the session-agents fixture and fails on any generated item that has no entry, so the map cannot fall behind the binding.
+
+### [feature] Surface map for Codex, with a schema snapshot (RW-2)
+
+- `spec/surface/codex.surface.json` does the same for the Codex binding, and `spec/codex/config.schema.json` is a copy of Codex's `config.toml` schema at tag `rust-v0.168.0`. A check compares every key and value in a generated `config.toml` with the schema. A known mismatch is excused only by a `knownDrift` entry that carries a ticket id; any other mismatch fails.
+
+### [feature] The tick: new versions from the npm registry (RW-3)
+
+- `scripts/release-watch/tick.mjs` reads the registry entry for Claude Code or Codex and lists every stable version published since the last one seen, by walking the registry's publish times. Skipped version numbers do not matter, and for Codex, prerelease and per-platform builds are dropped. It exits 0 when nothing is new, 10 when there are new versions, and 2 when the registry answer cannot be read.
+
+### [feature] The red-green gate (RW-11)
+
+- `scripts/release-watch/red-green.mjs` checks that a planted test fails at its own commit and passes at HEAD, working in a clone. It exits 1 and says "never red" when the test already passes at its own commit.
+
+### [feature] The verified Claude Code versions become a list with proofs (RW-7)
+
+- `spec/claude-code/verified.json` lists the Claude Code versions the output was checked on, each with a proof (run id, date, suite counts). `validate` and `guard --check` no longer mark an installed version as unverified when it is on the list. An entry with no proof does not count. With no readable list, the single `VERIFIED_ON` version behaves as before.
+
+### [feature] Permission rules for Codex (CX-13)
+
+- `settings { allow / ask / deny }` entries of the form `Bash(command *)` now scaffold `.codex/rules/<topology>.rules` as `prefix_rule(...)` calls: deny is `forbidden`, ask is `prompt`, allow is `allow`. Each rule carries a `match` example (for `git push`, `git push origin main`) that Codex checks when it loads the file; where the `codex` binary is installed the test runs `codex execpolicy check` against it. When one command is in two lists, the strictest decision is written.
+- An entry a command-prefix rule cannot hold (a tool name such as `WebFetch`, a wildcard inside the command) is reported with a warning instead of dropped.
+- When agents differ in `permissions`, the one warning now names the agents that set the strictest policy. A new "The `codex` binding" section in `docs/bindings.md` describes what is written and what is not.
+
+### [feature] Hooks compile to .codex/hooks.json (CX-8)
+
+- On `--target codex`, the topology's `hooks {}` block is now registered in `.codex/hooks.json` in the shape Codex reads. Before, the scaffold wrote no hook file at all. A hook with `run: "exit 2"` is written as that command; it no longer becomes a stub file named `exit` that exits 0.
+- Every hook command finds the repository root at run time, so it works from a subfolder. Scripts are written executable, and a stub for a `strength: refuse` hook exits 2 until it is written. Two scripts with the same file name no longer collide.
+- A hook's `if: "Tool(pattern)"` is kept through a small `at-if.sh` filter, so a hook meant for `rm -rf *` does not block every shell call. Without `jq` the filter blocks.
+- Hooks Codex cannot run get a warning and no entry: an event Codex lacks (for example `Error` or `Notification`), a `prompt`, `agent`, `http` or `mod` handler, an `if:` that is not `Tool(pattern)`, or run text that is prose. A matcher on an event that ignores it warns. Per-agent hooks are listed as not expressible, since Codex hooks are project-wide. Codex skips a new hook until it is trusted with `/hooks`, and scaffold says so.
+
+### [feature] Scheduled jobs that run Codex (CX-20)
+
+- On `--target codex`, a schedule job with `carrier: cron` (or none) that runs an agent now scaffolds an executable `scripts/schedule-<id>.sh` and a `crontab.fragment` line. The script runs `codex -a never exec --sandbox <mode>` with an explicit sandbox: the agent's, the project's, or `read-only`.
+- A job whose agent writes files while no sandbox is named gets a warning that `codex exec` is read-only by default, so the job cannot write. A job with another carrier (cloud, launchd, calendar, session) or one that runs an action gets a warning and no script. `carrier: session` with `survives:` is still an error (V125).
+
+### [feature] Codex says what it cannot express (CX-23)
+
+- `validate` with a Codex target (and `scaffold --target codex`) now gives one warning for each field Codex has no key for: sampling settings (temperature, max tokens, top-p, top-k, stop, seed), a thinking token budget, output format, max turns, log level, fallback chain, rate limit, circuit breaker, background and isolation on an agent, the same sampling settings under `defaults`, and `providers`. Each warning names the field, why, and which agents set it.
+- Temperature and max tokens are no longer left as commented-out lines in `config.toml`.
+- A zero-drop test holds every field set in `kitchen-sink.at` to "found in the Codex output" or "on the not-expressible list".
+
+### [feature] Full MCP tables for Codex (CX-14)
+
+- A Codex `[mcp_servers.<id>]` table now carries every field of the server: `env` as its own table, `args` and tool lists as arrays, `startup_timeout_sec` as a number, and `bearer_token_env_var` for a URL server. The Claude Code `type` key is left out.
+- A new `matcherProblem` for Codex hooks flags the dotted `mcp.server.tool` matcher (a Codex hook sees `mcp__server__tool`) and a matcher on an event that ignores it.
+
+### [feature] Honest Codex agent files and model names (CX-5)
+
+- `scaffold --target codex` now refuses a Claude model name (`opus`, `sonnet`, `haiku`, `fable` or any `claude-*`) on an agent or the orchestrator. It prints which agent uses which name, exits 1 and writes nothing. It does not pick a Codex model for you; set one such as `gpt-5.2`.
+- A Codex agent file no longer holds `sandbox_mode`, `mcp_servers` or `nickname_candidates`: Codex ignores the first two in an agent file and does not document the third. An agent that sets `sandbox` or `mcp-servers` gets a warning naming it, and `validate` with a Codex target gives the same warnings. MCP servers are written once in `config.toml`.
+- A prompt with `"""`, backslashes or quotes now survives in the agent file: it is written as a literal TOML string, or escaped when it holds `'''` or a control character, and `sync` reads it back either way.
+
+### [fix] A Codex config.toml that Codex 0.156.1 accepts (CX-4)
+
+- `approval_policy` is now `on-request` or `never`. The words `supervised`, `plan`, `confirm`, `interactive` and `suggest` used to become `untrusted`, which Codex no longer takes. With agents that differ in `permissions`, the strictest policy applies to the project and scaffold warns.
+- Providers are no longer written as `[[providers]]` tables: Codex has no such key, and a project config may not set `model_providers`. Scaffold warns that they are dropped. The keys `disable_response_storage`, `history.max_conversations` and `max_depth` are no longer written either, and `[agents]` uses `max_concurrent_threads_per_session`.
+- Extension keys now sit at the top of the file instead of inside the last MCP table, MCP `env` maps are written as `[mcp_servers.<id>.env]`, and the Claude Code `type` key is no longer copied into MCP tables.
+
+### [feature] The version line and installed mark per target (CX-1)
+
+- `targets` and `scaffold --target codex` now print the Codex line ("checked against Codex CLI ...") and, when the installed `codex` is not the checked version, a mark such as "installed 0.999.0: unverified". The Claude Code output is unchanged.
+- The line and the mark come from one per-target seam, `src/conformance/index.ts`, so a new target adds one entry instead of another branch in the CLI.
+
+### [feature] Inventory and coverage for a Codex project (CX-18)
+
+- `inventory` and `validate --inventory` now read a Codex project: the agent files under `.codex/agents`, the skills under `.agents/skills`, each entry in `.codex/hooks.json`, the files under `.codex/rules`, and the MCP servers in `.codex/config.toml`. Before, only the `.claude` tree was walked, so a Codex project counted 0.
+- Coverage maps them to the `.at` the same way as Claude Code files. A hook added by hand shows as unmapped.
+
+### [feature] Flow lens: what sits on the flow is drawn where it sits (VZ-5)
+
+- A gate is a chip on the edge it guards, with its grade (shape and word) beside it. Human steps sit in one "seats" lane, stores sit on a rail with a read tick and a write tick per agent, and jobs and triggers carry flags on the step they start.
+- Loop, wait and error edges differ by dash pattern and by a word ("loop max 3", "wait 30s", "error"), not only by color. Agents that share a phase open collapsed into one stage block; a click opens it.
+- Every label in the page is at least 11 px. `kitchen-sink.at` opens with 13 blocks and no overlapping boxes.
+
+### [feature] Sessions lens (VZ-6)
+
+- Places are titled boxes holding their session agents, with subagents nested under the session that spawns them. Each talk edge carries its message kind as a chip, `talk: hub` draws the hub, `decides:` shows a badge, and a session with no talk guard on disk is hatched "unguarded". The send and spawn guard grades come from the embedded facts.
+
+### [feature] Seats lens (VZ-8)
+
+- One row per human step and per declared decision: where it sits, what it releases, its timeout and on-timeout, and its grade from `guard --check`.
+
+### [feature] Coverage lens (VZ-9)
+
+- Mapped, unmapped and missing by kind, read from `validate --inventory` (including `inventory { roots }`, the `--user` tree and `needs`). A click on a number lists the items. With no project folder the lens reads "not checked". The embedded inventory facts now carry the per-kind lists, the roots, the user tree and the outside needs.
+
+### [feature] Index lens with the source embedded (VZ-10)
+
+- Every node, edge, store, command, hook, job, skill, tool and decision is a row with its line in the `.at`. The `.at` text is embedded in the page (escaped like the rest of the data) with an anchor per line, and a click on a row, or `#lens=index&line=12`, jumps to it.
+
+### [fix] A visualizer test no longer depends on the installed Claude Code version (VZ-7)
+
+- The check that the page counts `unverified` guards ran under the verified version, where nothing reads unverified. It now loads the facts under a version that is not the verified one.
+
+### [feature] Verified on Claude Code 2.1.323 (VO-323)
+
+- The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.
+- `guard --check` now grades the talk guard and the spawn guard `refuse` when the installed Claude Code is 2.1.323, and still `unverified` on any other version or when none is installed.
+- The hook contract snapshot was regenerated from the live docs page: no contract change, only the version and fetch date moved. The text-output snapshots changed only in the version line (36 lines).
+
+### [fix] The package no longer depends on itself (N47)
+
+- `package.json` listed `agentopology ^0.2.0` under `dependencies`, so every install pulled an old copy as a nested package. The entry and its lockfile record are removed, and a test fails if the package ever lists its own name again.
+
+### [feature] Inventory covers folders a run reads, other .at files, and the user's home (T-08)
+
+- A top-level `inventory { roots: ["harness/", "scripts/"] }` block lists extra project folders. `inventory --at <file.at>` and `validate --inventory` list every file under them (kind `file`) and report a root that does not exist as missing. An absolute path, a home path or `..` in a root is a validate error (V128).
+- `inventory --user` and `validate --inventory ... --user` add `~/.claude/agents`, `skills`, `commands` and the hooks in `~/.claude/settings.json`, tagged user-level and counted apart from the project.
+- `validate --inventory DIR a.at b.at` prints the per-file numbers, then one union number in which a live thing is mapped when any file maps it. With one file the output is unchanged.
+
+### [feature] Declare what lives outside the repo (L-4)
+
+- A top-level `needs { memory: "~/path"  connectors: [name]  user-skills: [name] }` block parses, round-trips and is listed by `validate` under "declared outside the repo". A bad memory path or a path used as a name is a validate error (V129).
+- With `validate --inventory ... --user`, a declared user skill (`~/.claude/skills/<name>`) and a declared memory path count as mapped when they exist and as missing (exit 1) when they do not. Connectors cannot be checked locally and print `not checked (account connector)`.
+- README and spec now say 129 rules (V1-V129).
+
+### [feature] The visualizer is one offline page with themes, lenses and deep links (VZ-4)
+
+- The generated page holds no web address at all: dagre and every script are inline, fonts are the system stack, and there is no `<link>` or `@import`. A test reads the page text and fails on any `http://` or `https://` outside comments.
+- Light and dark themes come from CSS variables, follow `prefers-color-scheme`, and a Theme button sets `data-theme` (remembered in the browser when storage allows).
+- A lens bar (Flow, Sessions, Guards, Seats, Coverage, Index): Flow and Guards work, the others show a "coming" panel. A headline strip shows seven facts: agents, session agents, gates, guards graded refuse / hope / none, coverage, validate results and the Claude Code version stamp. Facts that were not read say "not checked".
+- The legend is built from the projection rules table (one row per node kind, plus the guard grades), not written by hand.
+- `#node=<id>` opens that node's inspector and `#lens=guards` opens a lens (they combine with `&`). Search matches ids and labels.
+
+### [feature] A Guards lens that grades every guard without relying on color (VZ-7)
+
+- Each gate, approval step, permission rule, talk guard and spawn guard gets a chip from the embedded `guard --check` facts. Shape, word and color go together: refuse is a solid square, hope a hollow circle, none a dashed outline, and unverified is the refuse shape with a "?".
+- A ledger lists every graded item worst first (none, hope, detect, unverified, refuse) and lists hooks that no step ties to under "untied".
+- Clicking a headline number such as "hope 3" shows only those items.
+- With no project folder every chip reads "not checked". The counts in the page equal the counts `guard --check` prints for the same folder.
+
+### [feature] A small AGENTS.md for Codex that keeps your own text (CX-6)
+
+- The Codex `AGENTS.md` no longer holds agent prompts. Each prompt lives in `.codex/agents/<id>.toml`, between the prompt markers, so a 40-agent topology scaffolds an `AGENTS.md` well under Codex's size cap.
+- The generated part of `AGENTS.md` sits between `agentopology:begin` and `agentopology:end` markers. A re-scaffold replaces only that block and keeps any text you wrote above or below it.
+- `sync` reads prompts from the agent files. An `AGENTS.md` scaffolded earlier is still read for agents the files do not cover.
+
+### [fix] Codex skills are written where Codex reads them (CX-7)
+
+- Each skill is now `.agents/skills/<id>/SKILL.md` with `name` and `description` frontmatter. Nothing is written under `.codex/skills/` any more, since Codex never loaded those files.
+- A skill with `disable-model-invocation` also gets `agents/openai.yaml` with `policy.allow_implicit_invocation: false`.
+
+### [feature] One guard-script library for the bindings (CX-10)
+
+- The before-agent, before-action and gate-wrapper scripts, and the session spawn, talk and prompt-log guards, are now built in `src/bindings/lib/guards.ts` from a platform record (project-dir variable, folders, hook payload field names, whether a hook can ask). The Claude Code scaffold is byte-identical to before for every example and fixture, held by a golden test. A Codex platform record builds the same guards with no `CLAUDE_PROJECT_DIR` and no `.claude` paths in them. Nothing is wired into the Codex binding yet.
+
+### [feature] The Codex contract: constants, snapshots and a drift watch (CX-2)
+
+- A new module holds what Codex CLI 0.156.1 documents: the 14 hook events, which of them ignore a matcher, which handler types run and which are skipped, the legal approval and sandbox values, and the keys a project config may not set. `checkHooks` reports an unknown event, a matcher on an event that ignores it, and a handler that Codex skips.
+- Snapshots of the hook contract, the config keys and the feature flags are committed under `spec/codex/`. A test holds the constants to them, and `scripts/codex-drift.mjs` compares the snapshot with the live hooks page and prints each difference.
+- The four URL keys that a project config may not set are not yet listed, because the page that names them could not be read when this was written.
+
+### [feature] Codex probe pack (CX-3)
+
+- `spec/codex/probes.json` and `spec/codex/probes.md` record ten facts about Codex CLI 0.156.1 that its docs do not state, each with its evidence and the date it was measured.
+- Exit 2 from a `PreToolUse` hook blocks a shell command in `codex exec`. Exit 1, exit 127 and a timeout let the command run, with no warning.
+- File edits reach hooks as `apply_patch`, and a subagent spawn as `collaborationspawn_agent`. A subagent's `agent_type` is the `name` in its agent file.
+- Project hooks do not run without hook trust, and Codex does not say it skipped them. `.codex/` is read-only to the agent under `workspace-write`.
+- `codex exec --strict-config` is the one command that rejects unknown config keys before any model call. A message sent with `codex queue` reaches an interactive session as a plain `UserPromptSubmit`, and never reaches a `codex exec` session.
+- `scripts/codex-probes.sh` reruns the probes in temp repos. It is off unless `CODEX_LIVE=1`.
+- A `[CX-3]` test fails unless every probe P1 to P10 has a dated record with a Codex version.
+
+### [fix] README rule count matches the registered rules (I011)
+
+- README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
+
+### [fix] Text-output snapshots no longer depend on the machine (I011)
+
+- Setting `AGENTOPOLOGY_CLAUDE_VERSION` to a version (or `none`) replaces the `claude --version` check, so validate and guard --check print the same lines on every machine. The text-output snapshot test sets it to the verified version, and the snapshots are re-recorded with the padded strength column.
+
+### [feature] People who are away, and approvals that expire (T-09)
+
+- A top-level `person <id> { away: "2026-01-31..2026-02-14" }` block. A `human` takes `who: <person>`.
+  Validate warns for every human step whose person is away today or later, with what the step does on
+  timeout (V126). An unknown person or a malformed window is an error (V127).
+- A human may declare `valid: "YYYY-MM-DD..YYYY-MM-DD"`. `step check` refuses a step that human guards
+  once today is past the window.
+
+### [feature] Schedule jobs say what carries them and what they survive (T-06)
+
+- A schedule `job` takes `carrier: session | cron | launchd | cloud | calendar` and
+  `survives: pane-close | reboot | away`. Other values are a validate error (V124).
+- `carrier: session` with any `survives:` is an error (V125): a session cron dies with its session and
+  after 7 days.
+- `inventory` now lists launchd plists and crontab lines whose command points into the project folder,
+  counted as the machine's and never required.
+
+### [feature] Machines, and home-folder paths are an error (T-07)
+
+- A top-level `machines { machine mac { os: macos } }` block, and `machine:` on session agents, schedule
+  jobs and stores. A machine that is not declared is a validate error (V122).
+- A hook, gate, tool or action command with an absolute path into one person's home folder
+  (`/Users/<name>/`, `/home/<name>/`, `C:\Users\`) is a validate error (V123), because it only works
+  on that machine.
+
+### [feature] A store can name its owner (T-10)
+
+- `owner: <agent>` on a store. If two agents that are not the owner both write the store, validate now
+  reports an error (V121) that names both. An owner that is not an agent is an error too. Stores with no
+  owner are checked as before.
+
+### [fix] The validate inventory knows the talk log (N44c)
+
+- `validate --inventory` no longer lists `.claude/state/talk.jsonl` as unmapped when the topology declares
+  session agents, since the generated talk guard writes it.
+
+### [feature] The visualizer page carries check results (VZ-3)
+
+- `validate`, `guard --check`, `validate --inventory` and the Claude Code version stamp now have
+  functions that return their results as data. The terminal text is unchanged, pinned byte for byte
+  over every example.
+- `visualize --dir <project>` reads those results and embeds them in the page, keyed by item id, with
+  the sha256 of the `.at` source and the time they were read. A node's panel shows them under "Checks".
+  With no `--dir`, every fact reads "not checked".
+
+### [feature] `visualize` is quicker to run (VZ-11)
+
+- With no file argument, `visualize` draws the only `.at` in the current directory, or in
+  `.claude/topologies/`. With none or several it says so and lists them.
+- The page is written to `~/.cache/agentopology/visualize/` unless `--output` is given.
+- New flags: `--no-open` (write only), `--no-check` (ignore `--dir`, every fact "not checked") and
+  `--print-summary` (node counts and facts on stdout). `visualize-brain` also honours `--no-open`.
+- The browser opener is `open` on macOS, `xdg-open` on Linux, `start` on Windows and `wslview` under WSL.
+
 ## [0.10.1] - 2026-11-13
 
 ### [fix] Review fixes for the 0.10.1 session and import work (N44e)

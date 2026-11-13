@@ -25,8 +25,9 @@ describe("shellStub", () => {
     expect(shellStub("x")).toContain("set -euo pipefail");
   });
 
-  it("emits a TODO placeholder echo", () => {
-    expect(shellStub("x")).toContain('echo "TODO: implement this script"');
+  it("emits a TODO placeholder that fails (exit 1) until it is written (E-1)", () => {
+    expect(shellStub("x")).toContain('echo "TODO: implement this script');
+    expect(shellStub("x")).toMatch(/\nexit 1\n/);
   });
 
   it("produces deterministic output (same input → same output)", () => {

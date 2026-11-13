@@ -1,0 +1,12 @@
+{
+  "source": "codex features list",
+  "fetched": "2026-11-13",
+  "codex": "0.156.1",
+  "partial": "Only the features the build spec records; the full list comes from `codex features list`.",
+  "features": [
+    { "name": "agent_message_board", "stage": "under development", "enabled": false },
+    { "name": "hooks", "stage": "stable", "enabled": true },
+    { "name": "multi_agent", "stage": "stable", "enabled": true },
+    { "name": "multi_agent_v2", "stage": "stable", "enabled": false }
+  ]
+}

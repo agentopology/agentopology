@@ -1,0 +1,10 @@
+guard --check examples/memory-system.at (project: empty)
+
+
+enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.323
+--- exit 0
+guard --check examples/memory-system.at (project: proj)
+
+
+enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.323
+--- exit 0

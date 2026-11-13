@@ -17,3 +17,5 @@ The docs are the source of truth. SchemaStore's settings schema
   - the constants in `src/conformance/claude-code.ts` match it;
   - the minimum's contract is the derived one;
   - every event and handler field the binding writes exists at the minimum version.
+
+The surface map `spec/surface/claude-code.surface.json` lists everything the binding writes or relies on, one entry per item, each with its contract page. `src/__tests__/e2e/surface-map.test.ts` fails on any generated hook event, handler field, payload field, frontmatter key, settings key, path or CLI flag that has no entry.

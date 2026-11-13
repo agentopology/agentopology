@@ -1,0 +1,33 @@
+guard --check kitchen-sink.at (project: empty)
+
+  gate triage-validation        none        by: hook      SubagentStop on triager → gate-triage-validation.sh
+                                ✗ no SubagentStop entry for triager running gate-triage-validation.sh in .claude/settings.json
+                                ✗ .claude/skills/incident-response/scripts/gate-triage-validation.sh is missing
+  gate fix-verification         none        by: hook      SubagentStop on fixer → gate-fix-verification.sh
+                                ✗ no SubagentStop entry for fixer running gate-fix-verification.sh in .claude/settings.json
+                                ✗ .claude/skills/incident-response/scripts/gate-fix-verification.sh is missing
+  human ops-approval            none        by: hook      PreToolUse on launching verifier → ask
+                                ✗ no PreToolUse entry for before-agent.sh in .claude/settings.json
+  deny Bash(rm -rf *)           none        by: settings  permissions.deny in .claude/settings.json
+                                ✗ .claude/settings.json has no deny rule Bash(rm -rf *)
+  ask Bash(git push --force *)  none        by: settings  permissions.ask in .claude/settings.json
+                                ✗ .claude/settings.json has no ask rule Bash(git push --force *)
+
+enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.323
+5 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check kitchen-sink.at (project: proj)
+
+  gate triage-validation        refuse, a stop event: it cannot block a call  by: hook      SubagentStop on triager → gate-triage-validation.sh
+                                ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
+                                ⚠ its check script .claude/skills/incident-response/scripts/validate-triage.sh is still a stub, so it blocks every run until it is written
+  gate fix-verification         refuse, a stop event: it cannot block a call  by: hook      SubagentStop on fixer → gate-fix-verification.sh
+                                ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
+                                ⚠ its check script .claude/skills/incident-response/scripts/verify-fix-safe.sh is still a stub, so it blocks every run until it is written
+  human ops-approval            refuse                                        by: hook      PreToolUse on launching verifier → ask
+                                ⚠ Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied
+  deny Bash(rm -rf *)           refuse                                        by: settings  permissions.deny in .claude/settings.json
+  ask Bash(git push --force *)  refuse                                        by: settings  permissions.ask in .claude/settings.json
+
+enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.323
+--- exit 0

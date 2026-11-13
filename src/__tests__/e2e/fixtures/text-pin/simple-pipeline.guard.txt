@@ -1,0 +1,20 @@
+guard --check examples/simple-pipeline.at (project: empty)
+
+  gate quality-check   none        by: hook      SubagentStop on writer → gate-quality-check.sh
+                       ✗ no SubagentStop entry for writer running gate-quality-check.sh in .claude/settings.json
+                       ✗ .claude/skills/simple-pipeline/scripts/gate-quality-check.sh is missing
+  deny Bash(rm -rf *)  none        by: settings  permissions.deny in .claude/settings.json
+                       ✗ .claude/settings.json has no deny rule Bash(rm -rf *)
+
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
+2 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check examples/simple-pipeline.at (project: proj)
+
+  gate quality-check   refuse, a stop event: it cannot block a call  by: hook      SubagentStop on writer → gate-quality-check.sh
+                       ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
+                       ⚠ its check script .claude/skills/simple-pipeline/scripts/check-quality.sh is still a stub, so it blocks every run until it is written
+  deny Bash(rm -rf *)  refuse                                        by: settings  permissions.deny in .claude/settings.json
+
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.323
+--- exit 0

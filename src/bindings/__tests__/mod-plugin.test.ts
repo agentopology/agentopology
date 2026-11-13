@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { parse } from "../../parser/index.js";
+import { codexSource } from "./codex-models.js";
 import { validate } from "../../parser/validator.js";
 import { claudeCodeBinding, bindings } from "../index.js";
 import type { GeneratedFile } from "../types.js";
@@ -165,7 +166,7 @@ describe("other targets cannot host a Mod", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     for (const [name, b] of Object.entries(bindings)) {
       if (name === "claude-code") continue;
-      const out = b.scaffold(parse(topology([REDACT, GATE].join("\n"))));
+      const out = b.scaffold(parse(codexSource(topology([REDACT, GATE].join("\n")))));
       expect(out.some((f) => f.content.includes("redact.ts")), name).toBe(false);
     }
     expect(warn.mock.calls.filter((c) => String(c[0]).includes("cannot host them"))).toHaveLength(Object.keys(bindings).length - 1);

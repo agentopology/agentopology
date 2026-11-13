@@ -1,0 +1,7 @@
+{
+  "file": "config.schema.json",
+  "source": "https://raw.githubusercontent.com/openai/codex/rust-v0.168.0/codex-rs/core/config.schema.json",
+  "tag": "rust-v0.168.0",
+  "fetched": "2026-11-13",
+  "note": "A verbatim copy. Refresh by fetching the file at a newer rust-vX.Y.Z tag; the watch diffs two of these (RW-6)."
+}

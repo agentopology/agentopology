@@ -1,0 +1,1167 @@
+/**
+ * Review findings R-1..R-12 on the Codex binding (and the guards it shares
+ * with Claude Code). Each test plants the case the review named and runs the
+ * generated script the way the host runs it.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse } from "../../parser/index.js";
+import { validate } from "../../parser/validator.js";
+import { codexBinding } from "../../bindings/codex.js";
+import { isVerifiedVersion, verifiedListProblems } from "../../conformance/claude-code.js";
+import { deepMergeSettingsJson } from "../../scaffold/merge.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = resolve(here, "fixtures/codex-gates.at");
+const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
+
+let root: string;
+const at = (p: string) => join(root, p);
+
+function quiet<T>(fn: () => T): T {
+  const w = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try { return fn(); } finally { w.mockRestore(); }
+}
+
+/** Scaffold a source for Codex into `dir` (default: root). */
+function scaffoldInto(src: string, dir = root) {
+  const files = quiet(() => codexBinding.scaffold(parse(src)));
+  for (const f of files) {
+    const p = join(dir, f.path);
+    fs.mkdirSync(dirname(p), { recursive: true });
+    fs.writeFileSync(p, f.content);
+    if (f.executable) fs.chmodSync(p, 0o755);
+  }
+  return files;
+}
+
+beforeEach(() => { root = fs.mkdtempSync(join(os.tmpdir(), "at-rfix-")); spawnSync("git", ["init", "-q", root]); });
+afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+describe("[R-10] a verified-list entry counts only with a clean suite", () => {
+  const list = (entry: object) => {
+    const f = join(root, "verified.json");
+    fs.writeFileSync(f, JSON.stringify({ versions: [entry] }));
+    return f;
+  };
+  const withList = <T>(file: string, fn: () => T): T => {
+    const old = process.env.AGENTOPOLOGY_VERIFIED_LIST;
+    process.env.AGENTOPOLOGY_VERIFIED_LIST = file;
+    try { return fn(); } finally { if (old === undefined) delete process.env.AGENTOPOLOGY_VERIFIED_LIST; else process.env.AGENTOPOLOGY_VERIFIED_LIST = old; }
+  };
+
+  it("[R-10] an entry whose suite failed 12 tests is a problem and the version reads unverified", () => {
+    const entry = { version: "9.9.1", proof: { run: "X", date: "2026-11-13", suite: { passed: 3, failed: 12, skipped: 0 } } };
+    expect(verifiedListProblems({ versions: [entry] }).length).toBe(1);
+    expect(withList(list(entry), () => isVerifiedVersion("9.9.1"))).toBe(false);
+  });
+
+  it("[R-10] an entry with no suite is a problem and the version reads unverified", () => {
+    const entry = { version: "9.9.2", proof: { run: "X", date: "2026-11-13" } };
+    expect(verifiedListProblems({ versions: [entry] }).length).toBe(1);
+    expect(withList(list(entry), () => isVerifiedVersion("9.9.2"))).toBe(false);
+  });
+
+  it("[R-10] an entry with a clean suite still counts", () => {
+    const entry = { version: "9.9.3", proof: { run: "X", date: "2026-11-13", suite: { passed: 3, failed: 0, skipped: 0 } } };
+    expect(verifiedListProblems({ versions: [entry] })).toEqual([]);
+    expect(withList(list(entry), () => isVerifiedVersion("9.9.3"))).toBe(true);
+  });
+});
+
+describe("[R-9] guard --target codex writes the gate's check script and the Codex version line", () => {
+  const CLI = resolve(here, "../../../dist/cli/index.js");
+  it("[R-9] into an empty project: the check stub exists and the output carries the Codex line", () => {
+    const r = spawnSync("node", [CLI, "guard", FIXTURE, "--target", "codex", "--dir", root], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CODEX_VERSION: "0.156.1" } });
+    expect(fs.existsSync(at(".codex/scripts/render-check.sh"))).toBe(true);
+    expect(fs.readFileSync(at(".codex/scripts/render-check.sh"), "utf8")).toContain("AGENTOPOLOGY_STUB");
+    expect(r.stdout).toContain("checked against Codex CLI");
+    expect(r.stdout).not.toContain("checked against Claude Code");
+  });
+
+  it("[R-9] an existing check script is never overwritten", () => {
+    const mine = "#!/usr/bin/env bash\nexit 0\n";
+    fs.mkdirSync(at(".codex/scripts"), { recursive: true });
+    fs.writeFileSync(at(".codex/scripts/render-check.sh"), mine);
+    spawnSync("node", [CLI, "guard", FIXTURE, "--target", "codex", "--dir", root], { encoding: "utf8" });
+    expect(fs.readFileSync(at(".codex/scripts/render-check.sh"), "utf8")).toBe(mine);
+  });
+});
+
+type HookEntry = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> };
+const hooksOf = (dir = root): Record<string, HookEntry[]> => JSON.parse(fs.readFileSync(join(dir, ".codex/hooks.json"), "utf8")).hooks;
+const bashPayload = (command: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+const spawnPayload = (agent_type: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "collaborationspawn_agent", tool_input: { task_name: "t", agent_type, message: "m" } });
+/** Run a hooks.json command the way Codex does: a shell, from `cwd`, the payload on stdin, no Claude variable. */
+function runHook(command: string, cwd: string, stdin: string, timeout = 20_000) {
+  const env = { ...process.env } as Record<string, string>;
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync("/bin/sh", ["-c", command], { cwd, input: stdin, env, encoding: "utf8", timeout });
+}
+
+describe.skipIf(!hasJq)("[R-2] a guard's hook command blocks when its script is not found", () => {
+  const actionCommand = (dir = root) => hooksOf(dir).PreToolUse.find((e) => e.hooks[0].command.includes("before-action.sh"))!.hooks[0].command;
+
+  it("[R-2] from a nested git repository inside the project the guard still runs and blocks (exit 2)", () => {
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"));
+    fs.mkdirSync(at("vendor/lib"), { recursive: true });
+    spawnSync("git", ["init", "-q", at("vendor/lib")]);
+    const r = runHook(actionCommand(), at("vendor/lib"), bashPayload("./tool publish ep1"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(runHook(actionCommand(), at("vendor/lib"), bashPayload("ls")).status).toBe(0);
+  });
+
+  it("[R-2] from a subfolder of a project that is not a git repository the guard still runs and blocks", () => {
+    const plain = fs.mkdtempSync(join(os.tmpdir(), "at-rfix-nogit-"));
+    try {
+      scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), plain);
+      fs.mkdirSync(join(plain, "src/deep"), { recursive: true });
+      const r = runHook(actionCommand(plain), join(plain, "src/deep"), bashPayload("./tool publish ep1"));
+      expect(r.status, r.stderr).toBe(2);
+    } finally { fs.rmSync(plain, { recursive: true, force: true }); }
+  });
+
+  it("[R-2] a guard whose script is gone exits 2 with a reason, not 127", () => {
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"));
+    fs.rmSync(at(".codex/scripts/ship/before-action.sh"));
+    const r = runHook(actionCommand(), root, bashPayload("ls"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("before-action.sh");
+  });
+});
+
+const AGENT_GATE = (after: string) => `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Write, then review"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [writer, editor, reviewer]
+  }
+  agent writer {
+    model: gpt-5.2
+    description: "Writes"
+  }
+  agent editor {
+    model: gpt-5.2
+    description: "Edits"
+  }
+  agent reviewer {
+    model: gpt-5.2
+    description: "Reviews"
+  }
+  gates {
+    gate checked {
+      after: ${after}
+      before: reviewer
+      run: "scripts/check.sh"
+      on-fail: halt
+    }
+  }
+  flow { writer -> editor -> reviewer }
+}
+`;
+
+describe("[R-8] a rescaffold replaces the topology's own Codex hook groups", () => {
+  const CLI = resolve(here, "../../../dist/cli/index.js");
+  const scaffoldCli = (src: string) => {
+    const f = join(root, "t.at");
+    fs.writeFileSync(f, src);
+    return spawnSync("node", [CLI, "scaffold", f, "--target", "codex", "--output", root], { encoding: "utf8" });
+  };
+
+  it("[R-8] moving a gate's anchor leaves exactly the new SubagentStop group; the user's group stays", () => {
+    expect(scaffoldCli(AGENT_GATE("writer")).status).toBe(0);
+    const file = at(".codex/hooks.json");
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    const mine = { matcher: "writer", hooks: [{ type: "command", command: "bash my-own-stop.sh" }] };
+    doc.hooks.SubagentStop.push(mine);
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    expect(scaffoldCli(AGENT_GATE("editor")).status).toBe(0);
+    const stop = hooksOf().SubagentStop;
+    const generated = stop.filter((g) => g.hooks[0].command.includes(".codex/scripts/review/"));
+    expect(generated.map((g) => g.matcher)).toEqual(["editor"]);
+    expect(stop.filter((g) => g.hooks[0].command === "bash my-own-stop.sh")).toHaveLength(1);
+  });
+});
+
+describe("[R-8] ownership reads the Codex command form wherever the script path sits", () => {
+  const owned = [".codex/scripts/review/gate-checked.sh"];
+  const group = (matcher: string, command: string) => ({ matcher, hooks: [{ type: "command", command }] });
+  const forms = [
+    `bash "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/scripts/review/gate-checked.sh"`,
+    `AT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; bash "$AT_ROOT/.codex/scripts/review/gate-checked.sh" || exit 2`,
+  ];
+  it.each(forms)("[R-8] a stale owned group in the form %s is removed; the user's group is kept", (cmd) => {
+    const existing = { hooks: { SubagentStop: [group("writer", cmd), group("writer", "bash my-own-stop.sh")] } };
+    const generated = { hooks: { SubagentStop: [group("editor", cmd)] } };
+    const out = JSON.parse(deepMergeSettingsJson(JSON.stringify(existing), JSON.stringify(generated), owned));
+    expect(out.hooks.SubagentStop.map((g: { matcher: string; hooks: Array<{ command: string }> }) => `${g.matcher}:${g.hooks[0].command === cmd ? "gen" : g.hooks[0].command}`))
+      .toEqual(["writer:bash my-own-stop.sh", "editor:gen"]);
+  });
+
+  it("[R-8] a Claude Code group is owned exactly as before: by a token equal to the script path", () => {
+    const cc = [".claude/skills/t/scripts/gate-x.sh"];
+    const existing = { hooks: { SubagentStop: [group("a", "bash .claude/skills/t/scripts/gate-x.sh"), group("a", "bash ./mine/.claude/skills/t/scripts/gate-x.sh")] } };
+    const generated = { hooks: { SubagentStop: [group("b", "bash .claude/skills/t/scripts/gate-x.sh")] } };
+    const out = JSON.parse(deepMergeSettingsJson(JSON.stringify(existing), JSON.stringify(generated), cc));
+    expect(out.hooks.SubagentStop.map((g: { matcher: string }) => g.matcher)).toEqual(["a", "b"]);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-1] a gate between two agents holds the second agent's spawn on Codex", () => {
+  const S = ".codex/scripts/review";
+  const check = (code: number) => fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\nexit ${code}\n`, { mode: 0o755 });
+
+  it("[R-1] hooks.json has a PreToolUse entry on collaborationspawn_agent for before-agent.sh", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    const spawn = hooksOf().PreToolUse?.find((e) => e.matcher === "collaborationspawn_agent");
+    expect(spawn?.hooks[0].command).toContain(`${S}/before-agent.sh`);
+  });
+
+  it("[R-1] before-agent.sh holds reviewer (exit 2) while the gate script fails, and lets it start when it passes", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.mkdirSync(at("src/deep"), { recursive: true });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    check(1);
+    const held = runHook(cmd, at("src/deep"), spawnPayload("reviewer"));
+    expect(held.status, held.stderr).toBe(2);
+    expect(runHook(cmd, at("src/deep"), spawnPayload("editor")).status).toBe(0);
+    check(0);
+    const open = runHook(cmd, at("src/deep"), spawnPayload("reviewer"));
+    expect(open.status, open.stderr).toBe(0);
+  });
+
+  it("[R-1] AGENTS.md says the spawn of reviewer is what holds, not the stop of writer", () => {
+    const files = scaffoldInto(AGENT_GATE("writer"));
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toMatch(/before-agent\.sh[^\n]*reviewer|reviewer[^\n]*before-agent\.sh/);
+  });
+
+  it("[R-1] a gate after the last agent, with no agent after it, is not called a blocking hook", () => {
+    const files = scaffoldInto(AGENT_GATE("reviewer").replace("      before: reviewer\n", ""));
+    const line = files.find((f) => f.path === "AGENTS.md")!.content.split("\n").find((l) => l.includes("**Enforcement:**"))!;
+    expect(line).toMatch(/cannot block/);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-12] before-agent.sh reads agent_type trimmed and lowercased on Codex", () => {
+  it("[R-12] agent_type \" Reviewer \" is held like reviewer", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    expect(runHook(cmd, root, spawnPayload(" Reviewer ")).status).toBe(2);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook timeout", () => {
+  const slow = (extra: string) => AGENT_GATE("writer").replace('      run: "scripts/check.sh"\n', `      run: "scripts/check.sh"\n${extra}`);
+  const spawnEntry = () => hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0];
+
+  it("[R-3] timeout: 10m retry: 2 raises the hook timeout above the gate's worst case (1802 s)", () => {
+    scaffoldInto(slow("      timeout: 10m\n      retry: 2\n"));
+    expect(spawnEntry().timeout!).toBeGreaterThan(3 * 600 + 2);
+    const stop = hooksOf().SubagentStop.find((e) => e.matcher === "writer")!.hooks[0];
+    expect(stop.timeout!).toBeGreaterThan(3 * 600 + 2);
+  });
+
+  it("[R-3] the hook command has its own deadline below the hook timeout", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    const e = spawnEntry();
+    const m = /-s KILL (\d+) /.exec(e.command);
+    expect(m, e.command).not.toBeNull();
+    expect(Number(m![1])).toBeLessThan(e.timeout!);
+  });
+
+  it("[R-3] a check that sleeps 200 s is cut at the deadline and the guard exits 2 (deadline set to 3 s here)", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
+    const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ");
+    const t0 = Date.now();
+    const r = runHook(cmd, root, spawnPayload("reviewer"), 30_000);
+    expect(r.status, r.stderr).toBe(2);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+    expect(r.stderr).toMatch(/deadline/);
+  });
+
+  it("[R-3] with no timeout or gtimeout on PATH (stock macOS) the deadline still holds: the guard exits 2 and the payload still reaches the guard", () => {
+    // A PATH that has every tool from /usr/bin and /bin except timeout and gtimeout.
+    const bin = fs.mkdtempSync(join(os.tmpdir(), "at-r3-path-"));
+    for (const d of ["/usr/bin", "/bin"]) {
+      for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+        if (f === "timeout" || f === "gtimeout" || fs.existsSync(join(bin, f))) continue;
+        try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
+      }
+    }
+    for (const tool of ["jq", "git", "bash"]) {
+      const w = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+      if (w && !fs.existsSync(join(bin, tool))) fs.symlinkSync(w, join(bin, tool));
+    }
+    const noTimeout = (command: string, stdin: string) => {
+      const env = { ...process.env, PATH: bin } as Record<string, string>;
+      delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("/bin/sh", ["-c", command], { cwd: root, input: stdin, env, encoding: "utf8", timeout: 30_000 });
+    };
+    expect(spawnSync("/bin/sh", ["-c", "command -v timeout || command -v gtimeout || echo none"], { env: { PATH: bin }, encoding: "utf8" }).stdout.trim()).toBe("none");
+
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
+    const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
+    const t0 = Date.now();
+    const slowRun = noTimeout(cmd, spawnPayload("reviewer"));
+    expect(slowRun.status, slowRun.stderr).toBe(2);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+    expect(slowRun.stderr).toMatch(/deadline/);
+
+    // A passing check still passes, and the guard still reads the payload (an ungated agent spawns).
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    expect(noTimeout(cmd, spawnPayload("reviewer")).status).toBe(0);
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const failing = noTimeout(cmd, spawnPayload("reviewer"));
+    expect(failing.status, failing.stderr).toBe(2);
+    expect(failing.stderr).not.toMatch(/deadline/);
+  });
+
+  it("[R-3] validate warns when a gate's worst case is longer than the default hook timeout", () => {
+    const w = validate(parse(slow("      timeout: 10m\n      retry: 2\n")), { target: "codex" }).filter((r) => r.rule === "CX9-timeout");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain("checked");
+  });
+});
+
+const HOOKED = (hooks: string) => `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "t"
+  }
+  agent worker {
+    description: "Does work"
+    model: gpt-5.2
+    permissions: autonomous
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+  flow { intake -> worker }
+  hooks {
+${hooks}
+  }
+}
+`;
+const refuseHook = (name: string, matcher: string, extra = "") => `    hook ${name} {
+      on: PreToolUse
+      matcher: "${matcher}"
+      run: "scripts/${name}.sh"
+      type: command
+      strength: refuse
+${extra}    }`;
+
+describe("[R-5] Claude tool names in a matcher become their Codex names", () => {
+  it("[R-5] Edit|Write becomes apply_patch and Task becomes collaborationspawn_agent; Bash stays", () => {
+    scaffoldInto(HOOKED([refuseHook("files", "Edit|Write"), refuseHook("spawn", "Task"), refuseHook("sh", "Bash")].join("\n")));
+    const matchers = hooksOf().PreToolUse.map((e) => e.matcher);
+    expect(matchers).toEqual(["apply_patch", "collaborationspawn_agent", "Bash"]);
+  });
+
+  it("[R-5] a name with no Codex equivalent gets a warning", () => {
+    const w = validate(parse(HOOKED(refuseHook("reads", "Read|Edit"))), { target: "codex" }).filter((r) => r.rule === "CX8-tool");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain('"Read"');
+    scaffoldInto(HOOKED(refuseHook("reads", "Read|Edit")));
+    expect(hooksOf().PreToolUse[0].matcher).toBe("apply_patch");
+  });
+});
+
+const patchPayload = (patch: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: patch } });
+const blockScript = (rel: string) => { fs.mkdirSync(dirname(at(rel)), { recursive: true }); fs.writeFileSync(at(rel), "#!/usr/bin/env bash\necho 'refused by hook' >&2\nexit 2\n", { mode: 0o755 }); };
+const envHook = refuseHook("no-env", "Write", '      if: "Write(.env*)"\n');
+
+describe.skipIf(!hasJq)("[R-6] the if: filter reads the paths of an apply_patch", () => {
+  const cmd = () => hooksOf().PreToolUse[0].hooks[0].command;
+
+  it("[R-6] an apply_patch that adds $PWD/.env runs the refuse hook (exit 2)", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    const patch = `*** Begin Patch\n*** Add File: ${root}/.env\n+SECRET=1\n*** End Patch\n`;
+    const r = runHook(cmd(), root, patchPayload(patch));
+    expect(r.status, r.stderr).toBe(2);
+  });
+
+  it("[R-6] an Update File and a Move to are read too; an unrelated patch passes", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    const update = `*** Begin Patch\n*** Update File: ${root}/src/a.ts\n*** Move to: ${root}/.env.local\n@@\n-a\n+b\n*** End Patch\n`;
+    expect(runHook(cmd(), root, patchPayload(update)).status).toBe(2);
+    const other = `*** Begin Patch\n*** Add File: ${root}/src/b.ts\n+x\n*** End Patch\n`;
+    expect(runHook(cmd(), root, patchPayload(other)).status).toBe(0);
+  });
+
+  it("[R-6] stdin that is not JSON, or empty, on a refuse hook exits 2", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    expect(runHook(cmd(), root, "not json").status).toBe(2);
+    expect(runHook(cmd(), root, "").status).toBe(2);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-7] the if: filter runs its command as argv, so a path with a space works", () => {
+  it("[R-7] in a project folder named \"fx 3\", a guarded git push exits 2", () => {
+    const spaced = join(root, "fx 3");
+    fs.mkdirSync(spaced);
+    spawnSync("git", ["init", "-q", spaced]);
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')), spaced);
+    fs.writeFileSync(join(spaced, ".codex/scripts/no-push.sh"), "#!/usr/bin/env bash\necho 'no push' >&2\nexit 2\n", { mode: 0o755 });
+    const cmd = hooksOf(spaced).PreToolUse[0].hooks[0].command;
+    const r = runHook(cmd, spaced, bashPayload("git push origin main"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("no push");
+    expect(runHook(cmd, spaced, bashPayload("git status")).status).toBe(0);
+  });
+
+  it("[R-7] a refuse hook whose command is not found (127) blocks with exit 2", () => {
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')));
+    fs.rmSync(at(".codex/scripts/no-push.sh"));
+    const r = runHook(hooksOf().PreToolUse[0].hooks[0].command, root, bashPayload("git push origin main"));
+    expect(r.status).toBe(2);
+  });
+
+  it("[R-7] an inline shell command still runs through the filter", () => {
+    scaffoldInto(HOOKED(`    hook g {
+      on: PreToolUse
+      matcher: "Bash"
+      if: "Bash(rm -rf *)"
+      run: "exit 2"
+      type: command
+    }`));
+    const cmd = hooksOf().PreToolUse[0].hooks[0].command;
+    expect(runHook(cmd, root, bashPayload("rm -rf /tmp/x")).status).toBe(2);
+    expect(runHook(cmd, root, bashPayload("ls")).status).toBe(0);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-4] before-action.sh sees a guarded step however the command is written", () => {
+  const BLOCK: string[] = [
+    "./tool  publish ep1",
+    "./tool\tpublish ep1",
+    "if ./tool publish ep1; then :; fi",
+    "while ./tool publish ep1; do break; done",
+    "until ./tool publish ep1; do :; done",
+    "! ./tool publish ep1",
+    "echo $(./tool publish ep1)",
+    "echo `./tool publish ep1`",
+    "command ./tool publish ep1",
+    "nice ./tool publish ep1",
+    "nice -n 5 ./tool publish ep1",
+    "sudo ./tool publish ep1",
+    "sudo -u bot ./tool publish ep1",
+    "env -i ./tool publish ep1",
+    "echo ep1 | xargs ./tool publish",
+    "\"./tool\" publish ep1",
+    "./tool 'publish' ep1",
+    "/opt/project/tool publish ep1",
+    "cd x && ./tool publish ep1",
+    "(./tool publish ep1)",
+    "{ ./tool publish ep1; }",
+    "FOO=1 ./tool publish ep1",
+    "ls\n./tool publish ep1",
+    "bash -c './tool publish ep1'",
+    "eval ./tool publish ep1",
+  ];
+  const PASS: string[] = ["ls -la", "git status", "./tool render ep1", "./tool publisher ep1", "echo done"];
+  const ast = () => parse(fs.readFileSync(FIXTURE, "utf8"));
+
+  const platforms = [
+    {
+      name: "Codex",
+      setup: () => { scaffoldInto(fs.readFileSync(FIXTURE, "utf8")); fs.mkdirSync(at("src/deep"), { recursive: true }); return at(".codex/scripts/ship/before-action.sh"); },
+      env: {} as Record<string, string>,
+    },
+    {
+      name: "Claude Code",
+      setup: async () => {
+        const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+        const f = generateBeforeActionScript(ast(), CLAUDE_CODE_GUARDS)!;
+        fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+        fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+        fs.mkdirSync(at("src/deep"), { recursive: true });
+        return at(f.path);
+      },
+      env: { CLAUDE_PROJECT_DIR: "" } as Record<string, string>,
+    },
+  ];
+
+  for (const p of platforms) {
+    const run = (script: string, command: string) => {
+      const env = { ...process.env, ...p.env } as Record<string, string>;
+      if (p.name === "Claude Code") env.CLAUDE_PROJECT_DIR = root; else delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("bash", [script], { cwd: at("src/deep"), input: bashPayload(command), env, encoding: "utf8" });
+    };
+    it.each(BLOCK)(`[R-4] ${p.name}: %j exits 2 while the gate's ledger has no ok record`, async (command) => {
+      const script = await p.setup();
+      const r = run(script, command);
+      expect(r.status, r.stderr).toBe(2);
+    });
+    it.each(PASS)(`[R-4] ${p.name}: %j is no guarded step and passes`, async (command) => {
+      const script = await p.setup();
+      const r = run(script, command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+    it(`[R-4] ${p.name}: with an ok ledger record the step passes in its unusual forms too`, async () => {
+      const script = await p.setup();
+      fs.mkdirSync(at("logs/ep1"), { recursive: true });
+      fs.writeFileSync(at("logs/ep1/trace.jsonl"), JSON.stringify({ step: "render", unit: "ep1", ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+      for (const c of ["./tool  publish ep1", "echo $(./tool publish ep1)", "if ./tool publish ep1; then :; fi", "/opt/project/tool publish ep1"]) {
+        const r = run(script, c);
+        expect(r.status, `${c}: ${r.stderr}`).toBe(0);
+      }
+    });
+  }
+});
+
+describe.skipIf(!hasJq)("[R-11] the human gate on Codex does not hand the model its own approval", () => {
+  const gates = () => fs.readFileSync(FIXTURE, "utf8");
+  const unrestricted = () => gates().replace('description: "Edits the rendered piece"', 'description: "Edits the rendered piece"\n    permissions: unrestricted');
+  const forge = (src: string) => validate(parse(src), { target: "codex" }).filter((r) => r.rule === "CX11-forgeable");
+
+  it("[R-11] validate warns when the sandbox lets the model write .codex (danger-full-access)", () => {
+    const w = forge(unrestricted());
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain("approve");
+    expect(w[0].message).toContain("danger-full-access");
+  });
+
+  it("[R-11] under workspace-write there is no such warning", () => {
+    const src = unrestricted().replace("  flow {", "  settings {\n    sandbox: workspace-write\n  }\n  flow {");
+    expect(forge(src)).toEqual([]);
+    expect(forge(gates())).toEqual([]);
+  });
+
+  it("[R-11] the block message names no ready-to-run command; AGENTS.md gives the record format", () => {
+    const files = scaffoldInto(gates());
+    fs.writeFileSync(at(".codex/scripts/render-check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    const r = runHook(cmd, root, spawnPayload("editor"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/person/);
+    expect(r.stderr).not.toMatch(/printf|>>|mkdir/);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain(".codex/state/approvals.jsonl");
+    // F-10: AGENTS.md is in the model's context, so it describes the record for the person and holds no line that writes it.
+    for (const field of ["`step`", "`ok`", "`at`", "`approve`"]) expect(md).toContain(field);
+    const writes = (text: string) => text.split("\n").filter((l) => /approvals\.jsonl/.test(l) && /\b(printf|echo|tee|cat)\b|>>?\s*\S*approvals\.jsonl/.test(l));
+    expect(writes(md)).toEqual([]);
+    expect(writes(r.stderr)).toEqual([]);
+    expect(md).not.toMatch(/```sh[\s\S]*approvals\.jsonl[\s\S]*```/);
+  });
+});
+
+const CLI_JS = resolve(here, "../../../dist/cli/index.js");
+const cliIn = (args: string[], env: Record<string, string> = {}) =>
+  spawnSync("node", [CLI_JS, ...args], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CODEX_VERSION: "0.156.1", ...env } });
+const writeAt = (src: string) => { const f = join(root, "t.at"); fs.writeFileSync(f, src); return f; };
+const listAll = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? listAll(join(dir, e.name)).map((p) => `${e.name}/${p}`) : [e.name]);
+const enforcementLine = (md: string) => md.split("\n").find((l) => l.includes("**Enforcement:**"))!;
+
+describe("[R-1] honesty: on Codex a gate that holds reads unverified, and one that cannot hold reads none", () => {
+  it("[R-1] (a) the agent-to-agent gate is graded unverified by guard --check, and AGENTS.md does not call it a hook", () => {
+    const f = writeAt(AGENT_GATE("writer"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(AGENT_GATE("writer"), proj);
+    const line = enforcementLine(fs.readFileSync(join(proj, "AGENTS.md"), "utf8"));
+    expect(line).toMatch(/\*\*Enforcement:\*\* unverified/);
+    expect(line).not.toMatch(/\bhook\b/);
+    const r = cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+    expect(r.stdout).toMatch(/gate checked\s+unverified/);
+    expect(r.stdout).not.toMatch(/gate checked\s+refuse/);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+  });
+
+  it("[R-1] (b) a gate after the last agent, with no blocking event, is graded none and scaffold warns", () => {
+    const src = AGENT_GATE("reviewer").replace("      before: reviewer\n", "");
+    const w = validate(parse(src), { target: "codex" }).filter((r) => r.rule === "CX9-noblock");
+    expect(w).toHaveLength(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const files = codexBinding.scaffold(parse(src));
+    const printed = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(printed.some((m) => m.includes("CX9-noblock") || m.includes("cannot block"))).toBe(true);
+    expect(enforcementLine(files.find((x) => x.path === "AGENTS.md")!.content)).toMatch(/\*\*Enforcement:\*\* none/);
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(src, proj);
+    const r = cliIn(["guard", writeAt(src), "--check", "--target", "codex", "--dir", proj]);
+    expect(r.stdout).toMatch(/gate checked\s+none/);
+  });
+});
+
+describe("[E-2] guard --check never writes, on any target", () => {
+  it("[E-2] guard --check --target codex on an empty folder writes no file", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = fs.mkdtempSync(join(os.tmpdir(), "at-e2-"));
+    try {
+      cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+      cliIn(["guard", f, "--check", "--target", "claude-code", "--dir", proj]);
+      expect(listAll(proj)).toEqual([]);
+    } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+  });
+});
+
+describe("[E-5] guard --check grades a Codex project from .codex/", () => {
+  it("[E-5] on a fresh Codex scaffold (found from .codex/, no --target) every guard reads unverified and the exit is 0", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj);
+    const r = cliIn(["guard", f, "--check", "--dir", proj]);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/gate publish-ready\s+unverified/);
+    expect(r.stdout).toMatch(/gate render-check\s+unverified/);
+    expect(r.stdout).toMatch(/human approve\s+unverified/);
+    expect(r.stdout).not.toContain(".claude");
+    expect(r.stdout).toContain("checked against Codex CLI");
+    expect(r.stdout).not.toContain("checked against Claude Code");
+  });
+
+  it("[E-5] a Codex project missing its hooks.json grades none and exits 1", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj);
+    fs.rmSync(join(proj, ".codex/hooks.json"));
+    const r = cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/gate publish-ready\s+none/);
+  });
+});
+
+const STUB_GATE = `topology ship : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Check, then publish"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [render, publish]
+  }
+  tools {
+    tool render-check {
+      script: "./scripts/render-check.py"
+      lang: python
+      description: "Checks the render"
+    }
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  action publish {
+    kind: external
+    commands: ["./tool publish"]
+  }
+  gates {
+    gate checked {
+      after: render
+      before: publish
+      run: "python3 ./scripts/render-check.py"
+      on-fail: halt
+    }
+  }
+  flow { render -> publish }
+}
+`;
+
+describe("[E-1] every generated stub fails, so a gate that runs one blocks", () => {
+  const hasPy = spawnSync("/bin/sh", ["-c", "command -v python3"]).status === 0;
+  const hasNode = true;
+
+  it.skipIf(!hasJq || !hasPy)("[E-1] Claude Code: a gate whose run: is an unwritten python tool stub blocks the step (exit 2), and guard --check's 'blocks every run' holds", async () => {
+    const { claudeCodeBinding } = await import("../../bindings/claude-code.js");
+    const files = quiet(() => claudeCodeBinding.scaffold(parse(STUB_GATE)));
+    for (const f of files) { fs.mkdirSync(dirname(at(f.path)), { recursive: true }); fs.writeFileSync(at(f.path), f.content); if (f.executable) fs.chmodSync(at(f.path), 0o755); }
+    const script = files.find((f) => f.path.endsWith("/before-action.sh"))!.path;
+    // The check the gate runs is the tool's own stub (the file the tool's script: names, as a tool scaffold writes it).
+    const kitchen = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8");
+    const toolStub = quiet(() => claudeCodeBinding.scaffold(parse(kitchen))).find((f) => f.path.endsWith("/rollback-deploy.py"))!.content;
+    fs.writeFileSync(at("scripts/render-check.py"), toolStub);
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: root } as Record<string, string>;
+    const r = spawnSync("bash", [at(script)], { cwd: root, input: bashPayload("./tool publish"), env, encoding: "utf8" });
+    expect(r.status, r.stdout + r.stderr).toBe(2);
+    const check = cliIn(["guard", writeAt(STUB_GATE), "--check", "--target", "claude-code", "--dir", root]);
+    expect(check.stdout).toContain("blocks every run");
+  });
+
+  it.skipIf(!hasJq || !hasPy)("[E-1] Codex: the same gate blocks the step (exit 2)", () => {
+    scaffoldInto(STUB_GATE);
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "Bash")!.hooks[0].command;
+    const r = runHook(cmd, root, bashPayload("./tool publish"));
+    expect(r.status, r.stderr).toBe(2);
+  });
+
+  it("[E-1] every file carrying the stub marker, from either target, exits non-zero when run", async () => {
+    const { claudeCodeBinding } = await import("../../bindings/claude-code.js");
+    const kitchen = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8");
+    const { codexSource } = await import("../../bindings/__tests__/codex-models.js");
+    const all = [
+      ...quiet(() => claudeCodeBinding.scaffold(parse(kitchen))),
+      ...quiet(() => codexBinding.scaffold(parse(codexSource(kitchen)))),
+      ...quiet(() => codexBinding.scaffold(parse(STUB_GATE))),
+    ];
+    const stubs = all.filter((f) => f.content.includes("AGENTOPOLOGY_STUB"));
+    expect(stubs.length).toBeGreaterThan(5);
+    const passed: string[] = [];
+    for (const f of stubs) {
+      const p = join(root, "stub-" + Math.random().toString(36).slice(2) + f.path.replace(/^.*\./, "."));
+      fs.writeFileSync(p, f.content);
+      const interp = f.path.endsWith(".py") ? "python3" : f.path.endsWith(".js") || f.path.endsWith(".mjs") ? "node" : "bash";
+      if (interp === "python3" && !hasPy) continue;
+      if (interp === "node" && !hasNode) continue;
+      const r = spawnSync(interp, [p], { cwd: root, input: "{}", encoding: "utf8", timeout: 10_000 });
+      if (r.status === 0) passed.push(f.path);
+    }
+    expect(passed, `stubs that exit 0: ${passed.join(", ")}`).toEqual([]);
+  });
+});
+
+const MEDIA = `topology show : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Render after review"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [review, render]
+  }
+  action review {
+    kind: external
+    commands: ["./media episode review EP.json"]
+  }
+  action render {
+    kind: external
+    commands: ["./media episode render EP.json OUT.mp4"]
+  }
+  records {
+    record trace { path: "logs/trace.jsonl" }
+  }
+  gates {
+    gate reviewed {
+      after: review
+      before: render
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { review -> render }
+}
+`;
+
+describe.skipIf(!hasJq)("[E-3] a step's command with placeholders matches on the words before them", () => {
+  const platforms: Array<[string, () => Promise<{ script: string; env: Record<string, string> }>]> = [
+    ["Codex", async () => { scaffoldInto(MEDIA); return { script: at(".codex/scripts/show/before-action.sh"), env: {} }; }],
+    ["Claude Code", async () => {
+      const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+      const f = generateBeforeActionScript(parse(MEDIA), CLAUDE_CODE_GUARDS)!;
+      fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+      fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+      return { script: at(f.path), env: { CLAUDE_PROJECT_DIR: root } };
+    }],
+  ];
+  for (const [name, setup] of platforms) {
+    it(`[E-3] ${name}: the filled-in call blocks (exit 2) and an unrelated subcommand does not`, async () => {
+      const { script, env: extra } = await setup();
+      const env = { ...process.env, ...extra } as Record<string, string>;
+      if (!extra.CLAUDE_PROJECT_DIR) delete env.CLAUDE_PROJECT_DIR;
+      const run = (c: string) => spawnSync("bash", [script], { cwd: root, input: bashPayload(c), env, encoding: "utf8" });
+      const r = run("./media episode render show/ep7/ep.json out.mp4");
+      expect(r.status, r.stderr).toBe(2);
+      expect(run("./media episode list").status).toBe(0);
+      expect(run("./media episode review show/ep7/ep.json").status).toBe(0);
+    });
+  }
+
+  it("[E-3] validate warns that a guarded command with placeholders is matched on the words before them", () => {
+    const w = validate(parse(MEDIA)).filter((r) => r.rule === "AG-placeholder");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain('"./media episode render"');
+  });
+});
+
+describe("[E-6] validate --target codex adds the Codex warnings", () => {
+  it("[E-6] kitchen-sink with a Codex model: --target codex prints the CX23 warnings, plain validate does not", () => {
+    const src = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8").replace(/\bmodel: (opus|sonnet|haiku)\b/g, "model: gpt-5.2");
+    const f = writeAt(src);
+    const withTarget = cliIn(["validate", f, "--target", "codex"]);
+    const plain = cliIn(["validate", f]);
+    expect(withTarget.stdout).toContain("CX23");
+    expect(withTarget.stdout).toContain("not expressible on Codex");
+    expect(plain.stdout).not.toContain("CX23");
+  });
+});
+
+// F-batch (Fable attack on d66864e, RC e2e): the matcher refuses what it cannot read (deny-on-doubt).
+// Inputs are the attacker's exact strings (attack-inputs.json, rows 1, 2, 3, 5, 19) plus the RC e2e's
+// interpreter forms (F-21). Both targets run the same generated matcher.
+const INTERP_AT = `topology post : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "post"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [check, post]
+  }
+  action check {
+    kind: external
+    commands: ["python3 harness/bin/check.py"]
+  }
+  action post {
+    kind: external
+    commands: ["python3 harness/bin/post-ig.py upload"]
+    unit-from: "post-ig.py upload (\\\\S+)"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate post-ready {
+      after: check
+      before: post
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { check -> post }
+}
+`;
+describe.skipIf(!hasJq)("[F-1] before-action.sh refuses a guarded step it cannot read (deny-on-doubt)", () => {
+  const BLOCK: string[] = [
+    // F-1: backslash line continuation
+    "./tool \\\npublish ep1",
+    "./tool pub\\\nlish ep1",
+    // F-2: redirects glued to or between the words
+    "./tool publish>/dev/null ep1",
+    "./tool >/dev/null publish ep1",
+    "./tool 2>&1 publish ep1",
+    "./tool publish<<<x ep1",
+    "./tool < /dev/null publish ep1",
+    "./tool publish ep1 2>&1 | tee out.log",
+    // F-3: expansions, quoting and globs inside the step
+    "./tool pu$()blish ep1",
+    "./tool ${IFS}publish ep1",
+    "./tool publish${X} ep1",
+    "./tool publish$X ep1",
+    "./tool $'publish' ep1",
+    "./tool $'\\x70ublish' ep1",
+    "./tool {publish,x} ep1",
+    "./tool {publish,} ep1",
+    "./tool p{ublish,} ep1",
+    "./tool pub*lish ep1",
+    "./tool pub?ish ep1",
+    "./tool pub[l]ish ep1",
+    "./to?l publish ep1",
+    "./tool `echo publish` ep1",
+    "./tool $(echo publish) ep1",
+    "{./tool,publish,ep1}",
+    // F-19: case on a case-insensitive disk; a flag between the words
+    "./TOOL publish ep1",
+    "./tool -v publish ep1",
+    "./tool --verbose=1 publish ep1",
+  ];
+  const PASS: string[] = [
+    "ls -la", "git status", "./tool render ep1", "./tool publisher ep1", "echo done",
+    "ls *.txt", "cat src/*.ts | wc -l", "echo $HOME", "./tool publish --help", "./tool --version",
+    "for f in a b; do echo $f; done",
+  ];
+  const ast = () => parse(fs.readFileSync(FIXTURE, "utf8"));
+  const platforms = [
+    { name: "Codex", setup: () => { scaffoldInto(fs.readFileSync(FIXTURE, "utf8")); fs.mkdirSync(at("src/deep"), { recursive: true }); return at(".codex/scripts/ship/before-action.sh"); } },
+    {
+      name: "Claude Code",
+      setup: async () => {
+        const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+        const f = generateBeforeActionScript(ast(), CLAUDE_CODE_GUARDS)!;
+        fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+        fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+        fs.mkdirSync(at("src/deep"), { recursive: true });
+        return at(f.path);
+      },
+    },
+  ];
+  const ledger = (unit: string) => {
+    fs.mkdirSync(at(`logs/${unit}`), { recursive: true });
+    fs.writeFileSync(at(`logs/${unit}/trace.jsonl`), JSON.stringify({ step: "render", unit, ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+  };
+  for (const p of platforms) {
+    const run = (script: string, command: string) => {
+      const env = { ...process.env } as Record<string, string>;
+      if (p.name === "Claude Code") env.CLAUDE_PROJECT_DIR = root; else delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("bash", [script], { cwd: at("src/deep"), input: bashPayload(command), env, encoding: "utf8" });
+    };
+    it.each(BLOCK)(`[F-1] ${p.name}: %j exits 2 while the gate's ledger has no ok record`, async (command) => {
+      const r = run(await p.setup(), command);
+      expect(r.status, r.stderr).toBe(2);
+    });
+    it.each(PASS)(`[F-1] ${p.name}: %j is no guarded step and passes`, async (command) => {
+      const r = run(await p.setup(), command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+    it(`[F-5] ${p.name}: a second step in the same command needs its own ok record`, async () => {
+      const script = await p.setup();
+      ledger("ok1");
+      expect(run(script, "./tool publish ok1").status).toBe(0);
+      // `true ./tool publish ok1 ./tool publish ep2` runs nothing (true ignores its arguments), so it is no step (P1-d);
+      // the forms below do run the tool, and each unit they name needs its own ok record.
+      for (const c of ["env A=\"./tool publish ok1\" ./tool publish ep2", "sudo ./tool publish ok1 ./tool publish ep2"]) {
+        const r = run(script, c);
+        expect(r.status, `${c}: ${r.stderr}`).toBe(2);
+      }
+      ledger("ep2");
+      expect(run(script, "sudo ./tool publish ok1 ./tool publish ep2").status).toBe(0);
+      expect(run(script, "true ./tool publish ok1 ./tool publish ep2").status).toBe(0);
+    });
+    it(`[F-1] ${p.name}: with an ok record a plain step passes, and an unreadable one is still refused`, async () => {
+      const script = await p.setup();
+      ledger("ep1");
+      expect(run(script, "./tool publish ep1").status).toBe(0);
+      expect(run(script, "./tool  publish  ep1 > out.log 2>&1").status).toBe(0);
+      const r = run(script, "./tool pub*lish ep1");
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/cannot read|plain command/);
+    });
+  }
+  // F-21: the step runs through an interpreter; the tool is the script.
+  const interp = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(INTERP_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const runCC = (script: string, command: string) =>
+    spawnSync("bash", [script], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it.each([
+    "python3 harness/bin/post-ig.py upload ep7",
+    "python3 ./harness/bin/post-ig.py upload ep7",
+    "python3 /abs/elsewhere/harness/bin/post-ig.py upload ep7",
+    "python harness/bin/post-ig.py upload ep7",
+    "python post-ig.py upload ep7",
+    "env python3 harness/bin/post-ig.py upload ep7",
+    "/usr/bin/python3 -u harness/bin/post-ig.py upload ep7",
+    "cd harness/bin && python3 post-ig.py upload ep7",
+  ])("[F-21] the interpreter step %j exits 2 while the gate's ledger has no ok record", async (command) => {
+    const r = runCC(await interp(), command);
+    expect(r.status, r.stderr).toBe(2);
+  });
+  it("[F-21] other scripts under the same interpreter pass", async () => {
+    const script = await interp();
+    for (const c of ["python3 harness/bin/check.py", "python3 -m pytest", "python3 harness/bin/post-ig.py --help"]) {
+      const r = runCC(script, c);
+      expect(r.status, `${c}: ${r.stderr}`).toBe(0);
+    }
+  });
+});
+
+describe.skipIf(!hasJq)("[F-11] the Codex if: filter reads a shell command the way the step guard does", () => {
+  const forms = [" git push", "cd . && git push", "git  push", "git -C . push", "command git push", "true; git push", "GIT_TRACE=1 git push", "sudo git push origin main", "/usr/bin/git push", "git \\\npush", "git push>/dev/null", "GIT push"];
+  const setup = () => {
+    scaffoldInto(HOOKED(refuseHook("no-push", "Bash", '      if: "Bash(git push*)"\n')));
+    fs.writeFileSync(at(".codex/scripts/no-push.sh"), "#!/usr/bin/env bash\necho 'no push' >&2\nexit 2\n", { mode: 0o755 });
+    return hooksOf().PreToolUse[0].hooks[0].command;
+  };
+  it.each(forms)("[F-11] Bash(git push*) refuses %j", (command) => {
+    const r = runHook(setup(), root, bashPayload(command));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("no push");
+  });
+  it.each(["git status", "git pull", "echo push", "ls -la", "git log --oneline"])("[F-11] Bash(git push*) lets %j run", (command) => {
+    const r = runHook(setup(), root, bashPayload(command));
+    expect(r.status, r.stderr).toBe(0);
+  });
+  it("[F-11] a refuse hook treats an unreadable mention of the tool as a match", () => {
+    const r = runHook(setup(), root, bashPayload("g$()it push"));
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
+
+// P1-d (RC e2e round 2): the guard looks for the tool where bash would run it, so reading or naming
+// the script is no step. Programs that can run their arguments are still scanned (deny on doubt).
+const READS_AT = `topology rd : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "rd"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [check, register, kit]
+  }
+  action check {
+    kind: external
+    commands: ["python3 docs/check.py"]
+  }
+  action register {
+    kind: external
+    commands: ["python3 docs/deliver.py JOB"]
+    unit-from: "deliver.py (\\\\S+)"
+  }
+  action kit {
+    kind: external
+    commands: ["./media kit SLUG"]
+    unit-from: "media kit (\\\\S+)"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate reg-ready {
+      after: check
+      before: register
+      ledger: trace
+      on-fail: halt
+    }
+    gate kit-ready {
+      after: check
+      before: kit
+      ledger: trace
+      on-fail: halt
+    }
+  }
+  flow { check -> register -> kit }
+}
+`;
+describe.skipIf(!hasJq)("[P1-d] the guard looks for the tool where bash would run it", () => {
+  const script = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(READS_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it.each([
+    "git diff docs/deliver.py", "git log docs/deliver.py", "git add docs/deliver.py", "git commit -m \"deliver.py fix\"",
+    "git commit -m \"media kit flag\"", "ls docs/deliver.py", "cat docs/deliver.py", "head docs/deliver.py",
+    "grep -n x docs/deliver.py", "wc -l docs/deliver.py", "ls docs/*/*.py", "ls docs/media-engine/*.py",
+    "echo media kit", "echo $HOME immediately", "find . -name '*.py'", "cat tool media",
+    "echo \"run ./media kit s1 later\"", "rg \"media kit\" docs", "echo ${PWD}/media", "ls media*",
+  ])("[P1-d] %j reads or names the step and passes", async (command) => {
+    const r = run(await script(), command);
+    expect(r.status, r.stderr).toBe(0);
+  });
+  it.each([
+    "python3 docs/deliver.py J1", "python docs/deliver.py J1", "./media kit s1", "sudo ./media kit s1",
+    "echo s1 | xargs ./media kit", "find . -maxdepth 0 -exec ./media kit s1 \;", "timeout 5 ./media kit s1",
+    "git -c alias.k='!./media kit s1' k", "rg --pre ./media kit docs", "env FOO=1 python3 docs/deliver.py J1",
+    "X=./media; $X kit s1", "`echo ./media` kit s1", "./media kit $S", "./med?a kit s1", "{./media,kit,s1}",
+    "python3 -m runpy docs/deliver.py J1", "watch -n1 ./media kit s1", "nohup ./media kit s1 &",
+    // found by the differential fuzzer: a wrapper between -exec and the tool
+    "find . -maxdepth 0 -exec nohup ./media kit s1 \\;", "find . -exec env -i PATH=/bin ./media kit s1 \\;",
+    "find . -maxdepth 0 -exec timeout 5 ./media kit s1 \\;", "find . -ok stdbuf -o0 ./media kit s1 \\;",
+  ])("[P1-d] %j runs the step (or may) and exits 2", async (command) => {
+    const r = run(await script(), command);
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
+
+// Mutation pass (Fable, 34 mutants): behaviour tests for the rows only the golden hash killed, or none.
+describe.skipIf(!hasJq)("[F-17] tests that kill the surviving and hash-only mutants", () => {
+  const setup = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(fs.readFileSync(FIXTURE, "utf8")), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  const ok = (rel: string, unit: string) => {
+    fs.mkdirSync(dirname(at(rel)), { recursive: true });
+    fs.writeFileSync(at(rel), JSON.stringify({ step: "render", unit, ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+  };
+  it("[F-17] C3: --help in the middle of a step is no usage request; the step is refused", async () => {
+    expect(run(await setup(), "./tool publish --help ep1").status).toBe(2);
+  });
+  it("[F-17] K2: a second mention of the tool hidden in a command substitution is refused although the first is read", async () => {
+    const s = await setup();
+    ok("logs/ok1/trace.jsonl", "ok1");
+    expect(run(s, "./tool publish ok1").status).toBe(0);
+    expect(run(s, "./tool publish ok1; `echo ./tool` publish ep2").status).toBe(2);
+  });
+  it("[F-17] U3: a unit of '..' is refused, so logs/../trace.jsonl is never read", async () => {
+    const s = await setup();
+    ok("trace.jsonl", "..");
+    const r = run(s, "./tool publish ..");
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/safe file name/);
+  });
+});
+
+describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after the run is dead", () => {
+  const spawnEntry = () => hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0];
+  const pathWithout = (...hide: string[]) => {
+    const bin = fs.mkdtempSync(join(os.tmpdir(), "at-f9d-path-"));
+    for (const d of ["/usr/bin", "/bin"]) {
+      for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+        if (hide.includes(f) || fs.existsSync(join(bin, f))) continue;
+        try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
+      }
+    }
+    for (const tool of ["jq", "git", "bash", "pgrep"]) {
+      const w = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+      if (w && !fs.existsSync(join(bin, tool))) fs.symlinkSync(w, join(bin, tool));
+    }
+    return bin;
+  };
+  const alive = (pid: number) => spawnSync("sh", ["-c", `kill -0 ${pid} 2>/dev/null`]).status === 0;
+  for (const mode of ["POSIX watchdog", "GNU timeout"]) {
+    it(`[F-17] ${mode}: a check that ignores TERM is dead when the hook exits 2`, () => {
+      scaffoldInto(AGENT_GATE("writer"));
+      const pidFile = at("check.pid");
+      fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\ntrap "" TERM\necho $$ > "${pidFile}"\nsleep 30\nexit 0\n`, { mode: 0o755 });
+      const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
+      const env = { ...process.env } as Record<string, string>;
+      delete env.CLAUDE_PROJECT_DIR;
+      if (mode === "POSIX watchdog") env.PATH = pathWithout("timeout", "gtimeout");
+      const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: root, input: spawnPayload("reviewer"), env, encoding: "utf8", timeout: 40_000 });
+      expect(r.status, r.stderr).toBe(2);
+      const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      expect(pid).toBeGreaterThan(0);
+      expect(alive(pid), `check ${pid} still running after the hook returned`).toBe(false);
+    }, 45_000);
+  }
+});
+
+// Mutation pass 2: rules whose inputs no other rule catches (F1, V1), and the lead-word skips that keep
+// read-only commands from being refused (L1-L3).
+describe.skipIf(!hasJq)("[F-17] the matcher's single-rule refusals and the reads its skips allow", () => {
+  const script = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(READS_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it("[F-17] F1: git -c can make a reading subcommand run the tool (a pager), so it is refused", async () => {
+    // The pager runs the step itself; without the -c rule `git log` would read as a read-only command.
+    expect(run(await script(), "git -c core.pager='./media kit s1' log").status).toBe(2);
+  });
+  it("[F-17] V1: a variable the command sets to the tool, used through eval, is refused", async () => {
+    expect(run(await script(), "X=./media; eval \"$X kit s1\"").status).toBe(2);
+  });
+  // The step's words are present but only read as file names by cat: without the lead-word skip, `if`,
+  // `!` or `FOO=1` would be taken for an unknown program and the step words after it for a run.
+  it.each(["if cat ./media kit; then :; fi", "! cat ./media kit", "FOO=1 cat ./media kit", "while cat ./media kit; do break; done"])(
+    "[F-17] L1-L3: %j only reads the tool and passes", async (command) => {
+      const r = run(await script(), command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+});

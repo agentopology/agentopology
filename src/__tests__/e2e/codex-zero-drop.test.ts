@@ -1,0 +1,177 @@
+/**
+ * [CX-23] Zero drop on Codex: every field set in kitchen-sink.at is either
+ * found in the Codex output or is on the "not expressible on codex" list, and
+ * each listed field gives one validate warning. No model call, no codex binary.
+ */
+import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse } from "../../parser/index.js";
+import { validate } from "../../parser/validator.js";
+import { codexBinding } from "../../bindings/codex.js";
+import { NOT_EXPRESSIBLE, notExpressibleHits } from "../../bindings/lib/not-expressible.js";
+import type { GeneratedFile } from "../../bindings/types.js";
+import type { TopologyAST } from "../../parser/ast.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const kitchen = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8").replace(/\bmodel: (opus|sonnet|haiku)\b/g, "model: gpt-5.2");
+
+/** Parser bookkeeping, not user-written fields. */
+const STRUCTURAL = new Set(["id", "type", "label", "line", "file"]);
+
+/** Fields expressed in another form than their own text: where to look instead. */
+const EXPRESSED_AS: Record<string, (files: GeneratedFile[]) => boolean> = {
+  // permissions become the project approval_policy
+  "agent.permissions": (files) => /^approval_policy = "(on-request|never)"/m.test(files.find((f) => f.path === ".codex/config.toml")!.content),
+};
+
+const norm = (x: string) => x.toLowerCase().replace(/[-_]/g, " ");
+const leaves = (v: unknown, acc: string[] = []): string[] => {
+  if (v === undefined || v === null || v === false) return acc;
+  if (typeof v === "object") for (const x of Object.values(v as object)) leaves(x, acc);
+  else acc.push(String(v));
+  return acc;
+};
+
+/** The fields set in `ast` that are neither found in the output nor on the list. */
+function unaccounted(ast: TopologyAST, files: GeneratedFile[]): string[] {
+  const out = norm(files
+    .map((f) => (f.path.endsWith(".toml") ? f.content.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n") : f.content))
+    .join("\n"));
+  const paths = new Set(files.map((f) => f.path));
+  const listed = new Set(NOT_EXPRESSIBLE.map((n) => `${n.scope}.${n.field}`));
+  const missing: string[] = [];
+  for (const node of ast.nodes) {
+    for (const [field, value] of Object.entries(node as unknown as Record<string, unknown>)) {
+      if (STRUCTURAL.has(field)) continue;
+      const ls = leaves(value);
+      if (ls.length === 0) continue;
+      const key = `${node.type}.${field}`;
+      if (listed.has(`agent.${field}`) && node.type === "agent") continue;
+      if (EXPRESSED_AS[key]?.(files)) continue;
+      if (!ls.some((l) => out.includes(norm(l)))) missing.push(`${key} (${node.id})`);
+    }
+  }
+  // E-4: a tool's script is a file at its declared path (a project path, not one under .codex/scripts/).
+  for (const tool of ast.toolDefs ?? []) {
+    const declared = tool.script.replace(/^\.\//, "").split(/\s+/).find((w) => /\.(sh|py|js|mjs)$/.test(w)) ?? tool.script;
+    if (!declared.startsWith("/") && !paths.has(declared) && !paths.has(`.codex/scripts/${declared.replace(/^.*\//, "")}`)) missing.push(`tool.script (${tool.id}: ${tool.script})`);
+  }
+  return missing;
+}
+
+describe("[CX-23] zero drop on Codex", () => {
+  const ast = parse(kitchen);
+  const files = codexBinding.scaffold(ast);
+
+  it("[CX-23] every field kitchen-sink.at sets is in the Codex output or on the not-expressible list", () => {
+    expect(unaccounted(ast, files)).toEqual([]);
+  });
+
+  it("[CX-23] planted: a new AST field with neither fails the check", () => {
+    const planted = parse(kitchen);
+    (planted.nodes.find((n) => n.type === "agent") as any).zzBrandNewField = "zz-never-written-anywhere";
+    expect(unaccounted(planted, codexBinding.scaffold(planted))).toEqual([expect.stringContaining("agent.zzBrandNewField")]);
+  });
+
+  it("[CX-23] each listed field the topology sets gives exactly one validate warning, and a Claude Code validate gives none", () => {
+    const hits = notExpressibleHits(ast);
+    expect(hits.length).toBeGreaterThan(3);
+    const warnings = validate(ast, { target: "codex" }).filter((r) => r.rule === "CX23");
+    expect(warnings).toHaveLength(hits.length);
+    for (const h of hits) {
+      expect(warnings.filter((w) => w.message.includes(`"${h.field}"`) && w.message.includes(h.scope)), `${h.scope}.${h.field}`).toHaveLength(1);
+    }
+    expect(validate(ast).filter((r) => r.rule === "CX23")).toEqual([]);
+  });
+
+  it("[CX-23] scaffold prints the same warnings, once each", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    codexBinding.scaffold(parse(kitchen));
+    const text = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    for (const h of notExpressibleHits(ast)) {
+      expect(text.filter((m) => m.includes("not expressible") && m.includes(`"${h.field}"`) && m.includes(h.scope)), h.field).toHaveLength(1);
+    }
+  });
+
+  it("[CX-23] temperature and max tokens are no longer silent TOML comments", () => {
+    const toml = files.find((f) => f.path === ".codex/config.toml")!.content;
+    expect(toml).not.toMatch(/^#\s+temperature = /m);
+    expect(toml).not.toMatch(/^#\s+max_tokens = /m);
+  });
+});
+
+/** E-4: a topology that sets what kitchen-sink.at does not: a gate's description and behavior, and a tool script at a project path. */
+const DROP = fs.readFileSync(resolve(here, "fixtures/codex-gates.at"), "utf8")
+  .replace('      run: "scripts/render-check.sh"\n', '      run: "scripts/render-check.sh"\n      description: "Zzgate checks the render frames"\n      behavior: blocking\n')
+  .replace("  records {", '  tools {\n    tool render-tool {\n      script: "tools/render.py"\n      lang: python\n      description: "Renders a piece"\n    }\n  }\n  records {');
+
+describe("[E-4] zero drop: gate description and behavior, and a tool's declared script path", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const ast = parse(DROP);
+  const files = codexBinding.scaffold(ast);
+  warn.mockRestore();
+
+  it("[E-4] the fixture sets the three fields", () => {
+    const gate = ast.nodes.find((n) => n.id === "render-check") as any;
+    expect(gate.description).toContain("Zzgate");
+    expect(gate.behavior).toBe("blocking");
+    expect(ast.toolDefs[0].script).toBe("tools/render.py");
+  });
+
+  it("[E-4] every field it sets is in the Codex output: the gate fields in AGENTS.md, the tool script at tools/render.py", () => {
+    expect(unaccounted(ast, files)).toEqual([]);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain("Zzgate checks the render frames");
+    expect(md).toMatch(/\*\*Behavior:\*\* blocking/);
+    const tool = files.find((f) => f.path === "tools/render.py");
+    expect(tool?.content).toContain("AGENTOPOLOGY_STUB");
+  });
+});
+
+/** F-23: a gate that cites the code refusing it: at, match and bypass (with strength and by). */
+const CITED = fs.readFileSync(resolve(here, "fixtures/codex-gates.at"), "utf8")
+  .replace("      ledger: trace\n", '      ledger: trace\n      strength: refuse\n      by: code\n      at: "tools/publish.py:2"\n      match: "zzassert_ready("\n      bypass: "ZZ_SKIP_READY=1"\n');
+
+describe("[F-23] zero drop: a gate's code citation (at, match, bypass)", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const ast = parse(CITED);
+  const files = codexBinding.scaffold(ast);
+  warn.mockRestore();
+
+  it("[F-23] the fixture sets the three fields", () => {
+    expect(ast.nodes.find((n) => n.id === "publish-ready")).toMatchObject({ at: "tools/publish.py:2", match: "zzassert_ready(", bypass: "ZZ_SKIP_READY=1" });
+  });
+
+  it("[F-23] every field it sets is in the Codex output: AGENTS.md names the cited code, the text expected there and the bypass", () => {
+    expect(unaccounted(ast, files)).toEqual([]);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain("tools/publish.py:2");
+    expect(md).toContain("zzassert_ready(");
+    expect(md).toContain("ZZ_SKIP_READY=1");
+  });
+
+  it("[F-23] codex guard --check reads the citation: a cited file that is there is credited, with the bypass; a missing one reads none", async () => {
+    const os = await import("node:os");
+    const { join, dirname: dn } = await import("node:path");
+    const { checkCodexGuards } = await import("../../guard/check-codex.js");
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-f23-"));
+    try {
+      for (const f of files) { fs.mkdirSync(dn(join(root, f.path)), { recursive: true }); fs.writeFileSync(join(root, f.path), f.content); }
+      const missing = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(missing.strength).toBe("none");
+      expect(missing.notes.join(" ")).toContain("tools/publish.py");
+      fs.mkdirSync(join(root, "tools"), { recursive: true });
+      fs.writeFileSync(join(root, "tools/publish.py"), "import sys\nzzassert_ready(sys.argv)\n");
+      const ok = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(ok.strength).not.toBe("none");
+      expect(ok.notes.join(" ")).toContain("ZZ_SKIP_READY=1");
+      fs.writeFileSync(join(root, "tools/publish.py"), "import sys\nprint('refactored')\n");
+      const moved = checkCodexGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
+      expect(moved.strength).toBe("none");
+      expect(moved.notes.join(" ")).toContain("zzassert_ready(");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});

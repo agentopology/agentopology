@@ -20,8 +20,10 @@ import { codexBinding } from "../../bindings/codex.js";
 import { cursorBinding } from "../../bindings/cursor.js";
 import { claudeWorkflowBinding } from "../../bindings/claude-workflow.js";
 import { checkGuards, renderGuardReport } from "../../guard/check.js";
-import { SESSION_HOOKS_PROVEN } from "../../conformance/claude-code.js";
+import { sessionHooksProven } from "../../conformance/claude-code.js";
 
+// Pin the installed version so these tests do not depend on the claude on PATH (a version with no live check grades unverified).
+process.env.AGENTOPOLOGY_CLAUDE_VERSION = "2.1.999";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(resolve(here, "fixtures/session-ops.at"), "utf8");
 const SCRIPTS = ".claude/skills/session-ops/scripts";
@@ -225,8 +227,8 @@ describe.skipIf(!hasJq)("[T04] decision seats", () => {
 });
 
 describe("[N44b] guard --check grades", () => {
-  it("[N44b] the proven field exists in the conformance facts and is false", () => {
-    expect(SESSION_HOOKS_PROVEN).toEqual({ sendMessage: false, agent: false });
+  it("[N44b] the proven fact exists in the conformance facts and is false when the installed Claude Code has no live check", () => {
+    expect(sessionHooksProven()).toEqual({ sendMessage: false, agent: false });
   });
 
   it("[N44b] talk and spawn guards on disk grade unverified, never refuse, while unproven", () => {

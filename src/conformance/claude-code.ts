@@ -3,7 +3,7 @@
  * generated settings.json against it.
  *
  * Each fact below was checked against https://code.claude.com/docs/en/hooks.md
- * on 2026-11-10 (Claude Code 2.1.319 installed). When the contract moves,
+ * on 2026-11-13 (Claude Code 2.1.323). When the contract moves,
  * this file moves with it, and the conformance tests say which generated
  * output stopped matching. spec/claude-code/hooks-contract.json is the same
  * page as a snapshot: e2e/contract-drift.test.ts holds these constants to it,
@@ -13,9 +13,12 @@
  */
 
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import type { AgentNode, GateNode, TopologyAST } from "../parser/ast.js";
 
 /** The Claude Code version this contract was last checked against. */
-export const VERIFIED_ON = "2.1.319";
+export const VERIFIED_ON = "2.1.323";
 
 /** The oldest Claude Code the generated output supports (`onFailure` needs it). */
 export const MINIMUM_VERSION = "2.1.295";
@@ -27,6 +30,53 @@ export const MINIMUM_VERSION = "2.1.295";
  */
 export function verifiedOnLine(): string {
   return `checked against Claude Code ${VERIFIED_ON} (supports ${MINIMUM_VERSION} and later)`;
+}
+
+/** One version the output was checked on, and the proof (RW-7). */
+export interface VerifiedEntry {
+  version: string;
+  proof: { run: string; date: string; suite: { passed: number; failed: number; skipped: number }; note?: string };
+}
+
+/** What is wrong with a verified list; empty when every entry names a version and carries a proof whose suite has failed: 0. */
+export function verifiedListProblems(doc: unknown): string[] {
+  const versions = (doc as { versions?: unknown })?.versions;
+  if (!Array.isArray(versions)) return ["the list has no `versions` array"];
+  const out: string[] = [];
+  for (const e of versions as Array<Record<string, any>>) {
+    const v = typeof e?.version === "string" ? e.version : "";
+    const label = v || JSON.stringify(e);
+    if (!/^\d+\.\d+\.\d+$/.test(v)) out.push(`entry ${label}: version is not x.y.z`);
+    else if (!e.proof || typeof e.proof !== "object") out.push(`entry ${label}: no proof field`);
+    else if (typeof e.proof.run !== "string" || !e.proof.run) out.push(`entry ${label}: proof has no run id`);
+    else if (typeof e.proof.date !== "string" || !e.proof.date) out.push(`entry ${label}: proof has no date`);
+    else if (!e.proof.suite || typeof e.proof.suite !== "object") out.push(`entry ${label}: proof has no suite, so nothing shows the checks passed`);
+    else if (!["passed", "failed", "skipped"].every((k) => Number.isInteger(e.proof.suite[k]))) out.push(`entry ${label}: proof.suite needs passed, failed and skipped counts`);
+    // R-10: a proof whose suite failed proves nothing; the version stays unverified.
+    else if (e.proof.suite.failed !== 0) out.push(`entry ${label}: proof.suite has ${e.proof.suite.failed} failed test(s); only a suite with failed: 0 verifies a version`);
+  }
+  return out;
+}
+
+/**
+ * spec/claude-code/verified.json: the versions checked, each with its proof.
+ * Only entries that pass the check above count. An unreadable file gives an
+ * empty list, so VERIFIED_ON alone stays verified (the one-version behavior).
+ * AGENTOPOLOGY_VERIFIED_LIST=<file> stands in for the file; tests set it.
+ */
+export function loadVerifiedList(): VerifiedEntry[] {
+  const file = process.env.AGENTOPOLOGY_VERIFIED_LIST || fileURLToPath(new URL("../../spec/claude-code/verified.json", import.meta.url));
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    return (doc.versions as VerifiedEntry[]).filter((e) => verifiedListProblems({ versions: [e] }).length === 0);
+  } catch {
+    return [];
+  }
+}
+
+/** True for VERIFIED_ON and for any version on the proven list. */
+export function isVerifiedVersion(v: string): boolean {
+  return v === VERIFIED_ON || loadVerifiedList().some((e) => e.version === v);
 }
 
 export type InstalledStatus =
@@ -41,20 +91,45 @@ let installedCache: InstalledStatus | undefined;
  * What `claude --version` says (first x.y.z in stdout, 3 s timeout), read at
  * most once per process. A timeout or unparsable output is "unknown", never
  * an error. No `claude` on PATH is "not-installed".
+ *
+ * Env override: AGENTOPOLOGY_CLAUDE_VERSION=<x.y.z> stands in for the
+ * installed version, and AGENTOPOLOGY_CLAUDE_VERSION=none for "not installed",
+ * without running `claude`. Tests set it so output does not depend on PATH.
  */
 export function installedStatus(): InstalledStatus {
   if (installedCache) return installedCache;
+  const forced = process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+  if (forced !== undefined && forced !== "") {
+    if (forced === "none") return (installedCache = { state: "not-installed" });
+    const v = /^\d+\.\d+\.\d+$/.exec(forced)?.[0];
+    return (installedCache = !v ? { state: "unknown" } : isVerifiedVersion(v) ? { state: "verified", version: v } : { state: "different", version: v });
+  }
   const r = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
   let status: InstalledStatus;
   if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") status = { state: "not-installed" };
   else {
     const m = r.error || r.status !== 0 ? null : /\b(\d+\.\d+\.\d+)\b/.exec(r.stdout ?? "");
-    status = !m ? { state: "unknown" } : m[1] === VERIFIED_ON ? { state: "verified", version: m[1] } : { state: "different", version: m[1] };
+    status = !m ? { state: "unknown" } : isVerifiedVersion(m[1]) ? { state: "verified", version: m[1] } : { state: "different", version: m[1] };
   }
   return (installedCache = status);
 }
 
-/** The line validate and guard --check add about the installed Claude Code; null when it is VERIFIED_ON. */
+/** The version stamp as data: what the output was checked against, and what is installed. */
+export interface VersionStamp {
+  verifiedOn: string;
+  minimum: string;
+  /** The same sentence validate prints. */
+  line: string;
+  installed: InstalledStatus;
+  /** The mark validate and guard --check add; null when the installed version is on the verified list. */
+  mark: string | null;
+}
+
+export function versionStamp(): VersionStamp {
+  return { verifiedOn: VERIFIED_ON, minimum: MINIMUM_VERSION, line: verifiedOnLine(), installed: installedStatus(), mark: installedMark() };
+}
+
+/** The line validate and guard --check add about the installed Claude Code; null when it is on the verified list. */
 export function installedMark(): string | null {
   const s = installedStatus();
   switch (s.state) {
@@ -272,8 +347,62 @@ export function matcherGaps(ast: GapSource, extra: string[] = []): MatcherGap[] 
 }
 
 /**
- * Whether a PreToolUse hook on these tools is proven to refuse a call in the
- * installed Claude Code (N44b). Until a conformance run proves it, `guard
- * --check` grades the talk and spawn guards `unverified`, never `refuse`.
+ * Live checks: what was measured on a real Claude Code, per version (N44b,
+ * VO-323). A guard is graded `refuse` only on a version listed here.
  */
-export const SESSION_HOOKS_PROVEN = { sendMessage: false, agent: false } as const;
+export const LIVE_CHECKS: ReadonlyArray<{ version: string; date: string; facts: readonly string[] }> = [
+  {
+    version: "2.1.323",
+    date: "2026-11-13",
+    facts: [
+      "PreToolUse fires on the SendMessage tool, and exit code 2 blocks the call.",
+      "`claude --agent X` resolves `.claude/agents/X/AGENT.md`.",
+      "The SendMessage tool input carries the target as both `to` and `recipient`.",
+    ],
+  },
+];
+
+/**
+ * Whether a PreToolUse hook on these tools is proven to refuse a call in the
+ * installed Claude Code (N44b). Proven only on a version with a live check
+ * (LIVE_CHECKS); on any other version, or none installed, `guard --check`
+ * grades the talk and spawn guards `unverified`, never `refuse`.
+ */
+export function sessionHooksProven(): { sendMessage: boolean; agent: boolean } {
+  const s = installedStatus();
+  const ok = (s.state === "verified" || s.state === "different") && LIVE_CHECKS.some((c) => c.version === s.version);
+  return { sendMessage: ok, agent: ok };
+}
+
+/** True when version a is lower than version b (x.y.z, numeric per part). */
+export function versionBelow(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+  return false;
+}
+
+/** The first Claude Code release that reads a hook's `onFailure` field. */
+export const ON_FAILURE_SINCE = "2.1.295";
+
+/**
+ * F-14: the scaffold marks every refusing PreToolUse hook (a `strength: refuse`
+ * hook, the gate and approval guards, the session guards) `onFailure: "block"`.
+ * A Claude Code older than 2.1.295 ignores the field, so such a hook that cannot
+ * start or times out lets the call run. One warning when the Claude Code this
+ * runs against (the installed one, or AGENTOPOLOGY_CLAUDE_VERSION) is older.
+ */
+export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level: "warning"; message: string }> {
+  const s = installedStatus();
+  if (s.state !== "different" || !versionBelow(s.version, ON_FAILURE_SINCE)) return [];
+  const hooks = [...(ast.hooks ?? []), ...ast.nodes.flatMap((n) => (n.type === "agent" ? (n as AgentNode).hooks ?? [] : []))];
+  const refusing = hooks.filter((h) => h.strength === "refuse" && (h.on === "PreToolUse")).map((h) => `hook ${h.name}`);
+  const guarded = ast.nodes.some((n) => (n.type === "gate" && (n as GateNode).behavior !== "advisory") || n.type === "human");
+  if (refusing.length === 0 && !guarded) return [];
+  const what = [...refusing, ...(guarded ? ["the gate and approval guards"] : [])].join(", ");
+  return [{
+    rule: "CC-onfailure",
+    level: "warning",
+    message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook cannot start or times out. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
+  }];
+}

@@ -1,0 +1,20 @@
+guard --check examples/scheduled-monitor.at (project: empty)
+
+  gate metric-validation  none        by: hook      SubagentStop on collector → gate-metric-validation.sh
+                          ✗ no SubagentStop entry for collector running gate-metric-validation.sh in .claude/settings.json
+                          ✗ .claude/skills/scheduled-monitor/scripts/gate-metric-validation.sh is missing
+  deny Edit               none        by: settings  permissions.deny in .claude/settings.json
+                          ✗ .claude/settings.json has no deny rule Edit
+
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
+2 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check examples/scheduled-monitor.at (project: proj)
+
+  gate metric-validation  refuse, a stop event: it cannot block a call  by: hook      SubagentStop on collector → gate-metric-validation.sh
+                          ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
+                          ⚠ its check script .claude/skills/scheduled-monitor/scripts/validate-metrics.sh is still a stub, so it blocks every run until it is written
+  deny Edit               refuse                                        by: settings  permissions.deny in .claude/settings.json
+
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.323
+--- exit 0

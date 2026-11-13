@@ -20,15 +20,18 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
+import { BindingRefusal } from "../bindings/types.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
+import { collectFacts, coverageResult, validateResult } from "../visualizer/facts.js";
+import { currentOpener, defaultOutputDir, pickTopology, summaryLines } from "../visualizer/command.js";
 import { parseBrainVault, renderBrainHtml } from "../visualizer/brain.js";
 import { exporters } from "../exporters/index.js";
 import { analyze } from "../analyzer/index.js";
@@ -50,11 +53,13 @@ import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
+import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
-import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
-import { collectInventory, coverage, renderCoverage, type InventoryItem } from "../inventory/index.js";
+import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
+import { platformConformance } from "../conformance/index.js";
+import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -82,24 +87,28 @@ ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
-  agentopology validate <file.at> [--inventory <project-dir|inventory.json>] [--dir <project-dir>]
+  agentopology validate <file.at> [more.at ...] [--target <binding>] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user]
                        With --inventory: how many live things in the project the .at
                        accounts for (unmapped warns), and what it points at that is not
-                       on disk (missing, exits 1).
-  agentopology inventory [<project-dir>]
+                       on disk (missing, exits 1). Folders the .at lists in
+                       inventory { roots: [...] } are listed too. With several .at files
+                       the per-file numbers print first, then one union number. --user
+                       adds ~/.claude (counted apart) and checks the needs block.
+  agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
+                       --at adds the roots that .at declares; --user adds ~/.claude.
   agentopology scaffold <file.at> --target <binding> [--dry-run] [--force] [--allow-invalid] [--prune] [--output <dir>]
   agentopology sync <file.at> --target <binding> --dir <path>
-  agentopology visualize <file.at> [--output <dir>]
+  agentopology visualize [file.at] [--dir <project>] [--output <dir>] [--no-open] [--no-check] [--print-summary]
   agentopology visualize-brain <vault-folder> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
-  agentopology guard <file.at> --target claude-code [--dir <project-dir>] [--dry-run]
+  agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and
-                       permissions of settings.json (merged). Keeps edited scripts and
+                       permissions of settings.json (merged; for codex, .codex/hooks.json). Keeps edited scripts and
                        implemented checks, reports each. Then runs --check.
   agentopology guard <file.at> --check [--dir <project-dir>]
                        Report which gates, approval steps and permission rules the
@@ -125,6 +134,9 @@ ${c.bold("Commands:")}
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
+             No file: the only .at in the current directory or .claude/topologies/.
+             Writes to ~/.cache/agentopology/visualize/ unless --output is given.
+             With --dir <project>, check results are embedded in the page.
              Auto-renders + cross-links any brain stores it declares.
   visualize-brain  Render a brain vault (folder of markdown) as an Obsidian-style
              graph. Auto-detects + links back to its owning topology if nearby.
@@ -141,6 +153,9 @@ ${c.bold("Options:")}
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
   --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
+  --no-open         visualize: write the page, do not open a browser.
+  --no-check        visualize: do not read the project; every fact reads "not checked".
+  --print-summary   visualize: print node counts and facts to stdout.
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite files scaffold did not create or that were edited (never symlinks).
   --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
@@ -211,7 +226,16 @@ interface ParsedArgs {
   task: string | undefined;
   root: string | undefined;
   check: boolean;
+  noOpen: boolean;
+  noCheck: boolean;
+  printSummary: boolean;
   inventory: string | undefined;
+  /** `--user`: add the user-level tree (inventory) and check what `needs` declares (validate --inventory). */
+  user: boolean;
+  /** `inventory --at <file.at>` (repeatable): topologies whose `inventory { roots }` are listed. */
+  at: string[];
+  /** More .at files after the first: `validate --inventory DIR a.at b.at`. */
+  more: string[];
   help: boolean;
 }
 
@@ -238,7 +262,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     task: undefined,
     root: undefined,
     check: false,
+    noOpen: false,
+    noCheck: false,
+    printSummary: false,
     inventory: undefined,
+    user: false,
+    at: [],
+    more: [],
     help: false,
   };
 
@@ -276,11 +306,16 @@ function parseArgs(argv: string[]): ParsedArgs {
       i++;
       continue;
     }
+    if (arg === "--no-open") { result.noOpen = true; i++; continue; }
+    if (arg === "--no-check") { result.noCheck = true; i++; continue; }
+    if (arg === "--print-summary") { result.printSummary = true; i++; continue; }
     if (arg === "--inventory" && i + 1 < args.length) {
       result.inventory = args[i + 1];
       i += 2;
       continue;
     }
+    if (arg === "--user") { result.user = true; i++; continue; }
+    if (arg === "--at" && i + 1 < args.length) { result.at.push(args[i + 1]); i += 2; continue; }
     if (arg === "--all") {
       result.all = true;
       i++;
@@ -352,6 +387,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.command = arg;
     } else if (!result.file) {
       result.file = arg;
+    } else if (result.command === "validate") {
+      result.more.push(arg);
     }
     i++;
   }
@@ -363,7 +400,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
+function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string): void {
+  if (more.length) return cmdValidateMany([filePath, ...more], inventory, dir, user, target);
   const source = readFile(filePath);
 
   let ast;
@@ -379,21 +417,37 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
   );
   console.log("");
 
-  const results = validate(ast, { filePath: path.resolve(filePath) });
-  const covered = inventory ? printCoverage(ast, inventory, dir) : true;
+  // E-6: --target <binding> adds that binding's warnings (CX* for codex).
+  if (target && !(target in bindings)) {
+    console.error(c.red(`Error: unknown target "${target}".`));
+    process.exit(1);
+  }
+  const checked = validateResult(ast, path.resolve(filePath), target);
+  // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
+  const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+  const results = [...checked.results, ...ccExtra];
+  const errorCount = checked.errors;
+  const warningCount = checked.warnings + ccExtra.length;
+  if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
+  const covered = inventory ? printCoverage(ast, inventory, dir, user) : true;
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
-    printInstalledMark();
-    console.log(c.dim(verifiedOnLine()));
+    printVersionLines(target);
     if (!covered) process.exit(1);
     return;
   }
 
-  const errors = results.filter((r) => r.level === "error");
-  const warnings = results.filter((r) => r.level === "warning");
+  printFindings(results, errorCount, warningCount);
+  printVersionLines(target);
 
+  if (errorCount > 0 || !covered) {
+    process.exit(1);
+  }
+}
+
+function printFindings(results: ReturnType<typeof validateResult>["results"], errorCount: number, warningCount: number): void {
   for (const result of results) {
     const prefix =
       result.level === "error"
@@ -406,17 +460,54 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
 
   console.log("");
   console.log(
-    `  ${c.red(`${errors.length} error(s)`)}, ${c.yellow(`${warnings.length} warning(s)`)}`
+    `  ${c.red(`${errorCount} error(s)`)}, ${c.yellow(`${warningCount} warning(s)`)}`
   );
   console.log("");
 
   printLessons(results.map((r) => r.rule));
-  printInstalledMark();
-  console.log(c.dim(verifiedOnLine()));
+}
 
-  if (errors.length > 0 || !covered) {
-    process.exit(1);
+/**
+ * Several .at files over one project: each is validated on its own, then with
+ * --inventory the per-file coverage numbers print, then one union number (a
+ * live thing is mapped when any of the files maps it).
+ */
+function cmdValidateMany(files: string[], inventory?: string, dir?: string, user = false, target?: string): void {
+  const asts: TopologyAST[] = [];
+  let failed = false;
+  for (const f of files) {
+    let ast: TopologyAST;
+    try { ast = parseAt(readFile(f), f); } catch (err) {
+      console.error(c.red(`Parse error: ${f}: ${(err as Error).message}`));
+      process.exit(1);
+    }
+    asts.push(ast);
+    console.log(c.bold(`Validating ${path.basename(f)} (${ast.topology.name} v${ast.topology.version})`));
+    console.log("");
+    if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
+    const checked = validateResult(ast, path.resolve(f), target);
+    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+    const results = [...checked.results, ...ccExtra];
+    const { errors } = checked;
+    const warnings = checked.warnings + ccExtra.length;
+    if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
+    else printFindings(results, errors, warnings);
+    if (errors > 0) failed = true;
   }
+  if (inventory) {
+    const { items, root } = loadInventory(inventory, dir, [...new Set(asts.flatMap((a) => a.inventoryRoots ?? []))], user);
+    const reports = asts.map((a) => coverageResult(a, items, root, user));
+    const pct = (r: CoverageReport) => (r.total ? Math.round((r.mapped / r.total) * 100) : 100);
+    reports.forEach((r, i) => console.log(`  ${path.basename(files[i])}: coverage: ${r.mapped} of ${r.total} live things are in the .at (${pct(r)}%)`));
+    const u = unionCoverage(reports);
+    const lines = renderCoverage(u);
+    lines[0] = lines[0].replace("coverage:", `coverage (union of ${files.length} files):`);
+    for (const line of lines) console.log(`  ${line}`);
+    console.log("");
+    if (u.missing.length) failed = true;
+  }
+  printVersionLines(target);
+  if (failed) process.exit(1);
 }
 
 /**
@@ -425,7 +516,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
  * against --dir, else the directory given, else the current directory.
  * Returns false when something the .at points at is missing.
  */
-function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boolean {
+function loadInventory(inventory: string, dir: string | undefined, roots: string[], user: boolean): { items: InventoryItem[]; root: string } {
   const target = path.resolve(inventory);
   if (!fs.existsSync(target)) {
     console.error(c.red(`Error: --inventory ${inventory} not found.`));
@@ -434,7 +525,7 @@ function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boole
   const isDir = fs.statSync(target).isDirectory();
   const root = path.resolve(dir ?? (isDir ? target : "."));
   let items: InventoryItem[];
-  if (isDir) items = collectInventory(target);
+  if (isDir) items = collectInventory(target, { roots, user });
   else {
     try { items = JSON.parse(fs.readFileSync(target, "utf-8")).items; } catch (err) {
       console.error(c.red(`Error: ${inventory} is not an inventory.json (${(err as Error).message}).`));
@@ -442,7 +533,12 @@ function printCoverage(ast: TopologyAST, inventory: string, dir?: string): boole
     }
     if (!Array.isArray(items)) { console.error(c.red(`Error: ${inventory} has no items list.`)); process.exit(1); }
   }
-  const r = coverage(ast, items, root);
+  return { items, root };
+}
+
+function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefined, user: boolean): boolean {
+  const { items, root } = loadInventory(inventory, dir, ast.inventoryRoots ?? [], user);
+  const r = coverageResult(ast, items, root, user);
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
   return r.missing.length === 0;
@@ -525,9 +621,26 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   if (targetName === "claude-code") {
     console.log(c.dim(`  ${verifiedOnLine()}`));
     console.log("");
+  } else {
+    const conf = platformConformance(targetName);
+    if (conf) {
+      const mark = conf.installedMark();
+      if (mark) console.log(c.dim(`  ${mark}`));
+      console.log(c.dim(`  ${conf.verifiedOnLine()}`));
+      console.log("");
+    }
   }
 
-  const files = binding.scaffold(ast);
+  let files: ReturnType<typeof binding.scaffold>;
+  try {
+    files = binding.scaffold(ast);
+  } catch (e) {
+    if (e instanceof BindingRefusal) {
+      console.error(c.red(`  ${e.message}`));
+      process.exit(1);
+    }
+    throw e;
+  }
 
   if (files.length === 0) {
     console.log(c.yellow("  No files generated."));
@@ -685,7 +798,18 @@ function cmdSync(filePath: string, targetName: string, dirPath: string): void {
   );
 }
 
-function cmdVisualize(filePath: string, outputDir?: string): void {
+interface VisualizeFlags { dir?: string; noOpen: boolean; noCheck: boolean; printSummary: boolean }
+
+function cmdVisualize(fileArg: string | undefined, outputDir: string | undefined, flags: VisualizeFlags): void {
+  let filePath = fileArg;
+  if (!filePath) {
+    const picked = pickTopology(process.cwd());
+    if (picked.error || !picked.file) {
+      console.error(c.red(`Error: ${picked.error}`));
+      process.exit(1);
+    }
+    filePath = picked.file;
+  }
   const source = readFile(filePath);
 
   let ast;
@@ -698,7 +822,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
 
   const resolved = path.resolve(filePath);
   const stem = path.basename(resolved, ".at");
-  const outDir = outputDir ? path.resolve(outputDir) : path.dirname(resolved);
+  const outDir = outputDir ? path.resolve(outputDir) : defaultOutputDir();
   const atDir = path.dirname(resolved);
   const topoFileName = `${stem}-topology.html`;
   const outFile = path.join(outDir, topoFileName);
@@ -740,7 +864,9 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
     }
   }
 
-  const html = generateVisualization(ast, { brains });
+  // Facts are read from the project only with --dir (and not --no-check).
+  const facts = collectFacts(ast, { source, filePath: resolved, dir: flags.noCheck ? undefined : flags.dir });
+  const html = generateVisualization(ast, { brains, facts });
 
   try {
     fs.writeFileSync(outFile, html, "utf-8");
@@ -753,10 +879,13 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
   console.log(c.green(`  Visualization written to ${outFile}`));
   if (brains.length) console.log(c.dim(`  ${brains.length} brain graph(s) linked from the topology header.`));
 
+  if (flags.printSummary) for (const line of summaryLines(ast, facts)) console.log(line);
+
   // Try to open in the default browser (non-fatal if it fails).
-  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  if (flags.noOpen) return;
+  const opener = currentOpener();
   try {
-    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+    execFileSync(opener.cmd, [...opener.args, outFile], { stdio: "ignore" });
   } catch {
     // Non-fatal — the file was written successfully regardless.
   }
@@ -849,7 +978,7 @@ function findOwningTopology(vaultPath: string): {
  * interactive force-directed graph — an Obsidian-style graph view in a single
  * self-contained HTML file, no Obsidian install required.
  */
-function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
+function cmdVisualizeBrain(vaultPath: string, outputDir?: string, noOpen = false): void {
   const resolved = path.resolve(vaultPath);
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
     console.error(c.red(`Error: "${vaultPath}" is not a directory. Point visualize-brain at a vault folder of .md files.`));
@@ -901,9 +1030,10 @@ function cmdVisualizeBrain(vaultPath: string, outputDir?: string): void {
   console.log(c.green(`  Brain graph written to ${outFile}`));
   console.log(c.dim(`  ${real} notes · ${graph.edges.length} links · ${ghosts} ghost nodes · ${graph.tags.length} tags`));
 
-  const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+  if (noOpen) return;
+  const opener = currentOpener();
   try {
-    execSync(`${openCmd} "${outFile}"`, { stdio: "ignore" });
+    execFileSync(opener.cmd, [...opener.args, outFile], { stdio: "ignore" });
   } catch {
     // Non-fatal.
   }
@@ -1229,7 +1359,9 @@ function cmdTargets(): void {
   console.log("");
   for (const [name, binding] of Object.entries(bindings)) {
     const label = binding.experimental ? c.yellow(" (experimental)") : "";
-    const verified = name === "claude-code" ? c.dim(` — ${verifiedOnLine()}`) : "";
+    const conf = platformConformance(name);
+    const mark = name !== "claude-code" ? conf?.installedMark() : null;
+    const verified = conf ? c.dim(` — ${conf.verifiedOnLine()}${mark ? `; ${mark}` : ""}`) : "";
     console.log(`  ${c.cyan(name.padEnd(16))} ${binding.description}${label}${verified}`);
   }
   console.log("");
@@ -1242,6 +1374,24 @@ function printInstalledMark(): void {
 }
 
 /**
+ * The installed mark and the "checked against" line for the target validate
+ * was run for (F-27): Claude Code when none is named, the target's own line
+ * otherwise, and nothing for a target with no conformance facts.
+ */
+function printVersionLines(target?: string): void {
+  if (!target || target === "claude-code") {
+    printInstalledMark();
+    console.log(c.dim(verifiedOnLine()));
+    return;
+  }
+  const conf = platformConformance(target);
+  if (!conf) return;
+  const mark = conf.installedMark();
+  if (mark) console.log(c.dim(mark));
+  console.log(c.dim(conf.verifiedOnLine()));
+}
+
+/**
  * Scan a scaffolded project directory for unimplemented stub scripts.
  *
  * A "stub" is a file that contains the AGENTOPOLOGY_STUB marker (emitted by
@@ -1249,11 +1399,17 @@ function printInstalledMark(): void {
  * removing it (after implementing the script) flips the file out of stub
  * state. Designed for CI: exits 1 if stubs remain, 0 if clean.
  */
-function cmdGuardCheck(filePath: string, dirPath: string): void {
+function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): void {
   const source = fs.readFileSync(path.resolve(filePath), "utf-8");
   const ast = parseAt(source, filePath);
   const root = path.resolve(dirPath);
-  const report = checkGuards(ast, root);
+  // E-5: a Codex project is graded from .codex/; with no --target, a project with .codex/ and no .claude/ is one.
+  const target = targetName ?? (!fs.existsSync(path.join(root, ".claude")) && fs.existsSync(path.join(root, ".codex")) ? "codex" : "claude-code");
+  if (target !== "claude-code" && target !== "codex") {
+    console.error(c.red(`Error: guard --check supports claude-code and codex only (got "${target}").`));
+    process.exit(1);
+  }
+  const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root);
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
@@ -1261,13 +1417,13 @@ function cmdGuardCheck(filePath: string, dirPath: string): void {
 }
 
 /**
- * `guard <file> --target claude-code`: write only the guard part of scaffold's
+ * `guard <file> --target claude-code|codex`: write only the guard part of scaffold's
  * output (see src/guard/target.ts), print what was written or kept, then run
  * the `--check` report and exit like it.
  */
 function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, dryRun: boolean): void {
-  if (targetName !== "claude-code") {
-    console.error(c.red(`Error: guard --target supports claude-code only (got "${targetName}").`));
+  if (targetName !== "claude-code" && targetName !== "codex") {
+    console.error(c.red(`Error: guard --target supports claude-code and codex only (got "${targetName}").`));
     process.exit(1);
   }
   const source = readFile(filePath);
@@ -1286,7 +1442,16 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
   const root = path.resolve(dirPath);
   const name = path.basename(filePath);
-  const plan = planGuardTarget(ast, root, name);
+  let plan;
+  try {
+    plan = planGuardTarget(ast, root, name, targetName);
+  } catch (e) {
+    if (e instanceof BindingRefusal) {
+      console.error(c.red(`  ${e.message}`));
+      process.exit(1);
+    }
+    throw e;
+  }
   const unsafe = plan.actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
     console.error(c.red(`  Refusing to write: ${unsafe.length} generated path(s) are not safe file names. Nothing was written.`));
@@ -1294,7 +1459,15 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
 
   console.log(c.bold(`guard --target ${targetName} ${filePath} (project: ${dirPath})${dryRun ? c.cyan(" — dry run, nothing is written") : ""}`));
-  console.log(c.dim(`  ${verifiedOnLine()}`));
+  // R-9: the line names the host the output was written for, not always Claude Code.
+  const conf = targetName === "codex" ? platformConformance("codex") : null;
+  if (conf) {
+    const mark = conf.installedMark();
+    if (mark) console.log(c.dim(`  ${mark}`));
+    console.log(c.dim(`  ${conf.verifiedOnLine()}`));
+  } else {
+    console.log(c.dim(`  ${verifiedOnLine()}`));
+  }
   console.log("");
   for (const a of plan.actions) {
     if (a.type === "create") console.log(`  ${c.green("+")} ${a.path}`);
@@ -1315,7 +1488,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
   let result;
   try {
-    result = applyGuardTarget(plan, root, name, source);
+    result = applyGuardTarget(plan, root, name, source, targetName);
   } catch (err) {
     console.error(c.red(`  Could not write: ${(err as Error).message}`));
     process.exit(1);
@@ -1326,6 +1499,12 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     process.exit(1);
   }
   console.log("");
+  if (targetName === "codex") {
+    // guard --check grades Claude Code settings only for now; say what a person must do instead.
+    console.log("  Codex skips a project hook until it is reviewed and trusted: open /hooks in Codex and trust the hooks in .codex/hooks.json.");
+    console.log("  Until then no guard is active, and a hook is a guardrail, not a sandbox. agentopology never writes a trust entry.");
+    return;
+  }
   cmdGuardCheck(filePath, dirPath);
 }
 
@@ -1399,11 +1578,19 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file, args.inventory, args.dir);
+      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target);
       break;
 
     case "inventory":
-      console.log(JSON.stringify({ version: 1, items: collectInventory(path.resolve(args.file ?? args.dir ?? ".")) }, null, 2));
+      {
+        const roots = args.at.flatMap((f) => {
+          try { return parseAt(readFile(f), f).inventoryRoots ?? []; } catch (err) {
+            console.error(c.red(`Parse error: ${f}: ${(err as Error).message}`));
+            process.exit(1);
+          }
+        });
+        console.log(JSON.stringify({ version: 1, items: collectInventory(path.resolve(args.file ?? args.dir ?? "."), { roots, user: args.user }) }, null, 2));
+      }
       break;
 
     case "scaffold":
@@ -1440,12 +1627,7 @@ function main(): void {
       break;
 
     case "visualize":
-      if (!args.file) {
-        console.error(c.red("Error: visualize requires a file argument."));
-        usage();
-        process.exit(1);
-      }
-      cmdVisualize(args.file, args.output);
+      cmdVisualize(args.file, args.output, { dir: args.dir, noOpen: args.noOpen, noCheck: args.noCheck, printSummary: args.printSummary });
       break;
 
     case "visualize-brain":
@@ -1454,7 +1636,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdVisualizeBrain(args.file, args.output);
+      cmdVisualizeBrain(args.file, args.output, args.noOpen);
       break;
 
     case "export":
@@ -1512,12 +1694,17 @@ function main(): void {
         console.error(c.red("Error: guard requires a file argument."));
         process.exit(1);
       }
+      // E-2: --check reads and never writes, on any target.
+      if (args.check) {
+        cmdGuardCheck(args.file, args.dir ?? ".", args.target);
+        break;
+      }
       if (args.target) {
         cmdGuardTarget(args.file, args.target, args.dir ?? ".", args.dryRun);
         break;
       }
       if (!args.check) {
-        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code (write the guards)."));
+        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code|codex (write the guards)."));
         process.exit(1);
       }
       cmdGuardCheck(args.file, args.dir ?? ".");

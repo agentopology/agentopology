@@ -178,6 +178,7 @@ function serializeAgent(node: AgentNode): string {
   if (node.invocation) lines.push(`    invocation: ${node.invocation}`);
   if (node.runs) lines.push(`    runs: ${node.runs}`);
   if (node.place) lines.push(`    place: ${node.place}`);
+  if (node.machine) lines.push(`    machine: ${node.machine}`);
   if (node.permissionMode) lines.push(`    permission-mode: ${node.permissionMode}`);
   if (node.decides?.length) lines.push(`    decides: ${inlineList(node.decides)}`);
   if (node.independent) lines.push("    independent: true");
@@ -332,6 +333,8 @@ function serializeHuman(node: HumanNode): string {
   if (node.description) lines.push(`    description: "${node.description}"`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
+  if (node.who) lines.push(`    who: ${node.who}`);
+  if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
   lines.push("  }");
   return lines.join("\n");
 }
@@ -522,6 +525,8 @@ function serializeStores(stores: StoreNode[]): string[] {
     if (store.path) lines.push(`      path: ${q(store.path)}`);
     if (store.connection) lines.push(`      connection: secret ${q(store.connection)}`);
     if (store.extraction) lines.push(`      extraction: ${store.extraction}`);
+    if (store.owner) lines.push(`      owner: ${store.owner}`);
+    if (store.machine) lines.push(`      machine: ${store.machine}`);
 
     // Embedding sub-block
     if (store.embedding) {
@@ -720,6 +725,9 @@ function serializeSchedules(jobs: ScheduleJobDef[]): string | null {
     if (job.every) lines.push(`      every: "${job.every}"`);
     if (job.agent) lines.push(`      agent: ${job.agent}`);
     if (job.action) lines.push(`      action: ${job.action}`);
+    if (job.machine) lines.push(`      machine: ${job.machine}`);
+    if (job.carrier) lines.push(`      carrier: ${job.carrier}`);
+    if (job.survives) lines.push(`      survives: ${job.survives}`);
     if (job.enabled === false) lines.push("      enabled: false");
     lines.push("    }");
   }
@@ -882,6 +890,32 @@ export function serializeAST(ast: TopologyAST): string {
   if (ast.pinModels !== undefined) {
     sections.push("");
     sections.push(`  pin-models: ${ast.pinModels}`);
+  }
+
+  for (const p of ast.persons ?? []) {
+    sections.push("");
+    sections.push(`  person ${p.id} {${p.away ? ` away: ${q(p.away)} ` : ""}}`);
+  }
+
+  if (ast.inventoryRoots?.length) {
+    sections.push("");
+    sections.push(`  inventory { roots: ${inlineList(ast.inventoryRoots)} }`);
+  }
+
+  if (ast.needs) {
+    sections.push("");
+    sections.push("  needs {");
+    if (ast.needs.memory !== undefined) sections.push(`    memory: ${q(ast.needs.memory)}`);
+    if (ast.needs.connectors?.length) sections.push(`    connectors: ${inlineList(ast.needs.connectors)}`);
+    if (ast.needs.userSkills?.length) sections.push(`    user-skills: ${inlineList(ast.needs.userSkills)}`);
+    sections.push("  }");
+  }
+
+  if (ast.machines) {
+    sections.push("");
+    sections.push("  machines {");
+    for (const m of ast.machines) sections.push(`    machine ${m.id} {${m.os ? ` os: ${m.os} ` : ""}}`);
+    sections.push("  }");
   }
 
   // Orchestrator

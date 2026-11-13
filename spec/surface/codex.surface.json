@@ -1,0 +1,1108 @@
+{
+  "platform": "codex",
+  "areas": [
+    "config.keys",
+    "approvals",
+    "sandbox",
+    "agents",
+    "instructions",
+    "skills",
+    "hooks",
+    "permissions",
+    "files"
+  ],
+  "entries": [
+    {
+      "id": "cx.agents.agents",
+      "area": "agents",
+      "tokens": [
+        "agents"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.agents.<id>",
+      "area": "agents",
+      "tokens": [
+        "agents.<id>"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.agents.<id>.config_file",
+      "area": "agents",
+      "tokens": [
+        "agents.<id>.config_file"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.agents.<id>.description",
+      "area": "agents",
+      "tokens": [
+        "agents.<id>.description"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.agents.max_concurrent_threads_per_session",
+      "area": "agents",
+      "tokens": [
+        "agents.max_concurrent_threads_per_session"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.file.description",
+      "area": "agents",
+      "tokens": [
+        "file.description"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.file.developer_instructions",
+      "area": "agents",
+      "tokens": [
+        "file.developer_instructions"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.file.model",
+      "area": "agents",
+      "tokens": [
+        "file.model"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.file.model_reasoning_effort",
+      "area": "agents",
+      "tokens": [
+        "file.model_reasoning_effort"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.file.name",
+      "area": "agents",
+      "tokens": [
+        "file.name"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.agents.path:.codex/agents/*.toml",
+      "area": "agents",
+      "tokens": [
+        "path:.codex/agents/*.toml"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AgentsToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "agent"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a role is not found or loses a setting",
+      "grade": "check"
+    },
+    {
+      "id": "cx.approvals.never",
+      "area": "approvals",
+      "tokens": [
+        "never"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AskForApproval"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "an agent asks more or less than declared",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.approvals.on-request",
+      "area": "approvals",
+      "tokens": [
+        "on-request"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/AskForApproval"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "an agent asks more or less than declared",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.config.keys.approval_policy",
+      "area": "config.keys",
+      "tokens": [
+        "approval_policy"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers.<id>",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers.<id>"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers.<id>.args",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers.<id>.args"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers.<id>.command",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers.<id>.command"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers.<id>.env",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers.<id>.env"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.mcp_servers.<id>.url",
+      "area": "config.keys",
+      "tokens": [
+        "mcp_servers.<id>.url"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.model",
+      "area": "config.keys",
+      "tokens": [
+        "model"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.path:.codex/config.toml",
+      "area": "config.keys",
+      "tokens": [
+        "path:.codex/config.toml"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.config.keys.sandbox_mode",
+      "area": "config.keys",
+      "tokens": [
+        "sandbox_mode"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "model",
+        "permissions",
+        "mcp"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "Codex ignores or rejects config.toml",
+      "grade": "check"
+    },
+    {
+      "id": "cx.files.path:.codex/domains/*",
+      "area": "files",
+      "tokens": [
+        "path:.codex/domains/*"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/metrics.jsonl",
+      "area": "files",
+      "tokens": [
+        "path:.codex/metrics.jsonl"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/protocols/*.md",
+      "area": "files",
+      "tokens": [
+        "path:.codex/protocols/*.md"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/references/*",
+      "area": "files",
+      "tokens": [
+        "path:.codex/references/*"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/runs/*",
+      "area": "files",
+      "tokens": [
+        "path:.codex/runs/*"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/scripts/*.py",
+      "area": "files",
+      "tokens": [
+        "path:.codex/scripts/*.py"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/scripts/*.sh",
+      "area": "files",
+      "tokens": [
+        "path:.codex/scripts/*.sh"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:.codex/scripts/*/*.sh",
+      "area": "files",
+      "tokens": [
+        "path:.codex/scripts/*/*.sh"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts",
+        "src/bindings/lib/codex-hooks.ts"
+      ],
+      "language": [
+        "gate",
+        "human",
+        "session"
+      ],
+      "proof": "src/__tests__/e2e/codex-gates.test.ts",
+      "ifBroken": "a guard script is not where hooks.json points, the hook exits 127 and Codex lets the call through (P10)",
+      "grade": "check"
+    },
+    {
+      "id": "cx.files.path:crontab.fragment",
+      "area": "files",
+      "tokens": [
+        "path:crontab.fragment"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.files.path:scripts/*.sh",
+      "area": "files",
+      "tokens": [
+        "path:scripts/*.sh"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "topology"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a generated support file is not where the binding expects it",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.hooks.event.PostToolUse",
+      "area": "hooks",
+      "tokens": [
+        "event:PostToolUse"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.event.PreToolUse",
+      "area": "hooks",
+      "tokens": [
+        "event:PreToolUse"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.event.SubagentStart",
+      "area": "hooks",
+      "tokens": [
+        "event:SubagentStart"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.event.SubagentStop",
+      "area": "hooks",
+      "tokens": [
+        "event:SubagentStop"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.field.command",
+      "area": "hooks",
+      "tokens": [
+        "field:command"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.field.matcher",
+      "area": "hooks",
+      "tokens": [
+        "field:matcher"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.field.timeout",
+      "area": "hooks",
+      "tokens": [
+        "field:timeout"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.field.type",
+      "area": "hooks",
+      "tokens": [
+        "field:type"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.hooks.path:.codex/hooks.json",
+      "area": "hooks",
+      "tokens": [
+        "path:.codex/hooks.json"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "guard",
+        "gate"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "a hook never fires or is misread",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.instructions.path:AGENTS.md",
+      "area": "instructions",
+      "tokens": [
+        "path:AGENTS.md"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties/project_doc_fallback_filenames"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "instructions"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "project instructions are not read",
+      "grade": "cosmetic"
+    },
+    {
+      "id": "cx.permissions.path:.codex/rules/*.rules",
+      "area": "permissions",
+      "tokens": [
+        "path:.codex/rules/*.rules"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties/permissions"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "permissions"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "command rules are not applied",
+      "grade": "check"
+    },
+    {
+      "id": "cx.sandbox.danger-full-access",
+      "area": "sandbox",
+      "tokens": [
+        "danger-full-access"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/SandboxMode"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "sandbox"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "an agent runs with the wrong file access",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.sandbox.read-only",
+      "area": "sandbox",
+      "tokens": [
+        "read-only"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/SandboxMode"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "sandbox"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "an agent runs with the wrong file access",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.sandbox.workspace-write",
+      "area": "sandbox",
+      "tokens": [
+        "workspace-write"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/SandboxMode"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts",
+        "src/conformance/codex.ts"
+      ],
+      "language": [
+        "sandbox"
+      ],
+      "proof": "src/__tests__/e2e/codex-contract.test.ts",
+      "ifBroken": "an agent runs with the wrong file access",
+      "grade": "refuse"
+    },
+    {
+      "id": "cx.skills.fm.description",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:description"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties/skills"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cx.skills.fm.name",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:name"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties/skills"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cx.skills.path:.agents/skills/*/SKILL.md",
+      "area": "skills",
+      "tokens": [
+        "path:.agents/skills/*/SKILL.md"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/properties/skills"
+      },
+      "usedBy": [
+        "src/bindings/codex.ts"
+      ],
+      "language": [
+        "skill"
+      ],
+      "proof": "src/__tests__/e2e/codex-inventory.test.ts",
+      "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    }
+  ],
+  "areaWords": {
+    "config.keys": [
+      "config.toml",
+      "config key"
+    ],
+    "approvals": [
+      "approval"
+    ],
+    "sandbox": [
+      "sandbox"
+    ],
+    "agents": [
+      "subagent",
+      "multi-agent",
+      "agent role"
+    ],
+    "hooks": [
+      "hook",
+      "hooks"
+    ],
+    "skills": [
+      "skill"
+    ],
+    "permissions": [
+      "permission profile",
+      "exec policy"
+    ]
+  },
+  "ignore": [],
+  "watchOnly": [
+    {
+      "id": "cx.new.code-mode",
+      "tokens": [
+        "features.code_mode"
+      ],
+      "card": "LG-3"
+    },
+    {
+      "id": "cx.new.permission-profiles",
+      "tokens": [
+        "default_permissions"
+      ],
+      "card": "LG-2"
+    }
+  ],
+  "knownDrift": []
+}

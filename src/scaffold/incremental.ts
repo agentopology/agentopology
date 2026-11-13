@@ -147,7 +147,7 @@ export function computeIncrementalPlan(
     // Config files merge whether or not scaffold made them: the merge keeps
     // every key, hook and rule the user wrote.
     if (category === "shared-config") {
-      const isSettings = /(^|\/)settings\.json$/.test(file.path);
+      const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
       const merged = isSettings
         ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
         : deepMergeJson(existingContent, file.content);

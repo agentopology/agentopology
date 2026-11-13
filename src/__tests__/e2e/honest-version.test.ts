@@ -102,3 +102,48 @@ describe("[T01] honest version", () => {
     expect(b.status).toBe(a.status);
   });
 });
+
+// [RW-7] The verified version is a list with a proof per version.
+describe("[RW-7] verified list", () => {
+  const listFile = (entries: unknown[]) => {
+    const f = join(fs.mkdtempSync(join(os.tmpdir(), "at-rw7-")), "verified.json");
+    fs.writeFileSync(f, JSON.stringify({ versions: entries }));
+    return f;
+  };
+  const proof = { run: "wf-test", date: "2026-11-13", suite: { passed: 10, failed: 0, skipped: 0 } };
+  const GOOD = [
+    { version: "2.1.319", proof }, { version: "2.1.321", proof }, { version: "2.1.323", proof },
+  ];
+  function validateWith(list: string, version: string) {
+    return spawnSync(process.execPath, [CLI, "validate", FIXTURE], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: [fakeBin(version)].join(":"), NO_COLOR: "1", AGENTOPOLOGY_VERIFIED_LIST: list },
+    });
+  }
+
+  it("[RW-7] a fake claude printing 2.1.321, with 2.1.319, 2.1.321, 2.1.323 listed: no unverified mark", () => {
+    const out = plain(validateWith(listFile(GOOD), "2.1.321").stdout);
+    expect(out).not.toContain("unverified");
+    expect(out).not.toContain("not installed");
+  });
+
+  it("[RW-7] printing 2.1.322 (not listed): 'installed 2.1.322: unverified'", () => {
+    expect(plain(validateWith(listFile(GOOD), "2.1.322").stdout)).toContain("installed 2.1.322: unverified");
+  });
+
+  it("[RW-7] a listed version with no proof field does not count as verified", () => {
+    const out = plain(validateWith(listFile([{ version: "2.1.321" }, { version: "2.1.323", proof }]), "2.1.321").stdout);
+    expect(out).toContain("installed 2.1.321: unverified");
+  });
+
+  it("[RW-7] a missing or unreadable list falls back to VERIFIED_ON alone (the 0.10.1 behavior)", () => {
+    const missing = join(os.tmpdir(), "at-rw7-no-such-list.json");
+    expect(plain(validateWith(missing, VERIFIED_ON).stdout)).not.toContain("unverified");
+    expect(plain(validateWith(missing, "2.1.321").stdout)).toContain("installed 2.1.321: unverified");
+  });
+
+  it("[RW-7] the version line still names VERIFIED_ON, whatever the list holds", () => {
+    const out = plain(validateWith(listFile(GOOD), "2.1.321").stdout);
+    expect(out).toContain(`checked against Claude Code ${VERIFIED_ON}`);
+  });
+});

@@ -95,7 +95,7 @@ who works, when they work, and what they know when they work. One file, two ways
                         ┌────────────┐
       ┌──────────────┐  │  Parser &  │   scaffold ──▶ Platform configs
       │   .at file   │─▶│  Validator │──┤                ├── .claude/agents/
-      │  (you write) │  │  120 rules  │  │                ├── <topology>.workflow.js
+      │  (you write) │  │  129 rules  │  │                ├── <topology>.workflow.js
       └──────────────┘  └────────────┘  │                ├── .codex/  .cursor/rules/
                                         │                └── …
                                         │
@@ -146,6 +146,7 @@ agentopology scaffold my-team.at --target claude-code
 ```bash
 agentopology visualize my-team.at
 ```
+The page is one offline HTML file (light and dark themes, no network). Six lenses switch from the lens bar: **Flow** (gates and their grades as chips on the edges they guard, human steps in a seat lane, stores on a rail, phase stages collapsed until you open them), **Sessions** (places, who may message whom with the message kind, the hub, who decides what, and which sessions have no talk guard on disk), **Guards** (a grade for every gate, approval step, permission rule and session guard: refuse, hope, none, unverified, from `guard --check`), **Seats** (one row per human step and declared decision, with its timeout and grade), **Coverage** (what the project holds against what the `.at` accounts for, by kind, from `validate --inventory`) and **Index** (every item with its line, and the `.at` text with a jump to each line). Run `visualize` with `--dir` in the project to fill in the grades and coverage; without it they read "not checked". Link straight to a view with `#lens=sessions`, `#node=<id>` or `#lens=index&line=<n>`.
 
 **List targets** — see all supported platforms:
 ```bash
@@ -232,7 +233,7 @@ In Claude Code, type `/agentopology` — or just ask naturally:
 Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
 
 1. Generates the `.at` file with the right syntax
-2. Validates it against 120 rules
+2. Validates it against 129 rules
 3. Scaffolds it to Claude Code (or an experimental target: Codex, Cursor)
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
@@ -560,7 +561,7 @@ import { parse, validate, bindings } from "agentopology";
 // Parse
 const ast = parse(atSource);
 
-// Validate (120 built-in rules, V1-V120)
+// Validate (129 built-in rules, V1-V129)
 const issues = validate(ast);
 
 // Scaffold — generate platform files
@@ -618,7 +619,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |
 | **See the architecture** | Read YAML, JSON, TOML, Markdown across 6 dirs | One `.at` file. Or `visualize` it. |
-| **Validate** | Hope for the best | 120 built-in rules catch errors before deploy |
+| **Validate** | Hope for the best | 129 built-in rules catch errors before deploy |
 | **Onboard someone** | "Read these 15 files and figure it out" | "Read this `.at` file" |
 | **Version control** | Diff 47 generated files | Diff one `.at` file |
 | **Move to a new tool** | Start over | `--target new-tool` |
@@ -640,7 +641,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 ## CLI Reference
 
 ```
-agentopology validate <file>              Validate an .at file (120 rules)
+agentopology validate <file>              Validate an .at file (129 rules)
 agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at
@@ -651,8 +652,10 @@ agentopology export <file> --format <fmt> Export as markdown, mermaid, json, asc
 agentopology info <file>                  Topology analysis and suggestions
 agentopology guard <file> --check [--dir <d>]   What the project enforces today: refuse / none / hope per gate
 agentopology guard <file> --target claude-code [--dir <d>] [--dry-run]   Write only the guards (hook scripts, gates, checks, settings hooks and permissions) into a hand-built project
-agentopology inventory [<dir>]                  What is live in the project, as JSON (writes nothing)
+agentopology inventory [<dir>] [--at <file>] [--user]  What is live in the project (the .claude tree, and for Codex the .codex agents, hooks.json entries, rules, config.toml MCP servers and .agents/skills), as JSON (writes nothing); --at adds the folders the .at lists in `inventory { roots }`, --user adds ~/.claude
 agentopology validate <file> --inventory <dir>  Coverage: live things the .at accounts for; unmapped, missing
+agentopology validate --inventory <dir> a.at b.at  Per-file coverage, then one union number (mapped when any file maps it)
+agentopology validate <file> --inventory <dir> --user  Also counts ~/.claude apart, and checks the `needs` block (user skills, memory path) against the home folder
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
 ```

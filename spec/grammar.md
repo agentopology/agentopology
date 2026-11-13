@@ -176,10 +176,10 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
-                 | schedule | interfaces
+                 | schedule | interfaces | inventory | needs
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, `tools`, `schedule`, and `interfaces` may appear **at most once** (parser error on duplicates). `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, `tools`, `schedule`, `interfaces`, `inventory`, and `needs` may appear **at most once** (parser error on duplicates). `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -681,6 +681,7 @@ memory {
 | `connection` | secret-string | no | -- | Connection URI for remote backends (V34) |
 | `extraction` | extraction-enum | no | -- | Entity/fact extraction method |
 | `format` | string | no | -- | File format/convention for file-native stores. For `brain`, typically `obsidian` ([[wikilinks]], #tags, YAML frontmatter) — a promise the store round-trips as a real Obsidian vault. |
+| `owner` | agent id | no | -- | The one agent that may share this store. Two other agents writing it (listing it under `memory:`, `custodian-of:` or `writes:`) is an error naming both, unless one of the two is the owner (V121). An owner that is no agent is an error. |
 | `sources` | sources-block | no | -- | **Presentation only** — provenance styling for the brain graph view. Maps a note's `source:` frontmatter to a color/icon. Visualizer-only; bindings ignore it. See below. |
 | `embedding` | embedding-block | no | -- | Embedding configuration (V31 warning if omitted for semantic/episodic/procedural) |
 | `index` | index-block | no | -- | Index/collection configuration |
@@ -1808,6 +1809,39 @@ agent expensive-thinker {
 **Validation:** When providers are declared, every model in a fallback chain should exist in at least one provider's `models` list (V22, warning level).
 
 **Binding behavior:** OpenClaw maps to `modelFallbackChain` in `openclaw.json`. Other bindings document the chain in their instructions or agent files.
+
+### 4.30 `inventory`
+
+```ebnf
+inventory       = 'inventory' '{' 'roots' ':' string-list '}'
+```
+
+```agenttopology
+inventory { roots: ["harness/", "scripts/"] }
+```
+
+Extra project folders whose files a run really reads. `agentopology inventory --at <file.at>` and `validate --inventory` list every file under each root as a live thing of kind `file` (id `file:<path>`), and a file counts as mapped when the topology points at it (a hook's or gate's `run:`, `file:`, `at:`, a tool's `script:`). A root that is not a folder on disk is reported as missing (exit 1). Each root must be a path inside the project: absolute paths, home paths (`~`) and `..` are a validate error (V128). Bindings emit nothing for it.
+
+`validate --inventory DIR a.at b.at` measures several topologies against one project: the per-file numbers print first, then one union number in which a live thing is mapped when any file maps it. `--user` (on `validate --inventory` and on `inventory`) also lists the user-level tree (`~/.claude/agents`, `skills`, `commands` and the hooks in `~/.claude/settings.json`), tagged user-level (`scope: "user"`, ids prefixed `user:`) and counted apart from the project numbers.
+
+### 4.31 `needs`
+
+```ebnf
+needs           = 'needs' '{' (memory-field | connectors-field | user-skills-field)* '}'
+memory-field    = 'memory' ':' string
+connectors-field = 'connectors' ':' name-list
+user-skills-field = 'user-skills' ':' name-list
+```
+
+```agenttopology
+needs {
+  memory: "~/notes/agent-memory"
+  connectors: [gmail, calendar]
+  user-skills: [writer]
+}
+```
+
+What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
 
 ---
 

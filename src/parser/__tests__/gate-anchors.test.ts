@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parse } from "../index.js";
+import { codexSource } from "../../bindings/__tests__/codex-models.js";
 import { validate } from "../validator.js";
 import { gateAnchors } from "../ast.js";
 import { resolveOrder } from "../../resolve/order.js";
@@ -148,7 +149,8 @@ describe("every binding survives a multi-anchor gate", () => {
   it("scaffolds without throwing, and never emits a joined 'a,b,c' anywhere", () => {
     const ast = parse(MULTI);
     for (const [name, binding] of Object.entries(bindings)) {
-      const files = binding.scaffold(ast);
+      // [CX-5] Codex refuses a Claude model name; it gets a Codex model.
+      const files = binding.scaffold(name === "codex" ? parse(codexSource(MULTI)) : ast);
       expect(files.length, name).toBeGreaterThan(0);
       for (const f of files) {
         expect(

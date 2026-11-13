@@ -29,14 +29,32 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import {
+  CLAUDE_CODE_GUARDS,
+  LEDGER_WRITABLE_NOTE,
+  approvalTargets,
+  checkableActionGate,
+  gateWiring,
+  generateBeforeActionScript as buildBeforeActionScript,
+  generateBeforeAgentScript as buildBeforeAgentScript,
+  generateBeforeEditScript as buildBeforeEditScript,
+  generateGateWrapperScripts as buildGateWrapperScripts,
+  getDelegationMode,
+  isRegisteredSubagentType,
+  runsAsSkill,
+  shellQuote,
+  stepMatchWords,
+} from "./lib/guards.js";
+export { approvalTargets, checkableActionGate, gateWiring };
+export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
-import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -101,8 +119,12 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
       return { type: "http", url: hook.url, ...timeout, ...filter };
     case "mcp_tool":
       return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout, ...filter };
-    default:
-      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter };
+    default: {
+      // F-14: a refuse hook on PreToolUse that cannot start, times out or exits other than 0/2 blocks the
+      // call (onFailure, Claude Code 2.1.295+) instead of letting it run. No effect on async hooks.
+      const block = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !hook.async ? { onFailure: "block" } : {};
+      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
+    }
   }
 }
 
@@ -160,287 +182,17 @@ function frontmatter(fields: Record<string, string | number | boolean | string[]
   return lines.join("\n");
 }
 
-/**
- * Check whether `name` refers to a node registered as a Claude Code subagent_type.
- *
- * Both `agent` and `group` nodes scaffold a `.claude/agents/<name>/AGENT.md`
- * file, which is what Claude Code registers as a subagent_type. Action, gate,
- * human, and orchestrator nodes are NOT registered and therefore CANNOT be
- * used as SubagentStop matchers.
- */
-/** An agent with runs: inline or fork compiles to a skill, not a subagent. */
-function runsAsSkill(agent: AgentNode): boolean {
-  return agent.runs === "inline" || agent.runs === "fork";
-}
-
 /** Permission modes a subagent may ask for but cannot get beyond its session. */
 const LOOSER_MODES = new Set(["acceptEdits", "auto", "dontAsk", "bypassPermissions"]);
-
-function isRegisteredSubagentType(ast: TopologyAST, name: string | undefined): boolean {
-  if (!name) return false;
-  return ast.nodes.some(
-    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode))) && n.id === name,
-  );
-}
-
-/**
- * Resolve the topology's orchestration delegation mode.
- *
- * Returns `"inline"` if the orchestrator block declares `delegation: inline`.
- * Otherwise returns `"subagent"` (the default). Inline-orchestrator topologies
- * drive every agent in the main session's context; no Task-tool subagent is
- * ever spawned, so any `SubagentStop` hook would silently never fire.
- */
-function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
-  const orch = ast.nodes.find((n) => n.type === "orchestrator") as
-    | OrchestratorNode
-    | undefined;
-  return orch?.delegation === "inline" ? "inline" : "subagent";
-}
-
 /** Generate an empty directory marker (a .gitkeep file). */
-/**
- * How a gate is enforced in Claude Code.
- *
- * - `subagent-stop`: every `after:` is an agent; a SubagentStop hook on each
- *   runs the gate when it finishes (exit 2 keeps it working).
- * - `before-agent`: an `after:` is an action or a human, but `before:` names
- *   agents; a PreToolUse hook on the Agent tool runs the gate before Claude
- *   Code launches one of them (exit 2 blocks the launch). Such gates used to
- *   compile to no hook at all.
- * - `none`: nothing in Claude Code marks the moment (inline delegation, or no
- *   agent on either side); the playbook runs the gate script.
- */
-export type GateWiring =
-  | { kind: "subagent-stop"; anchors: string[] }
-  | { kind: "before-agent"; agents: string[] }
-  | { kind: "none" };
-
-export function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
-  if (getDelegationMode(ast) === "inline") return { kind: "none" };
-  const afters = gateAnchors(gate, "after");
-  if (afters.length > 0 && afters.every((a) => isRegisteredSubagentType(ast, a))) {
-    return { kind: "subagent-stop", anchors: afters };
-  }
-  const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b));
-  return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
-}
-
-/** Agents a human approval step stands before: its direct flow successors. */
-export function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
-  if (getDelegationMode(ast) === "inline") return [];
-  const out = ast.edges.filter((e) => e.from === human.id && !e.isError).map((e) => e.to);
-  return [...new Set(out)].filter((id) => isRegisteredSubagentType(ast, id));
-}
-
 /** The settings.json command for the topology's before-agent hook. */
 function beforeAgentCommand(ast: TopologyAST): string {
   return `bash ${skillScriptPath(ast.topology.name, "before-agent.sh")}`;
 }
 
-/**
- * One PreToolUse hook on the Agent tool for the whole topology: before Claude
- * Code launches a subagent it runs that agent's gates (from actions or
- * humans), then asks the user to approve when a human step stands before it.
- * Null when nothing needs it.
- */
-function generateBeforeAgentScript(ast: TopologyAST): GeneratedFile | null {
-  const name = ast.topology.name;
-  const steps = new Map<string, string[]>();
-  const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
-
-  for (const node of ast.nodes) {
-    if (node.type !== "gate") continue;
-    const gate = node as GateNode;
-    if (!gate.run || gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) continue;
-    const wiring = gateWiring(ast, gate);
-    if (wiring.kind !== "before-agent") continue;
-    for (const agent of wiring.agents) {
-      add(agent, [
-        `    # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`,
-        `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
-      ]);
-    }
-  }
-  for (const node of ast.nodes) {
-    if (node.type !== "human") continue;
-    const human = node as HumanNode;
-    const reason = `Approval step "${human.id}"${human.description ? `: ${human.description}` : ""}`;
-    for (const agent of approvalTargets(ast, human)) {
-      add(agent, [`    # approval step ${human.id}`, `    ask ${shellQuote(reason)}`]);
-    }
-  }
-  if (steps.size === 0) return null;
-
-  const lines = [
-    "#!/usr/bin/env bash",
-    `# Before Claude Code launches a subagent of topology "${name}".`,
-    "# Auto-generated by agentopology scaffold. Wired in .claude/settings.json as a",
-    "# PreToolUse hook on the Agent tool. Exit 2 blocks the launch and shows the",
-    "# reason to Claude; an \"ask\" decision makes Claude Code ask the user first.",
-    "set -euo pipefail",
-    ...FAIL_CLOSED,
-    'cd "$CLAUDE_PROJECT_DIR"',
-    `DIR=".claude/skills/${name}/scripts"`,
-    'AGENT=$(jq -r \'.tool_input.subagent_type // ""\')',
-    "",
-    "ask() {",
-    "  jq -n --arg r \"$1\" '{hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"ask\", permissionDecisionReason: $r}}'",
-    "}",
-    "",
-    'case "$AGENT" in',
-  ];
-  for (const [agent, body] of steps) {
-    lines.push(`  ${agent})`, ...body, "    ;;");
-  }
-  lines.push("esac", FAIL_CLOSED_DONE, "exit 0", "");
-  return {
-    path: `.claude/skills/${name}/scripts/before-agent.sh`,
-    content: lines.join("\n"),
-    category: "script",
-    executable: true,
-  };
-}
-
 /** The settings.json command for the topology's before-action hook. */
 function beforeActionCommand(ast: TopologyAST): string {
   return `bash ${skillScriptPath(ast.topology.name, "before-action.sh")}`;
-}
-
-/**
- * A gate before a script step that the generated guard can check: it has a
- * ledger to read, or a `run:` script to run. A gate with neither has nothing
- * to check (V110) and gets no line.
- */
-export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
-  if (gate.behavior === "advisory") return false;
-  if (guardedActions(ast, gate).length === 0) return false;
-  return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
-}
-
-/** Every action a gate guards, with its gates, in declaration order. */
-function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
-  const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
-  const out: Array<{ action: ActionNode; gates: GateNode[] }> = [];
-  for (const node of ast.nodes) {
-    if (node.type !== "action") continue;
-    const mine = gates.filter((g) => guardedActions(ast, g).some((a) => a.id === node.id));
-    if (mine.length > 0) out.push({ action: node as ActionNode, gates: mine });
-  }
-  return out;
-}
-
-/**
- * One PreToolUse hook on Bash for the whole topology: before Claude Code runs
- * a script step's command, the gates that stand before that step are checked.
- * A gate with a ledger lets the command through only when the LAST ledger line
- * for its `after:` step (and the command's unit) is ok; a gate with `run:` also
- * runs its wrapper. Null when no gate guards a script step.
- *
- * Why a hook and not a note in the playbook: V25 used to say "invoke the gate
- * from your playbook", and a session that skipped it ran the step anyway. A
- * hook only covers Claude Code sessions; a script run from a terminal checks
- * itself with `agentopology step check`.
- */
-function generateBeforeActionScript(ast: TopologyAST): GeneratedFile | null {
-  const guards = actionGuards(ast);
-  if (guards.length === 0) return null;
-  const name = ast.topology.name;
-
-  const lines = [
-    "#!/usr/bin/env bash",
-    `# Before Claude Code runs a script step of topology "${name}".`,
-    "# Auto-generated by agentopology scaffold. Wired in .claude/settings.json as a",
-    "# PreToolUse hook on Bash. Exit 2 blocks the command and shows stderr to Claude.",
-    "# A ledger is JSON Lines: {\"step\": \"<id>\", \"unit\": \"<unit>\", \"ok\": true, \"at\": \"<ISO time>\"}.",
-    "# Covers Claude Code sessions only; a step run outside Claude calls",
-    "# `agentopology step check` itself.",
-    "set -euo pipefail",
-    ...FAIL_CLOSED,
-    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this step, so it is blocked" >&2; exit 2; }',
-    'if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then echo "agentopology: CLAUDE_PROJECT_DIR is not set, so this step cannot be checked and is blocked" >&2; exit 2; fi',
-    'cd "$CLAUDE_PROJECT_DIR"',
-    `DIR=".claude/skills/${name}/scripts"`,
-    'CMD=$(jq -er \'.tool_input.command // ""\') || { echo "agentopology: the hook input is not valid JSON, so the command is blocked" >&2; exit 2; }',
-    "",
-    "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
-    "",
-    "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
-    "check_ledger() {",
-    "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
-    '  if [[ "$tmpl" == *"{unit}"* ]]; then',
-    '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
-    '    path="${tmpl//\\{unit\\}/$unit}"',
-    "  else",
-    '    path="$tmpl"',
-    "  fi",
-    '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
-    "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
-    '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
-    '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
-    "}",
-    "",
-    "# A Bash command is a list: `cd repo && ./tool publish ep1`, `a; b`, `a || b`, `a | b`, a",
-    "# backgrounded `a &`, or several lines. Each segment is checked on its own, because the step is",
-    "# the segment's command, not the whole line (matching only the start of the whole line let",
-    "# `cd repo && ./tool publish ep1` run the step with its gate unmet). Quoting is NOT parsed: a",
-    "# separator inside a quoted string also splits, which can only produce an extra segment that",
-    "# is checked too, so it over-blocks and never under-blocks (fail-safe). A command that runs the",
-    "# step indirectly (bash -c, eval, a script that calls it) is not seen.",
-    "SEGS=$CMD",
-    "for sep in '&' '|' ';'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
-    "# Leading VAR=value assignments and wrappers are not part of the command.",
-    "re_assign='^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'\"'\"'[^'\"'\"']*'\"'\"'|[^[:space:]]*)([[:space:]]+|$)'",
-    "re_wrap='^(\\(+[[:space:]]*|\\{[[:space:]]+|(then|do|exec|time|nohup|env)([[:space:]]+|$))'",
-    "UNIT=''",
-    "",
-    "# Segments come in on fd 3 and children get stdin from /dev/null: a check that reads stdin must not swallow the later segments.",
-    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
-    "  prev=''",
-    '  while [ "$C" != "$prev" ]; do',
-    '    prev=$C',
-    '    C="${C#"${C%%[![:space:]]*}"}"',
-    '    if [[ "$C" =~ $re_assign ]]; then C="${C:${#BASH_REMATCH[0]}}"; elif [[ "$C" =~ $re_wrap ]]; then C="${C:${#BASH_REMATCH[0]}}"; fi',
-    "  done",
-    '  [ -n "$C" ] || continue',
-  ];
-  for (const { action, gates } of guards) {
-    const tests = (action.commands ?? []).map((c) => `[[ "$C" == ${shellQuote(c)} || "$C" == ${shellQuote(c + " ")}* ]]`);
-    lines.push(`  # step ${action.id}`, `  if ${tests.join(" || ")}; then`, "    UNIT=''");
-    if (action.unitFrom) {
-      lines.push(
-        `  UNIT=$(jq -nr --arg c "$C" --arg re ${shellQuote(action.unitFrom)} '$c | match($re) | .captures[0].string // empty') || deny ${shellQuote(gates[0].id)} "unit-from does not compile"`,
-        '  if ! [[ "$UNIT" =~ ^[A-Za-z0-9_.@+-]*$ ]] || [[ "$UNIT" == *..* ]]; then',
-        `    deny ${shellQuote(gates[0].id)} "the unit \\"$UNIT\\" read from the command is not a safe file name"`,
-        "  fi",
-      );
-    }
-    for (const gate of gates) {
-      lines.push(`  # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
-      const ledger = gateLedger(ast, gate);
-      if (ledger) {
-        for (const step of gateAnchors(gate, "after")) {
-          lines.push(`  check_ledger ${shellQuote(gate.id)} ${shellQuote(step)} ${shellQuote(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
-        }
-      }
-      if (scriptNameFromRun(gate.run)) {
-        lines.push(`  bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
-      }
-    }
-    lines.push("  fi", "");
-  }
-  lines.push('done 3<<< "$SEGS"', "", FAIL_CLOSED_DONE, "exit 0", "");
-  return {
-    path: `.claude/skills/${name}/scripts/before-action.sh`,
-    content: lines.join("\n"),
-    category: "script",
-    executable: true,
-  };
-}
-
-/** Single-quote a string for bash. */
-function shellQuote(text: string): string {
-  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 function gitkeep(dirPath: string): GeneratedFile {
@@ -667,6 +419,50 @@ function formatSchemaField(f: SchemaFieldDef): string {
 // Section generators
 // ---------------------------------------------------------------------------
 
+/**
+ * F-6: lines that hold a gated step's own script to its gates. Running
+ * `action-<id>.sh` by hand reached the step without the gate, since only the
+ * PreToolUse hook on Bash checked it. The script now hands each of its commands
+ * (the words before any placeholder, then the script's arguments, which carry
+ * the unit) to before-action.sh, the same check the hook makes, and exits 2
+ * before running anything when that refuses. Empty for an ungated step.
+ *
+ * D-1: the check sees the commands the script runs, and the arguments only as
+ * the unit. A step with `unit-from` takes exactly one argument, a safe unit
+ * name (`--help`, two words or none are refused); a step without one ignores
+ * its arguments. The check runs with AT_NO_USAGE=1, so `<step> --help` is a
+ * step there, never the usage exemption the hook gives a typed command.
+ */
+function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
+  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
+  if (!gated || !buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) return [];
+  const name = ast.topology.name;
+  const words = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))];
+  return [
+    "# Gate check (agentopology): this step runs only when its gates hold. Its commands go to",
+    "# before-action.sh, the check the PreToolUse hook on Bash makes, so running this script by",
+    ...(action.unitFrom
+      ? [
+          "# hand does not skip a gate. The one argument is the unit (e.g. ep1), checked as the unit only.",
+          'if [ "$#" -ne 1 ] || ! [[ "$1" =~ ^[A-Za-z0-9_.@+][A-Za-z0-9_.@+-]*$ ]] || [[ "$1" == *..* ]]; then',
+          `  echo "agentopology: step ${action.id} takes one argument, its unit (a plain name such as ep1), so it does not run" >&2; exit 2`,
+          "fi",
+          'AT_UNIT_ARG="$1"',
+        ]
+      : ["# hand does not skip a gate. The step has no unit, so its arguments are not part of the check.", 'AT_UNIT_ARG=""']),
+    'AT_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"',
+    // The check is found from where this script sits, never from a variable the caller can set.
+    'AT_PROJECT="$AT_HERE"',
+    "at_gate() {",
+    `  command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check the gates of step ${action.id}, so it does not run" >&2; exit 2; }`,
+    `  jq -n --arg c "$*" '{tool_name: "Bash", tool_input: {command: $c}}' | AT_NO_USAGE=1 CLAUDE_PROJECT_DIR="$AT_PROJECT" bash "$AT_PROJECT/.claude/skills/${name}/scripts/before-action.sh" \\`,
+    `    || { echo "agentopology: step ${action.id} does not run: a gate before it is not met" >&2; exit 2; }`,
+    "}",
+    ...words.map((w) => `at_gate ${shellQuote(w)} $AT_UNIT_ARG`),
+    "",
+  ];
+}
+
 /** Generate script stubs for each ActionNode. */
 function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -697,6 +493,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
     // The action's own commands, whatever its kind: an external or report
     // action used to drop them for a TODO line.
     if (action.commands && action.commands.length > 0) {
+      lines.push(...actionGateCheck(ast, action));
       lines.push(...action.commands);
     } else if (!action.kind || action.kind === "inline") {
       // Done by the orchestrator in conversation (the playbook says how).
@@ -1629,6 +1426,10 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
+      if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
+        sections.push(`Enforcement: refuse, ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
+      }
       sections.push("");
     }
   }
@@ -2148,123 +1949,19 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const gate = node as GateNode;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
-    const { script } = runParts(gate.run!);
+    const { script, interpreter } = runParts(gate.run!);
     // The user's own script, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     // A project path names the user's script: a stub only fills the gap until
     // it exists, and is never written over it.
     const project = isProjectPath(script);
+    const path = project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`;
     files.push({
       path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      // F-25: in the language of the interpreter hookCommand runs it with.
+      content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
       ...(project ? { createOnly: true } : {}),
-    });
-  }
-
-  return files;
-}
-
-/** Generate gate wrapper scripts that run validation when agents complete. */
-function generateGateWrapperScripts(ast: TopologyAST): GeneratedFile[] {
-  const files: GeneratedFile[] = [];
-  const name = ast.topology.name;
-
-  for (const node of ast.nodes) {
-    if (node.type !== "gate") continue;
-    const gate = node as GateNode;
-    if (!gate.run) continue;
-    if (gate.behavior === "advisory") continue;
-
-    if (!scriptNameFromRun(gate.run)) continue; // V96: prose in run names no script
-    const gateCommand = hookCommand(gate.run, name);
-    const onFailExit = gate.onFail === "halt"
-      ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
-      : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
-
-    const inlineMode = getDelegationMode(ast) === "inline";
-    const wiring = gateWiring(ast, gate);
-    const wiredAsHook = wiring.kind === "subagent-stop";
-    let enforcementNote: string;
-    let enforcementNote2: string;
-    if (checkableActionGate(ast, gate)) {
-      enforcementNote = `# Enforcement: PreToolUse hook on Bash (before-action.sh) before Claude Code runs a command of "${gateAnchors(gate, "before").join('", "')}".`;
-      enforcementNote2 = `#              Exit 2 blocks the command and surfaces stderr to Claude.`;
-    } else if (wiring.kind === "before-agent") {
-      enforcementNote = `# Enforcement: PreToolUse hook (before-agent.sh) before Claude Code launches "${wiring.agents.join('", "')}".`;
-      enforcementNote2 = `#              Exit 2 blocks the launch and surfaces stderr to Claude.`;
-    } else if (inlineMode) {
-      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (orchestrator.delegation is "inline").`;
-      enforcementNote2 = `#              Invoke this script from your /${ast.topology.name} playbook at the right step.`;
-    } else if (wiredAsHook) {
-      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gateAnchors(gate, "after").join('", "')}". Exit 2 blocks the subagent`;
-      enforcementNote2 = `#              from stopping (Claude Code prevents stop and surfaces stderr to Claude).`;
-    } else {
-      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gateAnchors(gate, "after").join(", ") || "<unset>"} is not an agent).`;
-      enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
-    }
-
-    const contentLines = [
-      "#!/usr/bin/env bash",
-      `# Gate wrapper: ${gate.id}`,
-      `# Auto-generated by agentopology scaffold — edit as needed.`,
-      enforcementNote,
-      enforcementNote2,
-      "set -euo pipefail",
-      ...FAIL_CLOSED,
-      "",
-      "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
-      "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),
-      `# On failure: ${gate.onFail || "halt"}`,
-    ];
-
-    if (gate.timeout) {
-      contentLines.push(`# Timeout: ${gate.timeout}`);
-    }
-
-    if (gate.retry != null && gate.retry > 0) {
-      contentLines.push("");
-      contentLines.push(`MAX_RETRIES=${gate.retry}`);
-      contentLines.push("ATTEMPT=0");
-      contentLines.push("GATE_RESULT=1");
-      contentLines.push("");
-      contentLines.push("while [ $ATTEMPT -le $MAX_RETRIES ] && [ $GATE_RESULT -ne 0 ]; do");
-      contentLines.push("  ATTEMPT=$((ATTEMPT + 1))");
-      if (gate.timeout) {
-        contentLines.push(`  timeout ${gate.timeout} ${gateCommand} && GATE_RESULT=0 || GATE_RESULT=$?`);
-      } else {
-        contentLines.push(`  ${gateCommand} && GATE_RESULT=0 || GATE_RESULT=$?`);
-      }
-      contentLines.push('  if [ $GATE_RESULT -ne 0 ] && [ $ATTEMPT -le $MAX_RETRIES ]; then');
-      contentLines.push(`    echo "Gate '${gate.id}' attempt $ATTEMPT failed, retrying..."`);
-      contentLines.push("    sleep 1");
-      contentLines.push("  fi");
-      contentLines.push("done");
-    } else {
-      contentLines.push("");
-      contentLines.push("# Run the gate check script");
-      contentLines.push(`GATE_RESULT=0`);
-      if (gate.timeout) {
-        contentLines.push(`timeout ${gate.timeout} ${gateCommand} || GATE_RESULT=$?`);
-      } else {
-        contentLines.push(`${gateCommand} || GATE_RESULT=$?`);
-      }
-    }
-
-    contentLines.push("");
-    contentLines.push(`if [ "$GATE_RESULT" -ne 0 ]; then`);
-    contentLines.push(`  echo "Gate '${gate.id}' FAILED (exit code $GATE_RESULT)"`);
-    contentLines.push(`  ${onFailExit}`);
-    contentLines.push("fi");
-    contentLines.push(FAIL_CLOSED_DONE);
-    contentLines.push("");
-
-    const content = contentLines.join("\n");
-
-    files.push({
-      path: `.claude/skills/${name}/scripts/gate-${gate.id}.sh`,
-      content,
-      category: "script",
     });
   }
 
@@ -2302,13 +1999,15 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
     `# Auto-generated by agentopology scaffold`,
     `# Hook: ${hookName} · Event: ${eventName} · Matcher: ${matcherHint || "*"}`,
     "# Replace this stub with your implementation.",
+    STUB_MARKER,
     "# Stdin JSON payload from Claude Code is available on FD 0.",
     "set -euo pipefail",
     "",
     'PAYLOAD=$(cat)',
     'AGENT_TYPE=$(echo "$PAYLOAD" | jq -r \'.agent_type // "unknown"\')',
     "",
-    `echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)"`,
+    `echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`,
+    "exit 1",
     "",
   ].join("\n");
 }
@@ -2457,9 +2156,11 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
     if (proseInRun(runPath)) continue; // V96: prose in run names no script
-    const { script } = runParts(runPath);
+    const { script, interpreter } = runParts(runPath);
     // An absolute script is the user's own, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
+    // F-24: a script run by anything but bash gets a stub in that interpreter's language.
+    const interp = interpreterFor(script, interpreter).replace(/^.*\//, "");
     const scoped = scriptNameFromRun(script);
     const filePath = isProjectPath(script)
       ? script
@@ -2470,7 +2171,9 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
 
     files.push({
       path: filePath,
-      content: observabilityStub(hook.name, hook.on, hook.matcher ?? ""),
+      content: interp === "bash"
+        ? observabilityStub(hook.name, hook.on, hook.matcher ?? "")
+        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
       executable: true,
       // A run that names its own path names the user's script: a stub only
@@ -2503,9 +2206,11 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
           "#!/usr/bin/env bash",
           `# Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`,
           "# Auto-generated by agentopology scaffold — edit as needed.",
+          STUB_MARKER,
           'set -euo pipefail',
           "",
-          `echo "TODO: implement ${hook.name} hook for ${agent.id}"`,
+          `echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`,
+          "exit 1",
           "",
         ].join("\n"),
         category: "script",
@@ -2540,11 +2245,12 @@ export function skillScriptPath(topologyName: string, file: string): string {
 export function hookCommand(run: string, topologyName: string): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter: named, script: first, args: rest } = runParts(run);
+  // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
+  const interpreter = interpreterFor(first, named);
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");
-    return [named ?? "bash", skillScriptPath(topologyName, base), ...rest].join(" ");
+    return [interpreter, skillScriptPath(topologyName, base), ...rest].join(" ");
   }
-  const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
   const where = first.startsWith("/")
     ? first
     : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
@@ -2709,7 +2415,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Blackboard implies a host-side observer that watches the workflow rung's
   // Write tool-calls LIVE. This is the host's piece of the hybrid's concurrent
   // observability (the deterministic workflow rung cannot express it).
-  if (generateBeforeAgentScript(ast)) {
+  if (buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
       // Agent is the subagent tool; Task is its earlier name.
@@ -2721,11 +2427,20 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
-  if (generateBeforeActionScript(ast)) {
+  if (buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
       matcher: "Bash",
       hooks: [{ type: "command", command: beforeActionCommand(ast), onFailure: "block" }],
+    });
+  }
+
+  // F-4: an edit of a gate's ledger is refused on the file-edit tools.
+  if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "Write|Edit|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
     });
   }
 
@@ -2890,6 +2605,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     "#!/usr/bin/env bash",
     "# Metering / cost tracking script",
     "# Auto-generated by agentopology scaffold — edit as needed.",
+    STUB_MARKER,
     'set -euo pipefail',
     "",
     `# Track: ${m.track.join(", ")}`,
@@ -2897,7 +2613,8 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     `# Output: ${m.output} (${m.format})`,
     `# Pricing: ${m.pricing}`,
     "",
-    'echo "TODO: implement metrics collection"',
+    'echo "TODO: implement metrics collection" >&2',
+    "exit 1",
     "",
   ];
 
@@ -2915,40 +2632,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
 
   for (const tool of ast.toolDefs) {
     const ext = tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
-    const shebang =
-      tool.lang === "python"
-        ? "#!/usr/bin/env python3"
-        : tool.lang === "node"
-          ? "#!/usr/bin/env node"
-          : "#!/usr/bin/env bash";
-
-    const lines = [
-      shebang,
-      `# Tool: ${tool.id} — ${tool.description}`,
-      "# Auto-generated by agentopology scaffold — edit as needed.",
-      tool.lang === "node" ? `// ${STUB_MARKER}` : STUB_MARKER,
-      "",
-    ];
-
-    if (tool.lang === "bash" || !tool.lang) {
-      lines.push('set -euo pipefail');
-      lines.push("");
-    }
-
-    if (tool.args && tool.args.length > 0) {
-      lines.push(`# Args: ${tool.args.join(", ")}`);
-      lines.push("");
-    }
-
-    if (tool.lang === "python") {
-      lines.push(`print("TODO: implement ${tool.id}")`);
-    } else if (tool.lang === "node") {
-      lines.push(`console.log("TODO: implement ${tool.id}");`);
-    } else {
-      lines.push(`echo "TODO: implement ${tool.id}"`);
-    }
-    lines.push("");
-
+    const lines = [toolStub(tool)];
     // The stub goes where the tool's script: says, not to a copy beside it: a
     // project path is the user's script (create-only); an absolute one is never
     // touched; a bare name lives in the skill's scripts folder.
@@ -2974,7 +2658,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
  * it. Only "1h", "daily" and a few words converted before; anything else
  * became a commented-out crontab line that never ran.
  */
-function everyToCron(every: string): string | null {
+export function everyToCron(every: string): string | null {
   const text = every.trim().toLowerCase();
   const words: Record<string, string> = { hourly: "0 * * * *", daily: "0 0 * * *", weekly: "0 0 * * 0" };
   if (words[text]) return words[text];
@@ -3426,7 +3110,8 @@ function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
       "# If your harness launches workflows out-of-process instead, replace the line",
       `# below with the real launcher (e.g. \`claude workflow ${workflowFile}\`).`,
       "",
-      `echo "TODO: launch the workflow rung — invoke '/workflow ${workflowFile}' in-session (${phaseLabel}: ${ownedAgents.join(", ")})."`,
+      `echo "TODO: launch the workflow rung — invoke '/workflow ${workflowFile}' in-session (${phaseLabel}: ${ownedAgents.join(", ")})." >&2`,
+      "exit 1",
       "",
     ].join("\n");
 
@@ -3565,7 +3250,8 @@ function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null
     "# workflow rung itself cannot express. Stdin JSON payload is on FD 0.",
     "",
     "PAYLOAD=$(cat)",
-    `echo "TODO: observe Blackboard write under ${root} — inspect the payload and log/notify."`,
+    `echo "TODO: observe Blackboard write under ${root} — inspect the payload and log/notify." >&2`,
+    "exit 1",
     "",
   ].join("\n");
   return {
@@ -3746,11 +3432,13 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
-    files.push(...generateGateWrapperScripts(ast));
-    const beforeAgent = generateBeforeAgentScript(ast);
+    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, hookCommand));
+    const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
-    const beforeAction = generateBeforeActionScript(ast);
+    const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAction) files.push(beforeAction);
+    const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeEdit) files.push(beforeEdit);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

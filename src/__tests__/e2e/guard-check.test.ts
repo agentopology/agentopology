@@ -152,7 +152,8 @@ describe("guard --check from the CLI", () => {
     const before = spawnSync("find", [root, "-type", "f"], { encoding: "utf8" }).stdout;
     const r = cli("guard", FIXTURE, "--check", "--dir", root);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/gate copy-check\s+refuse\s+by: hook/);
+    // D-8: a SubagentStop gate says on its grade that a stop event cannot block a call
+    expect(r.stdout).toMatch(/gate copy-check\s+refuse, a stop event: it cannot block a call\s+by: hook/);
     expect(r.stdout).toMatch(/enforcement: 3 of 3 steps refuse/);
     expect(r.stdout).toMatch(/Claude Code \d+\.\d+\.\d+/);
     expect(spawnSync("find", [root, "-type", "f"], { encoding: "utf8" }).stdout).toBe(before);

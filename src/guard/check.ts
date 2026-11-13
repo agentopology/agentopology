@@ -24,8 +24,10 @@ import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, SESSION_HOOKS_PROVEN, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { installedMark, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
@@ -41,6 +43,10 @@ export interface GuardItem {
   by: "hook" | "settings" | "code" | "gate" | "prose";
   /** The file wrote this strength down itself (an edge's [strength: none]): reported, never a failure. */
   declared?: boolean;
+  /** "none" because the host has no event that can block here, not because a file is missing: reported, never a failure (E-5). */
+  structural?: boolean;
+  /** Said on the grade line itself, after the strength: `refuse, <gradeNote>` (F-4). */
+  gradeNote?: string;
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
@@ -59,9 +65,11 @@ export interface GuardReport {
    */
   unattributed: string[];
   verifiedOn: string;
+  /** The host graded, when it is not Claude Code: its name, the version line, the installed mark, its hook file (E-5). */
+  platform?: { label: string; line: string; mark: string | null; config: string };
 }
 
-interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string }> }
+interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string; async?: boolean }> }
 
 function readJson(path: string): Record<string, any> | null {
   try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
@@ -102,7 +110,7 @@ const MATCH_WINDOW = 5;
  * in it, and `match` appears within 5 lines of it (anywhere, with no line).
  * Null when it holds; otherwise why not.
  */
-function citationProblem(root: string, at: string, match?: string): string | null {
+export function citationProblem(root: string, at: string, match?: string): string | null {
   const m = /^(.*?)(?::(\d+))?$/.exec(at)!;
   const [file, lineText] = [m[1].replace(/^\.\//, ""), m[2]];
   const text = readText(join(root, file));
@@ -119,11 +127,41 @@ function citationProblem(root: string, at: string, match?: string): string | nul
     : `"${match}" is not within ${MATCH_WINDOW} lines of line ${line} in ${file}; the check may have moved or gone`;
 }
 
-/** Whether a declared hook is in settings.json: same event, same matcher, a command naming its script. */
-function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): boolean {
+/** A declared hook's handlers in settings.json: same event, same matcher, a command naming its script. */
+function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): NonNullable<HookEntry["hooks"]> {
   const script = runParts(hook.run).script.replace(/^\.\//, "");
-  if (!script) return false;
-  return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher).length > 0;
+  if (!script) return [];
+  return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher);
+}
+
+/** The note on an entry with no onFailure: "block" (D-8 puts FAILS_OPEN on the grade line for it). */
+const NO_BLOCK_NOTE = 'the entry has no onFailure: "block", so the step goes through if the hook cannot start';
+/** D-8: on the grade line of a refuse whose PreToolUse entry lets the call through when the hook crashes. */
+export const FAILS_OPEN_NOTE = "fails open on a crash (no onFailure: block)";
+/** D-8: on the grade line of a gate held at SubagentStop. */
+export const STOP_EVENT_NOTE = "a stop event: it cannot block a call";
+
+/** Add a note to an item's grade line, after any it has (F-4, D-8). */
+function noteGrade(item: GuardItem, note: string, first = false): void {
+  if (item.gradeNote?.includes(note)) return;
+  item.gradeNote = item.gradeNote ? (first ? `${note}, ${item.gradeNote}` : `${item.gradeNote}, ${note}`) : note;
+}
+
+/** Claude Code events whose hook can stop the call it runs before (exit 2). */
+const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
+
+/**
+ * D-3: why a cited hook that declares strength: refuse cannot refuse, or null when it can: a
+ * non-async command hook on an event that runs before the call.
+ */
+export function hookCannotBlock(hook: HookDef, onDisk: Array<{ async?: boolean }> = []): string | null {
+  const event = claudeEvent(hook.on);
+  if (!BLOCKING_EVENTS.has(event)) {
+    const stop = event === "Stop" || event === "SubagentStop";
+    return `${event} cannot block a call: it runs ${stop ? "when an agent stops" : event === "PostToolUse" ? "after the tool has run" : "where no call waits on it"}${hook.async || onDisk.some((h) => h.async) ? ", and it is async" : ""}`;
+  }
+  if (hook.async || onDisk.some((h) => h.async)) return "it is async: Claude Code does not wait for it, so it cannot block";
+  return null;
 }
 
 /** Notes on a hook's command: a relative path is skipped off the project root. */
@@ -146,7 +184,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     const bad = commandProblem(hooks[0].command);
     if (bad) return { ok: false, notes: [bad] };
     if (beforeAgent === null) return { ok: false, notes: [`${scriptsDir}/before-agent.sh is missing`] };
-    const notes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+    const notes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
     return { ok: true, notes };
   };
 
@@ -175,11 +213,11 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
       const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
-      const indirect = "a command that runs the step indirectly (bash -c, eval, a script that calls it) is not seen";
+      const indirect = "a step named through a variable, an alias, a function or a script that calls it is not seen (bash -c and eval with the step written out are)";
       if (problems.length) {
         items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect] });
       } else {
-        const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+        const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
         items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
       }
       continue;
@@ -207,7 +245,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const where = `SubagentStop on ${wiring.anchors.join(", ")} → ${file}`;
       items.push(problems.length
         ? { ...base, strength: "none", by: "hook", where, notes: problems }
-        : { ...base, strength: "refuse", by: "hook", where, notes: scriptNotes });
+        : { ...base, strength: "refuse", by: "hook", where, notes: ["exit 2 keeps the agent working until the gate passes; a call it already made is not undone", ...scriptNotes], gradeNote: STOP_EVENT_NOTE });
       continue;
     }
     // before-agent
@@ -255,13 +293,13 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const where = `PreToolUse on ${matcher} → ${file}`;
       const notes = [...extra];
       if (problems.length) return items.push({ kind: "session", id, strength: "none", by: "hook", where, notes: [...problems, ...notes] });
-      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift('the entry has no onFailure: "block", so the step goes through if the hook cannot start');
+      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift(NO_BLOCK_NOTE);
       if (!proven) notes.unshift(`${event} is not proven to stop a call in the installed Claude Code (conformance facts), so this is unverified`);
       items.push({ kind: "session", id, strength: proven ? "refuse" : "unverified", by: "hook", where, notes });
     };
-    sessionGuard("spawn guard", "spawn-guard.sh", "Agent|Task", "PreToolUse on Agent", SESSION_HOOKS_PROVEN.agent, []);
+    sessionGuard("spawn guard", "spawn-guard.sh", "Agent|Task", "PreToolUse on Agent", sessionHooksProven().agent, []);
     if (talkEdgesOf(ast).length > 0) {
-      sessionGuard("talk guard", "talk-guard.sh", "SendMessage", "PreToolUse on SendMessage", SESSION_HOOKS_PROVEN.sendMessage, [
+      sessionGuard("talk guard", "talk-guard.sh", "SendMessage", "PreToolUse on SendMessage", sessionHooksProven().sendMessage, [
         "a send through a terminal command, a shared file or a session outside this repo is not seen",
         ".claude/state/talk.jsonl is a trail, not evidence: whoever can write files can edit it",
       ]);
@@ -335,9 +373,22 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
         const hook = hooksByName.get(g);
         if (hook) {
           if (!hook.strength) { why.push(`its edge cites ${g}, but ${g} declares no strength`); continue; }
-          if (!hookOnDisk(settings, hook)) { why.push(`its edge cites ${g}, but ${g} is not in .claude/settings.json`); continue; }
+          const onDisk = hookOnDisk(settings, hook);
+          if (onDisk.length === 0) { why.push(`its edge cites ${g}, but ${g} is not in .claude/settings.json`); continue; }
+          const where = `${hook.on}${hook.matcher ? ` ${hook.matcher}` : ""} hook ${g}, cited on ${edge.from} -> ${edge.to}`;
+          const blockless = hook.strength === "refuse" ? hookCannotBlock(hook, onDisk) : null;
+          if (blockless) {
+            // D-3: the file says refuse, but the hook cannot stop the call.
+            Object.assign(item, { strength: "none", by: "hook", where, notes: [`${g} declares strength: refuse, but ${blockless}`] });
+            break;
+          }
+          if (hook.strength === "refuse" && (hook.type ?? "command") !== "command") {
+            Object.assign(item, { strength: "unverified", by: "hook", where, notes: [`${g} is a ${hook.type} hook; only a command hook is graded refuse here`, ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            break;
+          }
           if (hook.strength === "refuse" || hook.strength === "detect") {
-            Object.assign(item, { strength: hook.strength, by: "hook", where: `${hook.on}${hook.matcher ? ` ${hook.matcher}` : ""} hook ${g}, cited on ${edge.from} -> ${edge.to}`, notes: ["cited, not proven", ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            const failsOpen = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !onDisk.some((h) => h.onFailure === "block");
+            Object.assign(item, { strength: hook.strength, by: "hook", where, notes: ["cited, not proven", ...(failsOpen ? [NO_BLOCK_NOTE] : []), ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
           }
         } else {
           const other = gateItem(g);
@@ -363,11 +414,22 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if ((ast.hooks ?? []).some((h) => { const sc = runParts(h.run).script.replace(/^\.\//, ""); return !!sc && u.startsWith(claudeEvent(h.on)) && u.includes(sc); })) unattributed.splice(i, 1);
   }
 
+  // F-4: a gate whose check reads a ledger says so on its grade: the agent can write that file.
+  for (const item of items) {
+    if (item.kind !== "gate" || item.strength !== "refuse" || item.by !== "hook") continue;
+    const gate = ast.nodes.find((n) => n.type === "gate" && n.id === item.id) as GateNode;
+    if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) noteGrade(item, LEDGER_WRITABLE_NOTE);
+  }
+  // D-8: a refuse whose PreToolUse entry fails open says so on the grade line, not only in a note.
+  for (const item of items) {
+    if (item.strength === "refuse" && item.notes.includes(NO_BLOCK_NOTE)) noteGrade(item, FAILS_OPEN_NOTE, true);
+  }
+
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none" && !i.declared).length,
+    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
   };
@@ -377,19 +439,55 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
 export function renderGuardReport(report: GuardReport): string[] {
   const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
+  const grade = (i: GuardItem) => (i.gradeNote ? `${i.strength}, ${i.gradeNote}` : i.strength);
+  const gradeWidth = Math.max(STRENGTH_WIDTH, ...report.items.map((i) => grade(i).length));
   const lines: string[] = [];
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
-  const mark = installedMark();
+  const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(STRENGTH_WIDTH)}  by: ${i.by.padEnd(8)}  ${i.where}`);
-    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
-  lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
+  // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
+  const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && !!i.gradeNote?.includes(LEDGER_WRITABLE_NOTE)).length;
+  const ledgerSuffix = ledgered ? ` (${ledgered} with an agent-writable ledger)` : "";
+  if (report.platform) {
+    const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");
+    const unverified = steps.filter((i) => i.strength === "unverified").length;
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse${ledgerSuffix}, ${unverified} unverified · ${report.platform.line}`);
+  } else {
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse${ledgerSuffix} · checked against Claude Code ${report.verifiedOn}`);
+  }
+  const config = report.platform?.config ?? ".claude/settings.json";
   if (report.unattributed.length) {
-    lines.push(`${report.unattributed.length} hook(s) in .claude/settings.json are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none. Declare them in hooks { } with a strength and cite them on the edge with [guard: name]:`);
+    lines.push(`${report.unattributed.length} hook(s) in ${config} are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none. Declare them in hooks { } with a strength and cite them on the edge with [guard: name]:`);
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
   return mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
+}
+
+/** One item of a guard report as page data. */
+export interface GuardFact {
+  kind: GuardItem["kind"];
+  strength: Strength;
+  by: GuardItem["by"];
+  where: string;
+  notes: string[];
+  declared?: boolean;
+  gradeNote?: string;
+}
+
+/**
+ * The report as data keyed by item id (a gate or human id, a permission rule,
+ * `a -> b` for an edge, `spawn guard` / `talk guard`). The text render and
+ * this read the same report.
+ */
+export function guardFacts(report: GuardReport): Record<string, GuardFact> {
+  const out: Record<string, GuardFact> = {};
+  for (const i of report.items) {
+    out[i.id] = { kind: i.kind, strength: i.strength, by: i.by, where: i.where, notes: [...i.notes], ...(i.declared ? { declared: true } : {}), ...(i.gradeNote ? { gradeNote: i.gradeNote } : {}) };
+  }
+  return out;
 }

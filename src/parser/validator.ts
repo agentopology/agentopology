@@ -27,6 +27,13 @@ import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
+import { parseWindow, today } from "./window.js";
+import { isClaudeModelName } from "../conformance/codex.js";
+import { planCodexRules } from "../bindings/lib/codex-rules.js";
+import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
+import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
+import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
+import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -1470,8 +1477,26 @@ function v104StrengthWords(ast: TopologyAST): ValidationResult[] {
   }
   for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, "strength", hook.strength);
   for (const edge of ast.edges) check(`Edge ${edge.from} -> ${edge.to}`, "strength", edge.strength);
+  // D-3: strength: refuse on a hook that cannot stop a call is a claim nothing holds.
+  for (const hook of ast.hooks ?? []) {
+    if (hook.strength !== "refuse") continue;
+    const event = HOOK_EVENT_ALIASES[hook.on] ?? hook.on;
+    const why = NON_BLOCKING_EVENTS.has(event)
+      ? `${event} cannot block a call (it runs ${event === "PostToolUse" || event === "PostToolUseFailure" ? "after the tool" : "where no call waits on it"})`
+      : hook.async ? "it is async: the host does not wait for it, so it cannot block" : null;
+    if (!why) continue;
+    results.push({
+      rule: "V104", level: "warning",
+      message: `Hook "${hook.name}" declares strength: refuse, but ${why}. Use PreToolUse (not async) for a hook that refuses, or say strength: detect.`,
+    });
+  }
   return results;
 }
+
+/** Universal hook event names and the host event they mean (as the Claude Code binding maps them). */
+const HOOK_EVENT_ALIASES: Record<string, string> = { AgentStart: "SubagentStart", AgentStop: "SubagentStop", ToolUse: "PostToolUse", Error: "PostToolUseFailure" };
+/** Events whose hook runs after the call or at a stop: exit 2 there does not stop a call (D-3). */
+const NON_BLOCKING_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop", "SubagentStart", "SessionStart", "SessionEnd", "Notification", "PreCompact"]);
 
 /**
  * V105: an edge's `guard:` names a hook or gate this file declares.
@@ -1633,6 +1658,19 @@ function v111UnitFromRegex(ast: TopologyAST): ValidationResult[] {
         rule: "V111",
         level: "error",
         message: `Action "${action.id}" has unit-from "${action.unitFrom}": ${problem}`,
+        node: action.id,
+        line: lookupLine(ast, action.id),
+      });
+    }
+    // D-2: a ledger path with no {unit} holds every unit's records in one file, so it cannot tell them apart.
+    for (const g of ast.nodes) {
+      if (g.type !== "gate" || !guardedActions(ast, g as GateNode).some((a) => a.id === action.id)) continue;
+      const rec = gateLedger(ast, g as GateNode);
+      if (!rec || rec.path.includes("{unit}")) continue;
+      results.push({
+        rule: "V111",
+        level: "warning",
+        message: `Action "${action.id}" has unit-from, but gate "${g.id}" reads ledger "${rec.id}" at "${rec.path}", which has no {unit}: the record cannot tell units apart by its file. The guard reads the unit field of each line, and refuses the step when no unit is read; put {unit} in the path (e.g. "logs/{unit}/trace.jsonl")`,
         node: action.id,
         line: lookupLine(ast, action.id),
       });
@@ -3995,10 +4033,13 @@ export interface ValidateOptions {
   importStack?: string[];
   /** Files already read and checked (set by import resolution; shared across a run). */
   importCache?: ImportCache;
+  /** Binding target being compiled for. Target-specific warnings (rule ids CX*) appear only when it is set. */
+  target?: string;
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
   return [
+    ...(opts.target === "codex" ? codexWarnings(ast) : []),
     ...v1UniqueNames(ast),
     ...v2NoKeywordNames(ast),
     ...v3FlowResolves(ast),
@@ -4055,6 +4096,16 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v118TalkPermissionModes(ast),
     ...v119ModelAliases(ast),
     ...v120DecisionArrives(ast),
+    ...v121StoreOwner(ast),
+    ...v122MachineKnown(ast),
+    ...v123HomePaths(ast),
+    ...v124ScheduleCarrier(ast),
+    ...v125SessionCronSurvives(ast),
+    ...v126AwayWaits(ast),
+    ...v127PersonWindows(ast),
+    ...v128InventoryRoots(ast),
+    ...v129NeedsOutside(ast),
+    ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4137,6 +4188,271 @@ function v120DecisionArrives(ast: TopologyAST): ValidationResult[] {
     results.push({
       rule: "V120", level: "warning", node: a.id, line: lookupLine(ast, a.id),
       message: `Agent "${a.id}" holds ${a.decides.join(", ")} and ${[...new Set(incoming.get(a.id))].join(", ")} can message it: a decision can arrive here as a message.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V121 (T-10): a store with `owner:` has one agent that may share it. Two
+ * agents that write it (list it under `memory:`, `custodian-of:` or `writes:`)
+ * are an error naming both, unless one of the two is the owner. An owner that
+ * is not an agent is an error too. A store with no `owner:` is unchecked.
+ */
+function v121StoreOwner(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
+  const ids = new Set(agents.map((a) => a.id));
+  for (const store of ast.stores ?? []) {
+    if (!store.owner) continue;
+    if (!ids.has(store.owner)) {
+      results.push({ rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id), message: `Store "${store.id}" has owner "${store.owner}", which is not an agent.` });
+      continue;
+    }
+    const writers = agents
+      .filter((a) => [...(a.memory ?? []), ...(a.custodianOf ?? []), ...(a.writes ?? [])].includes(store.id))
+      .map((a) => a.id)
+      .filter((id) => id !== store.owner);
+    if (writers.length >= 2) {
+      results.push({
+        rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id),
+        message: `Store "${store.id}" is owned by "${store.owner}", but "${writers[0]}" and "${writers[1]}" both write it and neither is the owner.`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V122 (T-07): `machine:` on a session agent, a schedule job or a store must name a `machines` entry. */
+function v122MachineKnown(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const known = new Set((ast.machines ?? []).map((m) => m.id));
+  const check = (kind: string, id: string, machine: string | undefined) => {
+    if (machine === undefined || known.has(machine)) return;
+    const have = known.size ? `declared: ${[...known].join(", ")}` : "the topology declares no machines";
+    results.push({ rule: "V122", level: "error", node: id, line: lookupLine(ast, id), message: `${kind} "${id}" runs on machine "${machine}", which is not in machines { } (${have}).` });
+  };
+  for (const n of ast.nodes) if (n.type === "agent") check("Agent", n.id, (n as AgentNode).machine);
+  for (const j of ast.schedules ?? []) check("Schedule job", j.id, j.machine);
+  for (const st of ast.stores ?? []) check("Store", st.id, st.machine);
+  return results;
+}
+
+const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
+
+/**
+ * V123 (T-07): an absolute path into one person's home folder
+ * (`/Users/<x>/`, `/home/<x>/`, `C:\Users\`) in a hook, gate, tool or action
+ * command only works on that person's machine.
+ */
+function v123HomePaths(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (what: string, id: string, text: string | undefined) => {
+    if (!text) return;
+    const m = text.match(HOME_PATH);
+    if (!m) return;
+    results.push({ rule: "V123", level: "error", node: id, line: lookupLine(ast, id), message: `${what} has a home-folder absolute path (${m[0].replace(/^[^/A-Za-z]/, "")}...): it only works on one machine. Use a project-relative path or declare a machine.` });
+  };
+  for (const h of ast.hooks ?? []) check(`Hook "${h.name}" command`, h.name, h.run);
+  for (const n of ast.nodes) {
+    if (n.type === "agent") for (const h of (n as AgentNode).hooks ?? []) check(`Hook "${h.name}" command`, n.id, h.run);
+    if (n.type === "gate") {
+      check(`Gate "${n.id}" run`, n.id, (n as { run?: string }).run);
+      for (const c of (n as { checks?: string[] }).checks ?? []) check(`Gate "${n.id}" check`, n.id, c);
+    }
+    if (n.type === "action") for (const c of (n as { commands?: string[] }).commands ?? []) check(`Action "${n.id}" command`, n.id, c);
+  }
+  for (const t of ast.toolDefs ?? []) {
+    check(`Tool "${t.id}" script`, t.id, t.script);
+    for (const a of t.args ?? []) check(`Tool "${t.id}" argument`, t.id, a);
+  }
+  return results;
+}
+
+const CARRIERS = ["session", "cron", "launchd", "cloud", "calendar"];
+const SURVIVES = ["pane-close", "reboot", "away"];
+
+/** V124 (T-06): a schedule job's `carrier:` and `survives:` must be one of the known values. */
+function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== undefined && !CARRIERS.includes(j.carrier))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has carrier "${j.carrier}"; use one of: ${CARRIERS.join(", ")}.` });
+    if (j.survives !== undefined && !SURVIVES.includes(j.survives))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has survives "${j.survives}"; use one of: ${SURVIVES.join(", ")}.` });
+  }
+  return results;
+}
+
+/** V125 (L-2): a job carried by a session cannot outlive it. */
+function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== "session" || !j.survives || !SURVIVES.includes(j.survives)) continue;
+    results.push({
+      rule: "V125", level: "error", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" has carrier: session and survives: ${j.survives}, but a session cron dies with its session and after 7 days. Use carrier: cron, launchd or cloud for a job that must survive.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V126 (T-09): a human step whose `who:` person is away today or later waits on
+ * someone who may not answer. The warning names the step, the person, the
+ * window and what the step does on timeout.
+ */
+function v126AwayWaits(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Map((ast.persons ?? []).map((p) => [p.id, p]));
+  const now = today();
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || !n.who) continue;
+    const person = people.get(n.who);
+    const w = parseWindow(person?.away);
+    if (!person || !w || w.end < now) continue;
+    const behavior = n.timeout
+      ? `on timeout (${n.timeout}) it will ${n.onTimeout ?? "halt"}`
+      : "it has no timeout, so it waits until they are back";
+    results.push({
+      rule: "V126", level: "warning", node: n.id, line: lookupLine(ast, n.id),
+      message: `Step "${n.id}" waits on ${person.id}, who is away ${person.away}: ${behavior}.`,
+    });
+  }
+  return results;
+}
+
+/** V127 (T-09): `who:` must name a `person`; `away:` and `valid:` must be real `YYYY-MM-DD..YYYY-MM-DD` windows. */
+function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Set((ast.persons ?? []).map((p) => p.id));
+  const bad = (id: string, what: string, value: string) =>
+    results.push({ rule: "V127", level: "error", node: id, line: lookupLine(ast, id), message: `${what} "${value}" is not a window like "2026-01-31..2026-02-14" (two real dates, the first not after the second).` });
+  for (const p of ast.persons ?? []) if (p.away !== undefined && !parseWindow(p.away)) bad(p.id, `Person "${p.id}" away:`, p.away);
+  for (const n of ast.nodes) {
+    if (n.type !== "human") continue;
+    if (n.who && !people.has(n.who))
+      results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message: `Human "${n.id}" has who: ${n.who}, which is not a person block.` });
+    if (n.valid !== undefined && !parseWindow(n.valid)) bad(n.id, `Human "${n.id}" valid:`, n.valid);
+  }
+  return results;
+}
+
+const hasDotDot = (p: string) => p.split(/[\\/]/).includes("..");
+const isAbsolute = (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\");
+
+/** V128 (T-08): an inventory root is a project-relative folder: no absolute path, no `..`. */
+function v128InventoryRoots(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const r of ast.inventoryRoots ?? []) {
+    if (!r || isAbsolute(r) || r.startsWith("~") || hasDotDot(r))
+      results.push({ rule: "V128", level: "error", message: `Inventory root "${r}" must be a path inside the project: relative, with no ".." and no absolute or home path.` });
+  }
+  return results;
+}
+
+/** V129 (L-4): `needs` names things outside the repo: memory is a path under the home folder (`~/...`, no `..`), skills and connectors are bare names. */
+function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const n = ast.needs;
+  if (!n) return results;
+  const err = (message: string) => results.push({ rule: "V129", level: "error", message });
+  if (n.memory !== undefined) {
+    if (!n.memory || hasDotDot(n.memory) || (isAbsolute(n.memory)) || (n.memory.startsWith("~") && !n.memory.startsWith("~/")))
+      err(`needs memory: "${n.memory}" must be a path under the user's home, written ~/<path> (no "..", no other absolute path).`);
+  }
+  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors]] as const) {
+    for (const name of list ?? [])
+      if (!name || /[\\/]/.test(name) || name === "." || name === "..")
+        err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
+  }
+  return results;
+}
+
+/**
+ * AG-placeholder (E-3): a guarded step's command holds placeholder words
+ * (`EP.json`, `OUT.mp4`, `<id>`), so its guard matches on the words before
+ * them. Said once per command, so the author knows what is matched.
+ */
+function stepPlaceholderWarnings(ast: TopologyAST): ValidationResult[] {
+  const out: ValidationResult[] = [];
+  const guarded = new Set<string>();
+  for (const n of ast.nodes) {
+    if (n.type === "gate" && checkableActionGate(ast, n as GateNode)) for (const a of guardedActions(ast, n as GateNode)) guarded.add(a.id);
+  }
+  for (const n of ast.nodes) {
+    if (n.type !== "action" || !guarded.has(n.id)) continue;
+    for (const c of (n as ActionNode).commands ?? []) {
+      const { words, cut } = stepMatchWords(c);
+      if (cut) out.push({ rule: "AG-placeholder", level: "warning", node: n.id, message: `action "${n.id}" command "${c}" holds placeholder words, so its guard matches any command containing "${words}" (the words before the first placeholder).` });
+    }
+  }
+  return out;
+}
+
+/**
+ * Codex warnings (CX-5): what a `--target codex` scaffold drops or refuses.
+ * They run only when `validate` is given `target: "codex"`, so a Claude Code
+ * user never sees them.
+ */
+export function codexWarnings(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const warn = (rule: string, node: string, message: string) => results.push({ rule, level: "warning", node, message: `[codex] ${message}` });
+  for (const n of ast.nodes) {
+    const model = (n as { model?: string }).model;
+    if (model && isClaudeModelName(model)) {
+      warn("CX5-model", n.id, `agent "${n.id}" uses the Claude model "${model}"; Codex runs no Claude model, so scaffold refuses it. Set a Codex model (for example gpt-5.2).`);
+    }
+    if (n.type !== "agent") continue;
+    const agent = n as AgentNode;
+    if (agent.sandbox != null) {
+      warn("CX5-sandbox", agent.id, `agent "${agent.id}" sets sandbox; a Codex agent file cannot override the parent sandbox_mode, so it is not written. Set sandbox_mode in config.toml for the whole project.`);
+    }
+    if (agent.mcpServers && agent.mcpServers.length > 0) {
+      warn("CX5-mcp", agent.id, `agent "${agent.id}" lists mcp-servers; a Codex agent file cannot scope MCP servers, so they are written once in config.toml for every agent.`);
+    }
+  }
+  for (const hook of ast.hooks) {
+    for (const p of codexHookProblems(hook)) {
+      if (p.level === "error") results.push({ rule: p.rule, level: "error", node: hook.name, message: `[codex] ${p.message}` });
+      else warn(p.rule, hook.name, p.message);
+    }
+  }
+  // R-11: a human step is a line in .codex/state/approvals.jsonl; a sandbox that lets the model write .codex lets it approve itself.
+  const forgeable = humanGateForgeable(ast);
+  if (forgeable) {
+    warn("CX11-forgeable", "approvals", `a human step stands before an agent, but ${forgeable}, so the model can write .codex/state/approvals.jsonl and approve itself; the human gate cannot hold. Set settings { sandbox: workspace-write }, which keeps .codex read-only for the agent.`);
+  }
+  // R-1: a gate Codex can only run on SubagentStop holds nothing; say so instead of looking like it holds.
+  for (const n of ast.nodes) {
+    if (n.type !== "gate") continue;
+    const hold = codexGateHold(ast, n as GateNode);
+    if (hold.kind === "none") {
+      warn("CX9-noblock", n.id, `gate "${n.id}" can only run when ${hold.anchors.join(", ")} stops; Codex cannot block a SubagentStop, and no agent spawn or script step follows it to hold, so nothing stops the next step (graded none). Give it a before: agent or script step, or run its script by hand.`);
+    }
+  }
+  // R-3: a long gate check holds every guarded call that long; Codex lets the call run if the hook times out.
+  for (const n of ast.nodes) {
+    if (n.type !== "gate") continue;
+    const gate = n as GateNode;
+    const worst = gateWorstCase(gate);
+    if (gate.behavior === "advisory" || !gate.run || worst === null) continue;
+    const hook = guardHookTimeout([gate]);
+    if (hook > GUARD_TIMEOUT) {
+      warn("CX9-timeout", gate.id, `gate "${gate.id}" can run up to ${worst}s (timeout ${gate.timeout} x ${(gate.retry ?? 0) + 1} attempt(s)); its hook timeout is raised to ${hook}s, so a guarded call waits that long while it is checked. Shorten the timeout or the retries.`);
+    }
+  }
+  for (const p of planCodexRules(ast).problems) {
+    warn("CX13", p.list, `settings ${p.list}: ${p.message}`);
+  }
+  for (const id of writingJobsWithoutSandbox(ast)) {
+    warn("CX20", id, `schedule job "${id}" runs an agent that writes, but no sandbox is set, and exec is read-only by default; the job runs with --sandbox read-only and cannot write. Set sandbox: workspace-write.`);
+  }
+  for (const hit of notExpressibleHits(ast)) {
+    const label = hit.scope === "agent" ? "agent field" : hit.scope === "defaults" ? "defaults field" : "topology field";
+    results.push({
+      rule: "CX23", level: "warning",
+      message: `[codex] ${label} "${hit.field}" is not expressible on Codex: ${hit.reason}. Set by: ${hit.where.join(", ")}.`,
     });
   }
   return results;

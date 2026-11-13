@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 120 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 129 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -777,14 +777,14 @@ through the validator like any other rule.
 | V101 | error | An agent's `runs:` is `subagent`, `session`, `inline` or `fork`, and an `independent` node does not run `inline` (it would read the author's reasoning) |
 | V102 | error | Every field and block name in a node, `meta`, a hook, job, artifact, tool or skill, and every topology section, is one the parser reads — a typo, a field of another node type or an unknown block vanished from the AST while validate passed. Contents of free-form blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, ...) are not checked yet |
 | V103 | error | An agent's or gate's `behavior:` is `advisory` or `blocking` — any other value was kept and emitted into the scaffold unchecked |
-| V104 | error | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` |
+| V104 | error/warning | `strength:` (on a gate, a hook or a flow edge) is `refuse`, `detect`, `hope` or `none`, and a gate's `by:` is `code`, `hook`, `settings` or `gate` (error); a hook with `strength: refuse` on an event that cannot block a call (`PostToolUse`, `Stop`, `SubagentStop`, ...) or with `async: true` (warning, D-3) |
 | V105 | error | A flow edge's `guard:` names a hook in `hooks { }` or a gate in `gates { }`, so an edge is never credited with a refusal nothing provides |
 | V106 | error | An `at:` citation is a safe project-relative `"path"` or `"path:line"`, and a gate's `match:` has an `at:` to be looked for in. Whether the file, line and match text exist is read by `guard --check`, never by validate |
 | V107 | error | A hook matcher can match: not permission-rule syntax (`Bash(rm -rf *)`, which belongs in `if:`), not the dotted `mcp.server.*` form, not a bare `mcp__server` (which matches no tool), and a regex that compiles. A hook's `if:` sits on a tool event, the only ones Claude Code reads it on |
 | V108 | warning | A hook's `run: "exit N"` with N other than 0 or 2 does not block: only exit 2 blocks |
 | V109 | warning | A hook with `strength: refuse` on PreToolUse or PermissionRequest that matches a tool of an MCP server matches every tool of that server the topology names (`validate --inventory` adds the inventory's tool names) |
 | V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
-| V111 | error | An action's `unit-from` is not a valid regex, or has no capture group |
+| V111 | error/warning | An action's `unit-from` is not a valid regex, or has no capture group (error); an action with `unit-from` behind a gate whose ledger path has no `{unit}`, so the record's file cannot tell units apart (warning, D-2) |
 | V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
 | V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `bypassPermissions` or `auto`; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
 | V114 | warning | Two or more session agents and no flow edge between any two of them: `talk not declared: unguarded` |
@@ -794,6 +794,15 @@ through the validator like any other rule.
 | V118 | warning | A talk edge joins two session agents that declare different `permission-mode`s: a session in another permission mode holds incoming messages for its user, so the edge may not arrive |
 | V119 | warning | `model:` is a bare alias (`opus`, `sonnet`, `haiku`, `fable`) while the topology sets `pin-models: true`: an alias resolves differently over time, so use the exact id for a pinned run |
 | V120 | warning | An agent with `decides:` has an incoming talk edge: a decision can arrive there as a message from another session. The binding logs each prompt as `typed` or `arrived` in `.claude/state/talk.jsonl` instead of refusing messages by keyword |
+| V121 | error | A store with `owner:` is written by two agents and neither is the owner (the message names both), or its owner is not an agent. An unowned store is not checked |
+| V122 | error | `machine:` on a session agent, a schedule job or a store names a machine that is not in the top-level `machines { }` block |
+| V123 | error | A hook, gate, tool or action command holds an absolute path into one person's home folder (`/Users/<x>/`, `/home/<x>/`, `C:\\Users\\`); it only works on that machine |
+| V124 | error | A schedule job's `carrier:` is not one of `session`, `cron`, `launchd`, `cloud`, `calendar`, or its `survives:` is not one of `pane-close`, `reboot`, `away` |
+| V125 | error | A schedule job has `carrier: session` and any `survives:`: a session cron dies with its session and after 7 days |
+| V126 | warning | A human step's `who:` person is away today or later: the message names the step, the person, the window and the step's timeout behavior (or says it has no timeout) |
+| V127 | error | A human's `who:` is no `person` block, or a person's `away:` or a human's `valid:` is not a real `YYYY-MM-DD..YYYY-MM-DD` window |
+| V128 | error | An `inventory { roots }` entry is an absolute path, a home path (`~`) or holds `..`; a root must be a folder inside the project |
+| V129 | error | `needs memory:` is not a `~/<path>` under the user's home (an absolute path or `..` is refused), or a `user-skills` or `connectors` entry is a path instead of a bare name |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

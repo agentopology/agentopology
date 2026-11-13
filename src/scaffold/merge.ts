@@ -13,6 +13,7 @@ import {
   CLAUDE_CODE_STRUCTURAL_HEADINGS,
 } from "../sync/index.js";
 import { hashContent } from "./manifest.js";
+import { AGENTS_MD_BEGIN, AGENTS_MD_END } from "../bindings/codex.js";
 import { fenceSpan } from "../bindings/lib/prompt-fence.js";
 
 /**
@@ -25,6 +26,15 @@ function getStructuralHeadings(binding: string): string[] {
     default:
       return CLAUDE_CODE_STRUCTURAL_HEADINGS;
   }
+}
+
+/** Where the managed block (markers included) starts and ends, or null. */
+function managedSpan(content: string): { start: number; end: number } | null {
+  const open = content.indexOf(AGENTS_MD_BEGIN);
+  if (open === -1) return null;
+  const close = content.indexOf(AGENTS_MD_END, open);
+  if (close === -1) return null;
+  return { start: open, end: close + AGENTS_MD_END.length };
 }
 
 /**
@@ -47,6 +57,14 @@ export function mergeAgentFile(
   generated: string,
   binding: string,
 ): string {
+  // A file with a managed block (AGENTS.md): only the block is ours; text
+  // above and below it is the user's and stays.
+  const myBlock = managedSpan(existing);
+  const newBlock = managedSpan(generated);
+  if (myBlock && newBlock) {
+    return existing.slice(0, myBlock.start) + generated.slice(newBlock.start, newBlock.end) + existing.slice(myBlock.end);
+  }
+
   // Files with prompt markers: keep the user's text between them, take
   // everything else from the generated file.
   const mine = fenceSpan(existing);
@@ -292,7 +310,20 @@ function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
   return group.hooks.some((h) => {
     if (!isPlainObject(h) || typeof h.command !== "string") return false;
     const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
-    return tokens.some((t) => scripts.includes(t));
+    if (tokens.some((t) => scripts.includes(t))) return true;
+    // R-8: a Codex command names its script after a root expression,
+    // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
+    // whitespace token equals the path. Read every `.codex/scripts/…` path in it.
+    for (const m of h.command.matchAll(/(?:^|[\s"'/])(\.codex\/scripts\/[^\s"'`;|&)]+)/g)) {
+      if (scripts.includes(m[1])) return true;
+    }
+    // F-13: the Claude Code scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`,
+    // which no whitespace token equals either. Only a path right after the variable counts, so a
+    // user's `bash ./mine/.claude/skills/...` is still not claimed.
+    for (const m of h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s"'`;|&)]+)/g)) {
+      if (scripts.includes(m[1].replace(/^\.\//, ""))) return true;
+    }
+    return false;
   });
 }
 

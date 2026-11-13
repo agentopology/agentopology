@@ -57,6 +57,9 @@ import type {
   PromptVariant,
   AuthDef,
   StoreNode,
+  MachineDef,
+  PersonDef,
+  NeedsDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -528,6 +531,7 @@ export function parseAgent(
   if (fields.invocation) node.invocation = fields.invocation;
   if (fields.runs) node.runs = fields.runs;
   if (fields.place) node.place = unquote(fields.place);
+  if (fields.machine) node.machine = unquote(fields.machine);
   if (fields["permission-mode"]) node.permissionMode = fields["permission-mode"];
   const decides = parseMultilineList(body, "decides");
   if (decides.length) node.decides = decides;
@@ -816,6 +820,8 @@ export function parseHuman(
   if (fields.description) node.description = unquote(fields.description);
   if (fields.timeout) node.timeout = unquote(fields.timeout);
   if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
+  if (fields.who) node.who = unquote(fields.who);
+  if (fields.valid) node.valid = unquote(fields.valid);
 
   return node;
 }
@@ -1258,6 +1264,8 @@ export function parseStore(id: string, body: string): StoreNode {
   if (fields.path) store.path = unquote(fields.path);
   if (fields.extraction) store.extraction = fields.extraction;
   if (fields.format) store.format = fields.format;
+  if (fields.owner) store.owner = fields.owner;
+  if (fields.machine) store.machine = fields.machine;
 
   // Connection: may use `secret "uri"` modifier (same pattern as parseCheckpoint)
   if (fields.connection) {
@@ -1924,6 +1932,9 @@ export function parseSchedule(body: string): ScheduleJobDef[] {
     if (fields.agent) job.agent = fields.agent;
     if (fields.action) job.action = fields.action;
     if (fields.enabled) job.enabled = fields.enabled !== "false";
+    if (fields.machine) job.machine = unquote(fields.machine);
+    if (fields.carrier) job.carrier = unquote(fields.carrier);
+    if (fields.survives) job.survives = unquote(fields.survives);
     jobs.push(job);
   }
   return jobs;
@@ -2223,7 +2234,7 @@ function buildSourceMap(rawSource: string): Record<string, number> {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Match: agent <id> {, action <id> {, gate <id> {, human <id> {, store <id> {, retrieval <id> {
-    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group|store|retrieval)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
+    const namedMatch = line.match(/^\s*(?:agent|action|gate|human|group|store|retrieval|person)\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\{|[^{]*\{)/);
     if (namedMatch) {
       sourceMap[namedMatch[1]] = i + 1; // 1-based line number
       continue;
@@ -2592,6 +2603,43 @@ export function parse(source: string): TopologyAST {
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
 
+  // --- Machines (top-level `machines { machine <id> { os: ... } }`) ---
+  const machinesBlock = extractBlock(topBody, "machines");
+  const machines: MachineDef[] | undefined = machinesBlock
+    ? extractAllBlocks(machinesBlock.body, "machine").filter((b) => b.id).map((b) => {
+        const f = parseFields(b.body);
+        return { id: b.id as string, ...(f.os ? { os: unquote(f.os) } : {}) };
+      })
+    : undefined;
+
+  // --- People (top-level `person <id> { away: "..." }`) ---
+  const personBlocks = extractAllBlocks(topBody, "person").filter((b) => b.id);
+  const persons: PersonDef[] | undefined = personBlocks.length
+    ? personBlocks.map((b) => {
+        const f = parseFields(b.body);
+        return { id: b.id as string, ...(f.away ? { away: unquote(f.away) } : {}) };
+      })
+    : undefined;
+
+  // --- Inventory roots (top-level `inventory { roots: ["harness/"] }`) ---
+  const inventoryBlock = extractBlock(topBody, "inventory");
+  const inventoryRootsField = inventoryBlock ? parseFields(inventoryBlock.body).roots : undefined;
+  const inventoryRoots = inventoryRootsField ? parseList(inventoryRootsField).map(unquote) : undefined;
+
+  // --- Needs outside the repo (top-level `needs { memory: "~/x" connectors: [..] user-skills: [..] }`) ---
+  const needsBlock = extractBlock(topBody, "needs");
+  const needs: NeedsDef | undefined = needsBlock
+    ? (() => {
+        // The fields may share a line: `needs { memory: "~/m"  connectors: [a] }`.
+        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills)[ \t]*:)/g, "\n"));
+        return {
+          ...(f.memory ? { memory: unquote(f.memory) } : {}),
+          ...(f.connectors ? { connectors: parseList(f.connectors).map(unquote) } : {}),
+          ...(f["user-skills"] ? { userSkills: parseList(f["user-skills"]).map(unquote) } : {}),
+        };
+      })()
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2831,6 +2879,10 @@ export function parse(source: string): TopologyAST {
     records,
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
+    ...(machines ? { machines } : {}),
+    ...(persons ? { persons } : {}),
+    ...(inventoryRoots?.length ? { inventoryRoots } : {}),
+    ...(needs ? { needs } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 
