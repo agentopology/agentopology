@@ -84,3 +84,31 @@ export function notExpressibleHits(ast: TopologyAST): NotExpressibleHit[] {
   }
   return hits;
 }
+
+/** True when the job's agent writes files (a `writes` list, or a Write/Edit tool). */
+function agentWrites(agent: AgentNode | undefined): boolean {
+  if (!agent) return false;
+  return (agent.writes?.length ?? 0) > 0 || (agent.tools ?? []).some((t) => t === "Write" || t === "Edit");
+}
+
+/** True when the topology or the job's agent names a sandbox: `settings.sandbox`, the codex extension, or the agent's `sandbox`. */
+export function hasSandboxWord(ast: TopologyAST, agent?: AgentNode): boolean {
+  const ext = (ast.settings?.extensions as Record<string, Record<string, unknown>> | undefined)?.codex ?? (ast.extensions?.codex as Record<string, unknown> | undefined);
+  return ast.settings?.sandbox != null || ext?.sandbox_type != null || ext?.["sandbox-type"] != null || agent?.sandbox != null;
+}
+
+/** Jobs Codex runs through `codex exec` (carrier cron or none, an agent target). */
+export function execJobs(ast: TopologyAST): { id: string; agent: AgentNode }[] {
+  const out: { id: string; agent: AgentNode }[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== undefined && j.carrier !== "cron") continue;
+    const agent = ast.nodes.find((n) => n.type === "agent" && n.id === j.agent) as AgentNode | undefined;
+    if (agent) out.push({ id: j.id, agent });
+  }
+  return out;
+}
+
+/** Exec jobs whose agent writes while no sandbox is named: `codex exec` is read-only by default. */
+export function writingJobsWithoutSandbox(ast: TopologyAST): string[] {
+  return execJobs(ast).filter((j) => agentWrites(j.agent) && !hasSandboxWord(ast, j.agent)).map((j) => j.id);
+}

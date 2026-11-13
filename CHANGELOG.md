@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Scheduled jobs that run Codex (CX-20)
+
+- On `--target codex`, a schedule job with `carrier: cron` (or none) that runs an agent now scaffolds an executable `scripts/schedule-<id>.sh` and a `crontab.fragment` line. The script runs `codex -a never exec --sandbox <mode>` with an explicit sandbox: the agent's, the project's, or `read-only`.
+- A job whose agent writes files while no sandbox is named gets a warning that `codex exec` is read-only by default, so the job cannot write. A job with another carrier (cloud, launchd, calendar, session) or one that runs an action gets a warning and no script. `carrier: session` with `survives:` is still an error (V125).
+
 ### [feature] Codex says what it cannot express (CX-23)
 
 - `validate` with a Codex target (and `scaffold --target codex`) now gives one warning for each field Codex has no key for: sampling settings (temperature, max tokens, top-p, top-k, stop, seed), a thinking token budget, output format, max turns, log level, fallback chain, rate limit, circuit breaker, background and isolation on an agent, the same sampling settings under `defaults`, and `providers`. Each warning names the field, why, and which agents set it.
