@@ -1934,6 +1934,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     // A project path names the user's script: a stub only fills the gap until
     // it exists, and is never written over it.
     const project = isProjectPath(script);
+    const path = project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`;
     files.push({
       path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
       // F-25: in the language of the interpreter hookCommand runs it with.
