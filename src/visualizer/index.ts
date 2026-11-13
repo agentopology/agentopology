@@ -1945,7 +1945,7 @@ function showNodeDetail(id) {
     const fv = fi.validate;
     h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">validate: ' + (typeof fv === 'string' ? esc(fv) : fv.length === 0 ? 'clean' : fv.length + ' issue(s)') + '</div>';
     const fg = fi.guard;
-    if (fg) h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">guard: ' + (typeof fg === 'string' ? esc(fg) : esc(fg.strength) + ' <span style="color:var(--t3)">' + esc(fg.where) + '</span>') + '</div>';
+    if (fg) h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">guard: ' + (typeof fg === 'string' ? esc(fg) : esc(fg.gradeNote ? fg.strength + ', ' + fg.gradeNote : fg.strength) + ' <span style="color:var(--t3)">' + esc(fg.where) + '</span>') + '</div>';
     h += '<div style="font-size:10px;margin-top:4px;color:var(--t3);font-family:var(--font-mono)">source ' + esc(data.facts.sha256.slice(0, 12)) + ' \\u00b7 ' + esc(data.facts.at) + '</div>';
     h += '</div></div>';
   }
@@ -2539,12 +2539,18 @@ function chipHtml(grade) {
   if (!g) return '<span class="chip chip-outline-dotted chip-gray" title="not checked"><i class="chip-shape"></i>not checked</span>';
   return '<span class="chip chip-' + esc(g.shape) + ' chip-' + esc(g.color) + '" title="' + esc(g.meaning) + '"><i class="chip-shape">' + esc(g.mark || '') + '</i>' + esc(g.word) + '</span>';
 }
+// The grade as guard --check prints it: the strength, then its note when it has one (F-4).
+function guardWord(id) {
+  var g = data.facts && data.facts.guard ? data.facts.guard[id] : null;
+  if (!g) return '';
+  return g.gradeNote ? g.strength + ', ' + g.gradeNote : g.strength;
+}
 function guardRowsAll() {
   var rows = [];
   if (factsChecked()) {
     Object.keys(data.facts.guard).forEach(function(id) {
       var g = data.facts.guard[id];
-      rows.push({ id: id, kind: g.kind, grade: g.strength, word: g.strength, by: g.by, where: g.where, notes: g.notes || [] });
+      rows.push({ id: id, kind: g.kind, grade: g.strength, word: guardWord(id), by: g.by, where: g.where, notes: g.notes || [] });
     });
   } else {
     // With no project dir nothing was read: every chip reads "not checked".
