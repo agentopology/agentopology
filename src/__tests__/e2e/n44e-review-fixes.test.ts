@@ -91,3 +91,48 @@ describe("[N44e] place and talk forms (V113)", () => {
     expect(r.some((x) => x.rule === "V113" && x.level === "error" && /everyone/.test(x.message))).toBe(true);
   });
 });
+
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../../../dist/cli/index.js");
+const cli = (...a: string[]) => spawnSync("node", [CLI, ...a], { encoding: "utf8" });
+
+const WITH_IMPORT = `topology t : [pipeline] {
+  meta { version: "1.0.0"
+    description: "x" }
+  import missing from "./nope.at"
+  orchestrator { model: sonnet
+    handles: [a, b] }
+  agent a { model: sonnet
+    description: "a" }
+  agent b { model: sonnet
+    description: "b" }
+  flow { a -> b }
+}
+`;
+
+describe("[N44e] every CLI path that validates resolves imports", () => {
+  for (const [name, args] of [
+    ["scaffold", (f: string, d: string) => ["scaffold", f, "--target", "claude-code", "--output", d]],
+    ["plan", (f: string, _d: string) => ["plan", f]],
+    ["visualize", (f: string, d: string) => ["visualize", f, "--output", d]],
+  ] as const) {
+    it(`[N44e] ${name} of a file with a missing import refuses like validate does`, () => {
+      const f = join(root, "t.at");
+      fs.writeFileSync(f, WITH_IMPORT);
+      const out = join(root, "out");
+      const v = cli("validate", f);
+      expect(v.status).toBe(1);
+      const r = cli(...args(f, out));
+      const text = r.stdout + r.stderr;
+      if (name === "visualize") {
+        // The page embeds the validation issues, so the missing import shows there.
+        const html = fs.readdirSync(out).filter((x) => x.endsWith(".html")).map((x) => fs.readFileSync(join(out, x), "utf8")).join("");
+        expect(html).toMatch(/file not found/);
+        return;
+      }
+      expect(text, name).toMatch(/file not found|nope\.at/);
+      expect(r.status, text).not.toBe(0);
+    });
+  }
+});

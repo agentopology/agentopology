@@ -520,10 +520,11 @@ function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationRe
   }
   const local = ast.imports.filter((i) => !i.registry);
   if (local.length === 0) return results;
-  if (!opts.filePath) {
+  const filePath = opts.filePath ?? ast.sourcePath;
+  if (!filePath) {
     return [...results, { rule: "V8", level: "warning", message: "imports not checked" }];
   }
-  return [...results, ...checkImports(ast, opts.filePath, parseSource, validate, opts.importStack)];
+  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack)];
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */

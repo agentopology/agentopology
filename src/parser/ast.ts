@@ -1122,6 +1122,12 @@ export interface TopologyAST {
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
+  /**
+   * Absolute path of the file the CLI parsed this from. Set (non-enumerable, so
+   * it never reaches `export --format json`) by the CLI; `validate` uses it to
+   * resolve imports when no `filePath` option is given.
+   */
+  sourcePath?: string;
 }
 
 // ---------------------------------------------------------------------------

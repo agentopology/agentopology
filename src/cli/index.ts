@@ -166,6 +166,17 @@ function readFile(filePath: string): string {
   return fs.readFileSync(resolved, "utf-8");
 }
 
+/**
+ * Parse a topology read from `filePath`. The path is recorded on the AST
+ * (non-enumerable, so exports do not carry it) so every later `validate(ast)`
+ * resolves imports relative to the file, as `validate` does.
+ */
+function parseAt(source: string, filePath: string): ReturnType<typeof parse> {
+  const ast = parse(source);
+  Object.defineProperty(ast, "sourcePath", { value: path.resolve(filePath), enumerable: false, writable: true, configurable: true });
+  return ast;
+}
+
 /** Recursively create directories and write a file. */
 function writeFile(basePath: string, relativePath: string, content: string, executable?: boolean): void {
   const fullPath = path.join(basePath, relativePath);
@@ -357,7 +368,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -469,7 +480,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -679,7 +690,7 @@ function cmdVisualize(filePath: string, outputDir?: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -903,7 +914,7 @@ function cmdExport(filePath: string, formatName: string, outputDir?: string): vo
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -954,7 +965,7 @@ function cmdPlan(
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -1057,7 +1068,7 @@ function cmdInfo(filePath: string): void {
 
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
@@ -1240,7 +1251,7 @@ function printInstalledMark(): void {
  */
 function cmdGuardCheck(filePath: string, dirPath: string): void {
   const source = fs.readFileSync(path.resolve(filePath), "utf-8");
-  const ast = parse(source);
+  const ast = parseAt(source, filePath);
   const root = path.resolve(dirPath);
   const report = checkGuards(ast, root);
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
@@ -1262,7 +1273,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   const source = readFile(filePath);
   let ast;
   try {
-    ast = parse(source);
+    ast = parseAt(source, filePath);
   } catch (err) {
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
