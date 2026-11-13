@@ -180,12 +180,13 @@
   ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
   ".claude/skills/ship/scripts/action-publish.sh": "9388757e36b462e77438d40347b2b5a13ab5694226e15e38f6b21ac62581e860",
   ".claude/agents/editor/AGENT.md": "2f96436d7154307e5b406a38116a13e6eb966bc20b85ccb5172319074e96dbf4",
-  ".claude/skills/ship/SKILL.md": "b9e3bc4f23c91bd585915fd26aff655a21cb7e773c692f90dff918081917eacd",
+  ".claude/skills/ship/SKILL.md": "a223df4d34cd9ef472a338a0abc46f72c20c625e5d2f34d7d1e320ba9bccdf3e",
   ".claude/skills/ship/scripts/render-check.sh": "b7b7fbb4de0856551ec6b7f9dcf0a2be2b4d2b3a0fff883685084a45f5761549",
   ".claude/skills/ship/scripts/gate-render-check.sh": "cbd13fc545c01207bdaa284247e9b58023459f4542c5ff1a8f49edeb65b41a54",
   ".claude/skills/ship/scripts/before-agent.sh": "5bad9997a37582e18c192ce03c9c915f9d98ebf762722f275d7623e2d31ce79a",
-  ".claude/skills/ship/scripts/before-action.sh": "ffe9bcf859fade95c7e07db72a8c9fa40a38103cd543eea1bbac7714de1e695c",
-  ".claude/settings.json": "e7a2cf95d890a4f989da6f62b392f72439bb96871e399845236dfa76a69a4ca9",
+  ".claude/skills/ship/scripts/before-action.sh": "f733f78cc0695c5bdeeec5a756c092cb392ca1033177dca293878a1735665946",
+  ".claude/skills/ship/scripts/before-edit.sh": "d1befcd0ab91f2072dbc1605d30a59d8aec7ff0b79e055f0f319d6ea016f1b0a",
+  ".claude/settings.json": "a294a163e020ac268b8f41d54ee0c0755afa5ec91c7065c1a4d607d264480e15",
   ".claude/rules/ship.md": "bf8d65b27840d1f7e81c5da817da0cae5e38ed057e59fe1a9da59bab563c9d57"
  },
  "src/__tests__/e2e/fixtures/compile.at": {
@@ -251,9 +252,10 @@
  "inline:action-gate": {
   ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
   ".claude/skills/ship/scripts/action-publish.sh": "9388757e36b462e77438d40347b2b5a13ab5694226e15e38f6b21ac62581e860",
-  ".claude/skills/ship/SKILL.md": "26b1ca760c4722f0c012a4711a35903377a467f04ebfacef488321b96bdae014",
-  ".claude/skills/ship/scripts/before-action.sh": "ffe9bcf859fade95c7e07db72a8c9fa40a38103cd543eea1bbac7714de1e695c",
-  ".claude/settings.json": "a84dabe22c58babdc9d489ac013c61092e7eac9c66e233ec8a7be38e5b9c0234",
+  ".claude/skills/ship/SKILL.md": "a21a683a7512aaa778cc192053a3e6cdd314c3e989c6693b2cc0a82da1b64f0a",
+  ".claude/skills/ship/scripts/before-action.sh": "f733f78cc0695c5bdeeec5a756c092cb392ca1033177dca293878a1735665946",
+  ".claude/skills/ship/scripts/before-edit.sh": "d1befcd0ab91f2072dbc1605d30a59d8aec7ff0b79e055f0f319d6ea016f1b0a",
+  ".claude/settings.json": "e17353aab4a48254bc0b4692bf011f90c61adae6bea8d52553931dc949b93eab",
   ".claude/rules/ship.md": "f31a3dad0b87814d5932ba6467d07cc92a67d4328141384c51b3cd83201ffe31"
  }
 }
