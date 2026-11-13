@@ -288,7 +288,8 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
             `approved() { [ -f "$APPROVALS" ] && [ "$(jq -rs --arg s "$1" '[.[] | select(.step == $s)] | last | (.ok == true)' "$APPROVALS" 2>/dev/null)" = true ]; }`,
             "need_approval() {",
             '  echo "agentopology: $2 has no approval yet, so this agent is not started." >&2',
-            String.raw`  echo "agentopology: the person approves, in the project root, with: mkdir -p ${p.stateDir} && printf '{\"step\":\"$1\",\"ok\":true,\"at\":\"%s\"}\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" >> ${p.stateDir}/approvals.jsonl" >&2`,
+            // R-11: stderr goes to the model; it is told who approves and where, never handed the command (AGENTS.md has the format).
+            `  echo "agentopology: a person must approve step $1 by adding a record to ${p.stateDir}/approvals.jsonl, as AGENTS.md (Human Checkpoints) describes. The model must not write that record; ask the person." >&2`,
             "  exit 2",
             "}",
             "",

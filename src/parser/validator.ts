@@ -31,6 +31,7 @@ import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
 import { planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
+import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4359,6 +4360,11 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   }
   for (const hook of ast.hooks) {
     for (const p of codexHookProblems(hook)) warn(p.rule, hook.name, p.message);
+  }
+  // R-11: a human step is a line in .codex/state/approvals.jsonl; a sandbox that lets the model write .codex lets it approve itself.
+  const forgeable = humanGateForgeable(ast);
+  if (forgeable) {
+    warn("CX11-forgeable", "approvals", `a human step stands before an agent, but ${forgeable}, so the model can write .codex/state/approvals.jsonl and approve itself; the human gate cannot hold. Set settings { sandbox: workspace-write }, which keeps .codex read-only for the agent.`);
   }
   // R-3: a long gate check holds every guarded call that long; Codex lets the call run if the hook times out.
   for (const n of ast.nodes) {

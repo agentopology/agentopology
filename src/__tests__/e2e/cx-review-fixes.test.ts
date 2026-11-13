@@ -486,3 +486,35 @@ describe.skipIf(!hasJq)("[R-4] before-action.sh sees a guarded step however the 
     });
   }
 });
+
+describe.skipIf(!hasJq)("[R-11] the human gate on Codex does not hand the model its own approval", () => {
+  const gates = () => fs.readFileSync(FIXTURE, "utf8");
+  const unrestricted = () => gates().replace('description: "Edits the rendered piece"', 'description: "Edits the rendered piece"\n    permissions: unrestricted');
+  const forge = (src: string) => validate(parse(src), { target: "codex" }).filter((r) => r.rule === "CX11-forgeable");
+
+  it("[R-11] validate warns when the sandbox lets the model write .codex (danger-full-access)", () => {
+    const w = forge(unrestricted());
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain("approve");
+    expect(w[0].message).toContain("danger-full-access");
+  });
+
+  it("[R-11] under workspace-write there is no such warning", () => {
+    const src = unrestricted().replace("  flow {", "  settings {\n    sandbox: workspace-write\n  }\n  flow {");
+    expect(forge(src)).toEqual([]);
+    expect(forge(gates())).toEqual([]);
+  });
+
+  it("[R-11] the block message names no ready-to-run command; AGENTS.md gives the record format", () => {
+    const files = scaffoldInto(gates());
+    fs.writeFileSync(at(".codex/scripts/render-check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    const r = runHook(cmd, root, spawnPayload("editor"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/person/);
+    expect(r.stderr).not.toMatch(/printf|>>|mkdir/);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain(".codex/state/approvals.jsonl");
+    expect(md).toContain('{"step":"approve","ok":true');
+  });
+});
