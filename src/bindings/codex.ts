@@ -37,6 +37,11 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
+import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
+
+/** Markers around the generated part of AGENTS.md; text outside them is the user's. */
+export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
+export const AGENTS_MD_END = "<!-- /agentopology:end -->";
 import { gateAnchors } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
@@ -737,13 +742,10 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push(`- **Compensates:** ${agent.compensates} (saga rollback)`);
       }
 
-      // Prompt
+      // The prompt lives in .codex/agents/<id>.toml (developer_instructions),
+      // not here: AGENTS.md is read whole into every Codex session (CX-6).
       if (agent.prompt) {
-        sections.push("");
-        sections.push("#### Instructions");
-        sections.push("");
-        sections.push(agent.prompt);
-        sections.push("");
+        sections.push(`- **Instructions:** \`.codex/agents/${agent.id}.toml\``);
       }
 
       // Prompt variants
@@ -756,9 +758,6 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
           if (v.model) parts.push(`model: ${v.model}`);
           if (v.temperature != null) parts.push(`temperature: ${v.temperature}`);
           sections.push(`- ${parts.join(", ")}`);
-          if (v.prompt) {
-            sections.push(`  > ${v.prompt.replace(/\n/g, "\n  > ")}`);
-          }
         }
         sections.push("");
       }
@@ -1230,7 +1229,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
 
   return {
     path: "AGENTS.md",
-    content: sections.join("\n") + "\n",
+    content: `${AGENTS_MD_BEGIN}\n${sections.join("\n")}\n${AGENTS_MD_END}\n`,
     category: "agent",
   };
 }
@@ -1501,14 +1500,25 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
 // Skill documentation
 // ---------------------------------------------------------------------------
 
-/** Generate skill documentation files under .codex/skills/. */
+/**
+ * Generate skills where Codex reads them: `.agents/skills/<id>/SKILL.md`
+ * (frontmatter `name` and `description`), plus `agents/openai.yaml` with
+ * `policy.allow_implicit_invocation: false` for a skill that disables model
+ * invocation (CX-7).
+ */
 function generateSkills(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   for (const skill of ast.skills) {
     const sections: string[] = [];
+    const oneLine = (skill.description || toTitle(skill.id)).replace(/\s+/g, " ").trim();
 
-    sections.push(`# ${toTitle(skill.id)} Skill`);
+    sections.push("---");
+    sections.push(`name: ${skill.id}`);
+    sections.push(`description: ${JSON.stringify(oneLine)}`);
+    sections.push("---");
+    sections.push("");
+    sections.push(`# ${toTitle(skill.id)}`);
     sections.push("");
     if (skill.description) {
       sections.push(skill.description);
@@ -1535,7 +1545,6 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
       }
       sections.push("");
     }
-    // #11 — additional skill fields in skill docs
     if (skill.prompt) {
       sections.push(`Prompt file: ${skill.prompt}`);
       sections.push("");
@@ -1556,16 +1565,20 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
       sections.push(`Agent: ${skill.agent}`);
       sections.push("");
     }
-    if (skill.disableModelInvocation) {
-      sections.push(`Model invocation: disabled`);
-      sections.push("");
-    }
 
     files.push({
-      path: `.codex/skills/${skill.id}.md`,
+      path: `.agents/skills/${skill.id}/SKILL.md`,
       content: sections.join("\n") + "\n",
       category: "agent",
     });
+
+    if (skill.disableModelInvocation) {
+      files.push({
+        path: `.agents/skills/${skill.id}/agents/openai.yaml`,
+        content: "policy:\n  allow_implicit_invocation: false\n",
+        category: "machine",
+      });
+    }
   }
 
   return files;
@@ -1646,7 +1659,12 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
 
     // developer_instructions — use prompt if available, otherwise construct
     const instructions = agent.prompt ?? buildDeveloperInstructions(agent, ast);
-    lines.push(`developer_instructions = """\n${instructions}\n"""`);
+    // A written prompt sits between the prompt markers so sync can read it back.
+    lines.push(
+      agent.prompt
+        ? `developer_instructions = """\n${PROMPT_FENCE_OPEN}\n${agent.prompt}\n${PROMPT_FENCE_CLOSE}\n"""`
+        : `developer_instructions = """\n${instructions}\n"""`,
+    );
 
     // model
     if (agent.model) {
