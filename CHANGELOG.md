@@ -4,6 +4,28 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Gates on Codex (CX-9)
+
+- On `--target codex`, gates are now enforced by hook scripts instead of a note to run them by hand. `before-action.sh` refuses a script step's command until the gate's ledger shows the step finished ok, also inside an `&&` chain. `before-agent.sh` runs the gates that stand before an agent when Codex spawns it, and `gate-<id>.sh` runs when the agent it follows stops. All are registered in `.codex/hooks.json` with a 120 second timeout.
+- Codex lets a command through when a hook exits 1, exits 127 or times out; only exit 2 blocks. Every generated guard turns its own failure into exit 2 with a reason: a missing `jq`, input that is not JSON, an unreadable ledger, a gate script that cannot start. A gate script nobody has written yet fails instead of passing.
+- A project hook is skipped until it is trusted, with no warning, so every Codex guard is unverified. `AGENTS.md` now names the `/hooks` step. agentopology never writes a trust entry.
+
+### [feature] The human gate on Codex, without "ask" (CX-11)
+
+- Codex cannot ask from a `PreToolUse` hook, so an approval step before an agent now blocks the spawn with exit 2 until `.codex/state/approvals.jsonl` ends with an approval record for that step. The message gives the person the command that writes it. No generated script prints `ask`.
+
+### [feature] `guard --target codex` (CX-17)
+
+- `agentopology guard <file.at> --target codex` writes only the guard scripts and their `.codex/hooks.json` entries into a project built by hand. The user's own hook entries and files stay, `AGENTS.md` is not touched, and a second run changes nothing. `hooks.json` now merges on a scaffold too, instead of being reported as a conflict.
+
+### [feature] Conformance tests for Codex, tiers A to D (CX-15)
+
+- A new test file checks every example and fixture against the Codex contract with no model call: the config and agent files against a key list, `hooks.json` against the hook contract (now including timeouts and anchored script paths), every generated command hook run from a subfolder, and, where `codex` is installed, `codex execpolicy`, `codex sandbox` and `--strict-config`.
+
+### [fix] Codex inventory test used Claude model names (CX-18)
+
+- The Codex inventory test scaffolded fixtures that name Claude models, which the Codex scaffold refuses; it now uses a Codex model name.
+
 ### [feature] Permission rules for Codex (CX-13)
 
 - `settings { allow / ask / deny }` entries of the form `Bash(command *)` now scaffold `.codex/rules/<topology>.rules` as `prefix_rule(...)` calls: deny is `forbidden`, ask is `prompt`, allow is `allow`. Each rule carries a `match` example (for `git push`, `git push origin main`) that Codex checks when it loads the file; where the `codex` binary is installed the test runs `codex execpolicy check` against it. When one command is in two lists, the strictest decision is written.

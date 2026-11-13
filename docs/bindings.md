@@ -264,6 +264,7 @@ An Agent SDK binding would generate `agents/writer.json`:
 | `.codex/config.toml` | `model`, `approval_policy` (`on-request` or `never`), `sandbox_mode`, `[mcp_servers.<id>]` (with `env` as its own table), `[agents]` |
 | `.codex/agents/<id>.toml` | `name`, `description`, `developer_instructions`, and `model` / `model_reasoning_effort` when set |
 | `.codex/hooks.json` | The topology's `hooks {}` block, for the events and handler types Codex runs |
+| `.codex/scripts/<topology>/before-action.sh`, `before-agent.sh`, `gate-<id>.sh` | The guards for gates and approval steps, registered in `hooks.json` (see "Gates and approvals" below) |
 | `.codex/rules/<topology>.rules` | `settings { allow / ask / deny }` entries of the form `Bash(command *)` as `prefix_rule(...)` |
 | `scripts/schedule-<job>.sh`, `crontab.fragment` | Schedule jobs with `carrier: cron` that run an agent, through `codex -a never exec --sandbox <mode>` |
 
@@ -275,6 +276,26 @@ What to know:
 - **Providers are not written.** A project `.codex/config.toml` may not set `model_providers`, `notify`, `profiles`, `otel` and a few other keys; set them in your user config.
 - **What Codex cannot express** (sampling settings, a thinking token budget, output format, max turns, fallback chain, rate limit and more) gives one `validate` warning per field. Run `agentopology validate` with a Codex target, or read the warnings `scaffold` prints.
 - **`codex exec` is read-only by default.** A scheduled job whose agent writes, in a topology that names no sandbox, gets a warning and runs with `--sandbox read-only`. Set `settings { sandbox: workspace-write }`.
+
+### Gates and approvals on Codex
+
+Gates are held by hook scripts, written by the same library as for Claude Code and registered in `.codex/hooks.json` with a 120 second timeout:
+
+- `before-action.sh` (a `PreToolUse` hook on `Bash`) refuses a script step's command, also inside an `&&` or `;` chain, until the gate's ledger shows its `after:` step finished ok for the same unit.
+- `before-agent.sh` (a `PreToolUse` hook on the subagent spawn tool, `collaborationspawn_agent`) runs the gate scripts that stand before an agent. It matches on `agent_type`, which Codex sets to the agent file's `name`.
+- `gate-<id>.sh` runs when the agent it follows stops (`SubagentStop`).
+
+Codex lets a command run when a `PreToolUse` hook exits 1, exits 127 or times out. Only exit 2 blocks. Every generated guard therefore turns any error of its own into exit 2 with a reason on stderr: a missing `jq`, input that is not JSON, an unreadable ledger, a gate script that cannot start.
+
+**An approval step cannot ask.** A Codex `PreToolUse` hook may answer only `allow` or `deny`; `ask` makes the hook fail, and no generated script prints it. A `human` step before an agent instead blocks the spawn (exit 2) until `.codex/state/approvals.jsonl` holds an approval record as the step's last line: `{"step":"<id>","ok":true,"at":"<time>"}`. The block message gives the person the command that writes it. Under `workspace-write`, Codex does not let the agent write inside `.codex/` (measured on 0.156.1), so the agent cannot approve itself there; under another sandbox mode that no longer holds.
+
+**Every Codex guard is unverified.** A project hook that has not been trusted is skipped with no warning. Open `/hooks` in Codex and trust the hooks in `.codex/hooks.json` after every scaffold (the generated `AGENTS.md` says so). agentopology never writes a trust entry. Hooks also see only the tools Codex runs through its hook layer: `apply_patch` and MCP tools need their own matchers, and a hook is a guardrail, not a sandbox.
+
+`agentopology guard <file.at> --target codex [--dir <project>]` writes only these guards into a project built by hand: the guard scripts and their `hooks.json` entries, merged with the hooks already there. It does not touch `AGENTS.md`, `config.toml`, agent files or skills, and a second run changes nothing. `guard --check` does not grade Codex projects yet.
+
+### Conformance tests for Codex
+
+`src/__tests__/e2e/codex-conformance.test.ts` checks every example and fixture, with no model call: **A** the generated `config.toml` and agent files against the key list in `spec/codex/config-keys.json`; **B** `hooks.json` against the hook contract (events, matchers, handler types, timeouts, anchored script paths); **C** every generated command hook run from a subfolder with Codex's hook payload; **D** `codex execpolicy check` for each generated rule, `codex sandbox` for a write outside the workspace, and `--strict-config` on the generated config. Tier D is skipped, with a message, when `codex` is not installed.
 
 ---
 
