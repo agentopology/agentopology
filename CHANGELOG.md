@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] The Codex if: filter reads the paths of an apply_patch (R-6)
+
+- On `apply_patch`, `.codex/scripts/at-if.sh` read `.tool_input.file_path` / `.path`. Codex sends the patch text in `.tool_input.command`, with absolute paths, so `if: "Write(.env*)"` never fired; input that was not JSON also passed (exit 0). Now every `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:` path in the patch is made relative to the project root and matched. On a `strength: refuse` hook, input that is empty, not JSON, or a patch with no readable path blocks (exit 2).
+
 ### [fix] Claude tool names in a Codex hook matcher are rewritten (R-5)
 
 - A hook with `matcher: "Edit|Write"` or `"Task"` was written to `.codex/hooks.json` as is. Codex calls those tools `apply_patch` and `collaborationspawn_agent`, so the hook, a `strength: refuse` one included, never fired, with no warning. Now `Edit`, `Write` and `MultiEdit` become `apply_patch`, `Task` and `Agent` become `collaborationspawn_agent`, and `Bash` stays. A Claude tool Codex has no hook-visible tool for (`Read`, `Grep`, `WebFetch` and others) gets a `CX8-tool` warning; a matcher left with no name gets no entry.

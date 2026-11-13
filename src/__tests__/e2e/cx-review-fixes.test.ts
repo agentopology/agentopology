@@ -340,3 +340,35 @@ describe("[R-5] Claude tool names in a matcher become their Codex names", () => 
     expect(hooksOf().PreToolUse[0].matcher).toBe("apply_patch");
   });
 });
+
+const patchPayload = (patch: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: patch } });
+const blockScript = (rel: string) => { fs.mkdirSync(dirname(at(rel)), { recursive: true }); fs.writeFileSync(at(rel), "#!/usr/bin/env bash\necho 'refused by hook' >&2\nexit 2\n", { mode: 0o755 }); };
+const envHook = refuseHook("no-env", "Write", '      if: "Write(.env*)"\n');
+
+describe.skipIf(!hasJq)("[R-6] the if: filter reads the paths of an apply_patch", () => {
+  const cmd = () => hooksOf().PreToolUse[0].hooks[0].command;
+
+  it("[R-6] an apply_patch that adds $PWD/.env runs the refuse hook (exit 2)", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    const patch = `*** Begin Patch\n*** Add File: ${root}/.env\n+SECRET=1\n*** End Patch\n`;
+    const r = runHook(cmd(), root, patchPayload(patch));
+    expect(r.status, r.stderr).toBe(2);
+  });
+
+  it("[R-6] an Update File and a Move to are read too; an unrelated patch passes", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    const update = `*** Begin Patch\n*** Update File: ${root}/src/a.ts\n*** Move to: ${root}/.env.local\n@@\n-a\n+b\n*** End Patch\n`;
+    expect(runHook(cmd(), root, patchPayload(update)).status).toBe(2);
+    const other = `*** Begin Patch\n*** Add File: ${root}/src/b.ts\n+x\n*** End Patch\n`;
+    expect(runHook(cmd(), root, patchPayload(other)).status).toBe(0);
+  });
+
+  it("[R-6] stdin that is not JSON, or empty, on a refuse hook exits 2", () => {
+    scaffoldInto(HOOKED(envHook));
+    blockScript(".codex/scripts/no-env.sh");
+    expect(runHook(cmd(), root, "not json").status).toBe(2);
+    expect(runHook(cmd(), root, "").status).toBe(2);
+  });
+});
