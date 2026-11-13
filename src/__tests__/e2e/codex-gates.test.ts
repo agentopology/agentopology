@@ -190,3 +190,22 @@ describe.skipIf(!hasJq)("[CX-11] the human gate without ask", () => {
     }
   });
 });
+
+describe("[CX-9] release 1 label: Codex stays experimental and no guard is graded refuse", () => {
+  it("[CX-9] the codex binding is marked experimental and no hook is proven", async () => {
+    const { bindings } = await import("../../bindings/index.js");
+    expect((bindings as Record<string, { experimental?: boolean }>)["codex"].experimental).toBe(true);
+    const { CODEX_HOOKS_PROVEN } = await import("../../conformance/codex.js");
+    expect(Object.values(CODEX_HOOKS_PROVEN).every((v) => v === false)).toBe(true);
+  });
+
+  it("[CX-9] guard --target codex prints no \"refuse\" grade, only the trust step", () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "at-cx9-label-"));
+    try {
+      const r = spawnSync("node", [resolve(here, "../../../dist/cli/index.js"), "guard", FIXTURE, "--target", "codex", "--dir", dir], { encoding: "utf8" });
+      expect(r.status).toBe(0);
+      expect(r.stdout).not.toMatch(/\brefuse\b/i);
+      expect(r.stdout).toContain("/hooks");
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
