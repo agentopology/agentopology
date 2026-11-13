@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.11.0] - 2026-11-13
 
 ### [fix] Fixed: a generated action script finds its gate check from where it sits, not from CLAUDE_PROJECT_DIR (D-10)
 
