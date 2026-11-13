@@ -429,15 +429,13 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
-    printInstalledMark();
-    console.log(c.dim(verifiedOnLine()));
+    printVersionLines(target);
     if (!covered) process.exit(1);
     return;
   }
 
   printFindings(results, errorCount, warningCount);
-  printInstalledMark();
-  console.log(c.dim(verifiedOnLine()));
+  printVersionLines(target);
 
   if (errorCount > 0 || !covered) {
     process.exit(1);
@@ -499,8 +497,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log("");
     if (u.missing.length) failed = true;
   }
-  printInstalledMark();
-  console.log(c.dim(verifiedOnLine()));
+  printVersionLines(target);
   if (failed) process.exit(1);
 }
 
@@ -1365,6 +1362,24 @@ function cmdTargets(): void {
 function printInstalledMark(): void {
   const mark = installedMark();
   if (mark) console.log(c.dim(mark));
+}
+
+/**
+ * The installed mark and the "checked against" line for the target validate
+ * was run for (F-27): Claude Code when none is named, the target's own line
+ * otherwise, and nothing for a target with no conformance facts.
+ */
+function printVersionLines(target?: string): void {
+  if (!target || target === "claude-code") {
+    printInstalledMark();
+    console.log(c.dim(verifiedOnLine()));
+    return;
+  }
+  const conf = platformConformance(target);
+  if (!conf) return;
+  const mark = conf.installedMark();
+  if (mark) console.log(c.dim(mark));
+  console.log(c.dim(conf.verifiedOnLine()));
 }
 
 /**

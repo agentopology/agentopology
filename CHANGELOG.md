@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: `validate --target codex` names the Codex version, not Claude Code's (F-20, F-27)
+
+- `agentopology validate <file> --target codex`, with or without `--inventory`, ended with `checked against Claude Code 2.1.323`. It now prints the target's own line (`checked against Codex CLI 0.156.1 ...`); with no `--target` it still prints the Claude Code line, and a target with no conformance facts prints none.
+
 ### [feature] `validate --target <binding>` (E-6)
 
 - The Codex warnings (`CX5-*`, `CX8-*`, `CX9-*`, `CX11-*`, `CX13`, `CX20`, `CX23`) appeared only at scaffold, though the CX-23 entry says `validate` with a Codex target shows them. `agentopology validate <file> --target codex` now adds them; plain `validate` stays target-neutral.
