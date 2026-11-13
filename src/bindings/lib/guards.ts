@@ -505,7 +505,12 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
   return [...new Set(paths)].map((path) => {
     const base = path.replace(/^.*\//, "");
     const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    return { path, glob: unitPattern(path), name: unitPattern(base), letters: strip(base) || strip(path) };
+    // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
+    // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
+    const unitInName = base.includes("{unit}");
+    // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
+    const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
+    return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
   });
 }
 
@@ -538,7 +543,7 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
     "ledger_guard() {",
     "  local hit=0 w",
-    "  for w in $(norm \"$CMD\"); do eval \"case \\$w in $1|*/$1) hit=1 ;; esac\"; done",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
     "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
     "  [ \"$hit\" = 1 ] || return 0",
     "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
@@ -594,8 +599,9 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     '  R="$(canon "$P")"',
   ];
   for (const l of ledgers) {
-    lines.push(`  case "$R" in ${l.glob}) refuse ${shellQuote(l.path)} "$R" ;; esac`);
-    lines.push(`  case "\${R##*/}" in ${l.name}) refuse ${shellQuote(l.path)} "$R" ;; esac`);
+    // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
+    lines.push(`  PAT=${shellQuote(l.glob)}; if [[ $R == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+    if (l.name) lines.push(`  PAT=${shellQuote(l.name)}; if [[ \${R##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };

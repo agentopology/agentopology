@@ -209,3 +209,22 @@ describe("[F-4] guard --check says the ledger is agent-writable on the grade lin
     expect(cc).toContain(`refuse, ${NOTE}`);
   });
 });
+
+describe.skipIf(!hasJq)("[F-4] the ledger guard never runs the ledger path as code", () => {
+  const unitFile = SRC.replace('record trace { path: "logs/{unit}/trace.jsonl" }', 'record trace { path: "logs/{unit}.jsonl" }');
+  it.each(TARGETS)("[F-4] %s: a {unit} file name refuses that ledger only, not every .jsonl edit or command", (target) => {
+    scaffold(target, unitFile);
+    expect(hook(target, "before-edit.sh", write(at("logs/ep1.jsonl"))).status).toBe(2);
+    expect(hook(target, "before-edit.sh", write(at("data/other.jsonl"))).status).toBe(0);
+    expect(hook(target, "before-action.sh", bash("echo x >> data/other.jsonl")).status).toBe(0);
+    expect(hook(target, "before-action.sh", bash("echo x >> logs/ep1.jsonl")).status).toBe(2);
+  });
+  it.each(TARGETS)("[F-4] %s: the generated guards hold no eval and paste no ledger pattern into a case", (target) => {
+    scaffold(target);
+    for (const f of ["before-action.sh", "before-edit.sh"]) {
+      const body = fs.readFileSync(at(`${DIR[target]}/${f}`), "utf8");
+      expect(body, f).not.toMatch(/(^|[;&|{(]\s*|\bthen\s+|\bdo\s+)eval\s/m);
+      expect(body, f).not.toMatch(/case "[^"]*" in logs\//);
+    }
+  });
+});
