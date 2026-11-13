@@ -187,6 +187,158 @@ export function collectSurface(files: GeneratedFile[]): SurfaceItem[] {
   return [...seen.values()];
 }
 
+// ---------------------------------------------------------------- Codex (RW-2)
+
+import { parse as parseToml } from "smol-toml";
+
+export interface SchemaMismatch {
+  /** `cx.config.<dotted path>`, or `cx.knownDrift.<id>` for a drift item that breaks the rule. */
+  id: string;
+  path: string;
+  value: unknown;
+  message: string;
+}
+
+export interface KnownDrift { id: string; value: string; ticket: string; why: string }
+
+type Json = any;
+
+function resolveRef(ref: string, root: Json): Json {
+  return ref.replace(/^#\//, "").split("/").reduce((o: Json, k) => o?.[k], root);
+}
+
+function typeOk(v: unknown, t: string): boolean {
+  switch (t) {
+    case "string": return typeof v === "string";
+    case "boolean": return typeof v === "boolean";
+    case "integer": return Number.isInteger(v);
+    case "number": return typeof v === "number";
+    case "array": return Array.isArray(v);
+    case "object": return typeof v === "object" && v !== null && !Array.isArray(v);
+    case "null": return v === null;
+    default: return true;
+  }
+}
+
+/** Mismatches of a value against a JSON schema (the subset config.schema.json uses). Empty list = it fits. */
+function validateNode(v: unknown, node: Json, root: Json, path: string[]): SchemaMismatch[] {
+  if (node === true || node === undefined) return [];
+  if (node.$ref) return validateNode(v, resolveRef(node.$ref, root), root, path);
+  const out: SchemaMismatch[] = [];
+  const at = path.join(".");
+  const bad = (message: string, value: unknown = v, p = path) =>
+    out.push({ id: `cx.config.${p.join(".")}`, path: p.join("."), value, message });
+  for (const sub of node.allOf ?? []) out.push(...validateNode(v, sub, root, path));
+  for (const key of ["oneOf", "anyOf"] as const) {
+    if (node[key] && !node[key].some((sub: Json) => validateNode(v, sub, root, path).length === 0)) {
+      bad(`${at}: value ${JSON.stringify(v)} matches none of the forms the schema allows`);
+    }
+  }
+  if (node.enum && !node.enum.includes(v)) bad(`${at}: ${JSON.stringify(v)} is not one of ${JSON.stringify(node.enum)}`);
+  if (node.type) {
+    const types: string[] = Array.isArray(node.type) ? node.type : [node.type];
+    if (!types.some((t) => typeOk(v, t))) { bad(`${at}: expected ${types.join("|")}`); return out; }
+  }
+  if (typeOk(v, "object") && (node.properties || node.additionalProperties !== undefined)) {
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+      const sub = node.properties?.[k];
+      if (sub !== undefined) out.push(...validateNode(child, sub, root, [...path, k]));
+      else if (node.additionalProperties === false) bad(`${[...path, k].join(".")}: the schema has no such key`, child, [...path, k]);
+      else if (typeof node.additionalProperties === "object") out.push(...validateNode(child, node.additionalProperties, root, [...path, k]));
+    }
+  }
+  if (Array.isArray(v) && node.items) v.forEach((c, i) => out.push(...validateNode(c, node.items, root, [...path, String(i)])));
+  return out;
+}
+
+/**
+ * Mismatches of a parsed config.toml against the Codex config schema snapshot,
+ * minus the ones `knownDrift` excuses. A drift item needs a ticket id; one
+ * without it excuses nothing and is reported as `cx.knownDrift.<id>`.
+ */
+export function checkConfigAgainstSchema(config: Record<string, unknown>, schema: Json, knownDrift: KnownDrift[] = []): SchemaMismatch[] {
+  const raw = validateNode(config, schema, schema, []).filter((m) => m.path !== "" || m.message);
+  const valid = knownDrift.filter((k) => /^CX-?\d+/.test(k.ticket ?? ""));
+  const out = raw.filter((m) => !valid.some((k) => k.id === m.id && (k.value === "*" || k.value === String(m.value))));
+  for (const k of knownDrift) {
+    if (!valid.includes(k)) out.push({ id: `cx.knownDrift.${k.id}`, path: k.id, value: k.ticket, message: `knownDrift item ${k.id} has no CX ticket id` });
+  }
+  return out;
+}
+
+const CODEX_FIXED = new Set(["config.toml", "hooks.json", "AGENTS.md", "metrics.jsonl", "crontab.fragment", "SKILL.md"]);
+
+export function codexPathPattern(path: string): string {
+  const seg = path.split("/");
+  if (seg[0] === ".agents" && seg[1] === "skills" && seg.length > 2) seg[2] = "*";
+  const last = seg.length - 1;
+  const base = seg[last];
+  if (!CODEX_FIXED.has(base)) {
+    const dot = base.lastIndexOf(".");
+    seg[last] = dot > 0 && !base.startsWith(".") ? `*${base.slice(dot)}` : "*";
+  }
+  return seg.join("/");
+}
+
+function codexPathArea(path: string): string {
+  if (path === ".codex/config.toml") return "config.keys";
+  if (path.startsWith(".codex/agents/")) return "agents";
+  if (path.startsWith(".agents/skills/")) return "skills";
+  if (path === ".codex/hooks.json") return "hooks";
+  if (path === "AGENTS.md") return "instructions";
+  if (path.startsWith(".codex/rules/")) return "permissions";
+  return "files";
+}
+
+/** Config key paths with dynamic names (mcp server ids, agent role ids) replaced by `<id>`. */
+function tomlKeys(obj: Record<string, unknown>, prefix: string[], out: string[][]): void {
+  for (const [k, v] of Object.entries(obj)) {
+    const isTable = typeof v === "object" && v !== null && !Array.isArray(v);
+    const parent = prefix[prefix.length - 1];
+    const dynamic = isTable && (parent === "mcp_servers" || (parent === "agents" && prefix.length === 1));
+    const name = dynamic ? "<id>" : k;
+    out.push([...prefix, name]);
+    if (isTable && k !== "env" && k !== "headers") tomlKeys(v as Record<string, unknown>, [...prefix, name], out);
+  }
+}
+
+/** Every platform-facing item in the files a Codex scaffold wrote. */
+export function collectCodexSurface(files: GeneratedFile[]): SurfaceItem[] {
+  const seen = new Map<string, SurfaceItem>();
+  for (const f of files) {
+    const add = (area: string, token: string) => {
+      const k = `${area}:${token}`;
+      if (!seen.has(k)) seen.set(k, { area, token, where: f.path });
+    };
+    add(codexPathArea(f.path), `path:${codexPathPattern(f.path)}`);
+    if (f.path === ".codex/config.toml") {
+      const cfg = parseToml(f.content) as Record<string, unknown>;
+      const keys: string[][] = [];
+      tomlKeys(cfg, [], keys);
+      for (const k of keys) add(k[0] === "agents" ? "agents" : "config.keys", k.join("."));
+      if (typeof cfg.approval_policy === "string") add("approvals", cfg.approval_policy);
+      if (typeof cfg.sandbox_mode === "string") add("sandbox", cfg.sandbox_mode);
+    } else if (f.path.startsWith(".codex/agents/") && f.path.endsWith(".toml")) {
+      for (const k of Object.keys(parseToml(f.content))) add("agents", `file.${k}`);
+    } else if (f.path === ".codex/hooks.json") {
+      const hooks = JSON.parse(f.content).hooks ?? {};
+      for (const [ev, groups] of Object.entries<any>(hooks)) {
+        add("hooks", `event:${ev}`);
+        for (const g of groups) {
+          for (const k of Object.keys(g)) if (k !== "hooks") add("hooks", `field:${k}`);
+          for (const h of g.hooks ?? []) for (const k of Object.keys(h)) add("hooks", `field:${k}`);
+        }
+      }
+    } else if (f.path.startsWith(".agents/skills/") && f.path.endsWith("SKILL.md")) {
+      for (const l of frontMatter(f.content)) {
+        const k = /^([A-Za-z][\w-]*):/.exec(l);
+        if (k) add("skills", `frontmatter:${k[1]}`);
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
 function entryCovers(e: SurfaceEntry, i: SurfaceItem): boolean {
   return e.area === i.area && e.tokens.includes(i.token);
 }
