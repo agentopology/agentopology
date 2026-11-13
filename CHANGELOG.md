@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] `agentopology record check`: an append-only record that was rewritten or cut short is found, and fails the gate that reads it (SP-8)
+
+- `agentopology record check FILE.at [id] [--unit U] [--dir D]` keeps a head file per record (per unit for a `{unit}` path) under `.agentopology/records/`: the count of complete lines and the sha256 of those lines. First run sets the head (exit 0); a file that only grew moves it forward (exit 0); earlier lines changed, fewer lines, or the file gone exits 1 and leaves the head where it was. With no id it checks every record with `append-only: true`; a `{unit}` record with no `--unit` is checked for every unit on disk or in its heads. A record that is not append-only is skipped. A line still being written (no newline yet) is not counted.
+- `step check` runs the same check on an append-only ledger before it reads it: a rewritten or truncated ledger fails the gate even when its last line says ok. Grade: detect, by code (found at the next check, not stopped). The head folder is one exported constant, `RECORD_HEADS_DIR`, for the record guard (SP-7) to protect.
+
 ### [feature] Records, the signed human gate and compose: the grammar is read and kept (SP-1)
 
 - A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).

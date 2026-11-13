@@ -656,6 +656,7 @@ agentopology inventory [<dir>] [--at <file>] [--user]  What is live in the proje
 agentopology validate <file> --inventory <dir>  Coverage: live things the .at accounts for; unmapped, missing
 agentopology validate --inventory <dir> a.at b.at  Per-file coverage, then one union number (mapped when any file maps it)
 agentopology validate <file> --inventory <dir> --user  Also counts ~/.claude apart, and checks the `needs` block (user skills, memory path) against the home folder
+agentopology record check <file> [<id>] [--unit <u>] [--dir <d>]  An append-only record only grew since the last check (head files in .agentopology/records/); exit 1 on a rewrite or truncation
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
 ```
