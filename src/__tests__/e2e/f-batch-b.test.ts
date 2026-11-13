@@ -76,3 +76,65 @@ describe("[F-28] inventory on a Codex-only scaffold", () => {
     expect(r.out).toMatch(/coverage: (\d+) of \1 /);
   });
 });
+
+const RUN_GATE_BEFORE_STEP = `topology runstep : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "A run: gate before a script step, and one between two steps"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [render, publish]
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  action publish {
+    kind: external
+    commands: ["./tool publish"]
+  }
+  agent editor {
+    model: gpt-5.2
+    description: "Edits"
+  }
+  gates {
+    gate checked {
+      after: render
+      before: publish
+      run: "scripts/checked.sh"
+      on-fail: halt
+    }
+  }
+  flow { render -> publish }
+}
+`;
+const INLINE_GATE = RUN_GATE_BEFORE_STEP
+  .replace("    handles: [render, publish]\n", "    handles: [render, publish]\n    delegation: inline\n")
+  .replace('      before: publish\n', "      before: editor\n")
+  .replace("  flow { render -> publish }", "  flow { render -> editor -> publish }");
+
+describe("[F-29] AGENTS.md wording matches the grade guard --check gives", () => {
+  const enforcement = (md: string, gate: string) => {
+    const lines = md.split("\n");
+    const at = lines.findIndex((l) => l.startsWith("### ") && l.toLowerCase().includes(gate));
+    return lines.slice(at).find((l) => l.includes("**Enforcement:**"))!;
+  };
+  it("[F-29] a run: gate with no ledger before a script step names the gate script, not a ledger", () => {
+    const md = quiet(() => codexBinding.scaffold(parse(RUN_GATE_BEFORE_STEP))).find((f) => f.path === "AGENTS.md")!.content;
+    const line = enforcement(md, "checked");
+    expect(line).toContain("before-action.sh");
+    expect(line).not.toMatch(/ledger/);
+    expect(line).toMatch(/gate script passes/);
+  });
+  it("[F-29] a gate no Codex event marks reads hope in AGENTS.md, as in guard --check", () => {
+    const f = join(root, "t.at");
+    fs.writeFileSync(f, INLINE_GATE);
+    const md = quiet(() => codexBinding.scaffold(parse(INLINE_GATE))).find((x) => x.path === "AGENTS.md")!.content;
+    const line = enforcement(md, "checked");
+    expect(line).not.toContain("script-level");
+    expect(line).toMatch(/\*\*Enforcement:\*\* hope/);
+    const r = cli(["guard", f, "--check", "--target", "codex", "--dir", root]);
+    expect(r.out).toMatch(/checked\s+hope/);
+  });
+});

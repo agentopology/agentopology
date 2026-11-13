@@ -53,6 +53,7 @@ import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath 
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
 export const AGENTS_MD_END = "<!-- /agentopology:end -->";
 import { gateAnchors } from "../parser/ast.js";
+import { gateLedger } from "../parser/ledger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1118,11 +1119,17 @@ function gateEnforcementNote(ast: TopologyAST, gate: GateNode): string {
   const hold = codexGateHold(ast, gate);
   switch (hold.kind) {
     case "advisory": return "advisory — reported, never blocks";
-    case "action": return "unverified — `.codex/scripts/" + t + "/before-action.sh` (PreToolUse on Bash) refuses the step's command until the ledger shows the gate held; " + trust;
+    case "action": {
+      // F-29: say what before-action.sh checks for this gate: its ledger, its script, or both.
+      const ledger = gateLedger(ast, gate) ? "the ledger shows " + gateAnchors(gate, "after").map((a) => `\`${a}\``).join(", ") + " finished ok" : null;
+      const script = scriptNameFromRun(gate.run) ? "the gate script passes" : null;
+      return "unverified — `.codex/scripts/" + t + "/before-action.sh` (PreToolUse on Bash) refuses the step's command until " + [ledger, script].filter(Boolean).join(" and ") + "; " + trust;
+    }
     case "spawn": return "unverified — `.codex/scripts/" + t + "/before-agent.sh` (PreToolUse on `collaborationspawn_agent`) refuses to start " + hold.agents.map((a) => `\`${a}\``).join(", ") + " until the gate script passes; " + trust;
     case "none": return "none — `gate-" + gate.id + ".sh` runs when " + hold.anchors.map((a) => `\`${a}\``).join(", ") + " stops, but Codex cannot block a SubagentStop and nothing after it can be held, so nothing stops the next step; run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` yourself before it";
     case "prose": return "prose — its run: names no script; follow it by hand";
-    case "script": return "script-level — run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` between the steps";
+    // F-29: graded hope by guard --check, so it says hope here too.
+    case "script": return "hope — no Codex event marks its moment, so nothing runs it for you; run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` by hand between the steps";
   }
 }
 

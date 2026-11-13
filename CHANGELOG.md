@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex `AGENTS.md` says what holds a gate in the words `guard --check` grades it (F-29)
+
+- A gate before a script step with a `run:` script and no ledger read "refuses the step's command until the ledger shows the gate held", though it has no ledger. The line now names what `before-action.sh` checks: the ledger of the `after:` step, the gate script, or both.
+- A gate no Codex event marks read "script-level" in `AGENTS.md` and `hope` in `guard --check`. It now reads `hope` in both, with the script to run by hand.
+
 ### [fix] Fixed: Codex `AGENTS.md` no longer hands the model a command that approves a human step (F-10)
 
 - `AGENTS.md`, which Codex loads into the model's context, held a ready-to-run `printf ... >> .codex/state/approvals.jsonl` line under Human Checkpoints, so the model had its own approval one paste away. It now describes the record for the person in words (the file, the fields `step`, `ok`, `at` and what they mean) and holds no line that writes it. The R-11 test checks that neither `AGENTS.md` nor any guard's stderr has a `printf`, `echo`, `tee` or `>>` line naming `approvals.jsonl`.
