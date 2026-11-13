@@ -33,6 +33,7 @@ import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
   CLAUDE_CODE_GUARDS,
+  LEDGER_WRITABLE_NOTE,
   approvalTargets,
   checkableActionGate,
   gateWiring,
@@ -1410,6 +1411,10 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
+      if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
+        sections.push(`Enforcement: refuse, ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
+      }
       sections.push("");
     }
   }

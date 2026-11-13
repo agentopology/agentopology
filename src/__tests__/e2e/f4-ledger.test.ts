@@ -21,11 +21,14 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
+import { checkGuards, renderGuardReport } from "../../guard/check.js";
+import { checkCodexGuards } from "../../guard/check-codex.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(here, "fixtures/codex-gates.at");
 const SRC = fs.readFileSync(FIXTURE, "utf8");
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
+const NOTE = "ledger agent-writable until the signed gate";
 
 type Target = "claude-code" | "codex";
 const TARGETS: Target[] = ["claude-code", "codex"];
@@ -176,4 +179,33 @@ describe.skipIf(!hasJq)("[F-4] before-edit.sh refuses a file edit of a gate ledg
       expect(hook(target, "before-edit.sh", "not json").status).toBe(2);
     });
   }
+});
+
+describe("[F-4] guard --check says the ledger is agent-writable on the grade line", () => {
+  it("[F-4] claude-code: the ledger gate reads `refuse, ledger agent-writable until the signed gate`", () => {
+    const { ast } = scaffold("claude-code");
+    const lines = renderGuardReport(checkGuards(ast, root));
+    const line = lines.find((l) => /^\s+gate publish-ready\s/.test(l))!;
+    expect(line).toContain(`refuse, ${NOTE}`);
+    // A gate with no ledger keeps its plain grade.
+    expect(lines.find((l) => /^\s+gate render-check\s/.test(l))!).not.toContain(NOTE);
+  });
+
+  it("[F-4] codex: the ledger gate and the human step read `unverified, ledger agent-writable until the signed gate`", () => {
+    const { ast } = scaffold("codex");
+    const lines = renderGuardReport(checkCodexGuards(ast, root));
+    expect(lines.find((l) => /^\s+gate publish-ready\s/.test(l))!).toContain(`unverified, ${NOTE}`);
+    expect(lines.find((l) => /^\s+human approve\s/.test(l))!).toContain(`unverified, ${NOTE}`);
+    expect(lines.find((l) => /^\s+gate render-check\s/.test(l))!).not.toContain(NOTE);
+  });
+
+  it("[F-4] the generated docs carry the note on the Enforcement line", () => {
+    const cx = scaffold("codex").files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(cx).toMatch(new RegExp(`Enforcement:\\*\\* unverified, ${NOTE}`));
+    // The gate and the human step each carry it.
+    expect(cx.split(`**Enforcement:** unverified, ${NOTE}`).length - 1).toBe(2);
+    expect(cx).not.toMatch(/Enforcement:\*\* unverified, ledger[^\n]*render-check\.sh/);
+    const cc = scaffold("claude-code").files.map((f) => f.content).join("\n");
+    expect(cc).toContain(`refuse, ${NOTE}`);
+  });
 });

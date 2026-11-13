@@ -18,7 +18,8 @@ import { join } from "node:path";
 import type { GateNode, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { scriptNameFromRun } from "../parser/run.js";
-import { approvalTargets, CODEX_GUARDS } from "../bindings/lib/guards.js";
+import { approvalTargets, CODEX_GUARDS, LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { gateLedger } from "../parser/ledger.js";
 import { buildCodexHooks, codexGateHold } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { VERIFIED_ON, installedMark as codexInstalledMark, verifiedOnLine as codexVerifiedOnLine } from "../conformance/codex.js";
@@ -82,7 +83,9 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         if (script !== null && !script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
         if (scriptNameFromRun(gate.run) && readText(join(root, dir, wrapper)) === null) problems.push(`${dir}/${wrapper} is missing`);
         const where = `PreToolUse on Bash running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
-        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
+        // F-4: its check reads a ledger the agent can write; the grade says so.
+        const note = gateLedger(ast, gate) ? { gradeNote: LEDGER_WRITABLE_NOTE } : {};
+        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED], ...note });
         break;
       }
       case "spawn": {
@@ -108,7 +111,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     const by = (gate.by ?? "code") as GuardItem["by"];
     const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
     if (bad || item.strength === "hope" || item.strength === "none") {
-      Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes, structural: false });
+      Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes, structural: false, gradeNote: undefined });
     } else {
       item.notes.push(...notes.map((n) => `also ${n}`));
     }
@@ -129,7 +132,8 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     if (script !== null && !script.includes(`# approval step ${human.id}`)) problems.push(`before-agent.sh does not hold for ${human.id}`);
     const where = `PreToolUse on collaborationspawn_agent launching ${targets.join(", ")} → an approval record in ${CODEX_GUARDS.stateDir}/approvals.jsonl`;
     const notes = [UNVERIFIED, ...(forged ? [`${forged}, so the model can write the approval itself`] : [])];
-    items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes });
+    // F-4: the approval record is a file the agent can write; the grade says so.
+    items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes, gradeNote: LEDGER_WRITABLE_NOTE });
   }
 
   // Hooks on disk this check cannot tie to the topology.

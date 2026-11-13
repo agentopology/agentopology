@@ -469,6 +469,9 @@ export const CANON_FUNCTION: string[] = [
   'CROOT=/; CROOT="$(ROOT=/ PWD=/ canon "$ROOT")"',
 ];
 
+/** What a grade says, on the grade itself, for a step whose check reads a ledger the agent can write (F-4). */
+export const LEDGER_WRITABLE_NOTE = "ledger agent-writable until the signed gate";
+
 /** A file a guard trusts that the agent could write (F-4): a gate's ledger, or the Codex approval record. */
 export interface ProtectedLedger {
   /** The project-relative path as declared (`logs/{unit}/trace.jsonl`), for messages. */
