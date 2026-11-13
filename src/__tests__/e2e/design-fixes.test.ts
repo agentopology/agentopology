@@ -430,3 +430,23 @@ describe("[D-6] the ledger note appears wherever a grade is shown", () => {
     expect(lines.find((l) => l.startsWith("enforcement:"))).toMatch(/steps refuse \(1 with an agent-writable ledger\)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-7
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasJq)("[D-7] before-edit.sh compares paths without regard to case", () => {
+  const write = (file_path: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path, content: "{}" } });
+  const patch = (path: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch\n` } });
+  for (const target of TARGETS) {
+    it(`[D-7] ${target}: an edit of logs/ep1/TRACE.JSONL (and LOGS/Ep1/trace.jsonl) is refused; logs/ep1/notes.md is not`, () => {
+      scaffold(target);
+      const edit = target === "codex" ? patch : write;
+      for (const p of ["logs/ep1/TRACE.JSONL", "LOGS/Ep1/trace.jsonl", `${root}/Logs/ep1/Trace.Jsonl`]) {
+        const r = hook(target, "before-edit.sh", edit(p));
+        expect(r.status, `${p}: ${r.stderr}`).toBe(2);
+      }
+      expect(hook(target, "before-edit.sh", edit("logs/ep1/notes.md")).status).toBe(0);
+    });
+  }
+});

@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: before-edit.sh refuses a ledger edit in any letter case (D-7)
+
+- `before-edit.sh` compared an edit's path with the ledger's pattern case-sensitively, so on a case-insensitive disk (macOS) a `Write` to `logs/ep1/TRACE.JSONL` reached the ledger. Path and pattern are now compared lower-cased, on both targets. Every `before-edit.sh` changes.
+
 ### [fix] Fixed: the ledger note appears wherever a grade is shown (D-6)
 
 - The F-4 note (`ledger agent-writable until the signed gate`) was on the `guard --check` grade line and in the visualizer's node panel, but the Guards lens table showed a bare `refuse` chip, and the counts (`enforcement: N of M steps refuse`, the visualizer headline, `visualize --print-summary`) counted ledger gates unqualified. The Guards lens row now carries the note under the chip, and each refuse count adds `(K with an agent-writable ledger)` when K > 0.

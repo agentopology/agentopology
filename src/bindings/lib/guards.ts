@@ -606,11 +606,13 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
+    // D-7: a case-insensitive disk (macOS) opens logs/ep1/TRACE.JSONL as the ledger, so path and pattern are compared lower-cased.
+    "  RL=$(printf '%s' \"$R\" | tr '[:upper:]' '[:lower:]')",
   ];
   for (const l of ledgers) {
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
-    lines.push(`  PAT=${shellQuote(l.glob)}; if [[ $R == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
-    if (l.name) lines.push(`  PAT=${shellQuote(l.name)}; if [[ \${R##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+    lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+    if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
