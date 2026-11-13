@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: an action a topology .at with no orchestrator puts in the flow is handled (S-13)
+
+- When `import` takes flow from a project's `.at` that states no orchestrator (a plain pipeline ending in a `report` action) and the project also has a topology skill with one, the action came in through the flow but not into `handles`, and failed V9. Every action in the imported flow is now in the orchestrator's `handles`, after the ones the author listed.
+
 ### [fix] Fixed: a project with several topology skills imports one orchestrator that handles all their actions (S-13)
 
 - `import` kept the flow of every topology skill in `.claude/skills/*/SKILL.md` but only the first skill's `Handles:` line, so each action another skill's flow uses failed V9 ("used in flow but not in orchestrator.handles"). The one orchestrator now handles the union of every topology skill's `Handles:`, first skill first.

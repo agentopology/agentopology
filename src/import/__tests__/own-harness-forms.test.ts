@@ -63,3 +63,39 @@ describe("[S-13] V9: every action a merged flow uses is handled by the one orche
     expect(orch.handles).toEqual(expect.arrayContaining(["alpha-start", "beta-start"]));
   });
 });
+
+describe("[S-13] V9: a topology .at with no orchestrator brings its actions in handled", () => {
+  // A pipeline .at that ends in a report action and states no orchestrator,
+  // beside a topology skill that does have one.
+  const pipelineAt = `topology gamma-line : [pipeline] {
+  action gamma-done {
+    kind: report
+    description: "Line finished"
+  }
+  agent gamma-first {
+    model: sonnet
+  }
+  agent gamma-second {
+    model: sonnet
+  }
+  flow {
+    gamma-first -> gamma-second
+    gamma-second -> gamma-done
+  }
+}
+`;
+  it("validates with 0 errors and lists the .at's flow action in handles", () => {
+    const files = [
+      agent("alpha-writer"),
+      agent("gamma-first"),
+      agent("gamma-second"),
+      topologySkill("alpha-team", ["alpha-start"], ["alpha-start -> alpha-writer"]),
+      file("gamma-line.at", pipelineAt),
+    ];
+    const source = importFromPlatform(files, "claude-code", "mixed");
+    expect(source).toContain("gamma-second -> gamma-done");
+    expect(errors(source)).toEqual([]);
+    const orch = parse(source).nodes.find((n) => n.type === "orchestrator") as { handles: string[] };
+    expect(orch.handles).toEqual(["alpha-start", "gamma-done"]);
+  });
+});

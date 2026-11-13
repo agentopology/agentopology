@@ -1103,6 +1103,20 @@ export function importClaudeCode(
   // disk records (see flow.ts).
   const recovered = recoverFlowFromAt(files, nodes, edges);
 
+  // S-13: a source with no orchestrator (a pipeline .at) still brings actions
+  // into the flow; the one orchestrator handles them too (V9).
+  const theOrchestrator = nodes.find((n): n is OrchestratorNode => n.type === "orchestrator");
+  if (theOrchestrator) {
+    const inEdges = new Set(edges.flatMap((e) => [e.from, e.to]));
+    const handles = new Set(theOrchestrator.handles ?? []);
+    for (const node of nodes) {
+      if (node.type === "action" && inEdges.has(node.id) && !handles.has(node.id)) {
+        theOrchestrator.handles = [...(theOrchestrator.handles ?? []), node.id];
+        handles.add(node.id);
+      }
+    }
+  }
+
   // 11. An agent no flow mentions is invoked on demand, which is how a
   // hand-built Claude Code subagent runs. Import used to invent a linear chain
   // through every agent in file order, a flow the author never wrote.
