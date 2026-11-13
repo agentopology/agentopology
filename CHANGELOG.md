@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a unit-from step on a flat ledger needs its own unit (D-2)
+
+- With `record trace { path: "logs/trace.jsonl" }` (no `{unit}`) and a step with `unit-from`, a command the guard saw as the step but read no unit from (`./tool -v publish ep1`) was checked with an empty unit, and the ledger filter then took the last record of any unit. An empty capture was dropped rather than denied. Now, on both targets, a `unit-from` step with no unit read, or an empty one, is refused whatever the ledger path; `agentopology step check` asks for `--unit` for such a step; and `validate` warns (V111) when a `unit-from` step's gate ledger path has no `{unit}`, naming the step, the gate and the path. Every `before-action.sh` with a `unit-from` step changes.
+
 ### [fix] Fixed: a gated step's action script checks what it runs, with no usage exemption (D-1)
 
 - The F-6 gate check in `.claude/skills/<t>/scripts/action-<step>.sh` handed `before-action.sh` the step's words plus the script's arguments, then ran the declared commands without them. So `bash action-publish.sh --help` was checked as `./tool publish --help`, the usage exemption passed it, and the script ran `./tool publish` with no ledger. The check now runs with `AT_NO_USAGE=1` (honored by `before-action.sh`: no usage exemption), and the arguments count only as the unit: a step with `unit-from` takes exactly one plain unit name and refuses `--help`, `-h`, `--version`, no argument or two; a step without one leaves its arguments out of the check. The `action-<step>.sh` of every gated step changes.

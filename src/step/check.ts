@@ -21,7 +21,7 @@
 import * as fs from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import type { GateNode, TopologyAST } from "../parser/ast.js";
+import type { ActionNode, GateNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.js";
 import { scriptNameFromRun } from "../parser/run.js";
@@ -56,15 +56,18 @@ export interface StepReport {
 /** Longest a gate's `run:` may take. */
 const RUN_TIMEOUT_MS = 5 * 60_000;
 
-function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string): GateResult {
+function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string, stepHasUnit: boolean): GateResult {
   const reasons: string[] = [];
   const ledger = gateLedger(ast, gate);
   const runnable = !!scriptNameFromRun(gate.run);
 
   if (ledger) {
-    const needsUnit = ledger.path.includes("{unit}");
+    // D-2: a step with unit-from needs a unit even on a flat ledger, or any unit's record would do.
+    const needsUnit = ledger.path.includes("{unit}") || stepHasUnit;
     if (needsUnit && unit === "") {
-      reasons.push(`ledger ${ledger.path} needs a unit: pass --unit`);
+      reasons.push(stepHasUnit && !ledger.path.includes("{unit}")
+        ? `the step has unit-from, so it needs a unit: pass --unit (ledger ${ledger.path})`
+        : `ledger ${ledger.path} needs a unit: pass --unit`);
     } else if (unit !== "" && unsafeUnit(unit)) {
       reasons.push(`the unit "${unit}" is not a safe file name`);
     } else {
@@ -130,10 +133,11 @@ export function checkStep(ast: TopologyAST, step: string, options: StepCheckOpti
   const unit = options.unit ?? "";
   const root = resolve(options.dir ?? ".");
   const known = ast.nodes.some((n) => n.id === step);
+  const stepHasUnit = ast.nodes.some((n) => n.id === step && n.type === "action" && (n as ActionNode).unitFrom !== undefined);
   const gates = ast.nodes
     .filter((n): n is GateNode => n.type === "gate")
     .filter((g) => g.behavior !== "advisory" && gateAnchors(g, "before").includes(step))
-    .map((g) => checkGate(ast, g, unit, root));
+    .map((g) => checkGate(ast, g, unit, root, stepHasUnit));
   gates.push(...expiredHumans(ast, step, options.today ?? todayDate()));
   return { step, ...(unit ? { unit } : {}), known, gates, ok: known && gates.every((g) => g.ok) };
 }

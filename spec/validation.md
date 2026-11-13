@@ -784,7 +784,7 @@ through the validator like any other rule.
 | V108 | warning | A hook's `run: "exit N"` with N other than 0 or 2 does not block: only exit 2 blocks |
 | V109 | warning | A hook with `strength: refuse` on PreToolUse or PermissionRequest that matches a tool of an MCP server matches every tool of that server the topology names (`validate --inventory` adds the inventory's tool names) |
 | V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
-| V111 | error | An action's `unit-from` is not a valid regex, or has no capture group |
+| V111 | error/warning | An action's `unit-from` is not a valid regex, or has no capture group (error); an action with `unit-from` behind a gate whose ledger path has no `{unit}`, so the record's file cannot tell units apart (warning, D-2) |
 | V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
 | V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `bypassPermissions` or `auto`; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
 | V114 | warning | Two or more session agents and no flow edge between any two of them: `talk not declared: unguarded` |

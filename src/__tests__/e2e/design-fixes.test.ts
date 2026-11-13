@@ -110,3 +110,54 @@ describe.skipIf(!hasJq)("[D-1] Claude Code: the action script's gate check gets 
     expect(strict.status).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-2
+// ---------------------------------------------------------------------------
+
+const FLAT = SRC.replace('path: "logs/{unit}/trace.jsonl"', 'path: "logs/trace.jsonl"');
+
+describe.skipIf(!hasJq)("[D-2] a flat ledger on a unit-from step: no unit read is refused", () => {
+  it("[D-2] the flat fixture really is flat", () => {
+    expect(FLAT).toContain('path: "logs/trace.jsonl"');
+  });
+  for (const target of TARGETS) {
+    it(`[D-2] ${target}: an ok record for ep1 only: publish ep2 and -v publish ep1 are refused, publish ep1 runs`, () => {
+      scaffold(target, FLAT);
+      okRecord("logs/trace.jsonl", "ep1");
+      const ep2 = hook(target, "before-action.sh", bash("./tool publish ep2"));
+      expect(ep2.status, ep2.stderr).toBe(2);
+      const flag = hook(target, "before-action.sh", bash("./tool -v publish ep1"));
+      expect(flag.status, flag.stderr).toBe(2);
+      expect(flag.stderr).toMatch(/no unit/);
+      const ok = hook(target, "before-action.sh", bash("./tool publish ep1"));
+      expect(ok.status, ok.stderr).toBe(0);
+    });
+  }
+  it("[D-2] an empty capture counts as no unit, and is refused", () => {
+    const src = FLAT.replace(String.raw`unit-from: "./tool (?:re)?publish (\S+)"`, String.raw`unit-from: "./tool (?:re)?publish ?(\S*)"`);
+    expect(src).not.toBe(FLAT);
+    scaffold("claude-code", src);
+    okRecord("logs/trace.jsonl", "ep1");
+    const r = hook("claude-code", "before-action.sh", bash("./tool publish"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(hook("claude-code", "before-action.sh", bash("./tool publish ep1")).status).toBe(0);
+  });
+  it("[D-2] step check refuses a unit-from step with no --unit on a flat ledger", async () => {
+    const { checkStep } = await import("../../step/check.js");
+    scaffold("claude-code", FLAT);
+    okRecord("logs/trace.jsonl", "ep1");
+    const ast = parse(FLAT);
+    expect(checkStep(ast, "publish", { dir: root }).ok).toBe(false);
+    expect(checkStep(ast, "publish", { dir: root, unit: "ep2" }).ok).toBe(false);
+    expect(checkStep(ast, "publish", { dir: root, unit: "ep1" }).ok).toBe(true);
+  });
+  it("[D-2] validate warns when a unit-from step's gate ledger has no {unit}, naming both", async () => {
+    const { validate } = await import("../../parser/validator.js");
+    const w = validate(parse(FLAT)).filter((r) => r.level === "warning" && /unit-from/.test(r.message) && /\{unit\}/.test(r.message));
+    expect(w.length).toBe(1);
+    expect(w[0].message).toContain("publish");
+    expect(w[0].message).toContain("logs/trace.jsonl");
+    expect(validate(parse(SRC)).some((r) => /unit-from/.test(r.message) && /\{unit\}/.test(r.message))).toBe(false);
+  });
+});

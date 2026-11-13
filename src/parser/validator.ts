@@ -1644,6 +1644,19 @@ function v111UnitFromRegex(ast: TopologyAST): ValidationResult[] {
         line: lookupLine(ast, action.id),
       });
     }
+    // D-2: a ledger path with no {unit} holds every unit's records in one file, so it cannot tell them apart.
+    for (const g of ast.nodes) {
+      if (g.type !== "gate" || !guardedActions(ast, g as GateNode).some((a) => a.id === action.id)) continue;
+      const rec = gateLedger(ast, g as GateNode);
+      if (!rec || rec.path.includes("{unit}")) continue;
+      results.push({
+        rule: "V111",
+        level: "warning",
+        message: `Action "${action.id}" has unit-from, but gate "${g.id}" reads ledger "${rec.id}" at "${rec.path}", which has no {unit}: the record cannot tell units apart by its file. The guard reads the unit field of each line, and refuses the step when no unit is read; put {unit} in the path (e.g. "logs/{unit}/trace.jsonl")`,
+        node: action.id,
+        line: lookupLine(ast, action.id),
+      });
+    }
   }
   return results;
 }

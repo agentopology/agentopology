@@ -767,8 +767,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     if (action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
       lines.push(
-        `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // empty] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,
+        `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // ""] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,
         "    while IFS= read -r UNIT <&4 || [ -n \"$UNIT\" ]; do",
+        // D-2: the step has a unit, so none read (or an empty capture) is refused, whatever the ledger path.
+        `      [ -n "$UNIT" ] || deny ${sq(gates[0].id)} "no unit could be read from the command by the step's unit-from; write the step as a plain command naming its unit"`,
         '      if ! [[ "$UNIT" =~ ^[A-Za-z0-9_.@+-]*$ ]] || [[ "$UNIT" == *..* ]]; then',
         `        deny ${sq(gates[0].id)} "the unit \\"$UNIT\\" read from the command is not a safe file name"`,
         "      fi",
