@@ -271,12 +271,16 @@ export function parseMultilineList(body: string, key: string): string[] {
 }
 
 /**
- * Remove surrounding double quotes from a string value.
+ * Remove surrounding double quotes from a string value, and decode the two
+ * escapes a quoted value can hold: `\"` and `\\` (S-01). The serializer has
+ * always written a `"` inside a value as `\"`, but nothing decoded it, so an
+ * imported hook command `node "$X/a.js"` parsed back as `node \"$X/a.js\"`.
  *
  * If the string is not quoted, returns it unchanged.
  */
 export function unquote(s: string): string {
-  return s.replace(/^"(.*)"$/, "$1");
+  const m = s.match(/^"(.*)"$/s);
+  return m ? m[1].replace(/\\(["\\])/g, "$1") : s;
 }
 
 /**

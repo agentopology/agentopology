@@ -30,8 +30,34 @@ const SCRIPT_EXT = /\.(?:py|sh|ts|mjs|js)$/;
  * a stub named `SLUG`, and `pxframes.py gate OUT/frames-critic.json` one named
  * `frames-critic.json`.
  */
+/**
+ * `$CLAUDE_PROJECT_DIR` as a word starts it, quoted or not, with or without
+ * braces or a default (`"$CLAUDE_PROJECT_DIR"/x`, `"${CLAUDE_PROJECT_DIR}/x"`,
+ * `${CLAUDE_PROJECT_DIR:-.}/x`): the form Claude Code's own docs give a hook.
+ */
+const PROJECT_DIR = /^"?\$(?:CLAUDE_PROJECT_DIR\b|\{CLAUDE_PROJECT_DIR(?::-[^}"]*)?\})"?(?=\/)/;
+
+/**
+ * A word that names a file through the project-dir variable, as the
+ * project-relative path it is (`./x`); any other word unchanged (S-01). V96
+ * read `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` as "not a command or path",
+ * and the script name of `node "$CLAUDE_PROJECT_DIR/a.mjs"` as `a.mjs"`.
+ */
+export function projectWord(word: string): string {
+  const m = word.match(PROJECT_DIR);
+  if (!m) return word;
+  let path = word.slice(m[0].length);
+  // `"$CLAUDE_PROJECT_DIR/x.sh"`: the quote opened before the variable closes at the end
+  const open = m[0].startsWith('"') && !m[0].endsWith('"');
+  if (open) {
+    if (!path.endsWith('"')) return word;
+    path = path.slice(0, -1);
+  }
+  return path.includes('"') ? word : `.${path}`;
+}
+
 export function runParts(run: string): { interpreter?: string; script: string; args: string[] } {
-  const words = run.trim().split(/\s+/);
+  const words = run.trim().split(/\s+/).map((w, i) => (i < 2 ? projectWord(w) : w));
   const first = words[0] ?? "";
   const named =
     words.length > 1 &&
@@ -75,29 +101,54 @@ export function proseInRun(run: string): string | null {
   if (text === "") return "it is empty";
   if (/\r|\n/.test(text)) return "it spans several lines";
 
-  const first = text.split(/\s+/)[0];
-  if (/[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
-  if (!EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
+  const first = projectWord(text.split(/\s+/)[0]);
+  // A shell line that opens with an assignment (`f=$(...); ...`) runs as
+  // written (isShellCommand): no first word or script name to judge (S-10).
+  const assigns = ASSIGNMENT.test(first);
+  if (!assigns && /[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
+  if (!assigns && !EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
 
   // Judge only what the shell would see unquoted.
   const bare = text.replace(/'[^']*'|"[^"]*"/g, "''");
   if (/[^\x00-\x7F]/.test(bare)) return "it contains non-ASCII text outside quotes";
   if (/\s->\s|\s=>\s|\s<=\s|\s>=\s/.test(bare)) return "it contains an arrow or comparison (->, >=, <=)";
   if (/(^|[^$])\(/.test(bare)) return "it contains an unquoted parenthesis";
-  if (scriptNameFromRun(text) === null) return "no script file name can be derived from it";
+  if (!assigns && scriptNameFromRun(text) === null) return "no script file name can be derived from it";
   return null;
 }
 
-/** Shell builtins a `run:` may be written as directly (`exit 2`, `true`). */
-const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
+/** A shell variable assignment opening a line: `branch=$(git ...)`. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
- * Whether `run` is a shell command to run as written rather than a script:
- * its first word is a builtin. `run: "exit 2"` used to scaffold a stub script
- * named `exit` that exited 0, so a hook meant to block let everything through.
+ * First words that make `run:` shell, not a script (S-11): builtins and
+ * keywords (`exit 2`, `for f in ...`, `cd dir && ...`, `command tool`), and
+ * package runners, which run a package and never a project script
+ * (`uv run x`, `npx tool@1`).
+ */
+const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:|for|if|case|while|until|cd|export|source|\.|eval|exec|command)$/;
+const PACKAGE_RUNNER = /^(?:uv|npx|pnpm|yarn|bunx|pipx|poetry|bun|deno)$/;
+
+/** A shell operator outside quotes: | && || ; > < $( or a backtick. */
+function hasShellOperator(run: string): boolean {
+  const bare = run.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
+  return /[|;<>`]|&&|\$\(/.test(bare);
+}
+
+/**
+ * Whether `run` is a shell command to run as written rather than a script
+ * this topology scaffolds. `run: "exit 2"` used to scaffold a stub script
+ * named `exit` that exited 0, so a hook meant to block let everything
+ * through; `jq ... | ...` and `uv run x` became `bash .../scripts/jq` and a
+ * TODO stub. True when the first word is a builtin, keyword, assignment or
+ * package runner, or the line holds a shell operator outside quotes. A bare
+ * name (`check-review`) still means the topology's own scripts/check-review.
  */
 export function isShellCommand(run: string | undefined): boolean {
-  return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
+  const text = run?.trim() ?? "";
+  const first = text.split(/\s+/)[0] ?? "";
+  if (!first) return false;
+  return SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first) || PACKAGE_RUNNER.test(first) || hasShellOperator(text);
 }
 
 /**
