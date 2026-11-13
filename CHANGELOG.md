@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the Codex `if:` filter sees `.env` however an `apply_patch` spells its path (F-12)
+
+- `at-if.sh` compared a patch's paths as written, so `$ROOT/./.env`, `$ROOT//.env`, `sub/../.env`, `./.env` and `/proc/self/cwd/.env` passed a `strength: refuse` hook with `if: "Write(.env*)"`. Each path is now made canonical by its letters (relative paths from the current folder, `/proc/self/cwd` as the project root, `.`, `..` and `//` resolved, the root stripped; glob characters in a path are not expanded). A pattern with no slash, such as `.env*`, now also matches the file's name at any depth.
+
 ### [fix] Fixed: a stub runs under the interpreter its hook or gate command uses (F-24, F-25)
 
 - A hook with `run: "sh scripts/x.sh"` got a bash stub (`set -euo pipefail`), and the hook command ran it with `sh`. Dash rejects `-o pipefail` and exits 2, so on both targets a fresh scaffold blocked every matching call by accident. A stub now has a POSIX sh body when `sh` runs it, and a hook stub that is not `strength: refuse` exits 1 as designed.

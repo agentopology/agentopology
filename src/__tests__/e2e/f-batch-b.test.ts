@@ -276,3 +276,47 @@ describe.skipIf(!hasPython)("[F-25] a gate check stub is written in its file's l
     expect(runHook(spawnCommand(), root, spawnPayload("reviewer")).status).toBe(0);
   });
 });
+
+const patchPayload = (patch: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "apply_patch", tool_input: { command: patch } });
+const blockScript = (rel: string) => { fs.mkdirSync(dirname(at(rel)), { recursive: true }); fs.writeFileSync(at(rel), "#!/usr/bin/env bash\necho 'refused by hook' >&2\nexit 2\n", { mode: 0o755 }); };
+const add = (p: string) => `*** Begin Patch\n*** Add File: ${p}\n+SECRET=1\n*** End Patch\n`;
+
+describe.skipIf(!hasJq)("[F-12] the at-if apply_patch path check canonicalizes paths", () => {
+  const envHook = HOOKED(hookDef("no-env", "Write", "scripts/no-env.sh", '      strength: refuse\n      if: "Write(.env*)"\n'));
+  const cmd = () => hooksOf().PreToolUse[0].hooks[0].command;
+  for (const form of ["$ROOT/./.env", "$ROOT//.env", "sub/../.env", "./.env", "/proc/self/cwd/.env", "$ROOT/sub/../.env", "$ROOT/deep/dir/.env.local"]) {
+    it(`[F-12] ${form} is seen as .env and blocked`, () => {
+      scaffoldInto(envHook);
+      blockScript(".codex/scripts/no-env.sh");
+      const r = runHook(cmd(), root, patchPayload(add(form.replace("$ROOT", root))));
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toContain("refused by hook");
+    });
+  }
+  it("[F-12] an unrelated file passes, also in its odd forms", () => {
+    scaffoldInto(envHook);
+    blockScript(".codex/scripts/no-env.sh");
+    for (const p of [`${root}/src/a.ts`, `${root}/./src//b.ts`, "src/../README.md"]) expect(runHook(cmd(), root, patchPayload(add(p))).status, p).toBe(0);
+  });
+  it("[F-12] a pattern with a slash is matched against the whole project path, not the basename", () => {
+    scaffoldInto(HOOKED(hookDef("no-cfg", "Write", "scripts/no-cfg.sh", '      strength: refuse\n      if: "Write(config/*.json)"\n')));
+    blockScript(".codex/scripts/no-cfg.sh");
+    expect(runHook(cmd(), root, patchPayload(add(`${root}/./config//app.json`))).status).toBe(2);
+    expect(runHook(cmd(), root, patchPayload(add(`${root}/other/app.json`))).status).toBe(0);
+  });
+  it("[F-12, F-17b] a Delete File of .env is read and blocked", () => {
+    scaffoldInto(envHook);
+    blockScript(".codex/scripts/no-env.sh");
+    const r = runHook(cmd(), root, patchPayload(`*** Begin Patch\n*** Delete File: ${root}/.env\n*** End Patch\n`));
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
+describe.skipIf(!hasJq)("[F-12] a path holding a glob character is not expanded", () => {
+  it("[F-12] $ROOT/*/../.env is still .env (the * is a name, not a glob)", () => {
+    scaffoldInto(HOOKED(hookDef("no-env", "Write", "scripts/no-env.sh", '      strength: refuse\n      if: "Write(.env*)"\n')));
+    blockScript(".codex/scripts/no-env.sh");
+    fs.mkdirSync(at("a")); fs.mkdirSync(at("b"));
+    const r = runHook(hooksOf().PreToolUse[0].hooks[0].command, root, patchPayload(add(`${root}/*/x/../../.env`)));
+    expect(r.status, r.stderr).toBe(2);
+  });
+});
