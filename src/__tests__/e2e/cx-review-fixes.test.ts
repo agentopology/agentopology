@@ -553,7 +553,12 @@ describe.skipIf(!hasJq)("[R-11] the human gate on Codex does not hand the model 
     expect(r.stderr).not.toMatch(/printf|>>|mkdir/);
     const md = files.find((f) => f.path === "AGENTS.md")!.content;
     expect(md).toContain(".codex/state/approvals.jsonl");
-    expect(md).toContain('{"step":"approve","ok":true');
+    // F-10: AGENTS.md is in the model's context, so it describes the record for the person and holds no line that writes it.
+    for (const field of ["`step`", "`ok`", "`at`", "`approve`"]) expect(md).toContain(field);
+    const writes = (text: string) => text.split("\n").filter((l) => /approvals\.jsonl/.test(l) && /\b(printf|echo|tee|cat)\b|>>?\s*\S*approvals\.jsonl/.test(l));
+    expect(writes(md)).toEqual([]);
+    expect(writes(r.stderr)).toEqual([]);
+    expect(md).not.toMatch(/```sh[\s\S]*approvals\.jsonl[\s\S]*```/);
   });
 });
 

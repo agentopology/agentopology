@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex `AGENTS.md` no longer hands the model a command that approves a human step (F-10)
+
+- `AGENTS.md`, which Codex loads into the model's context, held a ready-to-run `printf ... >> .codex/state/approvals.jsonl` line under Human Checkpoints, so the model had its own approval one paste away. It now describes the record for the person in words (the file, the fields `step`, `ok`, `at` and what they mean) and holds no line that writes it. The R-11 test checks that neither `AGENTS.md` nor any guard's stderr has a `printf`, `echo`, `tee` or `>>` line naming `approvals.jsonl`.
+
 ### [fix] Fixed: inventory on a Codex-only scaffold counts nothing scaffold wrote as unmapped (F-28)
 
 - `validate --inventory` on a project scaffolded only with `--target codex` listed `.codex/.scaffold-manifest.json` as unmapped and every Claude Code file as "not scaffolded". The scaffold manifest (either target, shared or per topology) is now mapped, and a project with a Codex tree and no `.claude/` is not told to scaffold the Claude Code files.

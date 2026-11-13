@@ -719,12 +719,9 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       sections.push(`- **Type:** Human pause point — requires manual input or approval`);
       const targets = approvalTargets(ast, human);
       if (targets.length > 0) {
-        // R-11: the record format lives here for the person, not in the hook's stderr, which the model reads.
-        sections.push(`- **Approval record:** Codex cannot ask, so ${targets.map((t) => `\`${t}\``).join(", ")} is not started until \`.codex/state/approvals.jsonl\` ends with an approval for \`${human.id}\`. A person, not the model, adds it from the project root:`);
-        sections.push("");
-        sections.push("  ```sh");
-        sections.push(`  mkdir -p .codex/state && printf '{"step":"${human.id}","ok":true,"at":"%s"}\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .codex/state/approvals.jsonl`);
-        sections.push("  ```");
+        // R-11, F-10: AGENTS.md is loaded into the model's context, so the record is described for the
+        // person in words (file, fields, meaning) and no line here writes it.
+        sections.push(`- **Approval record:** Codex cannot ask, so ${targets.map((t) => `\`${t}\``).join(", ")} is not started until the last record for \`${human.id}\` in \`.codex/state/approvals.jsonl\` approves it. A person, not the model, adds that record by hand: one line holding one JSON object, with \`step\` set to the step id \`${human.id}\`, \`ok\` set to true (false withdraws an approval), and \`at\` set to the time of the approval as an ISO 8601 UTC string. The model must not write this file; when it is asked to, it asks the person instead.`);
       }
       if (human.timeout) {
         sections.push(`- **Timeout:** ${human.timeout}`);

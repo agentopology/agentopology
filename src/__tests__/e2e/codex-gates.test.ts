@@ -167,16 +167,21 @@ describe.skipIf(!hasJq)("[CX-11] the human gate without ask", () => {
     fs.mkdirSync(at(".codex/scripts"), { recursive: true });
     fs.writeFileSync(at(".codex/scripts/render-check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   });
-  it("[CX-11] a spawn behind a human step exits 2 with the reason; the command the person runs (in AGENTS.md, R-11) works; after it the spawn exits 0", () => {
+  it("[CX-11] a spawn behind a human step exits 2 with the reason; the record AGENTS.md describes (R-11, F-10) lets it start", () => {
     const r = hook(`${S}/before-agent.sh`, spawnAgent("editor"));
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("approve");
     expect(r.stderr).toContain("The editor approves before editing");
     expect(r.stderr).toContain(".codex/state/approvals.jsonl");
-    // the command AGENTS.md gives the person is the one that works (stderr, which the model reads, names none: R-11)
+    // neither stderr (R-11) nor AGENTS.md (F-10), both read by the model, holds a command that writes the record
     expect(r.stderr).not.toContain(">> .codex/state/approvals.jsonl");
-    const cmd = fs.readFileSync(at("AGENTS.md"), "utf8").split("\n").find((l) => l.includes(">> .codex/state/approvals.jsonl"))!.trim();
-    expect(spawnSync("/bin/sh", ["-c", cmd], { cwd: root, encoding: "utf8" }).status).toBe(0);
+    const md = fs.readFileSync(at("AGENTS.md"), "utf8");
+    expect(md).not.toContain(">> .codex/state/approvals.jsonl");
+    // the record the person writes, from the fields AGENTS.md names
+    const line = md.split("\n").find((l) => l.includes("**Approval record:**"))!;
+    for (const f of ["`step`", "`ok`", "`at`", "`approve`"]) expect(line).toContain(f);
+    fs.mkdirSync(at(".codex/state"), { recursive: true });
+    fs.writeFileSync(at(".codex/state/approvals.jsonl"), JSON.stringify({ step: "approve", ok: true, at: new Date().toISOString() }) + "\n");
     expect(hook(`${S}/before-agent.sh`, spawnAgent("editor")).status).toBe(0);
   });
   it("[CX-11] the last record decides: a later refusal blocks again", () => {
