@@ -219,6 +219,43 @@ export function extractAllBlocks(
   return results;
 }
 
+/**
+ * Like {@link extractAllBlocks}, but only blocks whose keyword sits at brace
+ * depth 0 of `src`: `env { }` inside an MCP server is not a topology `env`.
+ */
+export function extractTopLevelBlocks(
+  src: string,
+  keyword: string
+): BlockResult[] {
+  const depthAt: number[] = new Array(src.length);
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    depthAt[i] = depth;
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") depth--;
+  }
+  const results: BlockResult[] = [];
+  const re = new RegExp(
+    `(?:^|\\n)\\s*${escapeRegex(keyword)}(?![a-zA-Z0-9_-])(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
+    "gm"
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const at = m.index! + m[0].indexOf(keyword);
+    const startIdx = m.index! + m[0].length;
+    if (depthAt[at] !== 0) continue;
+    let d = 1;
+    let i = startIdx;
+    while (i < src.length && d > 0) {
+      if (src[i] === "{") d++;
+      else if (src[i] === "}") d--;
+      i++;
+    }
+    if (d === 0) results.push({ id: m[1] ?? null, body: src.slice(startIdx, i - 1) });
+  }
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Key-value & list parsing
 // ---------------------------------------------------------------------------

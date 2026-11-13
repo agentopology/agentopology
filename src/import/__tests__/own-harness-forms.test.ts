@@ -99,3 +99,66 @@ describe("[S-13] V9: a topology .at with no orchestrator brings its actions in h
     expect(orch.handles).toEqual(["alpha-start", "gamma-done"]);
   });
 });
+
+describe("[S-13] V23: an MCP server's env is not a second top-level env block", () => {
+  const mcp = file(
+    ".mcp.json",
+    JSON.stringify({
+      mcpServers: {
+        "store-one": { command: "uvx", args: ["some-server"], env: { STORE_PATH: "data/one" } },
+        "store-two": { command: "uvx", args: ["other-server"], env: {} },
+      },
+    }),
+  );
+
+  it("imports with no V23 warning", () => {
+    const source = importFromPlatform([agent("solo-agent"), mcp], "claude-code", "servers");
+    const warnings = validate(parse(source)).filter((r) => r.rule === "V23");
+    expect(warnings).toEqual([]);
+  });
+
+  // Held: the parser still reads the first `env`-named block at any depth as
+  // the topology env (an MCP server's env, or `environments`). Fixing it
+  // changes the CX-10 golden (examples/data-processing.at settings.json), so
+  // it waits for a decision on that golden.
+  it.skip("a server's env stays the server's: the topology env is not filled from it", () => {
+    const ast = parse(importFromPlatform([agent("solo-agent"), mcp], "claude-code", "servers"));
+    expect(ast.env).toEqual({});
+    expect((ast.mcpServers["store-one"] as { env?: Record<string, string> }).env).toEqual({ STORE_PATH: "data/one" });
+  });
+
+  it("two real top-level env blocks still warn", () => {
+    const src = `topology dup-env : [pipeline] {
+  env {
+    A: "1"
+  }
+  agent one {
+    model: sonnet
+  }
+  env {
+    B: "2"
+  }
+}
+`;
+    expect(validate(parse(src)).filter((r) => r.rule === "V23")).toHaveLength(1);
+  });
+
+  it("a longer keyword is not the same block: environments, observability-platform", () => {
+    const src = `topology near-names : [pipeline] {
+  env {
+    A: "1"
+  }
+  environments {
+    staging {
+      region: "eu"
+    }
+  }
+  agent one {
+    model: sonnet
+  }
+}
+`;
+    expect(validate(parse(src)).filter((r) => r.rule === "V23")).toEqual([]);
+    expect(parse(src).env).toEqual({ A: "1" });
+  });
+});

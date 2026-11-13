@@ -73,6 +73,7 @@ import {
   stripComments,
   extractBlock,
   extractAllBlocks,
+  extractTopLevelBlocks,
   parseKV,
   parseList,
   parseMultilineList,
@@ -2801,7 +2802,9 @@ export function parse(source: string): TopologyAST {
   ];
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
   for (const keyword of singletonKeywords) {
-    const allBlocks = extractAllBlocks(topBody, keyword);
+    // A block of the same name nested in another section (an MCP server's
+    // env) is not a second top-level one (S-13).
+    const allBlocks = extractTopLevelBlocks(topBody, keyword);
     if (allBlocks.length > 1) {
       duplicateSectionWarnings.push({
         rule: "V23",

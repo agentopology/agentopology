@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: V23 counts only top-level blocks of the whole keyword (S-13)
+
+- V23 ("Duplicate `env` block") counted a block of the same name at any depth, and any word that starts with the keyword. An imported `.mcp.json` server with `env: {}` made every such import warn, and `kitchen-sink.at` warned three times for nothing (`environments {` counted as `env`, `observability-platform {` inside `mcp-servers` as `observability`, `interfaces {` as `interface`). V23 now counts only blocks at the topology's top level whose keyword is the whole word. Two real top-level `env` blocks still warn. Not yet changed: the parser still takes the first `env`-named block at any depth as the topology env, so an MCP server's env, or an `environments` entry when no `env` comes first, can fill it (held: fixing it changes the scaffold of `examples/data-processing.at`).
+
 ### [fix] Fixed: an action a topology .at with no orchestrator puts in the flow is handled (S-13)
 
 - When `import` takes flow from a project's `.at` that states no orchestrator (a plain pipeline ending in a `report` action) and the project also has a topology skill with one, the action came in through the flow but not into `handles`, and failed V9. Every action in the imported flow is now in the orchestrator's `handles`, after the ones the author listed.
