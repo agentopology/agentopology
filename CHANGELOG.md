@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex gate's check stub is written where the gate runs it (F-22)
+
+- A gate with `run: "checks/review.sh"` got its stub at `.codex/scripts/review.sh`, while `gate-<id>.sh` runs `checks/review.sh`. Filling in the stub never let the gate pass. The stub is now written at the declared project path (created once, never overwritten), as on Claude Code; a bare name still goes to `.codex/scripts/`, and an absolute path is never stubbed.
+
 ### [fix] Fixed: Codex `AGENTS.md` says what holds a gate in the words `guard --check` grades it (F-29)
 
 - A gate before a script step with a `run:` script and no ledger read "refuses the step's command until the ledger shows the gate held", though it has no ledger. The line now names what `before-action.sh` checks: the ledger of the `after:` step, the gate script, or both.

@@ -138,3 +138,59 @@ describe("[F-29] AGENTS.md wording matches the grade guard --check gives", () =>
     expect(r.out).toMatch(/checked\s+hope/);
   });
 });
+
+const AGENT_GATE = (run: string, extra = "") => `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Write, then review"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [writer, reviewer]
+  }
+  agent writer {
+    model: gpt-5.2
+    description: "Writes"
+  }
+  agent reviewer {
+    model: gpt-5.2
+    description: "Reviews"
+  }
+  gates {
+    gate checked {
+      after: writer
+      before: reviewer
+      run: "${run}"
+      on-fail: halt
+${extra}    }
+  }
+  flow { writer -> reviewer }
+}
+`;
+type HookEntry = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number; onFailure?: string }> };
+const hooksOf = (dir = root): Record<string, HookEntry[]> => JSON.parse(fs.readFileSync(join(dir, ".codex/hooks.json"), "utf8")).hooks;
+const bashPayload = (command: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+const spawnPayload = (agent_type: unknown) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "collaborationspawn_agent", tool_input: { task_name: "t", ...(agent_type === undefined ? {} : { agent_type }), message: "m" } });
+function runHook(command: string, cwd: string, stdin: string, timeout = 30_000, env: Record<string, string> = {}) {
+  const e = { ...process.env, ...env } as Record<string, string>;
+  delete e.CLAUDE_PROJECT_DIR;
+  return spawnSync("/bin/sh", ["-c", command], { cwd, input: stdin, env: e, encoding: "utf8", timeout });
+}
+const spawnCommand = (dir = root) => hooksOf(dir).PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+
+describe.skipIf(!hasJq)("[F-22] a Codex gate stub is written where the gate wrapper runs it", () => {
+  it("[F-22] run: \"checks/review.sh\": the stub is at checks/review.sh, and filling it lets the gate pass", () => {
+    const files = scaffoldInto(AGENT_GATE("checks/review.sh"));
+    const stub = files.find((f) => f.path.endsWith("review.sh") && f.content.includes("AGENTOPOLOGY_STUB"))!;
+    expect(stub.path).toBe("checks/review.sh");
+    expect(runHook(spawnCommand(), root, spawnPayload("reviewer")).status).toBe(2);
+    fs.writeFileSync(at("checks/review.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    const r = runHook(spawnCommand(), root, spawnPayload("reviewer"));
+    expect(r.status, r.stderr).toBe(0);
+  });
+  it("[F-22] a bare name still goes to .codex/scripts/ and passes once filled", () => {
+    scaffoldInto(AGENT_GATE("scripts/review.sh"));
+    fs.writeFileSync(at(".codex/scripts/review.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    expect(runHook(spawnCommand(), root, spawnPayload("reviewer")).status).toBe(0);
+  });
+});

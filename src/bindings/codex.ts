@@ -1144,12 +1144,19 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run || isShellCommand(gate.run) || proseInRun(gate.run)) continue;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
+    const { script } = runParts(gate.run);
+    // The user's own script, outside the project: never stubbed.
+    if (script.startsWith("/")) continue;
+    // F-22: the stub goes where the gate wrapper runs it (codexGateCommand): a project path names the
+    // user's script, created once and never written over; any other name is under .codex/scripts/.
+    const project = isProjectPath(script);
     files.push({
-      path: `.codex/scripts/${scriptName}`,
+      path: project ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptName}`,
       // A gate nobody has written must not pass (probe P10: only exit 2 blocks).
       content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
       category: "script",
       executable: true,
+      ...(project ? { createOnly: true } : {}),
     });
   }
 

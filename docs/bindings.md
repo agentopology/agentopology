@@ -265,6 +265,7 @@ An Agent SDK binding would generate `agents/writer.json`:
 | `.codex/agents/<id>.toml` | `name`, `description`, `developer_instructions`, and `model` / `model_reasoning_effort` when set |
 | `.codex/hooks.json` | The topology's `hooks {}` block, for the events and handler types Codex runs |
 | `.codex/scripts/<topology>/before-action.sh`, `before-agent.sh`, `gate-<id>.sh` | The guards for gates and approval steps, registered in `hooks.json` (see "Gates and approvals" below) |
+| Gate check scripts | Each gate's `run:` script, as a failing stub, at the path the gate wrapper runs: a project path (`checks/review.sh`) is created there once and never overwritten, a bare name (`scripts/review.sh`) goes to `.codex/scripts/review.sh`, an absolute path is never touched |
 | Tool scripts | Each `tool`'s stub at its declared `script:` path (a project path is created once and never overwritten; a bare name goes to `.codex/scripts/`) |
 | `.codex/rules/<topology>.rules` | `settings { allow / ask / deny }` entries of the form `Bash(command *)` as `prefix_rule(...)` |
 | `scripts/schedule-<job>.sh`, `crontab.fragment` | Schedule jobs with `carrier: cron` that run an agent, through `codex -a never exec --sandbox <mode>` |
