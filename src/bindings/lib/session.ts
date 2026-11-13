@@ -51,6 +51,8 @@ export function warnSessionsNotCompiled(ast: TopologyAST, target: string): void 
 
 /** Characters a permission mode may hold when it is put in a shell line (acceptEdits, bypassPermissions, ...). */
 const SAFE_MODE = /^[A-Za-z0-9-]+$/;
+/** A flow target id that is safe to put in a shell `case` pattern. */
+const SAFE_TARGET = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** True when the id, place and permission mode are safe to write into a start line or script. */
 export function sessionIsSafe(agent: AgentNode): boolean {
@@ -82,7 +84,7 @@ export function sessionScriptPath(topology: string, file: string): string {
 function sessionsMd(allAgents: AgentNode[]): GeneratedFile {
   const agents = allAgents.filter((a) => {
     if (sessionIsSafe(a)) return true;
-    console.warn(`[claude-code] .claude/sessions.md: no start line for a session whose id, place or permission-mode has characters outside a-z, A-Z, 0-9 and "-"`);
+    console.warn(`[claude-code] .claude/sessions.md: no start line for a session whose id, place or permission-mode has characters outside a-z, 0-9 and "-" (permission-mode also allows A-Z); validate reports an unsafe id or place as V113`);
     return false;
   });
   const lines = [
@@ -109,7 +111,7 @@ export function shellQuote(value: string): string {
 function launcher(agents: AgentNode[]): GeneratedFile | null {
   for (const a of agents) {
     if (!sessionIsSafe(a)) {
-      console.warn(`[claude-code] scripts/start-sessions.sh not written: a session id, place or permission-mode has characters outside a-z, A-Z, 0-9 and "-"`);
+      console.warn(`[claude-code] scripts/start-sessions.sh not written: a session id, place or permission-mode has characters outside a-z, 0-9 and "-" (permission-mode also allows A-Z)`);
       return null;
     }
   }
@@ -253,13 +255,14 @@ function talkGuard(topology: string, ast: TopologyAST): GeneratedFile {
     "",
     "# From here the guard is fail-closed: a payload it cannot read blocks the send,",
     "# and the refusal is logged. A trailing ' [ref]' (ListAgents' mark for a",
-    "# duplicate name) is stripped; anything but a-z, 0-9 and - is refused.",
+    "# duplicate name) is stripped; anything but A-Z, a-z, 0-9, _ and - is refused.",
+    "# Session ids are kebab-case (V113) and, like other flow targets such as subagents, match exactly as declared.",
     'FROM="$AT_SESSION"',
     "# Claude Code delivers the target twice, as `to` and `recipient`; which one it",
     "# routes by is not documented. Use `to`, else `recipient`; if both are present",
     "# and differ after ref strip, trim and lowercase, refuse.",
     String.raw`DISAGREE=$(printf '%s' "$PAYLOAD" | jq -r 'def norm: sub(" \\[[A-Za-z0-9_-]+\\]\\z"; "") | gsub("^\\s+|\\s+$"; "") | ascii_downcase; (.tool_input | objects) as $i | if ($i.to != null and $i.recipient != null) then (if (($i.to | type) == "string") and (($i.recipient | type) == "string") then (($i.to | norm) != ($i.recipient | norm)) else true end) else false end' 2>/dev/null || echo true)`,
-    String.raw`TO=$(printf '%s' "$PAYLOAD" | jq -er '.tool_input | objects | (.to // .recipient) | strings | sub(" \\[[A-Za-z0-9_-]+\\]\\z"; "") | if test("\\A[a-z0-9-]{1,64}\\z") then . else "?" + (.[0:64] | @json) end') || TO="?unreadable"`,
+    String.raw`TO=$(printf '%s' "$PAYLOAD" | jq -er '.tool_input | objects | (.to // .recipient) | strings | sub(" \\[[A-Za-z0-9_-]+\\]\\z"; "") | if test("\\A[A-Za-z0-9_-]{1,64}\\z") then . else "?" + (.[0:64] | @json) end') || TO="?unreadable"`,
     'if [ "$DISAGREE" != "false" ]; then',
     '  log "$FROM" "$TO" refused || echo "talk log not written" >&2',
     '  echo "talk guard: to and recipient disagree" >&2',
@@ -270,8 +273,12 @@ function talkGuard(topology: string, ast: TopologyAST): GeneratedFile {
     'case "$FROM" in',
   ];
   for (const [from, tos] of allowed) {
-    const all = [...tos, "main"];
-    lines.push(`  ${from})`, `    ALLOWED="${all.join(" ")}"`, `    case "$TO" in ${all.join("|")}) OK=1 ;; esac`, "    ;;");
+    const safe = tos.filter((t) => SAFE_TARGET.test(t));
+    const sess = [...safe.filter((t) => sessionIds.has(t)), "main"];
+    const other = safe.filter((t) => !sessionIds.has(t));
+    lines.push(`  ${from})`, `    ALLOWED="${[...safe, "main"].join(" ")}"`, `    case "$TO" in ${sess.join("|")}) OK=1 ;; esac`);
+    if (other.length > 0) lines.push(`    case "$TO" in ${other.join("|")}) OK=1 ;; esac`);
+    lines.push("    ;;");
   }
   lines.push(
     "esac",

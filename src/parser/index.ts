@@ -1112,7 +1112,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
  * hub can carry its own `[message:]`. Expansion happens here, so the AST (and
  * `export --format json`) only ever holds plain edges.
  */
-export function expandTalk(flowBody: string, nodes: NodeDef[], edges: EdgeDef[]): EdgeDef[] {
+export function expandTalk(flowBody: string, nodes: NodeDef[], edges: EdgeDef[], talkErrors?: string[]): EdgeDef[] {
   const sessions = nodes.filter((n) => n.type === "agent" && (n as AgentNode).runs === "session").map((n) => n.id);
   const out = [...edges];
   const have = new Set(out.map((e) => `${e.from}\u0000${e.to}`));
@@ -1122,14 +1122,22 @@ export function expandTalk(flowBody: string, nodes: NodeDef[], edges: EdgeDef[])
     out.push({ from, to, condition: null, maxIterations: null, per: null, ...(message ? { message } : {}) });
   };
   for (const line of flowBody.split("\n")) {
-    const m = line.trim().match(/^talk\s*:\s*(all|hub\s+([A-Za-z0-9_-]+))\s*(?:\[\s*message\s*:\s*([A-Za-z0-9_-]+)\s*\])?\s*$/);
-    if (!m) continue;
+    const trimmed = line.trim();
+    if (!/^talk\s*:/.test(trimmed)) continue;
+    const m = trimmed.match(/^talk\s*:\s*(all|hub\s+([A-Za-z0-9_-]+))\s*(?:\[\s*message\s*:\s*([A-Za-z0-9_-]+)\s*\])?\s*$/);
+    if (!m) {
+      talkErrors?.push(`"${trimmed}" is not a talk form: write "talk: all" or "talk: hub <session-agent>", each optionally followed by [message: ticket|report|ask].`);
+      continue;
+    }
     const message = m[3];
     if (m[1] === "all") {
       for (const a of sessions) for (const b of sessions) add(a, b, message);
     } else {
       const hub = m[2];
-      if (!sessions.includes(hub)) continue; // V113 names a hub that is not a session agent
+      if (!sessions.includes(hub)) {
+        talkErrors?.push(`"talk: hub ${hub}": "${hub}" is not a session agent (runs: session), so no talk edges were made.`);
+        continue;
+      }
       for (const x of sessions) {
         add(hub, x, message);
         add(x, hub, message);
@@ -2557,8 +2565,9 @@ export function parse(source: string): TopologyAST {
   // --- Edges (flow) ---
   const flowBlock = extractBlock(topBody, "flow");
   const edgeAttributeErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  const talkErrors: string[] = [];
   const edges = flowBlock
-    ? expandTalk(flowBlock.body, nodes, parseFlow(flowBlock.body, edgeAttributeErrors))
+    ? expandTalk(flowBlock.body, nodes, parseFlow(flowBlock.body, edgeAttributeErrors), talkErrors)
     : [];
 
   // --- Decisions (topology-level `decisions: [...]`) ---
@@ -2765,6 +2774,7 @@ export function parse(source: string): TopologyAST {
   const ast: TopologyAST & {
     _unknownNameErrors?: typeof unknownNameErrors;
     _edgeAttributeErrors?: typeof edgeAttributeErrors;
+    _talkErrors?: string[];
     _duplicateSectionWarnings?: typeof duplicateSectionWarnings;
     _misplacedBlockErrors?: typeof misplacedBlockErrors;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
@@ -2808,6 +2818,8 @@ export function parse(source: string): TopologyAST {
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
+
+  if (talkErrors.length > 0) ast._talkErrors = talkErrors;
 
   // Attach V12 parse-time errors for the validator to consume.
   if (edgeAttributeErrors.length > 0) {

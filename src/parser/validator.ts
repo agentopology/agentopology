@@ -1296,12 +1296,15 @@ function v113SessionForms(ast: TopologyAST): ValidationResult[] {
     if (n.type !== "agent") continue;
     const a = n as AgentNode;
     const at = { node: a.id, line: lookupLine(ast, a.id) };
-    if (a.place !== undefined && !/^[A-Za-z][A-Za-z0-9_-]*$/.test(a.place)) {
-      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has place: ${a.place} — a place is a plain name like "ops".` });
+    if (a.place !== undefined && !/^[a-z][a-z0-9-]*$/.test(a.place)) {
+      results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has place: ${a.place} — a place is a lowercase name like "ops" (a-z, 0-9 and "-", starting with a letter), because it names a herdr tab and a heading in sessions.md.` });
     }
     if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) {
       results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has permission-mode: ${a.permissionMode} — use ${PERMISSION_MODES.join(", ")}.` });
     }
+  }
+  for (const msg of (ast as TopologyAST & { _talkErrors?: string[] })._talkErrors ?? []) {
+    results.push({ rule: "V113", level: "error", message: `flow: ${msg}` });
   }
   for (const e of ast.edges) {
     if (e.message !== undefined && !MESSAGE_KINDS.includes(e.message)) {
