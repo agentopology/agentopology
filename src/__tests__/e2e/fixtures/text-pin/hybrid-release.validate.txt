@@ -1,4 +1,4 @@
-Validating matchmat-ship.at (matchmat-ship v1.1.0)
+Validating hybrid-release.at (hybrid-release v1.0.0)
 
   All validation rules passed.
 

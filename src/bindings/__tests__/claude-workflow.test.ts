@@ -7,11 +7,11 @@ import { bindings, claudeWorkflowBinding } from "../index.js";
 import type { GeneratedFile } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Fixture: the dogfood topology (examples/matchmat-ship.at)
+// Fixture: the example hybrid topology (examples/hybrid-release.at)
 // ---------------------------------------------------------------------------
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fixturePath = path.resolve(here, "../../../examples/matchmat-ship.at");
+const fixturePath = path.resolve(here, "../../../examples/hybrid-release.at");
 const source = readFileSync(fixturePath, "utf-8");
 const ast = parse(source);
 const files: GeneratedFile[] = claudeWorkflowBinding.scaffold(ast);
@@ -35,30 +35,30 @@ describe("claude-workflow binding — registry", () => {
   });
 });
 
-describe("claude-workflow binding — workflow.js emission (matchmat-ship)", () => {
+describe("claude-workflow binding — workflow.js emission (hybrid-release)", () => {
   // (a) a *.workflow.js file is emitted
   it("emits a <topology>.workflow.js file", () => {
     const wf = find(".workflow.js");
     expect(wf).toBeDefined();
-    expect(wf!.path).toBe("matchmat-ship.workflow.js");
+    expect(wf!.path).toBe("hybrid-release.workflow.js");
   });
 
   const wf = find(".workflow.js")!;
 
-  // (b) STRICT SEAM: meta.phases contains ONLY the workflow-marked phase (2 / builder).
+  // (b) STRICT SEAM: meta.phases contains ONLY the workflow-marked phase (2 / packager).
   it("contains `export const meta` as a pure literal with ONLY the workflow-marked phase", () => {
     expect(wf.content).toContain("export const meta");
     expect(wf.content).toContain("phases:");
     // The meta literal must not contain computed/nondeterministic values
     expect(wf.content).not.toContain("Date.now");
     expect(wf.content).not.toContain("Math.random");
-    // Only phase 2 (builder) — not phase 1 or 3.
-    expect(wf.content).toContain("{ phase: 2, agents: ['builder'] }");
+    // Only phase 2 (packager) — not phase 1 or 3.
+    expect(wf.content).toContain("{ phase: 2, agents: ['packager'] }");
     expect(wf.content).not.toContain("phase: 1");
     expect(wf.content).not.toContain("phase: 3");
   });
 
-  it("uses parallel(...) for the builder fan-out", () => {
+  it("uses parallel(...) for the packager fan-out", () => {
     expect(wf.content).toContain("parallel(");
   });
 
@@ -66,61 +66,60 @@ describe("claude-workflow binding — workflow.js emission (matchmat-ship)", () 
     expect(wf.content).toContain("phase('Phase 2')");
   });
 
-  it("compiles ONLY the builder (scaled) phase with isolation:'worktree'", () => {
+  it("compiles ONLY the packager (scaled) phase with isolation:'worktree'", () => {
     expect(wf.content).toContain("isolation: 'worktree'");
-    // builder has scale {max: 6} → deterministic Array.from fan-out, no random
-    expect(wf.content).toContain("Array.from({ length: 6 }");
-    expect(wf.content).toMatch(/label: `builder-\$\{i\}`/);
+    // packager has scale {max: 4} → deterministic Array.from fan-out, no random
+    expect(wf.content).toContain("Array.from({ length: 4 }");
+    expect(wf.content).toMatch(/label: `packager-\$\{i\}`/);
   });
 
-  // STRICT SEAM: the host-side verifier phase (3) must NOT be in the workflow.js.
-  it("does NOT contain the host phase-1 agents (contract-scout, blast-radius-mapper, boundary-drafter)", () => {
-    expect(wf.content).not.toContain("contract-scout");
-    expect(wf.content).not.toContain("blast-radius-mapper");
-    expect(wf.content).not.toContain("'boundary-drafter'");
+  // STRICT SEAM: the host-side phase 3 must NOT be in the workflow.js.
+  it("does NOT contain the host phase-1 agents (change-lister, dependency-auditor)", () => {
+    expect(wf.content).not.toContain("change-lister");
+    expect(wf.content).not.toContain("dependency-auditor");
   });
 
-  it("does NOT contain the host phase-3 verifier agents (security-verifier, etc.)", () => {
-    expect(wf.content).not.toContain("security-verifier");
-    expect(wf.content).not.toContain("contract-verifier");
-    expect(wf.content).not.toContain("closed-loop-verifier");
+  it("does NOT contain the host phase-3 agents (smoke-tester, license-checker)", () => {
+    expect(wf.content).not.toContain("smoke-tester");
+    expect(wf.content).not.toContain("license-checker");
   });
 
-  it("does NOT contain a verifier verdict schema (phase 3 is HOST-side)", () => {
-    // The verdict enum belongs to the phase-3 verifiers, which are host-side now.
-    expect(wf.content).not.toContain("verdict:");
+  it("does NOT contain the phase-3 outputs schema (phase 3 is HOST-side)", () => {
+    // The pass|fail result enum belongs to the phase-3 agents, which are host-side.
+    expect(wf.content).not.toContain("result:");
+    expect(wf.content).not.toContain("pass | fail");
   });
 
-  it("embeds the builder's Blackboard read/write paths in its prompt (no filesystem)", () => {
-    // builder reads contract-delta/blast-radius/contracts-touched, writes build-report.
-    expect(wf.content).toContain("workspace/contract-delta.md");
-    expect(wf.content).toContain("workspace/build-report.md");
+  it("embeds the packager's Blackboard read/write paths in its prompt (no filesystem)", () => {
+    // packager reads changes/dependencies, writes artifacts.
+    expect(wf.content).toContain("workspace/changes.md");
+    expect(wf.content).toContain("workspace/artifacts.md");
   });
 
-  // STRICT SEAM: verify-gate is between phase 3 and ship-report (host) → NOT in the workflow.
-  it("does NOT contain the host-side verify-gate (it sits outside the workflow span)", () => {
+  // STRICT SEAM: release-check is between phase 3 and release-notes (host) → NOT in the workflow.
+  it("does NOT contain the host-side release-check gate (it sits outside the workflow span)", () => {
     expect(wf.content).not.toContain("bounce-back");
-    expect(wf.content).not.toContain("verify-gate");
+    expect(wf.content).not.toContain("release-check");
     expect(wf.content).not.toContain("for (let attempt");
   });
 
   // (d) the workflow.js does NOT contain the human node — neither as an agent nor a boundary block.
-  it("does NOT contain the human 'promote' node as an agent() call", () => {
-    expect(wf.content).not.toMatch(/agent\([^)]*label: 'promote'/);
+  it("does NOT contain the human 'approve-release' node as an agent() call", () => {
+    expect(wf.content).not.toMatch(/agent\([^)]*label: 'approve-release'/);
     // Strict seam: the human is host-side downstream — no in-script HUMAN BOUNDARY block.
     expect(wf.content).not.toContain("HUMAN BOUNDARY");
     // It is still surfaced loud as an UNREPRESENTABLE comment, though.
-    expect(wf.content).toContain("UNREPRESENTABLE: human 'promote'");
+    expect(wf.content).toContain("UNREPRESENTABLE: human 'approve-release'");
   });
 });
 
-describe("claude-workflow binding — human split (matchmat-ship)", () => {
-  // (c) a human-split README is emitted (topology has a `human promote` node)
+describe("claude-workflow binding — human split (hybrid-release)", () => {
+  // (c) a human-split README is emitted (topology has a `human approve-release` node)
   it("emits a <topology>-README.md documenting the human handoff", () => {
     const readme = find("-README.md");
     expect(readme).toBeDefined();
-    expect(readme!.path).toBe("matchmat-ship-README.md");
-    expect(readme!.content).toContain("promote");
+    expect(readme!.path).toBe("hybrid-release-README.md");
+    expect(readme!.content).toContain("approve-release");
     expect(readme!.content.toLowerCase()).toContain("human");
     expect(readme!.content.toLowerCase()).toContain("downstream");
   });
@@ -131,11 +130,11 @@ describe("claude-workflow binding — human split (matchmat-ship)", () => {
   });
 });
 
-describe("claude-workflow binding — LOSSY report (matchmat-ship)", () => {
+describe("claude-workflow binding — LOSSY report (hybrid-release)", () => {
   it("emits a <topology>-LOSSY-REPORT.md", () => {
     const report = find("-LOSSY-REPORT.md");
     expect(report).toBeDefined();
-    expect(report!.path).toBe("matchmat-ship-LOSSY-REPORT.md");
+    expect(report!.path).toBe("hybrid-release-LOSSY-REPORT.md");
   });
 
   it("classifies the human node as UNREPRESENTABLE", () => {
@@ -144,9 +143,9 @@ describe("claude-workflow binding — LOSSY report (matchmat-ship)", () => {
     expect(report.content).toContain("human");
   });
 
-  it("classifies the host-side verify-gate as LOSSY (not in the workflow.js)", () => {
+  it("classifies the host-side release-check gate as LOSSY (not in the workflow.js)", () => {
     const report = find("-LOSSY-REPORT.md")!;
-    expect(report.content).toContain("verify-gate");
+    expect(report.content).toContain("release-check");
     expect(report.content).toContain("HOST-side");
   });
 
@@ -164,18 +163,18 @@ describe("claude-workflow binding — LOSSY report (matchmat-ship)", () => {
   });
 });
 
-describe("claude-workflow binding — Blackboard seam contract (matchmat-ship)", () => {
+describe("claude-workflow binding — Blackboard seam contract (hybrid-release)", () => {
   it("emits a <topology>-SEAM.md describing the file-based hand-off", () => {
     const seam = find("-SEAM.md");
     expect(seam).toBeDefined();
-    expect(seam!.path).toBe("matchmat-ship-SEAM.md");
+    expect(seam!.path).toBe("hybrid-release-SEAM.md");
   });
 
   it("documents the workspace root and per-agent reads/writes", () => {
     const seam = find("-SEAM.md")!;
     expect(seam.content).toContain("workspace/");
-    expect(seam.content).toContain("builder");
-    expect(seam.content).toContain("contract-delta.md");
+    expect(seam.content).toContain("packager");
+    expect(seam.content).toContain("changes.md");
   });
 
   it("states the host .claude/ files are emitted by the claude-code binding, not this one", () => {
@@ -183,15 +182,23 @@ describe("claude-workflow binding — Blackboard seam contract (matchmat-ship)",
     expect(seam.content).toContain("claude-code");
   });
 
-  it("documents the strict run order: host phase 1 → launch workflow build → host phase 3/gate → human promote", () => {
+  it("[O-006] the README and SEAM docs describe this topology only: no pipeline wording from another harness is built in", () => {
+    for (const f of [find("-SEAM.md")!, find("-README.md")!, find("-LOSSY-REPORT.md")!]) {
+      for (const w of ["contract research", "adversarial verify", "ship-report", "build-report", "build rung", "the human promotes"]) {
+        expect(f.content, `${f.path} holds "${w}"`).not.toContain(w);
+      }
+    }
+  });
+
+  it("documents the strict run order: host phase 1 → launch workflow build → host phase 3/gate → human approval", () => {
     const seam = find("-SEAM.md")!;
     expect(seam.content).toContain("STRICT SEAM");
     // The workflow rung is the build; host runs the surrounding phases.
-    expect(seam.content).toContain("Host launches `matchmat-ship.workflow.js`");
-    expect(seam.content).toContain("build rung");
-    expect(seam.content).toContain("phase 1 (contract-scout");
-    expect(seam.content).toContain("phase 3 (security-verifier");
-    expect(seam.content).toContain("human `promote`");
+    expect(seam.content).toContain("Host launches `hybrid-release.workflow.js`");
+    expect(seam.content).toContain("workflow rung");
+    expect(seam.content).toContain("phase 1 (change-lister");
+    expect(seam.content).toContain("phase 3 (smoke-tester");
+    expect(seam.content).toContain("human `approve-release`");
   });
 });
 

@@ -389,7 +389,7 @@ function generateWorkflowScript(
       severity: "UNREPRESENTABLE",
       primitive: "human",
       scope: humanNode.id,
-      reason: `The Workflow runtime prohibits mid-run human input (NO_HUMAN_INPUT). The topology is SPLIT: the workflow.js is only the deterministic workflow-marked rung; the human node '${humanNode.id}' is a HOST concern downstream of it. After the host runs verify + gate, the human promotes, which triggers the SEPARATE downstream workflow (e.g. regression). See ${name}-README.md.`,
+      reason: `The Workflow runtime prohibits mid-run human input (NO_HUMAN_INPUT). The topology is SPLIT: the workflow.js is only the deterministic workflow-marked rung; the human node '${humanNode.id}' is a HOST concern downstream of it. After the host's own phases and gates, the human step decides; anything after it runs as a separate downstream workflow. See ${name}-README.md.`,
     });
   }
 
@@ -615,7 +615,7 @@ function generateHumanSplitReadme(ast: TopologyAST, human: HumanNode): Generated
   lines.push("");
   lines.push(`## What \`${name}.workflow.js\` does`);
   lines.push("");
-  lines.push(`It runs **only** the deterministic phases marked \`execution: workflow\` (STRICT SEAM) and exits with its results written to the Blackboard. It does **not** contain \`${human.id}\` as an agent — a workflow cannot wait on a human, and the human node is a HOST concern downstream of this rung. The host runs every other phase (the contract research, the adversarial verify, the gate, the ship-report) in-session, then the human promotes.`);
+  lines.push(`It runs **only** the deterministic phases marked \`execution: workflow\` (STRICT SEAM) and exits with its results written to the Blackboard. It does **not** contain \`${human.id}\` as an agent — a workflow cannot wait on a human, and the human node is a HOST concern downstream of this rung. The host runs every other phase, and every gate, in-session; the human step \`${human.id}\` comes after.`);
   lines.push("");
   lines.push(`## The human boundary: \`${human.id}\``);
   lines.push("");
@@ -696,7 +696,7 @@ function generateSeamDoc(ast: TopologyAST, phasesEmitted: number[]): GeneratedFi
     lines.push(`${step}. **Host** presents the Blackboard artifacts to the human \`${human.id}\`, who acts (e.g. promotes). Promotion triggers the SEPARATE downstream workflow (e.g. regression).`);
   }
   lines.push("");
-  lines.push(`So for this topology, the workflow.js is just the **build rung**: the host seeds the inputs, launches it, and consumes \`build-report.md\` (and the other declared \`writes\`) for the downstream host verify + gate + ship-report.`);
+  lines.push(`So for this topology, the workflow.js is just the **workflow rung**: the host seeds the inputs, launches it, and reads the files its agents declare in \`writes\` for the host phases and gates after it.`);
   lines.push("");
 
   lines.push(`## Per-agent reads/writes (the workflow contract)`);
