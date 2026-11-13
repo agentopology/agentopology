@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { serializeAST } from "../serializer.js";
-import { importFromPlatform } from "../index.js";
+import { importFromPlatform, importClaudeCodeWithReport } from "../index.js";
 import type { PlatformFile } from "../../sync/index.js";
 
 type Entry = [event: string, matcher: string | undefined, command: string];
@@ -109,5 +109,34 @@ describe("S-01: hook commands with quotes and variables survive import exactly",
 
   it("validates with 0 errors: a quoted project-dir path is a path (V96)", () => {
     expect(errors(importAt([settingsWith(entries)]))).toEqual([]);
+  });
+});
+
+describe("S-09: an agent's output-format is never a markdown fence", () => {
+  const agent = (id: string, body: string): PlatformFile =>
+    ({ path: `.claude/agents/${id}.md`, content: `---\nname: ${id}\ndescription: Reviews a diff.\nmodel: opus\n---\n\n${body}\n` }) as PlatformFile;
+
+  const fenced = agent("fenced", "Review the diff.\n\nOutput format:\n```\n## Findings\n- one per line\n```\n");
+  const prose = agent("prose", "Review the diff.\n\nOutput format: markdown with a findings table\n");
+  const real = agent("real", "Review the diff.\n\nOutput format: json\n");
+
+  it("does not read the next line's code fence as the value", () => {
+    const ast = parse(importAt([fenced, prose, real]));
+    const fmt = (id: string) => (ast.nodes.find((n) => n.id === id) as { outputFormat?: string }).outputFormat;
+    expect(fmt("fenced")).toBeUndefined();
+    expect(fmt("prose")).toBeUndefined();
+    expect(fmt("real")).toBe("json");
+  });
+
+  it("validates with 0 errors (V36)", () => {
+    expect(errors(importAt([fenced, prose, real]))).toEqual([]);
+  });
+
+  it("drops a value it cannot map with an import warning", () => {
+    const { report } = importClaudeCodeWithReport([fenced, prose, real], "pilot");
+    expect(report.warnings).toEqual([
+      'agent prose: "Output format: markdown" is not text, json or json-schema; dropped',
+    ]);
+    expect(importAt([prose])).toContain('# Import warning: agent prose: "Output format: markdown"');
   });
 });

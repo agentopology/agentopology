@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: an imported agent's output-format is never a markdown fence (S-09)
+
+- The importer read `Output format:` from an agent file's body with a pattern that crossed the newline, so a brief that says "Output format:" above a fenced example imported as `output-format: ```` and failed V36. The value must now be on the same line and be one of `text`, `json`, `json-schema`; any other value is dropped, and the import says so in its header (`# Import warning: agent x: "Output format: markdown" is not text, json or json-schema; dropped`). The body is still read, because scaffold writes `Output format: json` there.
+
 ### [fix] Fixed: hook commands with quotes and variables survive import exactly (S-01)
 
 - The serializer wrote a `"` inside a value as `\"`, but the parser never decoded it, so `node "$CLAUDE_PROJECT_DIR/a.mjs"` came back as `node \"$CLAUDE_PROJECT_DIR/a.mjs\"`. A quoted value now decodes `\"` and `\\`, and the serializer escapes `\` as well as `"`, so import → serialize → parse gives the same command. A hand-written quoted value that held `\\` now reads as one backslash.

@@ -42,6 +42,8 @@ export interface FlowReport {
   unwired: string[];
   /** Possible handoffs from reads/writes. Not in the flow: for a person to confirm. */
   suggested: Array<{ from: string; to: string; via: string }>;
+  /** Values an agent file holds that the language cannot carry: dropped, named here. */
+  warnings?: string[];
 }
 
 const agentIds = (nodes: NodeDef[]) => nodes.filter((n) => n.type === "agent").map((n) => n.id);
@@ -204,5 +206,6 @@ export function flowReportLines(report: FlowReport): string[] {
   for (const d of report.dropped) lines.push(`Edge dropped: ${d.edge} (${d.reason})`);
   for (const s of report.suggested) lines.push(`Possible handoff, not in the flow: ${s.from} -> ${s.to} (via ${s.via})`);
   for (const s of report.skipped) lines.push(`Not used: ${s.path} (${s.reason})`);
+  for (const w of report.warnings ?? []) lines.push(`Import warning: ${w}`);
   return lines;
 }

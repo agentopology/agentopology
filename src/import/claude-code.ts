@@ -202,6 +202,9 @@ function parseOutputLines(text: string | null): OutputsMap | undefined {
 // Inline pattern extractors
 // ---------------------------------------------------------------------------
 
+/** The output formats the language has (V36): anything else is dropped on import. */
+const OUTPUT_FORMATS = new Set(["text", "json", "json-schema"]);
+
 function extractInlinePattern(body: string, pattern: RegExp): string | null {
   const match = pattern.exec(body);
   return match ? match[1] : null;
@@ -279,6 +282,7 @@ const KNOWN_FRONTMATTER_KEYS = new Set([
 export function parseAgentMd(
   agentId: string,
   content: string,
+  warn: (message: string) => void = () => {},
 ): NodeDef | null {
   const { fields, body } = parseFrontmatter(content);
 
@@ -453,8 +457,11 @@ export function parseAgentMd(
   if (thinkingInfo.thinking) agent.thinking = thinkingInfo.thinking;
   if (thinkingInfo.thinkingBudget) agent.thinkingBudget = thinkingInfo.thinkingBudget;
 
-  const outputFormat = extractInlinePattern(body, /Output format:\s*(\S+)/);
-  if (outputFormat) agent.outputFormat = outputFormat;
+  // S-09: the value is on the same line. `\s*` crossed the newline, so a
+  // prose "Output format:" over a fenced example imported as output-format: ```
+  const outputFormat = extractInlinePattern(body, /^Output format:[ \t]*(\S+)/m);
+  if (outputFormat && OUTPUT_FORMATS.has(outputFormat)) agent.outputFormat = outputFormat;
+  else if (outputFormat) warn(`agent ${agentId}: "Output format: ${outputFormat}" is not text, json or json-schema; dropped`);
   const logLevel = extractInlinePattern(body, /Log level:\s*(\S+)/);
   if (logLevel) agent.logLevel = logLevel;
   const join = extractInlinePattern(body, /Wait strategy:\s*(\S+)/);
@@ -893,6 +900,7 @@ export function importClaudeCode(
 ): TopologyAST {
   const nodes: NodeDef[] = [];
   const roles: Record<string, string> = {};
+  const warnings: string[] = [];
 
   // Files an earlier scaffold generated are listed in its manifest(s). Every
   // other file was written by hand: it is imported with `file:`, so the
@@ -922,7 +930,7 @@ export function importClaudeCode(
     if (!match) continue;
     const agentId = match[1];
     if (nodes.some((n) => n.id === agentId)) continue;
-    const node = parseAgentMd(agentId, file.content);
+    const node = parseAgentMd(agentId, file.content, (w) => warnings.push(w));
     if (node) {
       const file_ = authored(file.path);
       if (file_) node.file = file_;
@@ -1098,7 +1106,7 @@ export function importClaudeCode(
     durable: topologyMeta?.durable,
   };
 
-  onFlowReport?.(buildFlowReport(nodes, edges, skillEdges, recovered));
+  onFlowReport?.({ ...buildFlowReport(nodes, edges, skillEdges, recovered), ...(warnings.length ? { warnings } : {}) });
 
   const ast: TopologyAST = {
     topology: meta,
