@@ -16,9 +16,9 @@ All notable changes to agentopology are documented here.
 
 - `before-action.sh` (both targets) compared a step's command literally, so `commands: ["./media episode render EP.json OUT.mp4"]` never matched the real call `./media episode render show/ep7/ep.json out.mp4`, and the gate never held. Now the command is matched on its words before the first placeholder: an ALL-CAPS word (`EP`, `PID`, `OUT.mp4`) or a word holding `< > { } [ ]`, and everything after it. `validate` warns with `AG-placeholder` and names the words matched. The Claude Code `before-action.sh` of such a topology changes too.
 
-### [fix] Fixed: every generated stub fails closed; 0.10.1 and earlier graded an unwritten tool stub "refuse" while its gate passed (E-1)
+### [fix] Fixed: every generated stub fails closed; 0.10.1 and earlier (0.9.x included) graded an unwritten tool stub "refuse" while its gate passed (E-1)
 
-- In 0.10.1 and earlier, a tool's script stub (and the hook, metering and workflow-seam stubs) printed a TODO line and exited 0. A gate whose check was such an unwritten stub therefore passed, and `before-action.sh` let the step run, while `guard --check` graded the gate `refuse` and said the stub "blocks every run". In 0.11.0 every generated stub, on both targets and in every language (bash, python, node), carries the `AGENTOPOLOGY_STUB` marker and fails closed: a check that must refuse exits 2, every other stub exits 1 (an error that does not block a stop event), so a gate that runs it blocks. Codex tool stubs now carry the marker too. This changes the Claude Code stub scripts; `guards-golden.json` is re-blessed in its own commit.
+- In 0.10.1 and earlier (0.9.x included: the Claude Code binding predates 0.10), a tool's script stub (and the hook, metering and workflow-seam stubs) printed a TODO line and exited 0. A gate whose check was such an unwritten stub therefore passed, and `before-action.sh` let the step run, while `guard --check` graded the gate `refuse` and said the stub "blocks every run". In 0.11.0 every generated stub, on both targets and in every language (bash, python, node), carries the `AGENTOPOLOGY_STUB` marker and fails closed: a check that must refuse exits 2, every other stub exits 1 (an error that does not block a stop event), so a gate that runs it blocks. Codex tool stubs now carry the marker too. This changes the Claude Code stub scripts; `guards-golden.json` is re-blessed in its own commit.
 
 ### [fix] Fixed: Codex guards are graded unverified, and a gate with no blocking event reads none (R-1)
 
@@ -55,7 +55,8 @@ All notable changes to agentopology are documented here.
 
 ### [fix] A slow gate check cannot outlast the Codex hook timeout (R-3)
 
-- Every guard was registered with a 120 second hook timeout and the gate wrapper had no deadline of its own. A check longer than that, or a gate with `timeout: 10m retry: 2`, was cut off by Codex, and Codex lets a timed-out call run. Now a guard's hook timeout is never below its gates' worst case (timeout x attempts, plus the pauses, plus a margin), and the hook command cuts the run 10 seconds before that timeout and exits 2 ("ran past its deadline"). `validate --target codex` warns (`CX9-timeout`) when a gate's worst case raises the hook timeout. The deadline needs GNU `timeout` (or Homebrew's `gtimeout`); without either, the raised hook timeout is the only bound.
+- Every guard was registered with a 120 second hook timeout and the gate wrapper had no deadline of its own. A check longer than that, or a gate with `timeout: 10m retry: 2`, was cut off by Codex, and Codex lets a timed-out call run. Now a guard's hook timeout is never below its gates' worst case (timeout x attempts, plus the pauses, plus a margin), and the hook command cuts the run 10 seconds before that timeout and exits 2 ("ran past its deadline"). `validate --target codex` warns (`CX9-timeout`) when a gate's worst case raises the hook timeout.
+- Where neither GNU `timeout` nor `gtimeout` is installed (stock macOS), the deadline is kept by a shell watchdog: it stops the check and everything the check started, and the guard exits 2.
 
 ### [fix] Codex before-agent.sh reads agent_type trimmed and lowercased (R-12)
 

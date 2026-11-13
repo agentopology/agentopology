@@ -60,13 +60,24 @@ export function launchCommand(interp: string, rel: string, args: string[], guard
   const tail = args.length ? " " + args.join(" ") : "";
   if (deadline !== undefined) {
     // R-3: the run is cut a few seconds before Codex's own hook timeout, which would let the call through.
-    // GNU `timeout` (or Homebrew's `gtimeout`) kills the whole group and exits 124; with neither, no deadline.
+    // GNU `timeout` (or Homebrew's `gtimeout`) kills the whole group and exits 124. With neither (stock
+    // macOS) a POSIX watchdog does it: the payload is read first, because a background job's stdin is
+    // /dev/null in a non-interactive shell, then piped in; the watchdog kills the run at the deadline.
+    const late = `echo "agentopology: ${rel} ran past its ${deadline}s deadline, so this call is blocked" >&2; exit 2`;
     return [
       `AT_ROOT=${REPO_ROOT}`,
       `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`,
       `[ -f "$AT_ROOT/${rel}" ] || { echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`,
       `AT_T="$(command -v timeout || command -v gtimeout || true)"`,
-      `\${AT_T:+"$AT_T" -k ${DEADLINE_KILL} ${deadline} }${interp} "$AT_ROOT/${rel}"${tail} || { AT_RC=$?; [ "$AT_RC" != 124 ] || echo "agentopology: ${rel} ran past its ${deadline}s deadline, so this call is blocked" >&2; exit 2; }`,
+      `if [ -n "$AT_T" ]; then "$AT_T" -k ${DEADLINE_KILL} ${deadline} ${interp} "$AT_ROOT/${rel}"${tail} || { AT_RC=$?; [ "$AT_RC" != 124 ] || { ${late}; }; exit 2; }; ` +
+        `else AT_D=${deadline}; AT_IN="$(cat)"; AT_F="$(mktemp)"; ` +
+        // kill the run and everything it started: a grandchild left alive holds the hook's output open
+        `at_kill() { for at_c in $(pgrep -P "$2" 2>/dev/null); do at_kill "$1" "$at_c"; done; kill "-$1" "$2" 2>/dev/null; }; ` +
+        `printf '%s' "$AT_IN" | ${interp} "$AT_ROOT/${rel}"${tail} & AT_P=$!; ` +
+        `( sleep "$AT_D"; kill -0 "$AT_P" 2>/dev/null && { echo late > "$AT_F"; at_kill TERM "$AT_P"; sleep ${DEADLINE_KILL}; at_kill KILL "$AT_P"; } ) >/dev/null 2>&1 & AT_W=$!; ` +
+        `wait "$AT_P"; AT_RC=$?; kill "$AT_W" 2>/dev/null; ` +
+        `if [ -s "$AT_F" ]; then rm -f "$AT_F"; ${late}; fi; rm -f "$AT_F"; ` +
+        `[ "$AT_RC" = 0 ] || exit 2; fi`,
     ].join("; ");
   }
   const missing = guard

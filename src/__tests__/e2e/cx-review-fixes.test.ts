@@ -289,6 +289,44 @@ describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook t
     expect(r.stderr).toMatch(/deadline/);
   });
 
+  it("[R-3] with no timeout or gtimeout on PATH (stock macOS) the deadline still holds: the guard exits 2 and the payload still reaches the guard", () => {
+    // A PATH that has every tool from /usr/bin and /bin except timeout and gtimeout.
+    const bin = fs.mkdtempSync(join(os.tmpdir(), "at-r3-path-"));
+    for (const d of ["/usr/bin", "/bin"]) {
+      for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+        if (f === "timeout" || f === "gtimeout" || fs.existsSync(join(bin, f))) continue;
+        try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
+      }
+    }
+    for (const tool of ["jq", "git", "bash"]) {
+      const w = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+      if (w && !fs.existsSync(join(bin, tool))) fs.symlinkSync(w, join(bin, tool));
+    }
+    const noTimeout = (command: string, stdin: string) => {
+      const env = { ...process.env, PATH: bin } as Record<string, string>;
+      delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("/bin/sh", ["-c", command], { cwd: root, input: stdin, env, encoding: "utf8", timeout: 30_000 });
+    };
+    expect(spawnSync("/bin/sh", ["-c", "command -v timeout || command -v gtimeout || echo none"], { env: { PATH: bin }, encoding: "utf8" }).stdout.trim()).toBe("none");
+
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
+    const cmd = spawnEntry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ").replace(/AT_D=\d+/, "AT_D=3");
+    const t0 = Date.now();
+    const slowRun = noTimeout(cmd, spawnPayload("reviewer"));
+    expect(slowRun.status, slowRun.stderr).toBe(2);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+    expect(slowRun.stderr).toMatch(/deadline/);
+
+    // A passing check still passes, and the guard still reads the payload (an ungated agent spawns).
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    expect(noTimeout(cmd, spawnPayload("reviewer")).status).toBe(0);
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const failing = noTimeout(cmd, spawnPayload("reviewer"));
+    expect(failing.status, failing.stderr).toBe(2);
+    expect(failing.stderr).not.toMatch(/deadline/);
+  });
+
   it("[R-3] validate warns when a gate's worst case is longer than the default hook timeout", () => {
     const w = validate(parse(slow("      timeout: 10m\n      retry: 2\n")), { target: "codex" }).filter((r) => r.rule === "CX9-timeout");
     expect(w).toHaveLength(1);
