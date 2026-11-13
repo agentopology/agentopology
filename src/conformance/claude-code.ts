@@ -41,9 +41,19 @@ let installedCache: InstalledStatus | undefined;
  * What `claude --version` says (first x.y.z in stdout, 3 s timeout), read at
  * most once per process. A timeout or unparsable output is "unknown", never
  * an error. No `claude` on PATH is "not-installed".
+ *
+ * Env override: AGENTOPOLOGY_CLAUDE_VERSION=<x.y.z> stands in for the
+ * installed version, and AGENTOPOLOGY_CLAUDE_VERSION=none for "not installed",
+ * without running `claude`. Tests set it so output does not depend on PATH.
  */
 export function installedStatus(): InstalledStatus {
   if (installedCache) return installedCache;
+  const forced = process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+  if (forced !== undefined && forced !== "") {
+    if (forced === "none") return (installedCache = { state: "not-installed" });
+    const v = /^\d+\.\d+\.\d+$/.exec(forced)?.[0];
+    return (installedCache = !v ? { state: "unknown" } : v === VERIFIED_ON ? { state: "verified", version: v } : { state: "different", version: v });
+  }
   const r = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
   let status: InstalledStatus;
   if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") status = { state: "not-installed" };

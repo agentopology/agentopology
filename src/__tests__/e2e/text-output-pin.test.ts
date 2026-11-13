@@ -2,7 +2,8 @@
  * [VZ3] validate and guard --check text output stays byte-identical while the
  * results get structured functions. Pinned over every example before the
  * refactor; the snapshot files live in fixtures/text-pin/.
- * PATH holds no `claude`, so the version line is stable.
+ * AGENTOPOLOGY_CLAUDE_VERSION is fixed to VERIFIED_ON, so the version line is
+ * the same on every machine.
  */
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -11,6 +12,7 @@ import * as os from "node:os";
 import { resolve, dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
+import { VERIFIED_ON } from "../../conformance/claude-code.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,7 +27,7 @@ const files = [
 
 const emptyBin = fs.mkdtempSync(join(os.tmpdir(), "at-pin-bin-"));
 function cli(cwd: string, ...args: string[]) {
-  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", env: { ...process.env, PATH: emptyBin, NO_COLOR: "1" } });
+  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", env: { ...process.env, PATH: emptyBin, NO_COLOR: "1", AGENTOPOLOGY_CLAUDE_VERSION: VERIFIED_ON } });
   return `${r.stdout}${r.stderr ? "--- stderr\n" + r.stderr : ""}--- exit ${r.status}\n`;
 }
 
