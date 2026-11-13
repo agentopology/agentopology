@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
+
+- Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.
+
 ### [fix] Fixed: a hook that is plain shell scaffolds as written, not as a stub script (S-11)
 
 - Scaffold read the first word of every command hook as a script of the topology: `jq -r ... | ...` became `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/jq" ...` with a TODO stub named `jq`, so the hook stopped working while `validate` passed. In the 12-repo scan this hit 14 of 32 imported hooks in 6 repos. A `run:` is now emitted as written, with no stub, when its first word is a shell builtin or keyword (`for`, `if`, `case`, `while`, `until`, `cd`, `export`, `source`, `.`, `eval`, `exec`, `command`, and the earlier `exit`, `true`, `echo`, ...), an assignment, or a package runner (`uv`, `npx`, `pnpm`, `yarn`, `bunx`, `pipx`, `poetry`, `bun`, `deno`), or when it holds `|`, `&&`, `||`, `;`, `>`, `<`, `$(` or a backtick outside quotes, on Claude Code and Codex. A bare name keeps its meaning (the topology's `scripts/<name>`); `import` writes a bare PATH tool that is not a file in the project as `command <tool> ...`.

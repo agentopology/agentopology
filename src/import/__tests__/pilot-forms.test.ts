@@ -220,3 +220,20 @@ describe("S-11: a hook that is plain shell scaffolds as written", () => {
     expect(ast.hooks[0].run).toBe("chunk validate");
   });
 });
+
+describe("S-12: a hook running the user's script inside an authored skill folder stays wired", () => {
+  it("import then scaffold keeps the hook in settings.json", () => {
+    const skill = {
+      path: ".claude/skills/auto/SKILL.md",
+      content: "---\nname: auto\ndescription: Runs the release.\n---\n\nDo the release.\n",
+    } as PlatformFile;
+    const run = 'python3 "$CLAUDE_PROJECT_DIR/.claude/skills/auto/references/guard.py" --strict';
+    const ast = parse(importAt([settingsWith([["PreToolUse", "Edit|Write", run]]), skill]));
+    const files = claudeCodeBinding.scaffold(ast);
+    const settings = JSON.parse(files.find((f) => f.path === ".claude/settings.json")!.content);
+    const commands = Object.values(settings.hooks ?? {}).flat().flatMap((h: any) => h.hooks.map((x: any) => x.command));
+    expect(commands).toContain(run);
+    // the user's script is never written over: no stub inside their folder
+    expect(files.some((f) => f.path.includes("skills/auto/references"))).toBe(false);
+  });
+});

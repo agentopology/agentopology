@@ -3352,7 +3352,11 @@ function withoutAuthored(ast: TopologyAST, files: GeneratedFile[]): GeneratedFil
     const p = normalizeRel(path);
     return exact.has(p) || folders.some((dir) => p.startsWith(dir));
   };
-  const dropped = files.filter((f) => isAuthored(f.path)).map((f) => normalizeRel(f.path));
+  // A createOnly file is a stub for the user's own script, written only when
+  // it is missing: in an authored folder the user's file is what runs, so
+  // the hook naming it stays wired (S-12). Only a generated file the hook
+  // needs and no longer gets (a gate wrapper) takes its hook with it.
+  const dropped = files.filter((f) => isAuthored(f.path) && !f.createOnly).map((f) => normalizeRel(f.path));
   return files
     .filter((f) => !isAuthored(f.path))
     .map((f) => (/(^|\/)\.claude\/settings\.json$/.test(f.path) ? withoutHooksRunning(f, dropped) : f));
