@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] The version line and installed mark per target (CX-1)
+
+- `targets` and `scaffold --target codex` now print the Codex line ("checked against Codex CLI ...") and, when the installed `codex` is not the checked version, a mark such as "installed 0.999.0: unverified". The Claude Code output is unchanged.
+- The line and the mark come from one per-target seam, `src/conformance/index.ts`, so a new target adds one entry instead of another branch in the CLI.
+
 ### [feature] Verified on Claude Code 2.1.323 (VO-323)
 
 - The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.
