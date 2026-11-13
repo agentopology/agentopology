@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex user hook finds its script from a nested repository (F-26)
+
+- A command hook from the `hooks {}` block ran `bash "$(git rev-parse --show-toplevel || pwd)/<script>"`, so from a nested git repository it ran the wrong path and exited 127. It now uses the guards' launcher, which climbs to the folder holding the script; a script found nowhere exits 1 with a reason (a hook that is not a guard does not block). Inside an `if:` filter the launcher is passed as one word, run with `sh -c`.
+
 ### [fix] Fixed: a hook or gate stub run through `sh` no longer blocks every call on a fresh scaffold (F-24)
 
 - A `run: "sh harness/bin/gate ..."` hook got a stub with a bash body (`set -euo pipefail`). Where `sh` is dash, the stub died at `pipefail` with exit 2, so on a fresh scaffold every Bash call was blocked by accident, on both targets. When the run names `sh` or `dash`, the stub is now POSIX (`#!/bin/sh`, `set -eu`): a hook stub that is not a refuse guard exits 1 as designed, and a gate or refuse stub exits 2 on purpose.

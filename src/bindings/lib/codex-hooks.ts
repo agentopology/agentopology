@@ -207,7 +207,8 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
       executable: true,
       createOnly: true,
     };
-    return { command: `${interp} "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/${rel}"${args.length ? " " + args.join(" ") : ""}`, file: stub };
+    // F-26: the launcher climbs to the folder that holds the script, so a nested repository's cwd still finds it.
+    return { command: launchCommand(interp, rel, args, false), file: stub };
   }
   let name = scriptNameFromRun(script) ?? "hook.sh";
   // Two hooks whose scripts share a basename must not share a file.
@@ -220,7 +221,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
     category: "script",
     executable: true,
   };
-  return { command: `${interp} "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/scripts/${name}"${args.length ? " " + args.join(" ") : ""}`, file };
+  return { command: launchCommand(interp, `.codex/scripts/${name}`, args, false), file };
 }
 
 /** The filter script that runs a hook's command only when the tool call matches its `if:`. */
@@ -441,7 +442,8 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
         usesFilter = true;
         // R-7: the command goes to the filter as argv; an inline shell command is one `sh -c` word.
         const refuse = hook.strength === "refuse";
-        const inner = isShellCommand(hook.run.trim()) ? `sh -c ${q(hook.run.trim())}` : command;
+        // A launcher is a shell list, so it reaches the filter as one word, which the filter runs with sh -c.
+        const inner = isShellCommand(hook.run.trim()) ? `sh -c ${q(hook.run.trim())}` : plan.file ? q(command) : command;
         command = launchCommand("bash", IF_FILTER_PATH, [...(refuse ? ["--refuse"] : []), q(cond.tool), q(cond.glob), inner], refuse);
       }
       handler = { type: "command", command, ...timeout };

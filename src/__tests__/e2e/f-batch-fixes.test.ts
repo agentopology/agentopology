@@ -170,3 +170,51 @@ describe("[F-24] a hook stub run through sh has a body sh can run", () => {
     });
   }
 });
+
+/** One PreToolUse hook on Bash running `run`, with optional extra fields. */
+const ONE_HOOK = (run: string, extra = "") => `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "t"
+  }
+  agent worker {
+    description: "Does work"
+    model: gpt-5.2
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+  flow { intake -> worker }
+  hooks {
+    hook h {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "${run}"
+      type: command
+${extra}    }
+  }
+}
+`;
+
+describe("[F-26] a Codex user hook finds its script from a nested repository", () => {
+  const nested = () => { fs.mkdirSync(at("vendor/lib"), { recursive: true }); spawnSync("git", ["init", "-q", at("vendor/lib")]); return at("vendor/lib"); };
+  const marker = (rel: string) => { fs.mkdirSync(dirname(at(rel)), { recursive: true }); fs.writeFileSync(at(rel), `#!/usr/bin/env bash\ntouch "${at("ran")}"\nexit 0\n`, { mode: 0o755 }); };
+
+  it.each(["scripts/log.sh", "tools/log.sh"])("[F-26] %s runs from vendor/lib (exit 0), not 127", (run) => {
+    scaffoldCodex(ONE_HOOK(run));
+    marker(run.startsWith("scripts/") ? ".codex/scripts/log.sh" : run);
+    const r = runHook(codexHooks().PreToolUse[0].hooks[0].command, nested(), bashPayload("ls"));
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(at("ran"))).toBe(true);
+  });
+
+  it("[F-26] a missing user hook script exits 1 with a reason (an error that does not block), not 127", () => {
+    scaffoldCodex(ONE_HOOK("scripts/log.sh"));
+    fs.rmSync(at(".codex/scripts/log.sh"));
+    const r = runHook(codexHooks().PreToolUse[0].hooks[0].command, root, bashPayload("ls"));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("log.sh");
+  });
+});
