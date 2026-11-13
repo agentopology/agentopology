@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A Codex guard blocks when its script is not found (R-2)
+
+- A guard's hook command was `bash "$(git rev-parse --show-toplevel || pwd)/.codex/scripts/<t>/<guard>.sh"`. From a nested git repository, or from a subfolder of a project outside git, that path does not exist, bash exits 127, and Codex lets the call run. The command now starts at the repository root (else the current folder) and climbs until it finds the script; if it is nowhere above, it prints the reason and exits 2, and any other non-zero exit of the run becomes 2.
+
 ### [fix] `guard --target codex` writes the gate's check script and names Codex (R-9)
 
 - `guard --target codex` did not write the check script a gate runs (such as `.codex/scripts/render-check.sh`): the gate wrapper names it by a bare root-relative path, which the discovery did not read, so in a fresh project the gate always failed with "exit code 127". It also printed "checked against Claude Code". Now the check is written as a failing stub when it is missing (an existing one is never overwritten) and the output carries the Codex CLI version line.

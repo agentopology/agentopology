@@ -145,7 +145,8 @@ const ROOT_EXPR = /["']?\$\(git rev-parse --show-toplevel[^)]*\)["']?/g;
  * found; exit 127 does not block on PreToolUse (probe P10).
  */
 export function unanchoredScript(command: string): string | null {
-  const text = command.replace(ROOT_EXPR, "/ROOT");
+  // The launcher (launchCommand) climbs from the root expression in $AT_ROOT.
+  const text = command.replace(ROOT_EXPR, "/ROOT").replace(/\$AT_ROOT\b/g, "/ROOT");
   const script = text.trim().split(/\s+/).map((p) => p.replace(/^["']|["']$/g, "")).find((p) => /\.(sh|py|js|mjs|ts)$/.test(p));
   if (!script) return null;
   if (script.startsWith("/") || script.startsWith("$HOME") || script.startsWith("~/")) return null;

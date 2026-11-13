@@ -89,3 +89,45 @@ describe("[R-9] guard --target codex writes the gate's check script and the Code
     expect(fs.readFileSync(at(".codex/scripts/render-check.sh"), "utf8")).toBe(mine);
   });
 });
+
+type HookEntry = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> };
+const hooksOf = (dir = root): Record<string, HookEntry[]> => JSON.parse(fs.readFileSync(join(dir, ".codex/hooks.json"), "utf8")).hooks;
+const bashPayload = (command: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+const spawnPayload = (agent_type: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "collaborationspawn_agent", tool_input: { task_name: "t", agent_type, message: "m" } });
+/** Run a hooks.json command the way Codex does: a shell, from `cwd`, the payload on stdin, no Claude variable. */
+function runHook(command: string, cwd: string, stdin: string, timeout = 20_000) {
+  const env = { ...process.env } as Record<string, string>;
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync("/bin/sh", ["-c", command], { cwd, input: stdin, env, encoding: "utf8", timeout });
+}
+
+describe.skipIf(!hasJq)("[R-2] a guard's hook command blocks when its script is not found", () => {
+  const actionCommand = (dir = root) => hooksOf(dir).PreToolUse.find((e) => e.hooks[0].command.includes("before-action.sh"))!.hooks[0].command;
+
+  it("[R-2] from a nested git repository inside the project the guard still runs and blocks (exit 2)", () => {
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"));
+    fs.mkdirSync(at("vendor/lib"), { recursive: true });
+    spawnSync("git", ["init", "-q", at("vendor/lib")]);
+    const r = runHook(actionCommand(), at("vendor/lib"), bashPayload("./tool publish ep1"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(runHook(actionCommand(), at("vendor/lib"), bashPayload("ls")).status).toBe(0);
+  });
+
+  it("[R-2] from a subfolder of a project that is not a git repository the guard still runs and blocks", () => {
+    const plain = fs.mkdtempSync(join(os.tmpdir(), "at-rfix-nogit-"));
+    try {
+      scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), plain);
+      fs.mkdirSync(join(plain, "src/deep"), { recursive: true });
+      const r = runHook(actionCommand(plain), join(plain, "src/deep"), bashPayload("./tool publish ep1"));
+      expect(r.status, r.stderr).toBe(2);
+    } finally { fs.rmSync(plain, { recursive: true, force: true }); }
+  });
+
+  it("[R-2] a guard whose script is gone exits 2 with a reason, not 127", () => {
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"));
+    fs.rmSync(at(".codex/scripts/ship/before-action.sh"));
+    const r = runHook(actionCommand(), root, bashPayload("ls"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("before-action.sh");
+  });
+});

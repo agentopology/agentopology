@@ -46,6 +46,28 @@ export function codexHookEvent(on: string): string | null {
 /** The repository root, found at run time: a hook's cwd is wherever the session is, not the root. */
 export const REPO_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"';
 
+/**
+ * The shell that finds a generated script and runs it (R-2). A hook runs in the
+ * session's current directory; `git rev-parse --show-toplevel` from a nested
+ * repository, or `pwd` outside git, is not the project root, and a path that is
+ * not found exits 127, which lets the call run (probe P10). So the launcher
+ * starts at the repository root (else the current directory) and climbs until
+ * the script is there. With `guard`, a script that is not found, or any
+ * non-zero exit of the run itself, comes out as exit 2: the call is blocked.
+ */
+export function launchCommand(interp: string, rel: string, args: string[], guard: boolean): string {
+  const tail = args.length ? " " + args.join(" ") : "";
+  const missing = guard
+    ? `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`
+    : `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it" >&2; exit 1; }`;
+  return [
+    `AT_ROOT=${REPO_ROOT}`,
+    `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`,
+    `[ -f "$AT_ROOT/${rel}" ] || ${missing}`,
+    `${interp} "$AT_ROOT/${rel}"${tail}${guard ? " || exit 2" : ""}`,
+  ].join("; ");
+}
+
 /** Where the `if:` filter script is written. */
 export const IF_FILTER_PATH = ".codex/scripts/at-if.sh";
 
@@ -182,7 +204,7 @@ export const GUARD_TIMEOUT = 120;
 
 /** The command a guard script is registered with: anchored at the repository root. */
 function guardCommand(ast: TopologyAST, file: string): string {
-  return `bash ${REPO_ROOT.slice(0, -1)}/${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}"`;
+  return launchCommand("bash", `${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}`, [], true);
 }
 
 /** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
