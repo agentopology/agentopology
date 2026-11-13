@@ -1,0 +1,56 @@
+topology records-guards : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "SP-7 B4-B6: records with written-by get generated guards (made-up content)"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [maker, checker]
+  }
+
+  agent maker {
+    model: sonnet
+    description: "Makes the draft"
+  }
+
+  agent checker {
+    model: sonnet
+    description: "Checks the draft"
+  }
+
+  flow {
+    maker -> checker
+  }
+
+  hooks {
+    hook protect-records {
+      on: PreToolUse
+      matcher: "Write|Edit|NotebookEdit"
+      run: "scripts/protect-records.sh"
+      type: command
+    }
+  }
+
+  records {
+    record approvals {
+      path: "records/approvals.jsonl"
+      written-by: ["scripts/approve.py"]
+      append-only: true
+    }
+    record trace {
+      path: "work/{unit}/trace.jsonl"
+      written-by: ["scripts/trace.py", "maker"]
+      append-only: true
+    }
+    record notes {
+      path: "records/notes.jsonl"
+      description: "No written-by: anyone may write it, so no guard"
+    }
+    record cited {
+      path: "records/cited.jsonl"
+      written-by: ["scripts/approve.py"]
+      guard: [protect-records]
+    }
+  }
+}

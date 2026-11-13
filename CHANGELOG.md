@@ -4,6 +4,14 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Records: generated guards refuse a tool or shell write to a record (SP-7)
+
+- A record with `written-by: [...]` and no `guard:` is now held by the generated guards, which extend the 0.11.0 ledger guards rather than add a second one. `before-edit.sh` refuses `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on the record's path (`{unit}` as one segment; `./records/../records/approvals.jsonl`, an absolute path and a capitalised path included) and on `.agentopology/records/` head files; empty or broken input exits 2. `before-action.sh` refuses a `Bash` command that names the record and writes it (`>`, `>>`, `tee`, `tee -a`, `sed -i`, `cp` onto, `mv` onto, `truncate`, a redirection onto an expansion), and lets through a command that only reads it, a here-document fed to a reader that only mentions it, and a run of one of its `written-by` programs by its project path. Planted tests B4, B5, B6 (45 tests, red before, green now).
+- The file-writing tool list comes from the conformance facts (`FILE_WRITE_TOOLS`, held to the tools reference page by a new snapshot `spec/claude-code/tools-contract.json`), not from a list typed in the binding. The matcher is unchanged: `Write|Edit|MultiEdit|NotebookEdit`.
+- The shell path is graded detect: a path built at run time passes (planted test B6), and every record carries the line "a program running as the same OS user can still write this file; only a signature or another OS user closes that" (`recordWaysIn`, for `guard --check` in SP-9).
+- Codex gets the same guards: its `before-edit.sh` (on `apply_patch`) and `before-action.sh` are built by the same library and carry the same record lines.
+- A record whose writers are not named, or that cites a hand-built guard, gets no generated guard. No existing fixture declares one, so no generated output changed (the CX-10 golden is untouched).
+
 ### [feature] Records, the signed human gate and compose: the grammar is read and kept (SP-1)
 
 - A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).

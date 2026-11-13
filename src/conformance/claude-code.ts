@@ -406,3 +406,20 @@ export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level
     message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook cannot start or times out. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
   }];
 }
+
+/**
+ * The tools that write a file (SP-7), in the order the PreToolUse matcher
+ * names them. The tools reference (https://code.claude.com/docs/en/tools-reference.md)
+ * states the set: its `Edit(...)` rule "applies to Edit, Write, NotebookEdit";
+ * spec/claude-code/tools-contract.json is that row as a snapshot, and
+ * records-guard.test.ts holds this list to it. `MultiEdit` is no longer on the
+ * page but was a file-writing tool in earlier releases; whether the installed
+ * Claude Code still has it is not checked, so it stays: a name that matches
+ * no tool costs nothing. The binding never types this list; it reads it here.
+ */
+export const FILE_WRITE_TOOLS: readonly string[] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+
+/** The PreToolUse matcher on every file-writing tool: `Write|Edit|MultiEdit|NotebookEdit`. */
+export function fileWriteMatcher(): string {
+  return FILE_WRITE_TOOLS.join("|");
+}

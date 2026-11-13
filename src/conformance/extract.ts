@@ -214,3 +214,18 @@ export function renderDiff(d: ContractDiff): string[] {
   if (d.matcherRulesChanged) out.push("the matcher rules table changed: re-check matcherMatches in src/conformance/claude-code.ts");
   return out.length ? out : ["no drift"];
 }
+
+/**
+ * The file-writing tools, read from the tools reference page's raw markdown
+ * (https://code.claude.com/docs/en/tools-reference.md, SP-7): the "Applies to"
+ * cell of the `Edit(...)` rule row, the tools a path rule for edits covers.
+ * Empty when the page has no such row.
+ */
+export function extractFileWriteTools(markdown: string): string[] {
+  for (const table of tables(markdown.split("\n"))) {
+    for (const row of table) {
+      if (/^`Edit\(/.test(row[0] ?? "")) return (row[1] ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}

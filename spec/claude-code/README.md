@@ -6,6 +6,7 @@ What the claude-code binding relies on, as Claude Code's own docs state it.
 |---|---|
 | `hooks-contract.json` | Extracted from https://code.claude.com/docs/en/hooks.md: the hook events, the events with no matcher support, the matcher rules, each handler type's fields, and every "Requires Claude Code vX". Its `claudeCode` field is the version installed when it was checked. |
 | `hooks-contract.2.1.295.json` | The same contract at the minimum version the binding supports, **derived**: events and fields that need a newer version are dropped. The docs are current-only, so a contract can't be fetched as it stood at an older version. |
+| `tools-contract.json` | The file-writing tools, from https://code.claude.com/docs/en/tools-reference.md: the "Applies to" cell of the `Edit(...)` rule row (`extractFileWriteTools` in `src/conformance/extract.ts`). `FILE_WRITE_TOOLS` in `src/conformance/claude-code.ts` must hold every tool it lists (`src/__tests__/e2e/records-guard.test.ts`); the record and ledger edit guard is wired on that list (SP-7). |
 
 The docs are the source of truth. SchemaStore's settings schema
 (`https://json.schemastore.org/claude-code-settings.json`) lags the CLI; on

@@ -55,6 +55,7 @@ import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { fileWriteMatcher } from "../conformance/claude-code.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2435,11 +2436,11 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
-  // F-4: an edit of a gate's ledger is refused on the file-edit tools.
+  // F-4, SP-7: an edit of a gate's ledger or a record is refused on every file-writing tool (conformance facts).
   if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
-      matcher: "Write|Edit|MultiEdit|NotebookEdit",
+      matcher: fileWriteMatcher(),
       hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
     });
   }
