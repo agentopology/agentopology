@@ -257,3 +257,66 @@ function renderCoverageView() {
   return h;
 }
 `;
+
+export const LENS_JS_INDEX = String.raw`
+// --- Index lens (VZ-10): every item as one row with its source line ---
+var indexJump = null;
+function indexModel() {
+  var f = data.facts;
+  var lines = (f && f.lines) || {};
+  var src = f && typeof f.source === 'string' ? f.source : null;
+  var talkLine = lines['talk:'] || null;
+  var sessionIds = {};
+  data.nodes.forEach(function(n) { if (n.runs === 'session') sessionIds[n.id] = true; });
+  var rows = [];
+  var add = function(kind, id, key) { rows.push({ id: id, kind: kind, key: key, line: lines[key] || null }); };
+  data.nodes.forEach(function(n) { add(n.type, n.id, n.type + ':' + n.id); });
+  data.edges.forEach(function(e) {
+    var key = 'edge:' + e.from + ' -> ' + e.to;
+    add('edge', e.from + ' -> ' + e.to, key);
+    // A talk edge the compiler made from a talk: line sits on that line.
+    if (!rows[rows.length - 1].line && sessionIds[e.from] && sessionIds[e.to]) rows[rows.length - 1].line = talkLine;
+  });
+  (data.stores || []).forEach(function(s) { add('store', s.id, 'store:' + s.id); });
+  (data.triggers || []).forEach(function(t) { add('command', t.name, 'command:' + t.name); });
+  (data.hooks || []).forEach(function(h) { add('hook', h.name, 'hook:' + h.name); });
+  (data.schedules || []).forEach(function(j) { add('job', j.id, 'job:' + j.id); });
+  (data.skills || []).forEach(function(k) { add('skill', k.id, 'skill:' + k.id); });
+  (data.toolDefs || []).forEach(function(t) { add('tool', t.id, 'tool:' + t.id); });
+  var decisions = [];
+  (data.decisions || []).forEach(function(d) { if (decisions.indexOf(d) < 0) decisions.push(d); });
+  data.nodes.forEach(function(n) { (n.decides || []).forEach(function(d) { if (decisions.indexOf(d) < 0) decisions.push(d); }); });
+  decisions.forEach(function(d) { add('decision', d, 'decision:' + d); });
+  return { rows: rows, source: src === null ? null : src.split('\n') };
+}
+function jumpToLine(n) {
+  indexJump = n;
+  if (currentLens !== 'index') setLens('index'); else { renderLens(); writeHash(); }
+  try {
+    var el = document.getElementById('L' + n);
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+  } catch (e) { /* no layout */ }
+}
+function renderIndexView() {
+  var m = indexModel();
+  var h = lensHead('Index', m.source === null
+    ? 'The source is not embedded in this page (no facts were collected), so rows have no line to jump to.'
+    : 'Every item with its line in the .at. Click a row to jump to it.');
+  var q = searchQuery;
+  h += '<table class="idx-table"><thead><tr><th>Kind</th><th>Item</th><th>Line</th></tr></thead><tbody>';
+  m.rows.forEach(function(r) {
+    if (q && r.id.toLowerCase().indexOf(q) < 0) return;
+    var click = r.line ? ' data-line="' + r.line + '" onclick="jumpToLine(' + r.line + ')"' : '';
+    h += '<tr class="idx-row"' + click + '><td>' + esc(r.kind) + '</td><td>' + esc(r.id) + '</td><td class="idx-line">' + (r.line || '—') + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  if (m.source) {
+    h += '<div class="src-box">';
+    m.source.forEach(function(text, i) {
+      h += '<div class="src-line' + (indexJump === i + 1 ? ' hit' : '') + '" id="L' + (i + 1) + '"><span class="ln">' + (i + 1) + '</span><span>' + esc(text) + '</span></div>';
+    });
+    h += '</div>';
+  }
+  return h;
+}
+`;

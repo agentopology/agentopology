@@ -11,6 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { sourceIndex } from "./source-index.js";
 import * as path from "node:path";
 import type { TopologyAST } from "../parser/ast.js";
 import { validate, type ValidationResult } from "../parser/validator.js";
@@ -90,6 +91,8 @@ export interface Facts {
   items: Record<string, ItemFacts>;
   /** The .at text the facts were read against (the Index lens embeds it). */
   source: string;
+  /** Where each declaration sits in `source`: `<kind>:<id>` to a 1-based line. */
+  lines: Record<string, number>;
 }
 
 export interface CollectOptions {
@@ -114,7 +117,7 @@ export function collectFacts(ast: TopologyAST, opts: CollectOptions): Facts {
   if (!opts.dir) {
     const items: Record<string, ItemFacts> = {};
     for (const n of ast.nodes) items[n.id] = { validate: NOT_CHECKED, guard: NOT_CHECKED };
-    return { checked: false, sha256, at, version, validate: NOT_CHECKED, guard: NOT_CHECKED, untied: NOT_CHECKED, inventory: NOT_CHECKED, items, source: opts.source };
+    return { checked: false, sha256, at, version, validate: NOT_CHECKED, guard: NOT_CHECKED, untied: NOT_CHECKED, inventory: NOT_CHECKED, items, source: opts.source, lines: sourceIndex(opts.source) };
   }
   const root = path.resolve(opts.dir);
   const v = validateResult(ast, opts.filePath);
@@ -133,7 +136,7 @@ export function collectFacts(ast: TopologyAST, opts: CollectOptions): Facts {
     items[n.id] = { validate: v.results.filter((r) => r.node === n.id), guard: guard[n.id] };
   }
   return {
-    checked: true, sha256, at, version, validate: v, guard, untied: [...report.unattributed], items, source: opts.source,
+    checked: true, sha256, at, version, validate: v, guard, untied: [...report.unattributed], items, source: opts.source, lines: sourceIndex(opts.source),
     inventory: {
       total: cov.total,
       mapped: cov.mapped,

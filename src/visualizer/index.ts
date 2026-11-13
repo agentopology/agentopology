@@ -16,7 +16,7 @@ import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { project } from "./project.js";
 import type { Facts } from "./facts.js";
-import { LENS_CSS, LENS_JS_COMMON, LENS_JS_SESSIONS, LENS_JS_SEATS, LENS_JS_COVERAGE } from "./lenses.js";
+import { LENS_CSS, LENS_JS_COMMON, LENS_JS_SESSIONS, LENS_JS_SEATS, LENS_JS_COVERAGE, LENS_JS_INDEX } from "./lenses.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -2408,7 +2408,7 @@ var LENSES = [
   { id: 'guards', label: 'Guards', active: true },
   { id: 'seats', label: 'Seats', active: true },
   { id: 'coverage', label: 'Coverage', active: true },
-  { id: 'index', label: 'Index', active: false }
+  { id: 'index', label: 'Index', active: true }
 ];
 var currentLens = 'flow';
 var guardFilter = null;
@@ -2443,18 +2443,21 @@ function parseHash(h) {
     try { v = decodeURIComponent(part.slice(i + 1)); } catch (e) { return; }
     if (k === 'node' && v) out.node = v;
     if (k === 'lens' && LENSES.some(function(l) { return l.id === v; })) out.lens = v;
+    if (k === 'line' && /^[0-9]+$/.test(v)) out.line = parseInt(v, 10);
   });
   return out;
 }
 function writeHash() {
   var parts = [];
   if (currentLens !== 'flow') parts.push('lens=' + currentLens);
+  if (currentLens === 'index' && indexJump) parts.push('line=' + indexJump);
   if (selectedNode) parts.push('node=' + encodeURIComponent(selectedNode));
   try { history.replaceState(null, '', '#' + parts.join('&')); } catch (e) { /* no history API */ }
 }
 function applyHash() {
   var p = parseHash(typeof location === 'undefined' ? '' : location.hash);
   if (p.lens) setLens(p.lens, true);
+  if (p.line) jumpToLine(p.line);
   if (p.node && data.nodes.some(function(n) { return n.id === p.node; })) onNodeClick(p.node);
 }
 
@@ -2637,7 +2640,7 @@ function initShell() {
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Lenses (Sessions, Seats, Coverage, Index)
 // ═══════════════════════════════════════════════════════════════
-` + LENS_JS_COMMON + LENS_JS_SESSIONS + LENS_JS_SEATS + LENS_JS_COVERAGE + `
+` + LENS_JS_COMMON + LENS_JS_SESSIONS + LENS_JS_SEATS + LENS_JS_COVERAGE + LENS_JS_INDEX + `
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Init
 // ═══════════════════════════════════════════════════════════════
