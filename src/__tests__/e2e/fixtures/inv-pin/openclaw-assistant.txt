@@ -1,0 +1,19 @@
+Validating openclaw-assistant.at (personal-assistant v1.0.0)
+
+  coverage: 2 of 9 live things are in the .at (22%)
+    unmapped (7), nothing in the .at accounts for these:
+      agent:reviewer  (.claude/agents/reviewer.md)
+      claude-file:hooks/guard.sh  (.claude/hooks/guard.sh)
+      command:ship  (.claude/commands/ship.md)
+      hook:PreToolUse[Bash] bash .claude/hooks/guard.sh  (.claude/settings.json)
+      skill-file:story/references/rules.md  (.claude/skills/story/references/rules.md)
+      skill-file:story/scripts/copy_gate.py  (.claude/skills/story/scripts/copy_gate.py)
+      skill:story  (.claude/skills/story/SKILL.md)
+    not scaffolded (11): scaffold would write these and they are not on disk; rerun scaffold
+
+  WARN  [V99] line 56: Agent "scheduler" uses skill "google-calendar", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill google-calendar { file: ".claude/skills/google-calendar/SKILL.md" }; otherwise check the name (scheduler)
+
+  0 error(s), 1 warning(s)
+
+<version line>
+--- exit 0

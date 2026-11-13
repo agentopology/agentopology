@@ -1,0 +1,20 @@
+Validating scheduled-monitor.at (scheduled-monitor v1.0)
+
+  coverage: 1 of 9 live things are in the .at (11%)
+    unmapped (8), nothing in the .at accounts for these:
+      agent:reviewer  (.claude/agents/reviewer.md)
+      agent:writer  (.claude/agents/writer/AGENT.md)
+      claude-file:hooks/guard.sh  (.claude/hooks/guard.sh)
+      command:ship  (.claude/commands/ship.md)
+      hook:PreToolUse[Bash] bash .claude/hooks/guard.sh  (.claude/settings.json)
+      skill-file:story/references/rules.md  (.claude/skills/story/references/rules.md)
+      skill-file:story/scripts/copy_gate.py  (.claude/skills/story/scripts/copy_gate.py)
+      skill:story  (.claude/skills/story/SKILL.md)
+    not scaffolded (20): scaffold would write these and they are not on disk; rerun scaffold
+
+  All validation rules passed.
+
+<version line>
+--- stderr
+[claude-code] Schedule "weekly-deep-scan" every: monday 3:00 has no cron form; its crontab line is commented out. Use cron: instead.
+--- exit 0
