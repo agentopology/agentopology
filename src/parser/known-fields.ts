@@ -108,6 +108,8 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     person: { fields: ["away"] },
+    inventory: { fields: ["roots"] },
+    needs: { fields: ["memory", "connectors", "user-skills"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },

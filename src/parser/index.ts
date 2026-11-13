@@ -59,6 +59,7 @@ import type {
   StoreNode,
   MachineDef,
   PersonDef,
+  NeedsDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -2620,6 +2621,25 @@ export function parse(source: string): TopologyAST {
       })
     : undefined;
 
+  // --- Inventory roots (top-level `inventory { roots: ["harness/"] }`) ---
+  const inventoryBlock = extractBlock(topBody, "inventory");
+  const inventoryRootsField = inventoryBlock ? parseFields(inventoryBlock.body).roots : undefined;
+  const inventoryRoots = inventoryRootsField ? parseList(inventoryRootsField).map(unquote) : undefined;
+
+  // --- Needs outside the repo (top-level `needs { memory: "~/x" connectors: [..] user-skills: [..] }`) ---
+  const needsBlock = extractBlock(topBody, "needs");
+  const needs: NeedsDef | undefined = needsBlock
+    ? (() => {
+        // The fields may share a line: `needs { memory: "~/m"  connectors: [a] }`.
+        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills)[ \t]*:)/g, "\n"));
+        return {
+          ...(f.memory ? { memory: unquote(f.memory) } : {}),
+          ...(f.connectors ? { connectors: parseList(f.connectors).map(unquote) } : {}),
+          ...(f["user-skills"] ? { userSkills: parseList(f["user-skills"]).map(unquote) } : {}),
+        };
+      })()
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2861,6 +2881,8 @@ export function parse(source: string): TopologyAST {
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(machines ? { machines } : {}),
     ...(persons ? { persons } : {}),
+    ...(inventoryRoots?.length ? { inventoryRoots } : {}),
+    ...(needs ? { needs } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 
