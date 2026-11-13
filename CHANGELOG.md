@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [0.11.1] - UNRELEASED
+## [0.11.1] - 2026-11-13
 
 
 ### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
