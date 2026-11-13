@@ -37,6 +37,16 @@ export type GuardTargetName = "claude-code" | "codex";
 function codexCommandRefs(command: string, known: Set<string>): string[] {
   return [...known].filter((p) => command.includes(`/${p}`));
 }
+/**
+ * The generated paths a Codex script names by a bare root-relative path (R-9):
+ * a gate wrapper runs its check as `bash .codex/scripts/render-check.sh` after
+ * the guard has changed to the project root, with no variable in front. Missing
+ * those left the check unwritten, and the gate failed "exit code 127" forever.
+ */
+function bareRefs(text: string, known: Set<string>): string[] {
+  const esc = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...known].filter((p) => /\.(sh|py|js|mjs)$/.test(p) && new RegExp(`(^|[\\s"'=])${esc(p)}($|[\\s"';|&)])`, "m").test(text));
+}
 const VAR_PATH = /\$\{?([A-Za-z_]\w*)\}?\/([^\s"'`;|&)]+)/g;
 
 /**
@@ -99,7 +109,8 @@ function discover(files: GeneratedFile[], target: GuardTargetName = "claude-code
     if (picked.has(p)) continue;
     const f = byPath.get(p)!;
     picked.set(p, f);
-    for (const r of refs(f.content, known)) {
+    const named = target === "codex" ? [...new Set([...refs(f.content, known), ...bareRefs(f.content, known)])] : refs(f.content, known);
+    for (const r of named) {
       if (r === p) continue;
       if (!depth.has(r)) depth.set(r, depth.get(p)! + 1);
       queue.push(r);

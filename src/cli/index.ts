@@ -1423,7 +1423,15 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
 
   console.log(c.bold(`guard --target ${targetName} ${filePath} (project: ${dirPath})${dryRun ? c.cyan(" — dry run, nothing is written") : ""}`));
-  console.log(c.dim(`  ${verifiedOnLine()}`));
+  // R-9: the line names the host the output was written for, not always Claude Code.
+  const conf = targetName === "codex" ? platformConformance("codex") : null;
+  if (conf) {
+    const mark = conf.installedMark();
+    if (mark) console.log(c.dim(`  ${mark}`));
+    console.log(c.dim(`  ${conf.verifiedOnLine()}`));
+  } else {
+    console.log(c.dim(`  ${verifiedOnLine()}`));
+  }
   console.log("");
   for (const a of plan.actions) {
     if (a.type === "create") console.log(`  ${c.green("+")} ${a.path}`);

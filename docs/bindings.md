@@ -291,7 +291,7 @@ Codex lets a command run when a `PreToolUse` hook exits 1, exits 127 or times ou
 
 **Every Codex guard is unverified.** A project hook that has not been trusted is skipped with no warning. Open `/hooks` in Codex and trust the hooks in `.codex/hooks.json` after every scaffold (the generated `AGENTS.md` says so). agentopology never writes a trust entry. Hooks also see only the tools Codex runs through its hook layer: `apply_patch` and MCP tools need their own matchers, and a hook is a guardrail, not a sandbox.
 
-`agentopology guard <file.at> --target codex [--dir <project>]` writes only these guards into a project built by hand: the guard scripts and their `hooks.json` entries, merged with the hooks already there. It does not touch `AGENTS.md`, `config.toml`, agent files or skills, and a second run changes nothing. `guard --check` does not grade Codex projects yet.
+`agentopology guard <file.at> --target codex [--dir <project>]` writes only these guards into a project built by hand: the guard scripts and their `hooks.json` entries, merged with the hooks already there. It also writes the check script each gate runs, as a failing stub, when it is missing; an existing one is never overwritten. It does not touch `AGENTS.md`, `config.toml`, agent files or skills, and a second run changes nothing. `guard --check` does not grade Codex projects yet.
 
 ### Conformance tests for Codex
 

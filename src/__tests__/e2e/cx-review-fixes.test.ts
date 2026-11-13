@@ -70,3 +70,22 @@ describe("[R-10] a verified-list entry counts only with a clean suite", () => {
     expect(withList(list(entry), () => isVerifiedVersion("9.9.3"))).toBe(true);
   });
 });
+
+describe("[R-9] guard --target codex writes the gate's check script and the Codex version line", () => {
+  const CLI = resolve(here, "../../../dist/cli/index.js");
+  it("[R-9] into an empty project: the check stub exists and the output carries the Codex line", () => {
+    const r = spawnSync("node", [CLI, "guard", FIXTURE, "--target", "codex", "--dir", root], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CODEX_VERSION: "0.156.1" } });
+    expect(fs.existsSync(at(".codex/scripts/render-check.sh"))).toBe(true);
+    expect(fs.readFileSync(at(".codex/scripts/render-check.sh"), "utf8")).toContain("AGENTOPOLOGY_STUB");
+    expect(r.stdout).toContain("checked against Codex CLI");
+    expect(r.stdout).not.toContain("checked against Claude Code");
+  });
+
+  it("[R-9] an existing check script is never overwritten", () => {
+    const mine = "#!/usr/bin/env bash\nexit 0\n";
+    fs.mkdirSync(at(".codex/scripts"), { recursive: true });
+    fs.writeFileSync(at(".codex/scripts/render-check.sh"), mine);
+    spawnSync("node", [CLI, "guard", FIXTURE, "--target", "codex", "--dir", root], { encoding: "utf8" });
+    expect(fs.readFileSync(at(".codex/scripts/render-check.sh"), "utf8")).toBe(mine);
+  });
+});

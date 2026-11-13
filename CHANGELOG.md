@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] `guard --target codex` writes the gate's check script and names Codex (R-9)
+
+- `guard --target codex` did not write the check script a gate runs (such as `.codex/scripts/render-check.sh`): the gate wrapper names it by a bare root-relative path, which the discovery did not read, so in a fresh project the gate always failed with "exit code 127". It also printed "checked against Claude Code". Now the check is written as a failing stub when it is missing (an existing one is never overwritten) and the output carries the Codex CLI version line.
+
 ### [fix] A verified-list entry counts only with a clean suite (R-10)
 
 - `spec/claude-code/verified.json` entries were checked for shape only, so an entry whose suite had `failed: 12`, or had no suite at all, made that Claude Code version read "verified". Now an entry counts only when its proof carries a suite with `failed: 0`; any other entry is reported as a problem and the version reads unverified.
