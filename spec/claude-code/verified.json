@@ -1,0 +1,14 @@
+{
+  "note": "Claude Code versions the generated output was checked on, each with its proof. A version not listed reads 'unverified'. Green watch runs add entries here (proposed on the integration branch, never on main). `VERIFIED_ON` in src/conformance/claude-code.ts stays the newest listed version.",
+  "versions": [
+    {
+      "version": "2.1.323",
+      "proof": {
+        "run": "VO-323",
+        "date": "2026-11-13",
+        "suite": { "passed": 45, "failed": 0, "skipped": 0 },
+        "note": "Offline conformance suite (conformance.test.ts, vo-323.test.ts) plus the three live checks recorded in LIVE_CHECKS."
+      }
+    }
+  ]
+}

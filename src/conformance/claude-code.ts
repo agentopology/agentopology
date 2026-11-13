@@ -13,6 +13,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /** The Claude Code version this contract was last checked against. */
 export const VERIFIED_ON = "2.1.323";
@@ -27,6 +29,50 @@ export const MINIMUM_VERSION = "2.1.295";
  */
 export function verifiedOnLine(): string {
   return `checked against Claude Code ${VERIFIED_ON} (supports ${MINIMUM_VERSION} and later)`;
+}
+
+/** One version the output was checked on, and the proof (RW-7). */
+export interface VerifiedEntry {
+  version: string;
+  proof: { run: string; date: string; suite?: { passed: number; failed: number; skipped: number }; note?: string };
+}
+
+/** What is wrong with a verified list; empty when every entry names a version and carries a proof. */
+export function verifiedListProblems(doc: unknown): string[] {
+  const versions = (doc as { versions?: unknown })?.versions;
+  if (!Array.isArray(versions)) return ["the list has no `versions` array"];
+  const out: string[] = [];
+  for (const e of versions as Array<Record<string, any>>) {
+    const v = typeof e?.version === "string" ? e.version : "";
+    const label = v || JSON.stringify(e);
+    if (!/^\d+\.\d+\.\d+$/.test(v)) out.push(`entry ${label}: version is not x.y.z`);
+    else if (!e.proof || typeof e.proof !== "object") out.push(`entry ${label}: no proof field`);
+    else if (typeof e.proof.run !== "string" || !e.proof.run) out.push(`entry ${label}: proof has no run id`);
+    else if (typeof e.proof.date !== "string" || !e.proof.date) out.push(`entry ${label}: proof has no date`);
+    else if (e.proof.suite && !["passed", "failed", "skipped"].every((k) => Number.isInteger(e.proof.suite[k]))) out.push(`entry ${label}: proof.suite needs passed, failed and skipped counts`);
+  }
+  return out;
+}
+
+/**
+ * spec/claude-code/verified.json: the versions checked, each with its proof.
+ * Only entries that pass the check above count. An unreadable file gives an
+ * empty list, so VERIFIED_ON alone stays verified (the one-version behavior).
+ * AGENTOPOLOGY_VERIFIED_LIST=<file> stands in for the file; tests set it.
+ */
+export function loadVerifiedList(): VerifiedEntry[] {
+  const file = process.env.AGENTOPOLOGY_VERIFIED_LIST || fileURLToPath(new URL("../../spec/claude-code/verified.json", import.meta.url));
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    return (doc.versions as VerifiedEntry[]).filter((e) => verifiedListProblems({ versions: [e] }).length === 0);
+  } catch {
+    return [];
+  }
+}
+
+/** True for VERIFIED_ON and for any version on the proven list. */
+export function isVerifiedVersion(v: string): boolean {
+  return v === VERIFIED_ON || loadVerifiedList().some((e) => e.version === v);
 }
 
 export type InstalledStatus =
@@ -52,14 +98,14 @@ export function installedStatus(): InstalledStatus {
   if (forced !== undefined && forced !== "") {
     if (forced === "none") return (installedCache = { state: "not-installed" });
     const v = /^\d+\.\d+\.\d+$/.exec(forced)?.[0];
-    return (installedCache = !v ? { state: "unknown" } : v === VERIFIED_ON ? { state: "verified", version: v } : { state: "different", version: v });
+    return (installedCache = !v ? { state: "unknown" } : isVerifiedVersion(v) ? { state: "verified", version: v } : { state: "different", version: v });
   }
   const r = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] });
   let status: InstalledStatus;
   if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") status = { state: "not-installed" };
   else {
     const m = r.error || r.status !== 0 ? null : /\b(\d+\.\d+\.\d+)\b/.exec(r.stdout ?? "");
-    status = !m ? { state: "unknown" } : m[1] === VERIFIED_ON ? { state: "verified", version: m[1] } : { state: "different", version: m[1] };
+    status = !m ? { state: "unknown" } : isVerifiedVersion(m[1]) ? { state: "verified", version: m[1] } : { state: "different", version: m[1] };
   }
   return (installedCache = status);
 }
@@ -71,7 +117,7 @@ export interface VersionStamp {
   /** The same sentence validate prints. */
   line: string;
   installed: InstalledStatus;
-  /** The mark validate and guard --check add; null when the installed version is VERIFIED_ON. */
+  /** The mark validate and guard --check add; null when the installed version is on the verified list. */
   mark: string | null;
 }
 
@@ -79,7 +125,7 @@ export function versionStamp(): VersionStamp {
   return { verifiedOn: VERIFIED_ON, minimum: MINIMUM_VERSION, line: verifiedOnLine(), installed: installedStatus(), mark: installedMark() };
 }
 
-/** The line validate and guard --check add about the installed Claude Code; null when it is VERIFIED_ON. */
+/** The line validate and guard --check add about the installed Claude Code; null when it is on the verified list. */
 export function installedMark(): string | null {
   const s = installedStatus();
   switch (s.state) {

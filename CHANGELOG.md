@@ -26,6 +26,26 @@ All notable changes to agentopology are documented here.
 
 - The Codex inventory test scaffolded fixtures that name Claude models, which the Codex scaffold refuses; it now uses a Codex model name.
 
+### [feature] Surface map for Claude Code (RW-1)
+
+- `spec/surface/claude-code.surface.json` lists everything the Claude Code binding writes or relies on: hook events, handler fields, payload fields, frontmatter keys, settings keys, permission modes, written paths and CLI flags. Each entry names its contract page, where the binding uses it, the test that proves it, and what breaks if it changes. A test scaffolds `kitchen-sink.at` and the session-agents fixture and fails on any generated item that has no entry, so the map cannot fall behind the binding.
+
+### [feature] Surface map for Codex, with a schema snapshot (RW-2)
+
+- `spec/surface/codex.surface.json` does the same for the Codex binding, and `spec/codex/config.schema.json` is a copy of Codex's `config.toml` schema at tag `rust-v0.168.0`. A check compares every key and value in a generated `config.toml` with the schema. A known mismatch is excused only by a `knownDrift` entry that carries a ticket id; any other mismatch fails.
+
+### [feature] The tick: new versions from the npm registry (RW-3)
+
+- `scripts/release-watch/tick.mjs` reads the registry entry for Claude Code or Codex and lists every stable version published since the last one seen, by walking the registry's publish times. Skipped version numbers do not matter, and for Codex, prerelease and per-platform builds are dropped. It exits 0 when nothing is new, 10 when there are new versions, and 2 when the registry answer cannot be read.
+
+### [feature] The red-green gate (RW-11)
+
+- `scripts/release-watch/red-green.mjs` checks that a planted test fails at its own commit and passes at HEAD, working in a clone. It exits 1 and says "never red" when the test already passes at its own commit.
+
+### [feature] The verified Claude Code versions become a list with proofs (RW-7)
+
+- `spec/claude-code/verified.json` lists the Claude Code versions the output was checked on, each with a proof (run id, date, suite counts). `validate` and `guard --check` no longer mark an installed version as unverified when it is on the list. An entry with no proof does not count. With no readable list, the single `VERIFIED_ON` version behaves as before.
+
 ### [feature] Permission rules for Codex (CX-13)
 
 - `settings { allow / ask / deny }` entries of the form `Bash(command *)` now scaffold `.codex/rules/<topology>.rules` as `prefix_rule(...)` calls: deny is `forbidden`, ask is `prompt`, allow is `allow`. Each rule carries a `match` example (for `git push`, `git push origin main`) that Codex checks when it loads the file; where the `codex` binary is installed the test runs `codex execpolicy check` against it. When one command is in two lists, the strictest decision is written.
