@@ -199,3 +199,61 @@ function renderSeatsView() {
   return h + '</tbody></table>';
 }
 `;
+
+export const LENS_JS_COVERAGE = String.raw`
+// --- Coverage lens (VZ-9): mapped, unmapped, missing by kind ---
+var covFilter = null;
+function inventoryFacts() {
+  var f = data.facts;
+  return f && f.inventory && f.inventory !== 'not checked' ? f.inventory : null;
+}
+function coverageModel() {
+  var inv = inventoryFacts();
+  if (!inv) return { checked: false };
+  return {
+    checked: true, total: inv.total, mapped: inv.mapped, unmapped: inv.unmapped.length, missing: inv.missing.length,
+    kinds: inv.kinds || [], roots: inv.roots || [], user: inv.user || null, outside: inv.outside || [], external: inv.external || [], notScaffolded: inv.notScaffolded || []
+  };
+}
+function setCoverageFilter(kind, status) {
+  covFilter = covFilter && covFilter.kind === kind && covFilter.status === status ? null : { kind: kind, status: status };
+  if (currentLens === 'coverage') renderLens();
+}
+function renderCoverageView() {
+  var m = coverageModel();
+  var h = lensHead('Coverage', m.checked
+    ? 'What the project holds against what the .at accounts for, by kind. Read from disk by validate --inventory.'
+    : 'Not checked: no project folder was read. Run visualize with --dir in the project to measure coverage.');
+  if (!m.checked) return h + '<div class="lens-sub">Coverage: not checked.</div>';
+  var pct = m.total ? Math.round(m.mapped / m.total * 100) : 100;
+  h += '<div class="lens-sub" data-cov="total"><b>' + m.mapped + ' of ' + m.total + '</b> live things are in the .at (' + pct + '%) · <b>' + m.unmapped + '</b> unmapped · <b>' + m.missing + '</b> missing</div>';
+  h += '<div class="cov-grid">';
+  m.kinds.forEach(function(k) {
+    h += '<div class="cov-card" data-kind="' + esc(k.kind) + '"><div class="cov-kind">' + esc(k.kind) + '</div><div class="cov-nums">';
+    ['mapped', 'unmapped', 'missing'].forEach(function(st) {
+      var on = covFilter && covFilter.kind === k.kind && covFilter.status === st;
+      h += '<button class="cov-num ' + st + (on ? ' on' : '') + '" data-kind="' + esc(k.kind) + '" data-status="' + st + '" onclick="setCoverageFilter(\'' + esc(k.kind) + '\',\'' + st + '\')">' + st + ' ' + k[st].length + '</button>';
+    });
+    h += '</div></div>';
+  });
+  h += '</div>';
+  if (covFilter) {
+    var k = m.kinds.find(function(x) { return x.kind === covFilter.kind; });
+    var items = k ? k[covFilter.status] : [];
+    h += '<div class="cov-list"><div class="lens-title">' + esc(covFilter.kind) + ' · ' + esc(covFilter.status) + ' (' + items.length + ')</div>';
+    items.forEach(function(i) { h += '<code>' + esc(i) + '</code>'; });
+    h += '</div>';
+  }
+  m.roots.forEach(function(r) {
+    h += '<div class="lens-sub" data-root="' + esc(r.root) + '">root ' + esc(r.root) + ': ' + r.mapped + ' of ' + r.total + ' files are in the .at</div>';
+  });
+  if (m.user) h += '<div class="lens-sub" data-cov="user">user-level: ' + m.user.mapped + ' of ' + m.user.total + ' live things in ~/.claude are in the .at (counted apart from the project)</div>';
+  if (m.outside.length) {
+    h += '<div class="lens-title">Declared outside the repo</div>';
+    m.outside.forEach(function(o) { h += '<div class="lens-sub" data-outside="' + esc(o.name) + '">' + esc(o.kind) + ' ' + esc(o.name) + ': ' + esc(o.status) + '</div>'; });
+  }
+  if (m.external.length) h += '<div class="lens-sub">external (' + m.external.length + '), tagged e, not required</div>';
+  if (m.notScaffolded.length) h += '<div class="lens-sub">not scaffolded (' + m.notScaffolded.length + '): rerun scaffold</div>';
+  return h;
+}
+`;

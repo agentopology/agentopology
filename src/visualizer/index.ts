@@ -16,7 +16,7 @@ import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { project } from "./project.js";
 import type { Facts } from "./facts.js";
-import { LENS_CSS, LENS_JS_COMMON, LENS_JS_SESSIONS, LENS_JS_SEATS } from "./lenses.js";
+import { LENS_CSS, LENS_JS_COMMON, LENS_JS_SESSIONS, LENS_JS_SEATS, LENS_JS_COVERAGE } from "./lenses.js";
 
 // ---------------------------------------------------------------------------
 // Load dagre source for inlining into the generated HTML
@@ -2407,7 +2407,7 @@ var LENSES = [
   { id: 'sessions', label: 'Sessions', active: true },
   { id: 'guards', label: 'Guards', active: true },
   { id: 'seats', label: 'Seats', active: true },
-  { id: 'coverage', label: 'Coverage', active: false },
+  { id: 'coverage', label: 'Coverage', active: true },
   { id: 'index', label: 'Index', active: false }
 ];
 var currentLens = 'flow';
@@ -2637,7 +2637,7 @@ function initShell() {
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Lenses (Sessions, Seats, Coverage, Index)
 // ═══════════════════════════════════════════════════════════════
-` + LENS_JS_COMMON + LENS_JS_SESSIONS + LENS_JS_SEATS + `
+` + LENS_JS_COMMON + LENS_JS_SESSIONS + LENS_JS_SEATS + LENS_JS_COVERAGE + `
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Init
 // ═══════════════════════════════════════════════════════════════
