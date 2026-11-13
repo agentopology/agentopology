@@ -1,0 +1,29 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.10.1-overnight.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/integrate/0.10.1. Create your branch feat/n44e-review-fixes from it. Push ONLY that branch: `git push -u origin feat/n44e-review-fixes`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you own src/bindings/lib/session.ts, src/parser/index.ts, src/parser/validator.ts, src/parser/imports.ts, src/cli/index.ts (validate callers only), src/visualizer/index.ts (the inline data script only), src/guard/check.ts (column padding only), src/docs/__tests__/readme-sync.test.ts. Other lanes are editing nothing on 0.10.1 (the 0.11 lanes work on integrate/0.11) right now; touch those only if unavoidable, and then minimally. Add a CHANGELOG.md entry under a new "## [Unreleased]" section at the top (create the heading if missing): one "### [feature]" or "### [fix]" block per ticket, in plain sentences, no private names.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/n44e-review-fixes` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): fixes from a code review of the whole 0.10.1 integration. Planted test first for each, prefix [N44e]. In order:
+0. GATE RED: src/docs/__tests__/readme-sync.test.ts counts rules with /\.\.\.v(\d+)[A-Za-z0-9_]*\(ast\)/ and misses `v8ImportsResolve(ast, opts)`, so it says 119 while 120 are registered. Use /\(ast[,)]/ as spec-sync.test.ts already does. README's 120 is right.
+1. P1 talk guard allow-list vs strict recipient regex (session.ts ~258): the guard refuses any `to` not matching ^[a-z0-9-]{1,64}$, but its allow-list includes non-session flow targets (subagents) whose ids may be snake_case or CamelCase. A session messaging its declared subagent `code_reviewer` is refused. Allow ^[A-Za-z0-9_-]{1,64}$ and compare session ids lowercased but other targets exactly as declared.
+2. P1 place mismatch (session.ts ~67 vs V113): V113 accepts place /^[A-Za-z][A-Za-z0-9_-]*$/ but scaffold's SAFE_NAME is /^[a-z0-9-]+$/, so `place: Ops` validates and then the sessions silently vanish from sessions.md. Make V113 require ^[a-z][a-z0-9-]*$ for place (error), and fix the scaffold warning text.
+3. P1 `talk: hub <name>` with a name that is not a session agent is silently skipped (parser/index.ts ~1132). Make it a V113 error naming the bad hub (and `talk:` with any other form an error too).
+4. P1 import resolution only runs in `cmdValidate`. scaffold, plan, export, brief and visualize call validate(ast) bare, so scaffold compiles a topology whose import is missing. Record the source file path on the AST at parse time when the CLI parses a file (e.g. ast.sourcePath) and have validate() use it when opts.filePath is absent; every CLI path that validates must then resolve imports. Planted: scaffold of a file with a missing import refuses like validate does.
+5. P1 security: the visualizer inlines page data as `const DEFAULT_DATA = ${dataJson};` without escaping. An agent field containing `</script>` breaks out. Escape `<`, `>`, `&`, U+2028 and U+2029 in the inlined JSON (< etc.). Planted: an initial-prompt with `</script><script>alert(1)</script>` yields exactly one closing </script> per script block.
+6. P2 parseImportsDetailed counts braces inside quoted strings (parser/index.ts ~2342), so `description: "use { to open"` before an import drops the import silently. Skip quoted strings (and # comments) when tracking depth. Planted test.
+7. P2 checkImports re-validates a file once per path that reaches it (imports.ts ~39): memoize per resolved path, keep the cycle check separate. Planted: a 15-level diamond finishes under 2 s.
+8. P2 an imported `fragment` is validated as a full topology (imports.ts ~71): validate fragments only for parse errors and their own unknown names, not V3/V4-style whole-topology rules. Planted test.
+9. P3 guard --check's padEnd(6) strength column breaks on 'unverified'; pad to the longest strength word.
+10. P3 validator.ts duplicates sessionAgents()/talkEdges() from src/bindings/lib/session.ts. Move one shared helper to src/parser/session-graph.ts and import it in both.
