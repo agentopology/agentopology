@@ -2,6 +2,15 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.11.1] - UNRELEASED
+
+### [fix] Fixed: the step and ledger guards fire for PowerShell and Monitor
+
+- Fixed: the step and ledger guards fire for PowerShell and Monitor. On PowerShell setups (Windows without Git Bash, or pwsh enabled), 0.11.0's step and ledger guards did not fire; on Claude Code before 2.1.314 a Bash hook does not fire for Monitor, and guard --check now says so.
+- `before-action.sh` is registered on `Bash|Monitor|PowerShell` (was `Bash`), still with `"onFailure": "block"`. A Monitor call with no command (a `ws` input) passes. A PowerShell command is read the same way as a Bash one, with a backslash read as a path separator (`.\tool publish ep1`), and any mention of the tool not read as a declared step (`& ./tool @(...)`, `Start-Process ./tool -ArgumentList "publish","ep1"`, `.\tool.exe`) is refused as doubt. `Get-Content`, `gc`, `Select-String` and `sls` count as reading only, so `Get-Content` of a ledger passes the ledger guard.
+- `guard --check` grades a before-action gate `refuse (Bash), unverified (PowerShell: not measured)`: the PowerShell payload is from the Claude Code docs, not measured. Below Claude Code 2.1.314, or with the version unknown, the line adds `Monitor commands not checked on …`. A project scaffolded by 0.11.0 reads `none (PowerShell: not in the matcher; rerun guard --target claude-code)`. The generated SKILL.md Enforcement line of a ledger gate says the same.
+- Scaffold output changes for every topology with a before-action guard: `.claude/settings.json` (the matcher), `before-action.sh` (the header and the PowerShell reading) and the skill's `SKILL.md` (the Enforcement line). Rerun `scaffold` or `guard --target claude-code`.
+
 ## [0.11.0] - 2026-11-13
 
 ### [fix] Fixed: a generated action script finds its gate check from where it sits, not from CLAUDE_PROJECT_DIR (D-10)

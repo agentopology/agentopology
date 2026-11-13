@@ -1945,7 +1945,7 @@ function showNodeDetail(id) {
     const fv = fi.validate;
     h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">validate: ' + (typeof fv === 'string' ? esc(fv) : fv.length === 0 ? 'clean' : fv.length + ' issue(s)') + '</div>';
     const fg = fi.guard;
-    if (fg) h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">guard: ' + (typeof fg === 'string' ? esc(fg) : esc(fg.gradeNote ? fg.strength + ', ' + fg.gradeNote : fg.strength) + ' <span style="color:var(--t3)">' + esc(fg.where) + '</span>') + '</div>';
+    if (fg) h += '<div style="font-size:11px;margin:2px 0;color:var(--t2)">guard: ' + (typeof fg === 'string' ? esc(fg) : esc(fg.gradeNote ? fg.strength + (fg.gradeNote.charAt(0) === '(' ? ' ' : ', ') + fg.gradeNote : fg.strength) + ' <span style="color:var(--t3)">' + esc(fg.where) + '</span>') + '</div>';
     h += '<div style="font-size:10px;margin-top:4px;color:var(--t3);font-family:var(--font-mono)">source ' + esc(data.facts.sha256.slice(0, 12)) + ' \\u00b7 ' + esc(data.facts.at) + '</div>';
     h += '</div></div>';
   }
@@ -2555,7 +2555,7 @@ function chipHtml(grade) {
 function guardWord(id) {
   var g = data.facts && data.facts.guard ? data.facts.guard[id] : null;
   if (!g) return '';
-  return g.gradeNote ? g.strength + ', ' + g.gradeNote : g.strength;
+  return g.gradeNote ? g.strength + (g.gradeNote.charAt(0) === '(' ? ' ' : ', ') + g.gradeNote : g.strength;
 }
 function guardRowsAll() {
   var rows = [];
@@ -2609,7 +2609,7 @@ function renderGuardsView() {
     data.nodes.forEach(function(n) { ids[n.id] = true; });
     L.rows.forEach(function(r) {
       var link = ids[r.id] ? ' link" onclick="onNodeClick(\\'' + esc(r.id) + '\\')' : '';
-      h += '<tr data-grade="' + esc(r.grade) + '"><td>' + chipHtml(r.grade) + (r.word && r.word.indexOf(r.grade + ', ') === 0 ? '<div class="note">' + esc(r.word.slice(r.grade.length + 2)) + '</div>' : '') + '</td><td>' + esc(r.kind) + '</td><td class="idcell' + link + '">' + esc(r.id) + '</td><td>' + esc(r.by) + '</td><td class="where">' + esc(r.where);
+      h += '<tr data-grade="' + esc(r.grade) + '"><td>' + chipHtml(r.grade) + (r.word && (r.word.indexOf(r.grade + ', ') === 0 || r.word.indexOf(r.grade + ' (') === 0) ? '<div class="note">' + esc(r.word.slice(r.grade.length).replace(/^,? /, '')) + '</div>' : '') + '</td><td>' + esc(r.kind) + '</td><td class="idcell' + link + '">' + esc(r.id) + '</td><td>' + esc(r.by) + '</td><td class="where">' + esc(r.where);
       r.notes.forEach(function(n) { h += '<div class="note">' + esc(n) + '</div>'; });
       h += '</td></tr>';
     });
