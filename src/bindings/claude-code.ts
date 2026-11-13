@@ -29,7 +29,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
   CLAUDE_CODE_GUARDS,
@@ -51,7 +51,7 @@ import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
-import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1893,7 +1893,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const gate = node as GateNode;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
-    const { script } = runParts(gate.run!);
+    const { script, interpreter } = runParts(gate.run!);
     // The user's own script, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     // A project path names the user's script: a stub only fills the gap until
@@ -1901,7 +1901,8 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const project = isProjectPath(script);
     files.push({
       path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      // F-25: in the language of the interpreter hookCommand runs it with.
+      content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
       ...(project ? { createOnly: true } : {}),
     });
@@ -2098,9 +2099,11 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     // generate the stub at exactly that path (observability pattern).
     // Otherwise scope the stub into this topology's skill scripts directory.
     if (proseInRun(runPath)) continue; // V96: prose in run names no script
-    const { script } = runParts(runPath);
+    const { script, interpreter } = runParts(runPath);
     // An absolute script is the user's own, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
+    // F-24: a script run by anything but bash gets a stub in that interpreter's language.
+    const interp = interpreterFor(script, interpreter).replace(/^.*\//, "");
     const scoped = scriptNameFromRun(script);
     const filePath = isProjectPath(script)
       ? script
@@ -2111,7 +2114,9 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
 
     files.push({
       path: filePath,
-      content: observabilityStub(hook.name, hook.on, hook.matcher ?? ""),
+      content: interp === "bash"
+        ? observabilityStub(hook.name, hook.on, hook.matcher ?? "")
+        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
       executable: true,
       // A run that names its own path names the user's script: a stub only
@@ -2183,11 +2188,12 @@ export function skillScriptPath(topologyName: string, file: string): string {
 export function hookCommand(run: string, topologyName: string): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter: named, script: first, args: rest } = runParts(run);
+  // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
+  const interpreter = interpreterFor(first, named);
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");
-    return [named ?? "bash", skillScriptPath(topologyName, base), ...rest].join(" ");
+    return [interpreter, skillScriptPath(topologyName, base), ...rest].join(" ");
   }
-  const interpreter = named ?? (first.endsWith(".py") ? "python3" : "bash");
   const where = first.startsWith("/")
     ? first
     : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;

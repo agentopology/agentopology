@@ -36,7 +36,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, toolStub } from "./lib/stub.js";
+import { scriptStub, toolStub } from "./lib/stub.js";
 import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
 import { tomlString, tomlStringArray, tomlTable, tomlKey, tomlMultiline } from "./lib/toml.js";
 import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES, isClaudeModelName } from "../conformance/codex.js";
@@ -47,7 +47,7 @@ import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
 import { CODEX_GUARDS, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
-import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath } from "../parser/run.js";
+import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath, interpreterFor } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -1144,7 +1144,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run || isShellCommand(gate.run) || proseInRun(gate.run)) continue;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
-    const { script } = runParts(gate.run);
+    const { script, interpreter } = runParts(gate.run);
     // The user's own script, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
     // F-22: the stub goes where the gate wrapper runs it (codexGateCommand): a project path names the
@@ -1153,7 +1153,8 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: project ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptName}`,
       // A gate nobody has written must not pass (probe P10: only exit 2 blocks).
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      // F-25: in the language of the interpreter codexGateCommand runs it with.
+      content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
       executable: true,
       ...(project ? { createOnly: true } : {}),

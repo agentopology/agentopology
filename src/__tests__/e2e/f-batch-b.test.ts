@@ -172,8 +172,9 @@ const hooksOf = (dir = root): Record<string, HookEntry[]> => JSON.parse(fs.readF
 const bashPayload = (command: string) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
 const spawnPayload = (agent_type: unknown) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "collaborationspawn_agent", tool_input: { task_name: "t", ...(agent_type === undefined ? {} : { agent_type }), message: "m" } });
 function runHook(command: string, cwd: string, stdin: string, timeout = 30_000, env: Record<string, string> = {}) {
-  const e = { ...process.env, ...env } as Record<string, string>;
+  const e = { ...process.env } as Record<string, string>;
   delete e.CLAUDE_PROJECT_DIR;
+  Object.assign(e, env);
   return spawnSync("/bin/sh", ["-c", command], { cwd, input: stdin, env: e, encoding: "utf8", timeout });
 }
 const spawnCommand = (dir = root) => hooksOf(dir).PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
@@ -191,6 +192,87 @@ describe.skipIf(!hasJq)("[F-22] a Codex gate stub is written where the gate wrap
   it("[F-22] a bare name still goes to .codex/scripts/ and passes once filled", () => {
     scaffoldInto(AGENT_GATE("scripts/review.sh"));
     fs.writeFileSync(at(".codex/scripts/review.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    expect(runHook(spawnCommand(), root, spawnPayload("reviewer")).status).toBe(0);
+  });
+});
+
+const HOOKED = (hooks: string, extra = "") => `topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "t"
+  }
+  agent worker {
+    description: "Does work"
+    model: gpt-5.2
+    permissions: autonomous
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+${extra}  flow { intake -> worker }
+  hooks {
+${hooks}
+  }
+}
+`;
+const hookDef = (name: string, matcher: string, run: string, extra = "") => `    hook ${name} {
+      on: PreToolUse
+      matcher: "${matcher}"
+      run: "${run}"
+      type: command
+${extra}    }`;
+const ccHooksOf = (dir = root): Record<string, HookEntry[]> => JSON.parse(fs.readFileSync(join(dir, ".claude/settings.json"), "utf8")).hooks;
+const asClaude = (src: string) => src.replace(/gpt-5\.2/g, "sonnet");
+
+describe("[F-24] a hook stub runs under the interpreter its hook command uses", () => {
+  it("[F-24] Codex: run: \"sh scripts/note.sh\" (not refuse): the fresh stub exits 1, not 2, so a Bash call is not blocked by accident", () => {
+    scaffoldInto(HOOKED(hookDef("note", "Bash", "sh scripts/note.sh")));
+    const cmd = hooksOf().PreToolUse[0].hooks[0].command;
+    expect(cmd).toMatch(/\bsh\b/);
+    const r = runHook(cmd, root, bashPayload("ls"));
+    expect(r.status, r.stderr).toBe(1);
+    expect(r.stderr).toContain("TODO");
+  });
+  it("[F-24] Claude Code: run: \"sh scripts/note.sh\" (not refuse): the fresh stub exits 1, not 2", () => {
+    scaffoldInto(asClaude(HOOKED(hookDef("note", "Bash", "sh scripts/note.sh"))), root, claudeCodeBinding);
+    const cmd = ccHooksOf().PreToolUse.find((e) => e.hooks[0].command.includes("note.sh"))!.hooks[0].command;
+    const r = runHook(cmd, root, bashPayload("ls"), 30_000, { CLAUDE_PROJECT_DIR: root });
+    expect(r.status, r.stderr).toBe(1);
+  });
+  it("[F-24] a refuse hook stub run by sh still exits 2", () => {
+    scaffoldInto(HOOKED(hookDef("guard", "Bash", "sh scripts/guard.sh", "      strength: refuse\n")));
+    const r = runHook(hooksOf().PreToolUse[0].hooks[0].command, root, bashPayload("ls"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("TODO");
+  });
+});
+
+const hasPython = spawnSync("/bin/sh", ["-c", "command -v python3"]).status === 0;
+describe.skipIf(!hasPython)("[F-25] a gate check stub is written in its file's language", () => {
+  for (const [label, binding, dir] of [["Codex", codexBinding, ""], ["Claude Code", claudeCodeBinding, ""]] as const) {
+    it(`[F-25] ${label}: checks/review.py is Python and exits 2; checks/review.mjs is JavaScript and exits 2`, () => {
+      const src = (run: string) => (binding === claudeCodeBinding ? asClaude(AGENT_GATE(run)) : AGENT_GATE(run));
+      const py = quiet(() => binding.scaffold(parse(src("checks/review.py")))).find((f) => f.path === `${dir}checks/review.py`)!;
+      expect(py.content.split("\n")[0]).toMatch(/python/);
+      fs.mkdirSync(at("checks"), { recursive: true });
+      fs.writeFileSync(at("checks/review.py"), py.content);
+      const rp = spawnSync("python3", [at("checks/review.py")], { encoding: "utf8" });
+      expect(rp.stderr).not.toMatch(/SyntaxError/);
+      expect(rp.status, rp.stderr).toBe(2);
+      expect(py.content).toContain("AGENTOPOLOGY_STUB");
+      const js = quiet(() => binding.scaffold(parse(src("checks/review.mjs")))).find((f) => f.path === `${dir}checks/review.mjs`)!;
+      fs.writeFileSync(at("checks/review.mjs"), js.content);
+      const rj = spawnSync("node", [at("checks/review.mjs")], { encoding: "utf8" });
+      expect(rj.status, rj.stderr).toBe(2);
+      expect(js.content).toContain("AGENTOPOLOGY_STUB");
+    });
+  }
+  it("[F-25] Codex: the gate wrapper runs checks/review.mjs with node, so a filled-in check passes", () => {
+    if (!hasJq) return;
+    scaffoldInto(AGENT_GATE("checks/review.mjs"));
+    fs.writeFileSync(at("checks/review.mjs"), "process.exit(0);\n");
     expect(runHook(spawnCommand(), root, spawnPayload("reviewer")).status).toBe(0);
   });
 });

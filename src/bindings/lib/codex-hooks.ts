@@ -15,10 +15,10 @@
 
 import type { AgentNode, GateNode, HookDef, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
-import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
 import { HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
 import type { GeneratedFile } from "../types.js";
-import { shellStub } from "./stub.js";
+import { scriptStub } from "./stub.js";
 import {
   CODEX_GUARDS,
   checkableActionGate,
@@ -196,13 +196,13 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   const run = hook.run.trim();
   if (isShellCommand(run)) return { command: run };
   const { interpreter, script, args } = runParts(run);
-  const interp = interpreter ?? (script.endsWith(".py") ? "python3" : "bash");
+  const interp = interpreterFor(script, interpreter);
   if (script.startsWith("/")) return { command: [interp, script, ...args].join(" ") };
   if (isProjectPath(script)) {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
       path: rel,
-      content: shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }),
+      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
       executable: true,
       createOnly: true,
@@ -216,7 +216,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   used.set(name, script);
   const file: GeneratedFile = {
     path: `.codex/scripts/${name}`,
-    content: shellStub(`Hook: ${hook.name} — fires on ${hook.on}`, { fail: hook.strength === "refuse" }),
+    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
     category: "script",
     executable: true,
   };
@@ -341,7 +341,7 @@ function runGates(ast: TopologyAST, keep: (g: GateNode) => boolean): GateNode[] 
 export function codexGateCommand(run: string, _topology: string): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter, script, args } = runParts(run);
-  const interp = interpreter ?? (script.endsWith(".py") ? "python3" : "bash");
+  const interp = interpreterFor(script, interpreter);
   const where = script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
   return [interp, where, ...args].join(" ");
 }

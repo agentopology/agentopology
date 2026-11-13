@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a stub runs under the interpreter its hook or gate command uses (F-24, F-25)
+
+- A hook with `run: "sh scripts/x.sh"` got a bash stub (`set -euo pipefail`), and the hook command ran it with `sh`. Dash rejects `-o pipefail` and exits 2, so on both targets a fresh scaffold blocked every matching call by accident. A stub now has a POSIX sh body when `sh` runs it, and a hook stub that is not `strength: refuse` exits 1 as designed.
+- A gate whose `run:` names a `.py` file got a bash stub (a Python `SyntaxError`, exit 1), and a `.js` / `.mjs` one was run with bash. Gate and hook stubs are now written in the file's language (Python for `.py`, JavaScript for `.js` / `.mjs` / `.cjs`) and run by the matching interpreter. On Claude Code a non-project `.py` script is now run by python3, not bash. The Claude Code stub for `compile.at`'s `docs/tools/check.py` changes.
+
 ### [fix] Fixed: a Codex gate's check stub is written where the gate runs it (F-22)
 
 - A gate with `run: "checks/review.sh"` got its stub at `.codex/scripts/review.sh`, while `gate-<id>.sh` runs `checks/review.sh`. Filling in the stub never let the gate pass. The stub is now written at the declared project path (created once, never overwritten), as on Claude Code; a bare name still goes to `.codex/scripts/`, and an absolute path is never stubbed.
