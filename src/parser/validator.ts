@@ -25,6 +25,7 @@ import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
+import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -1267,15 +1268,8 @@ const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions",
 const MESSAGE_KINDS = ["ticket", "report", "ask"];
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
-function sessionAgents(ast: TopologyAST): AgentNode[] {
-  return ast.nodes.filter((n): n is AgentNode => n.type === "agent" && (n as AgentNode).runs === "session");
-}
-
-/** Talk edges: flow edges with a session agent at both ends. */
-function talkEdges(ast: TopologyAST): EdgeDef[] {
-  const ids = new Set(sessionAgents(ast).map((a) => a.id));
-  return ast.edges.filter((e) => !e.isError && ids.has(e.from) && ids.has(e.to));
-}
+const sessionAgents = sessionAgentsOf;
+const talkEdges = talkEdgesOf;
 
 /**
  * V113: the forms session agents take. A session agent's id is its agent file

@@ -4,6 +4,18 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Review fixes for the 0.10.1 session and import work (N44e)
+
+- The talk guard now accepts a flow target whose id has letters, digits, `_` and `-` (for example a subagent `code_reviewer` or `Helper2`), matched exactly as declared. Session ids stay lowercase kebab-case and match exactly.
+- `place:` must be lowercase (`a-z`, `0-9`, `-`, starting with a letter); `place: Ops` is now a V113 error instead of silently dropping the session from `.claude/sessions.md`.
+- `talk: hub <name>` with a name that is not a session agent, and any `talk:` line that is not `all` or `hub <name>`, is now a V113 error naming the line.
+- `scaffold`, `plan`, `export`, `brief` and `visualize` now resolve imports the way `validate` does, so a missing or mismatched import is reported instead of compiled over.
+- The visualizer escapes `<`, `>`, `&`, U+2028 and U+2029 in the data it inlines, so a field containing `</script>` can no longer break out of the page script.
+- An `import` that follows a brace inside a quoted string or a `#` comment is no longer dropped.
+- Import checking reads and validates each imported file once, so a deep diamond of imports finishes quickly, and an imported `fragment` is checked for parse errors and its own names only, not as a whole topology.
+- `guard --check` pads its strength column to the longest strength word, so `unverified` lines up.
+- The README rule count check counts every registered rule, including those that take options.
+
 ### [fix] Talk guard reads both target fields (N44d)
 
 - Claude Code sends the `SendMessage` target twice, as `to` and `recipient`. The talk guard now uses `to`, or `recipient` when `to` is absent, so a send that names only `recipient` is checked against the talk edges instead of slipping through. When both are present and differ after removing a `[ref]` suffix, trimming and lowercasing, the send is refused with `talk guard: to and recipient disagree` and logged as refused.

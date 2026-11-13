@@ -259,3 +259,16 @@ describe("[N44e] guard --check column padding", () => {
     expect(new Set(cols).size).toBe(1);
   });
 });
+
+import * as graph from "../../parser/session-graph.js";
+import * as sessionLib from "../../bindings/lib/session.js";
+
+describe("[N44e] one shared session-graph helper", () => {
+  it("[N44e] validator and the binding use the same sessionAgents/talkEdges, defined once", () => {
+    expect(sessionLib.sessionAgentsOf).toBe(graph.sessionAgentsOf);
+    expect(sessionLib.talkEdgesOf).toBe(graph.talkEdgesOf);
+    const validatorSrc = fs.readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../parser/validator.ts"), "utf8");
+    expect(validatorSrc).not.toMatch(/function (sessionAgents|talkEdges)\(/);
+    expect(validatorSrc).toContain("session-graph.js");
+  });
+});

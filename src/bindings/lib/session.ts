@@ -22,21 +22,14 @@
  */
 
 import type { AgentNode, EdgeDef, TopologyAST } from "../../parser/ast.js";
+import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 
 /** The line other targets print when a topology has session agents. */
 export const SESSION_NOTICE = "session agents: experimental, not compiled";
 
-export function sessionAgentsOf(ast: TopologyAST): AgentNode[] {
-  return ast.nodes.filter((n): n is AgentNode => n.type === "agent" && (n as AgentNode).runs === "session");
-}
-
-/** Flow edges with a session agent at both ends. */
-export function talkEdgesOf(ast: TopologyAST): EdgeDef[] {
-  const ids = new Set(sessionAgentsOf(ast).map((a) => a.id));
-  return ast.edges.filter((e) => !e.isError && ids.has(e.from) && ids.has(e.to));
-}
+export { sessionAgentsOf, talkEdgesOf };
 
 /** Session agents that hold a decision seat and can receive a message. */
 export function decidersWithIncomingTalk(ast: TopologyAST): AgentNode[] {
