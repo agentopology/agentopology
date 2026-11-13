@@ -310,7 +310,15 @@ function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
   return group.hooks.some((h) => {
     if (!isPlainObject(h) || typeof h.command !== "string") return false;
     const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
-    return tokens.some((t) => scripts.includes(t));
+    if (tokens.some((t) => scripts.includes(t))) return true;
+    // R-8: a Codex command names its script after a root expression,
+    // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
+    // whitespace token equals the path. Read every `.codex/scripts/…` path in it.
+    // Claude Code commands carry no such path, so their ownership is unchanged.
+    for (const m of h.command.matchAll(/(?:^|[\s"'/])(\.codex\/scripts\/[^\s"'`;|&)]+)/g)) {
+      if (scripts.includes(m[1])) return true;
+    }
+    return false;
   });
 }
 

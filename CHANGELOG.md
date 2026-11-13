@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A Codex rescaffold removes the topology's stale hook groups (R-8)
+
+- When `.codex/hooks.json` was merged, a group counted as the topology's only when a whitespace-separated word of its command equalled a generated script path. A Codex command names the script after a root expression (`"$(git rev-parse …)/.codex/scripts/<t>/x.sh"`), so no group was ever recognized: moving a gate's anchor left both `SubagentStop` groups, and a removed gate kept firing. Now any `.codex/scripts/…` path in the command counts, the stale group is replaced, and the user's own groups stay. Claude Code ownership is unchanged.
+
 ### [fix] A Codex guard blocks when its script is not found (R-2)
 
 - A guard's hook command was `bash "$(git rev-parse --show-toplevel || pwd)/.codex/scripts/<t>/<guard>.sh"`. From a nested git repository, or from a subfolder of a project outside git, that path does not exist, bash exits 127, and Codex lets the call run. The command now starts at the repository root (else the current folder) and climbs until it finds the script; if it is nowhere above, it prints the reason and exits 2, and any other non-zero exit of the run becomes 2.

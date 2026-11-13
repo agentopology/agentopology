@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { codexBinding } from "../../bindings/codex.js";
 import { isVerifiedVersion, verifiedListProblems } from "../../conformance/claude-code.js";
+import { deepMergeSettingsJson } from "../../scaffold/merge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(here, "fixtures/codex-gates.at");
@@ -129,5 +130,85 @@ describe.skipIf(!hasJq)("[R-2] a guard's hook command blocks when its script is 
     const r = runHook(actionCommand(), root, bashPayload("ls"));
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("before-action.sh");
+  });
+});
+
+const AGENT_GATE = (after: string) => `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Write, then review"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [writer, editor, reviewer]
+  }
+  agent writer {
+    model: gpt-5.2
+    description: "Writes"
+  }
+  agent editor {
+    model: gpt-5.2
+    description: "Edits"
+  }
+  agent reviewer {
+    model: gpt-5.2
+    description: "Reviews"
+  }
+  gates {
+    gate checked {
+      after: ${after}
+      before: reviewer
+      run: "scripts/check.sh"
+      on-fail: halt
+    }
+  }
+  flow { writer -> editor -> reviewer }
+}
+`;
+
+describe("[R-8] a rescaffold replaces the topology's own Codex hook groups", () => {
+  const CLI = resolve(here, "../../../dist/cli/index.js");
+  const scaffoldCli = (src: string) => {
+    const f = join(root, "t.at");
+    fs.writeFileSync(f, src);
+    return spawnSync("node", [CLI, "scaffold", f, "--target", "codex", "--output", root], { encoding: "utf8" });
+  };
+
+  it("[R-8] moving a gate's anchor leaves exactly the new SubagentStop group; the user's group stays", () => {
+    expect(scaffoldCli(AGENT_GATE("writer")).status).toBe(0);
+    const file = at(".codex/hooks.json");
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    const mine = { matcher: "writer", hooks: [{ type: "command", command: "bash my-own-stop.sh" }] };
+    doc.hooks.SubagentStop.push(mine);
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    expect(scaffoldCli(AGENT_GATE("editor")).status).toBe(0);
+    const stop = hooksOf().SubagentStop;
+    const generated = stop.filter((g) => g.hooks[0].command.includes(".codex/scripts/review/"));
+    expect(generated.map((g) => g.matcher)).toEqual(["editor"]);
+    expect(stop.filter((g) => g.hooks[0].command === "bash my-own-stop.sh")).toHaveLength(1);
+  });
+});
+
+describe("[R-8] ownership reads the Codex command form wherever the script path sits", () => {
+  const owned = [".codex/scripts/review/gate-checked.sh"];
+  const group = (matcher: string, command: string) => ({ matcher, hooks: [{ type: "command", command }] });
+  const forms = [
+    `bash "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/scripts/review/gate-checked.sh"`,
+    `AT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; bash "$AT_ROOT/.codex/scripts/review/gate-checked.sh" || exit 2`,
+  ];
+  it.each(forms)("[R-8] a stale owned group in the form %s is removed; the user's group is kept", (cmd) => {
+    const existing = { hooks: { SubagentStop: [group("writer", cmd), group("writer", "bash my-own-stop.sh")] } };
+    const generated = { hooks: { SubagentStop: [group("editor", cmd)] } };
+    const out = JSON.parse(deepMergeSettingsJson(JSON.stringify(existing), JSON.stringify(generated), owned));
+    expect(out.hooks.SubagentStop.map((g: { matcher: string; hooks: Array<{ command: string }> }) => `${g.matcher}:${g.hooks[0].command === cmd ? "gen" : g.hooks[0].command}`))
+      .toEqual(["writer:bash my-own-stop.sh", "editor:gen"]);
+  });
+
+  it("[R-8] a Claude Code group is owned exactly as before: by a token equal to the script path", () => {
+    const cc = [".claude/skills/t/scripts/gate-x.sh"];
+    const existing = { hooks: { SubagentStop: [group("a", "bash .claude/skills/t/scripts/gate-x.sh"), group("a", "bash ./mine/.claude/skills/t/scripts/gate-x.sh")] } };
+    const generated = { hooks: { SubagentStop: [group("b", "bash .claude/skills/t/scripts/gate-x.sh")] } };
+    const out = JSON.parse(deepMergeSettingsJson(JSON.stringify(existing), JSON.stringify(generated), cc));
+    expect(out.hooks.SubagentStop.map((g: { matcher: string }) => g.matcher)).toEqual(["a", "b"]);
   });
 });
