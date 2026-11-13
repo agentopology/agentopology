@@ -275,7 +275,7 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
   for (const { event, entry } of guards.entries) (hooks[event] ??= []).push(entry);
 
   const hooksJson = Object.keys(hooks).length > 0
-    ? { path: ".codex/hooks.json", content: JSON.stringify({ hooks }, null, 2) + "\n", category: "machine" as const }
+    ? { path: ".codex/hooks.json", content: JSON.stringify({ hooks }, null, 2) + "\n", category: "shared-config" as const }
     : null;
   return { hooksJson, scripts, problems };
 }

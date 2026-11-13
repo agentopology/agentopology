@@ -104,10 +104,10 @@ ${c.bold("Usage:")}
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
-  agentopology guard <file.at> --target claude-code [--dir <project-dir>] [--dry-run]
+  agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and
-                       permissions of settings.json (merged). Keeps edited scripts and
+                       permissions of settings.json (merged; for codex, .codex/hooks.json). Keeps edited scripts and
                        implemented checks, reports each. Then runs --check.
   agentopology guard <file.at> --check [--dir <project-dir>]
                        Report which gates, approval steps and permission rules the
@@ -1381,13 +1381,13 @@ function cmdGuardCheck(filePath: string, dirPath: string): void {
 }
 
 /**
- * `guard <file> --target claude-code`: write only the guard part of scaffold's
+ * `guard <file> --target claude-code|codex`: write only the guard part of scaffold's
  * output (see src/guard/target.ts), print what was written or kept, then run
  * the `--check` report and exit like it.
  */
 function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, dryRun: boolean): void {
-  if (targetName !== "claude-code") {
-    console.error(c.red(`Error: guard --target supports claude-code only (got "${targetName}").`));
+  if (targetName !== "claude-code" && targetName !== "codex") {
+    console.error(c.red(`Error: guard --target supports claude-code and codex only (got "${targetName}").`));
     process.exit(1);
   }
   const source = readFile(filePath);
@@ -1406,7 +1406,16 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
   const root = path.resolve(dirPath);
   const name = path.basename(filePath);
-  const plan = planGuardTarget(ast, root, name);
+  let plan;
+  try {
+    plan = planGuardTarget(ast, root, name, targetName);
+  } catch (e) {
+    if (e instanceof BindingRefusal) {
+      console.error(c.red(`  ${e.message}`));
+      process.exit(1);
+    }
+    throw e;
+  }
   const unsafe = plan.actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
     console.error(c.red(`  Refusing to write: ${unsafe.length} generated path(s) are not safe file names. Nothing was written.`));
@@ -1435,7 +1444,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   }
   let result;
   try {
-    result = applyGuardTarget(plan, root, name, source);
+    result = applyGuardTarget(plan, root, name, source, targetName);
   } catch (err) {
     console.error(c.red(`  Could not write: ${(err as Error).message}`));
     process.exit(1);
@@ -1446,6 +1455,12 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     process.exit(1);
   }
   console.log("");
+  if (targetName === "codex") {
+    // guard --check grades Claude Code settings only for now; say what a person must do instead.
+    console.log("  Codex skips a project hook until it is reviewed and trusted: open /hooks in Codex and trust the hooks in .codex/hooks.json.");
+    console.log("  Until then no guard is active, and a hook is a guardrail, not a sandbox. agentopology never writes a trust entry.");
+    return;
+  }
   cmdGuardCheck(filePath, dirPath);
 }
 
@@ -1640,7 +1655,7 @@ function main(): void {
         break;
       }
       if (!args.check) {
-        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code (write the guards)."));
+        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code|codex (write the guards)."));
         process.exit(1);
       }
       cmdGuardCheck(args.file, args.dir ?? ".");

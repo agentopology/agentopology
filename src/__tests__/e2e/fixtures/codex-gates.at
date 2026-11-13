@@ -4,8 +4,14 @@
 # Claude model names.
 
 topology ship : [pipeline] {
-  meta { version: "1.0.0" description: "Render, approve, then publish" }
-  orchestrator { model: gpt-5.2 handles: [render, publish, editor] }
+  meta {
+    version: "1.0.0"
+    description: "Render, approve, then publish"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [render, publish, editor]
+  }
   action render {
     kind: external
     commands: ["./tool render"]
