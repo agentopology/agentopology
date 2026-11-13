@@ -25,6 +25,7 @@ import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
+import { BindingRefusal } from "../bindings/types.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
@@ -609,7 +610,16 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     console.log("");
   }
 
-  const files = binding.scaffold(ast);
+  let files: ReturnType<typeof binding.scaffold>;
+  try {
+    files = binding.scaffold(ast);
+  } catch (e) {
+    if (e instanceof BindingRefusal) {
+      console.error(c.red(`  ${e.message}`));
+      process.exit(1);
+    }
+    throw e;
+  }
 
   if (files.length === 0) {
     console.log(c.yellow("  No files generated."));

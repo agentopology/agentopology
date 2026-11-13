@@ -38,6 +38,14 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
+import { tomlString, tomlStringArray, tomlTable, tomlKey, tomlMultiline } from "./lib/toml.js";
+import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES, isClaudeModelName } from "../conformance/codex.js";
+import { codexWarnings } from "../parser/validator.js";
+import { BindingRefusal } from "./types.js";
+import { everyToCron } from "./claude-code.js";
+import { buildCodexHooks } from "./lib/codex-hooks.js";
+import { buildCodexRules } from "./lib/codex-rules.js";
+import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -57,68 +65,28 @@ function toTitle(id: string): string {
     .join(" ");
 }
 
+/** Permission words that mean "never ask": Codex `never`. */
+const NEVER_ASK = new Set(["never", "unrestricted", "full-auto", "bypassPermissions"]);
+
 /**
  * Map topology permission strings to Codex approval_policy values.
  *
- * Codex CLI supports these approval policies:
- *   - "untrusted"  — only run trusted commands without asking (default, most restrictive)
- *   - "on-request" — model decides when to ask the user
- *   - "never"      — never ask for user approval
- *
- * Legacy/deprecated:
- *   - "on-failure"  — deprecated, prefer "on-request" for interactive or "never" for non-interactive
+ * Codex 0.156.1 takes `on-request` and `never` (and a `granular` table).
+ * `untrusted` is unsupported and `on-failure` is deprecated, so every word
+ * that is not "never ask" becomes `on-request`, the policy that still asks.
  */
 function mapApprovalPolicy(perm: string): string {
-  // Codex-native values — pass through
-  const nativeValues = ["untrusted", "on-request", "on-failure", "never"];
-  if (nativeValues.includes(perm)) return perm;
-
-  // Topology-level semantic values
-  switch (perm) {
-    case "supervised":
-      return "untrusted";
-    case "autonomous":
-      return "on-request";
-    case "interactive":
-      return "untrusted";
-    case "unrestricted":
-      return "never";
-    // Legacy Codex values — map to current equivalents
-    case "suggest":
-      return "untrusted";
-    case "auto-edit":
-      return "on-request";
-    case "full-auto":
-      return "never";
-    // Claude Code native values mapped to Codex equivalents
-    case "plan":
-      return "untrusted";
-    case "auto":
-      return "on-request";
-    case "confirm":
-      return "untrusted";
-    case "bypassPermissions":
-      return "never";
-    default:
-      return "untrusted"; // safe default
-  }
+  return NEVER_ASK.has(perm) ? "never" : "on-request";
 }
 
 /**
- * Escape a TOML string value.
- * Wraps in double quotes, escaping internal quotes and backslashes.
+ * One approval policy for the whole project: Codex has one per config, not
+ * one per agent. The strictest agent wins (`on-request` over `never`).
  */
-function tomlString(value: string): string {
-  const escaped = value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
-  return `"${escaped}"`;
-}
-
-/** Format a TOML array of strings on a single line. */
-function tomlStringArray(values: string[]): string {
-  return `[${values.map(tomlString).join(", ")}]`;
+function projectApprovalPolicy(agents: AgentNode[]): string {
+  const policies = agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous"));
+  if (policies.length === 0) return "on-request";
+  return policies.includes("on-request") ? "on-request" : "never";
 }
 
 /** Generate an empty directory marker (a .gitkeep file). */
@@ -164,204 +132,141 @@ function formatRetryConfig(retry: number | RetryConfig): string {
 // TOML generation — .codex/config.toml
 // ---------------------------------------------------------------------------
 
+/** Warnings collected during one scaffold; flushed (printed once each) at the end of it. */
+let pendingWarnings: string[] = [];
+function codexWarn(message: string): void {
+  if (!pendingWarnings.includes(message)) pendingWarnings.push(message);
+}
+
+/** MCP keys Codex does not have; dropped. `type` is a Claude Code key. */
+const MCP_DROPPED_KEYS = new Set(["type"]);
+
+const MCP_NUMBER_KEYS = new Set(["startup_timeout_sec", "tool_timeout_sec"]);
+const MCP_BOOLEAN_KEYS = new Set(["enabled", "required"]);
+const MCP_LIST_KEYS = new Set(["args", "enabled_tools", "disabled_tools", "env_vars"]);
+
+/** The parser reads every MCP field as text; give Codex the type it expects for the keys it types. */
+function mcpValue(key: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (MCP_NUMBER_KEYS.has(key) && /^\d+(\.\d+)?$/.test(value.trim())) return Number(value);
+  if (MCP_BOOLEAN_KEYS.has(key) && /^(true|false)$/.test(value.trim())) return value.trim() === "true";
+  if (MCP_LIST_KEYS.has(key) && /^\[.*\]$/s.test(value.trim())) {
+    return value.trim().slice(1, -1).split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter((x) => x !== "");
+  }
+  return value;
+}
+
+/** An extension or config key written the way Codex spells it (snake_case). */
+function snakeKey(key: string): string {
+  return key.replace(/-/g, "_");
+}
+
 /**
  * Generate the main `.codex/config.toml` configuration file.
  *
- * Maps topology metadata, the most permissive agent's approval policy,
- * model, sandbox, and provider settings. Extension fields from
- * `extensions["codex"]` on the topology or agents are merged in.
+ * Top-level scalars come first and every table after them, so no key can land
+ * inside the wrong table. Only keys Codex 0.156.1 knows are written; a key a
+ * project config may not set (providers, notify, profiles, otel) is dropped
+ * with a warning, because Codex would ignore it.
  */
 function generateCodexToml(ast: TopologyAST): GeneratedFile {
-  const lines: string[] = [];
+  const header = ["# Codex CLI configuration", "# Auto-generated by agentopology scaffold — edit as needed.", ""];
+  const scalars: Record<string, string | number | boolean> = {};
+  const tables: string[] = [];
 
-  lines.push("# Codex CLI configuration");
-  lines.push("# Auto-generated by agentopology scaffold — edit as needed.");
-  lines.push("");
-
-  // Determine the primary model and approval policy from agents.
-  // Use the first orchestrator or first agent's model, falling back to gpt-4o.
   const orchestrator = ast.nodes.find((n) => n.type === "orchestrator");
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  const primaryModel =
-    (orchestrator as any)?.model ?? agents[0]?.model ?? "o4-mini";
-  // The spec's default is `autonomous` (spec/grammar.md:1717), which maps to
-  // Codex `on-request`. This used to default to `supervised` → `untrusted`,
-  // silently making an omitted `permissions` the MOST restrictive policy
-  // instead of the one the language says it means.
-  const primaryPermission = agents[0]?.permissions ?? "autonomous";
+  const primaryModel = (orchestrator as any)?.model ?? agents[0]?.model;
+  if (primaryModel) scalars.model = primaryModel;
 
-  lines.push(`model = ${tomlString(primaryModel)}`);
-  lines.push(`approval_policy = ${tomlString(mapApprovalPolicy(primaryPermission))}`);
-
-  // Disable response storage if env has a flag or topology explicitly sets it
-  const codexTopologyExt = getTopologyExtensions(ast);
-  if (codexTopologyExt?.disable_response_storage != null) {
-    lines.push(
-      `disable_response_storage = ${codexTopologyExt.disable_response_storage === true}`
+  // One policy for the project: the strictest agent's (the spec default for an omitted `permissions` is `autonomous`).
+  scalars.approval_policy = projectApprovalPolicy(agents);
+  const distinct = new Set(agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous")));
+  if (distinct.size > 1) {
+    const strictest = agents.filter((a) => mapApprovalPolicy(a.permissions ?? "autonomous") === scalars.approval_policy).map((a) => `"${a.id}"`);
+    codexWarn(
+      `[codex] agents differ in permissions (${agents.map((a) => `${a.id}: ${a.permissions ?? "autonomous"}`).join(", ")}); ` +
+      `Codex has one approval_policy per project, so the strictest, "${scalars.approval_policy}" from ${strictest.join(", ")}, applies to all agents`,
     );
   }
 
-  lines.push("");
+  const ext = getTopologyExtensions(ast);
 
-  // Model params from defaults or primary agent
-  const temp = ast.defaults?.temperature ?? agents[0]?.temperature;
-  const maxTok = ast.defaults?.maxTokens ?? agents[0]?.maxTokens;
-  if (temp != null || maxTok != null) {
-    lines.push("# Model parameters");
-    if (temp != null) lines.push(`# temperature = ${temp}`);
-    if (maxTok != null) lines.push(`# max_tokens = ${maxTok}`);
-    lines.push("");
-  }
-
-  // History settings from extensions
-  if (codexTopologyExt?.history) {
-    const history = codexTopologyExt.history as Record<string, unknown>;
-    lines.push("[history]");
-    if (history.max_conversations != null) {
-      lines.push(`max_conversations = ${history.max_conversations}`);
-    }
-    if (history.persistence != null) {
-      lines.push(`persistence = ${tomlString(String(history.persistence))}`);
-    }
-    lines.push("");
-  }
-
-  // Sandbox settings — first-class AST field, then extension, then derived
-  // Codex supports: "read-only", "workspace-write", "danger-full-access"
+  // Sandbox — first-class AST field, then extension, then derived.
   const topSandbox = ast.settings?.sandbox;
   const sandboxType = topSandbox != null
-    ? (typeof topSandbox === 'boolean' ? (topSandbox ? 'read-only' : 'danger-full-access') : mapSandboxMode(String(topSandbox)))
-    : codexTopologyExt?.sandbox_type ?? deriveSandboxType(ast);
-  if (sandboxType) {
-    lines.push(`sandbox_mode = ${tomlString(String(sandboxType))}`);
-    lines.push("");
-  }
+    ? (typeof topSandbox === "boolean" ? (topSandbox ? "read-only" : "danger-full-access") : mapSandboxMode(String(topSandbox)))
+    : ext?.sandbox_type ?? ext?.["sandbox-type"] ?? deriveSandboxType(ast);
+  if (sandboxType) scalars.sandbox_mode = String(sandboxType);
 
-  // Providers from extensions or ast.providers
-  const extProviders = codexTopologyExt?.providers as
-    | Array<Record<string, unknown>>
-    | undefined;
-  if (extProviders && extProviders.length > 0) {
-    // Extensions path takes priority
-    for (const provider of extProviders) {
-      lines.push("[[providers]]");
-      if (provider.name) lines.push(`name = ${tomlString(String(provider.name))}`);
-      if (provider.base_url)
-        lines.push(`base_url = ${tomlString(String(provider.base_url))}`);
-      if (provider.env_key)
-        lines.push(`env_key = ${tomlString(String(provider.env_key))}`);
-      lines.push("");
+  // Extension keys: scalars at the top level (an extension wins over a derived value),
+  // never a key Codex lacks or a project config may not set.
+  if (ext) {
+    const handled = new Set(["sandbox_type", "sandbox-type", "providers", "history", "disable_response_storage", "disable-response-storage"]);
+    for (const [rawKey, value] of Object.entries(ext)) {
+      if (handled.has(rawKey)) continue;
+      const key = snakeKey(rawKey);
+      if (PROJECT_FORBIDDEN_KEYS.includes(key)) {
+        codexWarn(`[codex] extension key "${rawKey}" is dropped: a project .codex/config.toml may not set it`);
+        continue;
+      }
+      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") scalars[key] = value;
     }
-  } else if (ast.providers && ast.providers.length > 0) {
-    // Fallback: map ast.providers to Codex [[providers]] format
-    for (const p of ast.providers) {
-      lines.push("[[providers]]");
-      lines.push(`name = ${tomlString(p.name)}`);
-      if (p.baseUrl) lines.push(`base_url = ${tomlString(p.baseUrl)}`);
-      if (p.apiKey) {
-        // Convert ${ENV_VAR} to just ENV_VAR for Codex env_key format
-        const envKey = p.apiKey.replace(/^\$\{(.+)\}$/, "$1");
-        lines.push(`env_key = ${tomlString(envKey)}`);
-      }
-      if (p.default) lines.push(`default = true`);
-      if (p.models && p.models.length > 0) {
-        lines.push(`models = ${tomlStringArray(p.models)}`);
-      }
-      if (p.auth) {
-        lines.push(`# Auth type: ${p.auth.type}`);
-        if (p.auth.issuer) lines.push(`# Auth issuer: ${p.auth.issuer}`);
-        if (p.auth.audience) lines.push(`# Auth audience: ${p.auth.audience}`);
-        if (p.auth.tokenUrl) lines.push(`# Auth token URL: ${p.auth.tokenUrl}`);
-        if (p.auth.clientId) lines.push(`# Auth client ID: ${p.auth.clientId}`);
-        if (p.auth.scopes && p.auth.scopes.length > 0) {
-          lines.push(`# Auth scopes: ${p.auth.scopes.join(", ")}`);
-        }
-      }
-      if (p.extra) {
-        for (const [ek, ev] of Object.entries(p.extra)) {
-          if (typeof ev === "string") {
-            lines.push(`${ek} = ${tomlString(ev)}`);
-          } else if (typeof ev === "boolean") {
-            lines.push(`${ek} = ${ev}`);
-          } else if (typeof ev === "number") {
-            lines.push(`${ek} = ${ev}`);
-          }
-        }
-      }
-      lines.push("");
+    if (ext.disable_response_storage != null || ext["disable-response-storage"] != null) {
+      codexWarn('[codex] extension key "disable_response_storage" is dropped: it is not a Codex config key');
+    }
+    if (ext.history) {
+      codexWarn('[codex] extension table "history" is dropped: max_conversations is not a Codex config key');
+    }
+    const prov = ext.providers as unknown[] | undefined;
+    if (prov && prov.length > 0) {
+      codexWarn("[codex] providers are dropped: a project .codex/config.toml may not set model_providers; set them in your user config");
     }
   }
+  if (ast.providers && ast.providers.length > 0) {
+    codexWarn("[codex] providers are dropped: a project .codex/config.toml may not set model_providers; set them in your user config");
+  }
 
-  // MCP servers from ast.mcpServers — render as [mcp_servers.<name>] tables
+  // Model parameters, providers and a fallback chain have no Codex key; `validate` warns (CX-23).
+  const comments: string[] = [];
+
+  // MCP servers — [mcp_servers.<id>] with its env table nested under it.
   if (ast.mcpServers && Object.keys(ast.mcpServers).length > 0) {
     for (const [name, config] of Object.entries(ast.mcpServers)) {
-      lines.push(`[mcp_servers.${name}]`);
-      for (const [ck, cv] of Object.entries(config)) {
-        if (typeof cv === "string") {
-          lines.push(`${ck} = ${tomlString(cv)}`);
-        } else if (typeof cv === "boolean") {
-          lines.push(`${ck} = ${cv}`);
-        } else if (typeof cv === "number") {
-          lines.push(`${ck} = ${cv}`);
-        } else if (Array.isArray(cv)) {
-          lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
-        }
+      const server: Record<string, unknown> = {};
+      for (const [ck, cv] of Object.entries(config as Record<string, unknown>)) {
+        const key = snakeKey(ck);
+        if (MCP_DROPPED_KEYS.has(key)) continue;
+        server[key] = mcpValue(key, cv);
       }
-      lines.push("");
+      tables.push(...tomlTable(["mcp_servers", name], server));
     }
   }
 
-  // Fallback chain — document if present (Codex doesn't natively support it)
-  const fallbackChain = ast.settings?.["fallback-chain"] as string[] | undefined;
-  if (fallbackChain && fallbackChain.length > 0) {
-    lines.push(`# Model fallback chain: ${fallbackChain.join(" -> ")}`);
-    lines.push("");
-  }
-
-  // Merge any remaining extension fields as top-level TOML keys
-  if (codexTopologyExt) {
-    const handled = new Set([
-      "disable_response_storage",
-      "history",
-      "sandbox_type",
-      "providers",
-    ]);
-    for (const [key, value] of Object.entries(codexTopologyExt)) {
-      if (handled.has(key)) continue;
-      if (typeof value === "string") {
-        lines.push(`${key} = ${tomlString(value)}`);
-      } else if (typeof value === "boolean") {
-        lines.push(`${key} = ${value}`);
-      } else if (typeof value === "number") {
-        lines.push(`${key} = ${value}`);
-      }
-    }
-  }
-
-  // Multi-agent support: [agents] section with per-agent references
+  // Multi-agent support: [agents] with one entry per agent.
   if (agents.length > 0) {
-    lines.push("");
-    lines.push("[agents]");
-    lines.push(`max_threads = ${Math.min(agents.length, 10)}`);
-    lines.push(`max_depth = 1`);
-    lines.push("");
-
+    tables.push("[agents]", `max_concurrent_threads_per_session = ${Math.min(agents.length, 10)}`, "");
     for (const agent of agents) {
       const desc = agent.description
         ?? ast.roles[agent.role ?? ""]
         ?? ast.roles[agent.id]
         ?? agent.role
         ?? toTitle(agent.id);
-      lines.push(`[agents.${agent.id}]`);
-      lines.push(`description = ${tomlString(desc)}`);
-      lines.push(`config_file = ${tomlString(`agents/${agent.id}.toml`)}`);
-      lines.push("");
+      tables.push(`[agents.${tomlKey(agent.id)}]`, `description = ${tomlString(desc)}`, `config_file = ${tomlString(`agents/${agent.id}.toml`)}`, "");
     }
   }
 
+  // Sanity: nothing the contract forbids or does not allow leaves here.
+  if (!APPROVAL_POLICIES.has(String(scalars.approval_policy))) throw new Error("codex binding: illegal approval_policy");
+  if (scalars.sandbox_mode !== undefined && !SANDBOX_MODES.has(String(scalars.sandbox_mode))) {
+    codexWarn(`[codex] sandbox mode "${scalars.sandbox_mode}" is not a Codex sandbox_mode; left out`);
+    delete scalars.sandbox_mode;
+  }
+
+  const scalarLines = tomlTable([], scalars);
   return {
     path: ".codex/config.toml",
-    content: lines.join("\n") + "\n",
+    content: [...header, ...scalarLines, ...comments, ...tables].join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n"),
     category: "machine",
   };
 }
@@ -1280,81 +1185,16 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    if (gate.run) {
-      const scriptName = gate.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-      files.push({
-        path: `.codex/scripts/${scriptName}`,
-        content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
-        category: "script",
-      });
-    }
-  }
-
-  return files;
-}
-
-// ---------------------------------------------------------------------------
-// Hook scripts
-// ---------------------------------------------------------------------------
-
-/** Generate hook script stubs under .codex/scripts/. */
-function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
-  const files: GeneratedFile[] = [];
-
-  // Global hooks
-  for (const hook of ast.hooks) {
-    if (!hook.run) continue;
-    const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-    const hookLines = [
-      "#!/usr/bin/env bash",
-      `# Hook: ${hook.name} — fires on ${hook.on}`,
-    ];
-    // #12 — include matcher, type, timeout as comments
-    if (hook.matcher) hookLines.push(`# Matcher: ${hook.matcher}`);
-    if (hook.type) hookLines.push(`# Type: ${hook.type}`);
-    if (hook.timeout != null) hookLines.push(`# Timeout: ${hook.timeout}ms`);
-    hookLines.push(
-      "# Auto-generated by agentopology scaffold — edit as needed.",
-      "set -euo pipefail",
-      "",
-      `echo "TODO: implement ${hook.name} hook"`,
-      "",
-    );
+    // A shell builtin (`exit 2`) is run as written; prose names no script.
+    if (!gate.run || isShellCommand(gate.run) || proseInRun(gate.run)) continue;
+    const scriptName = scriptNameFromRun(gate.run);
+    if (!scriptName) continue;
     files.push({
       path: `.codex/scripts/${scriptName}`,
-      content: hookLines.join("\n"),
+      content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
       category: "script",
+      executable: true,
     });
-  }
-
-  // #5 — per-agent hook script stubs
-  for (const node of ast.nodes) {
-    if (node.type !== "agent") continue;
-    const agent = node as AgentNode;
-    if (!agent.hooks) continue;
-    for (const hook of agent.hooks) {
-      if (!hook.run) continue;
-      const scriptName = hook.run.replace(/^.*\//, "").replace(/\s.*$/, "");
-      const hookLines = [
-        "#!/usr/bin/env bash",
-        `# Hook: ${hook.name} — fires on ${hook.on} (agent: ${agent.id})`,
-      ];
-      if (hook.matcher) hookLines.push(`# Matcher: ${hook.matcher}`);
-      if (hook.type) hookLines.push(`# Type: ${hook.type}`);
-      if (hook.timeout != null) hookLines.push(`# Timeout: ${hook.timeout}ms`);
-      hookLines.push(
-        "# Auto-generated by agentopology scaffold — edit as needed.",
-        "set -euo pipefail",
-        "",
-        `echo "TODO: implement ${hook.name} hook"`,
-        "",
-      );
-      files.push({
-        path: `.codex/scripts/${scriptName}`,
-        content: hookLines.join("\n"),
-        category: "script",
-      });
-    }
   }
 
   return files;
@@ -1408,6 +1248,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       path: `.codex/scripts/${tool.id}.${ext}`,
       content: lines.join("\n"),
       category: "script",
+      executable: true,
     });
   }
 
@@ -1442,6 +1283,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
     category: "script",
+    executable: true,
   };
 }
 
@@ -1657,23 +1499,15 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
       ?? toTitle(agent.id);
     lines.push(`description = ${tomlString(desc)}`);
 
-    // developer_instructions — use prompt if available, otherwise construct
-    const instructions = agent.prompt ?? buildDeveloperInstructions(agent, ast);
-    // A written prompt sits between the prompt markers so sync can read it back.
-    lines.push(
-      agent.prompt
-        ? `developer_instructions = """\n${PROMPT_FENCE_OPEN}\n${agent.prompt}\n${PROMPT_FENCE_CLOSE}\n"""`
-        : `developer_instructions = """\n${instructions}\n"""`,
-    );
+    // developer_instructions — the written prompt sits between the prompt markers so sync can read it back.
+    const instructions = agent.prompt
+      ? `${PROMPT_FENCE_OPEN}\n${agent.prompt}\n${PROMPT_FENCE_CLOSE}`
+      : buildDeveloperInstructions(agent, ast);
+    lines.push(`developer_instructions = ${tomlMultiline(instructions)}`);
 
-    // model
+    // model — only the agent's own, and never a Claude name (scaffold refused those).
     if (agent.model) {
       lines.push(`model = ${tomlString(agent.model)}`);
-    }
-
-    // sandbox_mode
-    if (agent.sandbox != null) {
-      lines.push(`sandbox_mode = ${tomlString(mapAgentSandbox(agent.sandbox))}`);
     }
 
     // model_reasoning_effort
@@ -1684,34 +1518,9 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
       }
     }
 
-    // nickname_candidates — derive from agent id
-    const nickname = agent.id
-      .split(/[-_]/)
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join("");
-    lines.push(`nickname_candidates = [${tomlString(nickname)}]`);
-
-    // MCP servers — include sections for agent-specific MCP servers
-    if (agent.mcpServers && agent.mcpServers.length > 0 && ast.mcpServers) {
-      lines.push("");
-      for (const serverName of agent.mcpServers) {
-        const config = ast.mcpServers[serverName];
-        if (!config) continue;
-        lines.push(`[mcp_servers.${serverName}]`);
-        for (const [ck, cv] of Object.entries(config)) {
-          if (typeof cv === "string") {
-            lines.push(`${ck} = ${tomlString(cv)}`);
-          } else if (typeof cv === "boolean") {
-            lines.push(`${ck} = ${cv}`);
-          } else if (typeof cv === "number") {
-            lines.push(`${ck} = ${cv}`);
-          } else if (Array.isArray(cv)) {
-            lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
-          }
-        }
-        lines.push("");
-      }
-    }
+    // Not written: sandbox_mode, approval_policy, model_provider and mcp_servers cannot
+    // be overridden from an agent file (Codex ignores them there); nickname_candidates
+    // is not a documented key. Scaffold warns about the first and the last-but-one.
 
     files.push({
       path: `.codex/agents/${agent.id}.toml`,
@@ -1727,6 +1536,93 @@ function generateAgentTomlFiles(ast: TopologyAST): GeneratedFile[] {
 // Binding export
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Schedules — crontab fragment and scripts that run `codex exec` (CX-20)
+// ---------------------------------------------------------------------------
+
+/** The `--sandbox` word for a scheduled `codex exec`: the agent's, the project's, else read-only (exec's own default, made explicit). */
+function execSandbox(ast: TopologyAST, agent: AgentNode | undefined): string {
+  if (agent?.sandbox != null) return mapAgentSandbox(agent.sandbox);
+  const top = ast.settings?.sandbox;
+  if (top != null) return typeof top === "boolean" ? (top ? "read-only" : "danger-full-access") : mapSandboxMode(String(top));
+  const ext = getTopologyExtensions(ast);
+  const word = ext?.sandbox_type ?? ext?.["sandbox-type"];
+  if (typeof word === "string" && SANDBOX_MODES.has(word)) return word;
+  return "read-only";
+}
+
+/** Generate `scripts/schedule-<id>.sh` and `crontab.fragment`. Only `carrier: cron` (or none) jobs on an agent are compiled. */
+function generateScheduleScripts(ast: TopologyAST): GeneratedFile[] {
+  const files: GeneratedFile[] = [];
+  const jobs = ast.schedules ?? [];
+  if (jobs.length === 0) return files;
+
+  const cronLines: string[] = [
+    "# Crontab fragment — auto-generated by agentopology scaffold",
+    "# Install with: crontab -l | cat - crontab.fragment | crontab -",
+    "",
+  ];
+  let any = false;
+
+  for (const job of jobs) {
+    if (job.carrier !== undefined && job.carrier !== "cron") {
+      codexWarn(`[codex] schedule job "${job.id}" has carrier: ${job.carrier}; Codex compiles only carrier: cron, so no script is written for it`);
+      continue;
+    }
+    const agent = ast.nodes.find((n) => n.type === "agent" && n.id === job.agent) as AgentNode | undefined;
+    if (!agent) {
+      codexWarn(`[codex] schedule job "${job.id}" ${job.action ? `runs action "${job.action}"` : "names no agent"}; Codex compiles only jobs that run an agent, so no script is written for it`);
+      continue;
+    }
+    const sandbox = execSandbox(ast, agent);
+    const scriptPath = `scripts/schedule-${job.id}.sh`;
+    const lines = [
+      "#!/usr/bin/env bash",
+      `# Schedule: ${job.id} — runs agent ${agent.id} with codex exec`,
+      "# Auto-generated by agentopology scaffold — edit as needed.",
+      "set -euo pipefail",
+      "# cron starts in $HOME: run from the project root (this script is in scripts/).",
+      'cd "$(dirname "$0")/.."',
+      "",
+      "# exec is read-only by default, so the sandbox is named; -a never because nobody is there to approve.",
+      `codex -a never exec --sandbox ${sandbox} "Run the scheduled task (${job.id}) as the ${agent.id} agent. Follow .codex/agents/${agent.id}.toml."`,
+      "",
+    ];
+    if (job.enabled === false) lines.unshift("# DISABLED — this schedule is not enabled");
+    files.push({ path: scriptPath, content: lines.join("\n"), category: "script", executable: true });
+
+    let cronExpr = job.cron ?? "# every: " + (job.every ?? "unknown");
+    if (!job.cron && job.every) {
+      const converted = everyToCron(job.every);
+      if (!converted) codexWarn(`[codex] schedule "${job.id}" every: ${job.every} has no cron form; its crontab line is commented out. Use cron: instead.`);
+      cronExpr = converted ?? `# every: ${job.every}`;
+    }
+    const prefix = job.enabled === false ? "# DISABLED: " : "";
+    cronLines.push(`${prefix}${cronExpr} bash ${scriptPath}  # ${job.id}`);
+    any = true;
+  }
+
+  if (any) {
+    cronLines.push("");
+    files.push({ path: "crontab.fragment", content: cronLines.join("\n"), category: "machine" });
+  }
+  return files;
+}
+
+/** Refuse a topology that names a Claude model: Codex runs none, and no Codex model is invented in its place. */
+function refuseClaudeModels(ast: TopologyAST): void {
+  const bad: string[] = [];
+  for (const n of ast.nodes) {
+    const model = (n as { model?: string }).model;
+    if (model && isClaudeModelName(model)) bad.push(`${n.type} "${n.id}" uses the Claude model "${model}"`);
+  }
+  if (bad.length > 0) {
+    throw new BindingRefusal(
+      `Codex runs no Claude model: ${bad.join("; ")}. Set a Codex model on each (for example gpt-5.2). Nothing was written.`,
+    );
+  }
+}
+
 /** OpenAI Codex CLI binding — full implementation. */
 export const codexBinding: BindingTarget = {
   name: "codex",
@@ -1735,6 +1631,9 @@ export const codexBinding: BindingTarget = {
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     warnSessionsNotCompiled(ast, "codex");
+    refuseClaudeModels(ast);
+    pendingWarnings = [];
+    for (const w of codexWarnings(ast)) codexWarn(w.message);
     const files: GeneratedFile[] = [];
 
     // 1. .codex/config.toml — main configuration
@@ -1756,8 +1655,12 @@ export const codexBinding: BindingTarget = {
     // 6. Gate scripts
     files.push(...generateGateScripts(ast));
 
-    // 7. Hook scripts
-    files.push(...generateHookScripts(ast));
+    // 7. Hooks: .codex/hooks.json and the scripts behind it
+    const hooks = buildCodexHooks(ast);
+    if (hooks.hooksJson) {
+      files.push(hooks.hooksJson, ...hooks.scripts);
+      codexWarn("[codex] .codex/hooks.json written: Codex skips a new or changed hook until you review and trust it with /hooks");
+    }
 
     // 8. Tool scripts
     files.push(...generateToolScripts(ast));
@@ -1766,10 +1669,19 @@ export const codexBinding: BindingTarget = {
     const wsProtocol = generateWorkspaceProtocol(ast);
     if (wsProtocol) files.push(wsProtocol);
 
+    // 9a. Permission rules
+    const rules = buildCodexRules(ast);
+    if (rules.file) files.push(rules.file);
+
+    // 10a. Schedules
+    files.push(...generateScheduleScripts(ast));
+
     // 10. Metering
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
 
+    for (const w of pendingWarnings) console.warn(w);
+    pendingWarnings = [];
     return deduplicateFiles(files);
   },
 };

@@ -4,6 +4,47 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Permission rules for Codex (CX-13)
+
+- `settings { allow / ask / deny }` entries of the form `Bash(command *)` now scaffold `.codex/rules/<topology>.rules` as `prefix_rule(...)` calls: deny is `forbidden`, ask is `prompt`, allow is `allow`. Each rule carries a `match` example (for `git push`, `git push origin main`) that Codex checks when it loads the file; where the `codex` binary is installed the test runs `codex execpolicy check` against it. When one command is in two lists, the strictest decision is written.
+- An entry a command-prefix rule cannot hold (a tool name such as `WebFetch`, a wildcard inside the command) is reported with a warning instead of dropped.
+- When agents differ in `permissions`, the one warning now names the agents that set the strictest policy. A new "The `codex` binding" section in `docs/bindings.md` describes what is written and what is not.
+
+### [feature] Hooks compile to .codex/hooks.json (CX-8)
+
+- On `--target codex`, the topology's `hooks {}` block is now registered in `.codex/hooks.json` in the shape Codex reads. Before, the scaffold wrote no hook file at all. A hook with `run: "exit 2"` is written as that command; it no longer becomes a stub file named `exit` that exits 0.
+- Every hook command finds the repository root at run time, so it works from a subfolder. Scripts are written executable, and a stub for a `strength: refuse` hook exits 2 until it is written. Two scripts with the same file name no longer collide.
+- A hook's `if: "Tool(pattern)"` is kept through a small `at-if.sh` filter, so a hook meant for `rm -rf *` does not block every shell call. Without `jq` the filter blocks.
+- Hooks Codex cannot run get a warning and no entry: an event Codex lacks (for example `Error` or `Notification`), a `prompt`, `agent`, `http` or `mod` handler, an `if:` that is not `Tool(pattern)`, or run text that is prose. A matcher on an event that ignores it warns. Per-agent hooks are listed as not expressible, since Codex hooks are project-wide. Codex skips a new hook until it is trusted with `/hooks`, and scaffold says so.
+
+### [feature] Scheduled jobs that run Codex (CX-20)
+
+- On `--target codex`, a schedule job with `carrier: cron` (or none) that runs an agent now scaffolds an executable `scripts/schedule-<id>.sh` and a `crontab.fragment` line. The script runs `codex -a never exec --sandbox <mode>` with an explicit sandbox: the agent's, the project's, or `read-only`.
+- A job whose agent writes files while no sandbox is named gets a warning that `codex exec` is read-only by default, so the job cannot write. A job with another carrier (cloud, launchd, calendar, session) or one that runs an action gets a warning and no script. `carrier: session` with `survives:` is still an error (V125).
+
+### [feature] Codex says what it cannot express (CX-23)
+
+- `validate` with a Codex target (and `scaffold --target codex`) now gives one warning for each field Codex has no key for: sampling settings (temperature, max tokens, top-p, top-k, stop, seed), a thinking token budget, output format, max turns, log level, fallback chain, rate limit, circuit breaker, background and isolation on an agent, the same sampling settings under `defaults`, and `providers`. Each warning names the field, why, and which agents set it.
+- Temperature and max tokens are no longer left as commented-out lines in `config.toml`.
+- A zero-drop test holds every field set in `kitchen-sink.at` to "found in the Codex output" or "on the not-expressible list".
+
+### [feature] Full MCP tables for Codex (CX-14)
+
+- A Codex `[mcp_servers.<id>]` table now carries every field of the server: `env` as its own table, `args` and tool lists as arrays, `startup_timeout_sec` as a number, and `bearer_token_env_var` for a URL server. The Claude Code `type` key is left out.
+- A new `matcherProblem` for Codex hooks flags the dotted `mcp.server.tool` matcher (a Codex hook sees `mcp__server__tool`) and a matcher on an event that ignores it.
+
+### [feature] Honest Codex agent files and model names (CX-5)
+
+- `scaffold --target codex` now refuses a Claude model name (`opus`, `sonnet`, `haiku`, `fable` or any `claude-*`) on an agent or the orchestrator. It prints which agent uses which name, exits 1 and writes nothing. It does not pick a Codex model for you; set one such as `gpt-5.2`.
+- A Codex agent file no longer holds `sandbox_mode`, `mcp_servers` or `nickname_candidates`: Codex ignores the first two in an agent file and does not document the third. An agent that sets `sandbox` or `mcp-servers` gets a warning naming it, and `validate` with a Codex target gives the same warnings. MCP servers are written once in `config.toml`.
+- A prompt with `"""`, backslashes or quotes now survives in the agent file: it is written as a literal TOML string, or escaped when it holds `'''` or a control character, and `sync` reads it back either way.
+
+### [fix] A Codex config.toml that Codex 0.156.1 accepts (CX-4)
+
+- `approval_policy` is now `on-request` or `never`. The words `supervised`, `plan`, `confirm`, `interactive` and `suggest` used to become `untrusted`, which Codex no longer takes. With agents that differ in `permissions`, the strictest policy applies to the project and scaffold warns.
+- Providers are no longer written as `[[providers]]` tables: Codex has no such key, and a project config may not set `model_providers`. Scaffold warns that they are dropped. The keys `disable_response_storage`, `history.max_conversations` and `max_depth` are no longer written either, and `[agents]` uses `max_concurrent_threads_per_session`.
+- Extension keys now sit at the top of the file instead of inside the last MCP table, MCP `env` maps are written as `[mcp_servers.<id>.env]`, and the Claude Code `type` key is no longer copied into MCP tables.
+
 ### [feature] Verified on Claude Code 2.1.323 (VO-323)
 
 - The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.

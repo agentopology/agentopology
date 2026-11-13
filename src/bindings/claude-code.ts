@@ -2613,7 +2613,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
  * it. Only "1h", "daily" and a few words converted before; anything else
  * became a commented-out crontab line that never ran.
  */
-function everyToCron(every: string): string | null {
+export function everyToCron(every: string): string | null {
   const text = every.trim().toLowerCase();
   const words: Record<string, string> = { hourly: "0 * * * *", daily: "0 0 * * *", weekly: "0 0 * * 0" };
   if (words[text]) return words[text];

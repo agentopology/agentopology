@@ -145,7 +145,11 @@ function extractCodexPrompts(files: PlatformFile[]): ExtractedPrompt[] {
   for (const file of files) {
     const match = file.path.match(/(?:^|[\\/])agents[\\/]([^\\/]+)\.toml$/);
     if (!match) continue;
-    const content = fencedPrompt(file.content);
+    let content = fencedPrompt(file.content);
+    // A prompt that cannot sit in a literal ('''') string is written as an escaped basic string.
+    if (content && /^developer_instructions\s*=\s*"""/m.test(file.content)) {
+      content = content.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m, e: string) => (e[0] === "u" && e.length === 5 ? String.fromCharCode(parseInt(e.slice(1), 16)) : e === "n" ? "\n" : e === "t" ? "\t" : e === "r" ? "\r" : e));
+    }
     if (content) prompts.push({ agentId: match[1], content });
   }
 
