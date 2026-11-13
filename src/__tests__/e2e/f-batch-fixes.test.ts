@@ -218,3 +218,27 @@ describe("[F-26] a Codex user hook finds its script from a nested repository", (
     expect(r.stderr).toContain("log.sh");
   });
 });
+
+describe.skipIf(!hasJq)("[F-10] AGENTS.md, which Codex loads into the model's context, carries no runnable approval line", () => {
+  const FIXTURE = join(dirname(new URL(import.meta.url).pathname), "fixtures/codex-gates.at");
+  const RUNNABLE = /printf|>>|mkdir|echo .*approvals|tee .*approvals|date -u/;
+
+  it("[F-10] the approval section describes the record's fields in prose and gives no command", () => {
+    const files = scaffoldCodex(fs.readFileSync(FIXTURE, "utf8"));
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    const lines = md.split("\n").filter((l) => l.includes("approvals.jsonl") || /"step"/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l, l).not.toMatch(RUNNABLE);
+    expect(md).not.toMatch(/```sh[\s\S]*?approvals\.jsonl[\s\S]*?```/);
+    expect(md).toMatch(/`ok`/);
+    expect(md).toMatch(/`at`/);
+  });
+
+  it("[F-10] the held spawn's stderr names no runnable line either", () => {
+    scaffoldCodex(fs.readFileSync(FIXTURE, "utf8"));
+    fs.writeFileSync(at(".codex/scripts/render-check.sh"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    const r = runHook(spawnCommand(), root, spawnPayload("editor"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).not.toMatch(RUNNABLE);
+  });
+});

@@ -4,6 +4,12 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the step guard refuses what it cannot read, and reads interpreter steps by their script (F-1, F-2, F-3, F-5, F-19, F-21)
+
+- An adversarial review of the 0.11.0 candidate ran guarded steps past `before-action.sh` (both targets) in ordinary shell forms: a backslash line continuation, a redirect glued to or between the words (`./tool publish>/dev/null ep1`, `./tool 2>&1 publish ep1`), an expansion or glob inside the words (`${IFS}`, `$'...'`, `{publish,}`, `pub*lish`, `./to?l`), upper case (`./TOOL`, a bypass on a case-insensitive disk), and a second step in the same command riding the first step's ok record. A step run through an interpreter (`python3 harness/bin/post.py`) passed as `python3 ./harness/bin/post.py`, by an absolute path, or as `python post.py`.
+- The guard now joins line continuations, drops redirections before it cuts the command, matches the tool in any case and at any path (for an interpreter step, the script under any interpreter), and lets flags sit between the step's words. What it cannot read it refuses: a command that holds an expansion or glob and names the tool more often than the step can be read plainly, or a glob or brace word that could expand to the tool, is refused for a step with a unit. Every unit a command names needs its own ok record. `<step> --help` alone is no step.
+- This over-blocks more than before while a gate is unmet: a command that mixes the tool with `$`, a glob or `~` is refused, as is a mention of the tool's name in a command with an expansion. The shipped Claude Code `before-action.sh` changes.
+
 ### [fix] Fixed: a Codex user hook finds its script from a nested repository (F-26)
 
 - A command hook from the `hooks {}` block ran `bash "$(git rev-parse --show-toplevel || pwd)/<script>"`, so from a nested git repository it ran the wrong path and exited 127. It now uses the guards' launcher, which climbs to the folder holding the script; a script found nowhere exits 1 with a reason (a hook that is not a guard does not block). Inside an `if:` filter the launcher is passed as one word, run with `sh -c`.

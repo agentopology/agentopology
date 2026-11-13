@@ -343,6 +343,25 @@ export function stepMatchWords(command: string): { words: string; cut: boolean }
   return { words: all.slice(0, at).join(" "), cut: true };
 }
 
+/** Programs that run a script: for these the step's tool is the script, not the program (F-21). */
+const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpm|yarn)$/;
+
+/**
+ * The tool a step runs and the words that must follow it (F-batch): the program's
+ * name with its path dropped, or for an interpreter (`python3 -u x.py`, `uv run x.py`)
+ * the script's name. Lower case; the words are cut before the first placeholder (E-3).
+ */
+export function stepKey(command: string): { key: string; rest: string } {
+  const words = stepMatchWords(command).words.split(" ").filter(Boolean);
+  const base = (w: string) => w.replace(/^.*\//, "").toLowerCase();
+  let i = 0;
+  if (words.length > 1 && INTERPRETERS.test(base(words[0]))) {
+    i = 1;
+    while (i < words.length - 1 && (words[i].startsWith("-") || ["run", "exec", "x"].includes(words[i]))) i++;
+  }
+  return { key: base(words[i] ?? ""), rest: words.slice(i + 1).join(" ").toLowerCase() };
+}
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -404,66 +423,135 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
     "}",
     "",
-    "# A Bash command is a list: `cd repo && ./tool publish ep1`, `a; b`, `a || b`, `a | b`, a",
-    "# backgrounded `a &`, a subshell or command substitution `(a)`, `$(a)`, `` `a` ``, or several",
-    "# lines. It is cut into segments at each of those, and each segment is checked on its own.",
-    "# In a segment, quotes and backslashes are dropped and tabs and runs of spaces become one",
-    "# space; the step is then seen ANYWHERE in it, as whole words, also when its program is",
-    "# named by another path (`/abs/tool` for `./tool`). So a prefix (`if`, `while`, `!`, `sudo`,",
-    "# `nice -n 5`, `env -i`, `xargs`, `FOO=1`, `bash -c '...'`, `eval ...`) does not hide it (R-4).",
-    "# This over-blocks (an `echo \"./tool publish\"` is refused too while the gate is unmet) and",
-    "# never under-blocks what is written out. A step reached through a variable, an alias, a",
-    "# function or a script that calls it is not seen.",
-    "SEGS=$CMD",
-    "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
-    "# norm TEXT: quotes and backslashes dropped, tabs and space runs made one space, padded with a space each side.",
+    "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",
+    "# - a backslash at a line end joins the next line;",
+    "# - redirections (`>out`, `2>&1`, `<<<x`, `< f`) are dropped before the command is cut, so they neither",
+    "#   split a step's words nor cut the command at the `&` of `2>&1`;",
+    "# - the command is cut into segments at `&` `|` `;` `(` `)` backticks and newlines; in each, quotes and",
+    "#   backslashes are dropped, spaces made single, letters made lower case;",
+    "# - a step is the tool's name (its program, or for an interpreter such as python3 or node, its script),",
+    "#   by any path, followed later in the segment by the step's words in order (`./tool -v publish` counts);",
+    "#   `<step> --help` (or -h, --version) as the whole tail only asks for usage and is no step;",
+    "# - DENY ON DOUBT: when the command holds an expansion or a glob ($ ` * ? [ { ~) and names the tool more",
+    "#   often than the step could be read plainly, or a word is a glob or brace that could expand to the tool,",
+    "#   the step is treated as unreadable: refused when it has a unit, checked as a step otherwise.",
+    "# Not seen: a step reached through a variable set elsewhere, an alias, a function, or another script.",
+    "CMD=${CMD//$'\\\\\\n'/}",
+    "lower() { printf '%s' \"$1\" | tr '[:upper:]' '[:lower:]'; }",
+    "letters() { printf '%s' \"$1\" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'; }",
+    "strip_redir() {",
+    "  local t=$1 re='(&>>|&>|>>|>\\||>&|<&|<<<|<<-|<<|<>|>|<)[[:space:]]*[^[:space:];&|()<>]*'",
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  printf '%s' \"$t\"",
+    "}",
     "norm() {",
     "  local t=$1",
     "  t=${t//\\\"/}; t=${t//\\'/}; t=${t//\\\\/}; t=${t//$'\\t'/ }; t=${t//$'\\r'/ }",
     "  while [[ \"$t\" == *'  '* ]]; do t=${t//'  '/' '}; done",
     "  printf ' %s ' \"${t# }\"",
     "}",
-    "# has_step SEGMENT STEP: STEP's words appear in SEGMENT, its program by this path or by any path ending in its name.",
-    "has_step() {",
-    "  local seg=$1 step=$2 prog rest base",
-    "  prog=${step%% *}; rest=${step#\"$prog\"}; base=${prog##*/}",
-    "  [[ \"$seg\" == *\" $step \"* || \"$seg\" == *\"/$base$rest \"* || \"$seg\" == *\" $base$rest \"* ]]",
+    "# step_count SEG KEY REST: how many times SEG runs the step (tool KEY, then the REST words in order).",
+    "step_count() { set +u; _step_count \"$@\"; set -u; }",
+    "_step_count() {",
+    "  local key=$2 i j k n c=0",
+    "  local -a w r",
+    "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
+    "  n=${#w[@]}",
+    "  for ((i=0; i<n; i++)); do",
+    "    [ \"${w[i]##*/}\" = \"$key\" ] || continue",
+    "    j=$((i+1)); k=0",
+    "    while [ \"$k\" -lt \"${#r[@]}\" ] && [ \"$j\" -lt \"$n\" ]; do",
+    "      [ \"${w[j]}\" = \"${r[k]}\" ] && k=$((k+1))",
+    "      j=$((j+1))",
+    "    done",
+    "    [ \"$k\" -eq \"${#r[@]}\" ] || continue",
+    "    if [ \"$j\" -eq $((n-1)) ] && [[ \" --help -h --version \" == *\" ${w[j]} \"* ]]; then continue; fi",
+    "    c=$((c+1))",
+    "  done",
+    "  echo \"$c\"",
     "}",
+    "# glob_names SEG KEY: a word of SEG is a glob or a brace list that could expand to the tool.",
+    "glob_names() {",
+    "  local key=$2 w b part lit",
+    "  for w in $1; do",
+    "    if [[ $w == *'{'*','* ]]; then",
+    "      for part in ${w//[\\{\\},]/ }; do [ \"${part##*/}\" = \"$key\" ] && return 0; done",
+    "    fi",
+    "    if [[ $w == *[\\*\\?\\[]* ]]; then",
+    "      b=${w##*/}; lit=$(letters \"$b\")",
+    "      if [ \"${#lit}\" -ge 2 ] && [[ $key == $b ]]; then return 0; fi",
+    "    fi",
+    "  done",
+    "  return 1",
+    "}",
+    "# key_count LETTERS: how often the tool's letters appear in the whole command's letters.",
+    "CMD_L=$(letters \"$CMD\")",
+    "key_count() { local t=$CMD_L n=0; while [[ $t == *\"$1\"* ]]; do t=${t#*\"$1\"}; n=$((n+1)); done; echo \"$n\"; }",
+    "CMD_EXPANDS=0",
+    "[[ $CMD == *[\\$\\`\\*\\?\\[\\{\\~]* ]] && CMD_EXPANDS=1",
+    "set -f",
+    "SEGS=$(strip_redir \"$CMD\")",
+    "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    "# Segments come in on fd 3 and children get stdin from /dev/null: a check that reads stdin must not swallow the later segments.",
-    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
-    '  C=$(norm "$C")',
-    '  [ "$C" != "  " ] || continue',
   ];
-  for (const { action, gates } of guards) {
-    // Each command is normalized the same way as the segment (one space between words), and cut before
-    // its first placeholder (E-3): the real call fills EP.json, OUT.mp4 and the like in.
-    const tests = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))].map((w) => `has_step "$C" ${shellQuote(w)}`);
-    lines.push(`  # step ${action.id}`, `  if ${tests.join(" || ")}; then`, "    UNIT=''");
-    if (action.unitFrom) {
-      lines.push(
-        `  UNIT=$(jq -nr --arg c "$C" --arg re ${shellQuote(action.unitFrom)} '$c | match($re) | .captures[0].string // empty') || deny ${shellQuote(gates[0].id)} "unit-from does not compile"`,
-        '  if ! [[ "$UNIT" =~ ^[A-Za-z0-9_.@+-]*$ ]] || [[ "$UNIT" == *..* ]]; then',
-        `    deny ${shellQuote(gates[0].id)} "the unit \\"$UNIT\\" read from the command is not a safe file name"`,
-        "  fi",
-      );
-    }
-    for (const gate of gates) {
-      lines.push(`  # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
-      const ledger = gateLedger(ast, gate);
-      if (ledger) {
-        for (const step of gateAnchors(gate, "after")) {
-          lines.push(`  check_ledger ${shellQuote(gate.id)} ${shellQuote(step)} ${shellQuote(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+  const sq = shellQuote;
+  // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
+  guards.forEach(({ action }, a) => {
+    const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
+    lines.push(`N${a}=0`);
+    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do");
+    lines.push('  L=$(lower "$(norm "$C")")');
+    for (const k of keys) lines.push(`  N${a}=$((N${a} + $(step_count "$L" ${sq(k.key)} ${sq(k.rest)})))`);
+    lines.push('done 3<<< "$SEGS"');
+  });
+  lines.push("");
+  for (const [a, { action, gates }] of guards.entries()) {
+    const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
+    const names = [...new Set(keys.map((k) => k.key))];
+    const gateChecks = (indent: string) => {
+      const out: string[] = [];
+      for (const gate of gates) {
+        out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
+        const ledger = gateLedger(ast, gate);
+        if (ledger) {
+          for (const step of gateAnchors(gate, "after")) {
+            out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+          }
+        }
+        if (scriptNameFromRun(gate.run)) {
+          out.push(`${indent}bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${sq(gate.id)} "its check script failed"`);
         }
       }
-      if (scriptNameFromRun(gate.run)) {
-        lines.push(`  bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${shellQuote(gate.id)} "its check script failed"`);
-      }
+      return out;
+    };
+    const unreadable = (why: string, indent: string) => action.unitFrom
+      ? [`${indent}deny ${sq(gates[0].id)} "it names ${names.join("/")} in a form this guard cannot read (${why}); write the step as a plain command"`]
+      : [`${indent}UNIT=''`, ...gateChecks(indent)];
+    lines.push(`# step ${action.id}`);
+    // The whole command: a mention of the tool that no plain read accounts for.
+    const doubt = names.map((n) => `[ "$(key_count ${sq(n.replace(/[^a-z0-9]/g, ""))})" -gt "$N${a}" ]`).join(" || ");
+    lines.push(`if [ "$CMD_EXPANDS" = 1 ] && { ${doubt}; }; then`, ...unreadable("an expansion or glob", "  "), "fi");
+    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
+    lines.push(`  if ${names.map((n) => `glob_names "$L" ${sq(n)}`).join(" || ")}; then`, ...unreadable("a glob or brace list", "    "), "  fi");
+    lines.push(`  if [ $(( ${keys.map((k) => `$(step_count "$L" ${sq(k.key)} ${sq(k.rest)})`).join(" + ")} )) -gt 0 ]; then`);
+    if (action.unitFrom) {
+      // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
+      lines.push(
+        `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // empty] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,
+        "    while IFS= read -r UNIT <&4 || [ -n \"$UNIT\" ]; do",
+        '      if ! [[ "$UNIT" =~ ^[A-Za-z0-9_.@+-]*$ ]] || [[ "$UNIT" == *..* ]]; then',
+        `        deny ${sq(gates[0].id)} "the unit \\"$UNIT\\" read from the command is not a safe file name"`,
+        "      fi",
+        ...gateChecks("      "),
+        '    done 4<<< "$UNITS"',
+      );
+    } else {
+      lines.push("    UNIT=''", ...gateChecks("    "));
     }
-    lines.push("  fi", "");
+    lines.push("  fi", 'done 3<<< "$SEGS"', "");
   }
-  lines.push('done 3<<< "$SEGS"', "", FAIL_CLOSED_DONE, "exit 0", "");
+  lines.push("", FAIL_CLOSED_DONE, "exit 0", "");
   return {
     path: `${p.scriptsDir(name)}/before-action.sh`,
     content: lines.join("\n"),
