@@ -71,8 +71,9 @@ describe("bindings agree with the spec's defaults table", () => {
     const toml = bindings["codex"]
       .scaffold(parse(src))
       .find((f) => f.path.endsWith(".toml"));
-    // Declared `supervised` must still map to `untrusted` — the fix changes the
-    // DEFAULT, not the mapping.
-    expect(toml!.content).toContain('approval_policy = "untrusted"');
+    // [CX-4] Codex 0.156.1 does not take `untrusted`; a declared `supervised`
+    // maps to `on-request`, the policy that still asks.
+    expect(toml!.content).toContain('approval_policy = "on-request"');
+    expect(toml!.content).not.toContain("untrusted");
   });
 });

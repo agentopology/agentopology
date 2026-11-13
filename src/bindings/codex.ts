@@ -38,6 +38,8 @@ import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { shellStub } from "./lib/stub.js";
 import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
+import { tomlString, tomlStringArray, tomlTable, tomlKey, tomlMultiline } from "./lib/toml.js";
+import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES } from "../conformance/codex.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -57,68 +59,28 @@ function toTitle(id: string): string {
     .join(" ");
 }
 
+/** Permission words that mean "never ask": Codex `never`. */
+const NEVER_ASK = new Set(["never", "unrestricted", "full-auto", "bypassPermissions"]);
+
 /**
  * Map topology permission strings to Codex approval_policy values.
  *
- * Codex CLI supports these approval policies:
- *   - "untrusted"  — only run trusted commands without asking (default, most restrictive)
- *   - "on-request" — model decides when to ask the user
- *   - "never"      — never ask for user approval
- *
- * Legacy/deprecated:
- *   - "on-failure"  — deprecated, prefer "on-request" for interactive or "never" for non-interactive
+ * Codex 0.156.1 takes `on-request` and `never` (and a `granular` table).
+ * `untrusted` is unsupported and `on-failure` is deprecated, so every word
+ * that is not "never ask" becomes `on-request`, the policy that still asks.
  */
 function mapApprovalPolicy(perm: string): string {
-  // Codex-native values — pass through
-  const nativeValues = ["untrusted", "on-request", "on-failure", "never"];
-  if (nativeValues.includes(perm)) return perm;
-
-  // Topology-level semantic values
-  switch (perm) {
-    case "supervised":
-      return "untrusted";
-    case "autonomous":
-      return "on-request";
-    case "interactive":
-      return "untrusted";
-    case "unrestricted":
-      return "never";
-    // Legacy Codex values — map to current equivalents
-    case "suggest":
-      return "untrusted";
-    case "auto-edit":
-      return "on-request";
-    case "full-auto":
-      return "never";
-    // Claude Code native values mapped to Codex equivalents
-    case "plan":
-      return "untrusted";
-    case "auto":
-      return "on-request";
-    case "confirm":
-      return "untrusted";
-    case "bypassPermissions":
-      return "never";
-    default:
-      return "untrusted"; // safe default
-  }
+  return NEVER_ASK.has(perm) ? "never" : "on-request";
 }
 
 /**
- * Escape a TOML string value.
- * Wraps in double quotes, escaping internal quotes and backslashes.
+ * One approval policy for the whole project: Codex has one per config, not
+ * one per agent. The strictest agent wins (`on-request` over `never`).
  */
-function tomlString(value: string): string {
-  const escaped = value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
-  return `"${escaped}"`;
-}
-
-/** Format a TOML array of strings on a single line. */
-function tomlStringArray(values: string[]): string {
-  return `[${values.map(tomlString).join(", ")}]`;
+function projectApprovalPolicy(agents: AgentNode[]): string {
+  const policies = agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous"));
+  if (policies.length === 0) return "on-request";
+  return policies.includes("on-request") ? "on-request" : "never";
 }
 
 /** Generate an empty directory marker (a .gitkeep file). */
@@ -164,204 +126,136 @@ function formatRetryConfig(retry: number | RetryConfig): string {
 // TOML generation — .codex/config.toml
 // ---------------------------------------------------------------------------
 
+/** Warnings collected during one scaffold; flushed (printed once each) at the end of it. */
+let pendingWarnings: string[] = [];
+function codexWarn(message: string): void {
+  if (!pendingWarnings.includes(message)) pendingWarnings.push(message);
+}
+
+/** MCP keys Codex does not have; dropped. `type` is a Claude Code key. */
+const MCP_DROPPED_KEYS = new Set(["type"]);
+
+/** An extension or config key written the way Codex spells it (snake_case). */
+function snakeKey(key: string): string {
+  return key.replace(/-/g, "_");
+}
+
 /**
  * Generate the main `.codex/config.toml` configuration file.
  *
- * Maps topology metadata, the most permissive agent's approval policy,
- * model, sandbox, and provider settings. Extension fields from
- * `extensions["codex"]` on the topology or agents are merged in.
+ * Top-level scalars come first and every table after them, so no key can land
+ * inside the wrong table. Only keys Codex 0.156.1 knows are written; a key a
+ * project config may not set (providers, notify, profiles, otel) is dropped
+ * with a warning, because Codex would ignore it.
  */
 function generateCodexToml(ast: TopologyAST): GeneratedFile {
-  const lines: string[] = [];
+  const header = ["# Codex CLI configuration", "# Auto-generated by agentopology scaffold — edit as needed.", ""];
+  const scalars: Record<string, string | number | boolean> = {};
+  const tables: string[] = [];
 
-  lines.push("# Codex CLI configuration");
-  lines.push("# Auto-generated by agentopology scaffold — edit as needed.");
-  lines.push("");
-
-  // Determine the primary model and approval policy from agents.
-  // Use the first orchestrator or first agent's model, falling back to gpt-4o.
   const orchestrator = ast.nodes.find((n) => n.type === "orchestrator");
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
-  const primaryModel =
-    (orchestrator as any)?.model ?? agents[0]?.model ?? "o4-mini";
-  // The spec's default is `autonomous` (spec/grammar.md:1717), which maps to
-  // Codex `on-request`. This used to default to `supervised` → `untrusted`,
-  // silently making an omitted `permissions` the MOST restrictive policy
-  // instead of the one the language says it means.
-  const primaryPermission = agents[0]?.permissions ?? "autonomous";
+  const primaryModel = (orchestrator as any)?.model ?? agents[0]?.model;
+  if (primaryModel) scalars.model = primaryModel;
 
-  lines.push(`model = ${tomlString(primaryModel)}`);
-  lines.push(`approval_policy = ${tomlString(mapApprovalPolicy(primaryPermission))}`);
-
-  // Disable response storage if env has a flag or topology explicitly sets it
-  const codexTopologyExt = getTopologyExtensions(ast);
-  if (codexTopologyExt?.disable_response_storage != null) {
-    lines.push(
-      `disable_response_storage = ${codexTopologyExt.disable_response_storage === true}`
-    );
+  // One policy for the project: the strictest agent's (the spec default for an omitted `permissions` is `autonomous`).
+  scalars.approval_policy = projectApprovalPolicy(agents);
+  const distinct = new Set(agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous")));
+  if (distinct.size > 1) {
+    codexWarn(`[codex] agents differ in permissions; Codex has one approval_policy per project, so the strictest ("${scalars.approval_policy}") applies to all`);
   }
 
-  lines.push("");
+  const ext = getTopologyExtensions(ast);
 
-  // Model params from defaults or primary agent
-  const temp = ast.defaults?.temperature ?? agents[0]?.temperature;
-  const maxTok = ast.defaults?.maxTokens ?? agents[0]?.maxTokens;
-  if (temp != null || maxTok != null) {
-    lines.push("# Model parameters");
-    if (temp != null) lines.push(`# temperature = ${temp}`);
-    if (maxTok != null) lines.push(`# max_tokens = ${maxTok}`);
-    lines.push("");
-  }
-
-  // History settings from extensions
-  if (codexTopologyExt?.history) {
-    const history = codexTopologyExt.history as Record<string, unknown>;
-    lines.push("[history]");
-    if (history.max_conversations != null) {
-      lines.push(`max_conversations = ${history.max_conversations}`);
-    }
-    if (history.persistence != null) {
-      lines.push(`persistence = ${tomlString(String(history.persistence))}`);
-    }
-    lines.push("");
-  }
-
-  // Sandbox settings — first-class AST field, then extension, then derived
-  // Codex supports: "read-only", "workspace-write", "danger-full-access"
+  // Sandbox — first-class AST field, then extension, then derived.
   const topSandbox = ast.settings?.sandbox;
   const sandboxType = topSandbox != null
-    ? (typeof topSandbox === 'boolean' ? (topSandbox ? 'read-only' : 'danger-full-access') : mapSandboxMode(String(topSandbox)))
-    : codexTopologyExt?.sandbox_type ?? deriveSandboxType(ast);
-  if (sandboxType) {
-    lines.push(`sandbox_mode = ${tomlString(String(sandboxType))}`);
-    lines.push("");
-  }
+    ? (typeof topSandbox === "boolean" ? (topSandbox ? "read-only" : "danger-full-access") : mapSandboxMode(String(topSandbox)))
+    : ext?.sandbox_type ?? ext?.["sandbox-type"] ?? deriveSandboxType(ast);
+  if (sandboxType) scalars.sandbox_mode = String(sandboxType);
 
-  // Providers from extensions or ast.providers
-  const extProviders = codexTopologyExt?.providers as
-    | Array<Record<string, unknown>>
-    | undefined;
-  if (extProviders && extProviders.length > 0) {
-    // Extensions path takes priority
-    for (const provider of extProviders) {
-      lines.push("[[providers]]");
-      if (provider.name) lines.push(`name = ${tomlString(String(provider.name))}`);
-      if (provider.base_url)
-        lines.push(`base_url = ${tomlString(String(provider.base_url))}`);
-      if (provider.env_key)
-        lines.push(`env_key = ${tomlString(String(provider.env_key))}`);
-      lines.push("");
+  // Extension keys: scalars at the top level (an extension wins over a derived value),
+  // never a key Codex lacks or a project config may not set.
+  if (ext) {
+    const handled = new Set(["sandbox_type", "sandbox-type", "providers", "history", "disable_response_storage", "disable-response-storage"]);
+    for (const [rawKey, value] of Object.entries(ext)) {
+      if (handled.has(rawKey)) continue;
+      const key = snakeKey(rawKey);
+      if (PROJECT_FORBIDDEN_KEYS.includes(key)) {
+        codexWarn(`[codex] extension key "${rawKey}" is dropped: a project .codex/config.toml may not set it`);
+        continue;
+      }
+      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") scalars[key] = value;
     }
-  } else if (ast.providers && ast.providers.length > 0) {
-    // Fallback: map ast.providers to Codex [[providers]] format
-    for (const p of ast.providers) {
-      lines.push("[[providers]]");
-      lines.push(`name = ${tomlString(p.name)}`);
-      if (p.baseUrl) lines.push(`base_url = ${tomlString(p.baseUrl)}`);
-      if (p.apiKey) {
-        // Convert ${ENV_VAR} to just ENV_VAR for Codex env_key format
-        const envKey = p.apiKey.replace(/^\$\{(.+)\}$/, "$1");
-        lines.push(`env_key = ${tomlString(envKey)}`);
-      }
-      if (p.default) lines.push(`default = true`);
-      if (p.models && p.models.length > 0) {
-        lines.push(`models = ${tomlStringArray(p.models)}`);
-      }
-      if (p.auth) {
-        lines.push(`# Auth type: ${p.auth.type}`);
-        if (p.auth.issuer) lines.push(`# Auth issuer: ${p.auth.issuer}`);
-        if (p.auth.audience) lines.push(`# Auth audience: ${p.auth.audience}`);
-        if (p.auth.tokenUrl) lines.push(`# Auth token URL: ${p.auth.tokenUrl}`);
-        if (p.auth.clientId) lines.push(`# Auth client ID: ${p.auth.clientId}`);
-        if (p.auth.scopes && p.auth.scopes.length > 0) {
-          lines.push(`# Auth scopes: ${p.auth.scopes.join(", ")}`);
-        }
-      }
-      if (p.extra) {
-        for (const [ek, ev] of Object.entries(p.extra)) {
-          if (typeof ev === "string") {
-            lines.push(`${ek} = ${tomlString(ev)}`);
-          } else if (typeof ev === "boolean") {
-            lines.push(`${ek} = ${ev}`);
-          } else if (typeof ev === "number") {
-            lines.push(`${ek} = ${ev}`);
-          }
-        }
-      }
-      lines.push("");
+    if (ext.disable_response_storage != null || ext["disable-response-storage"] != null) {
+      codexWarn('[codex] extension key "disable_response_storage" is dropped: it is not a Codex config key');
+    }
+    if (ext.history) {
+      codexWarn('[codex] extension table "history" is dropped: max_conversations is not a Codex config key');
+    }
+    const prov = ext.providers as unknown[] | undefined;
+    if (prov && prov.length > 0) {
+      codexWarn("[codex] providers are dropped: a project .codex/config.toml may not set model_providers; set them in your user config");
     }
   }
+  if (ast.providers && ast.providers.length > 0) {
+    codexWarn("[codex] providers are dropped: a project .codex/config.toml may not set model_providers; set them in your user config");
+  }
 
-  // MCP servers from ast.mcpServers — render as [mcp_servers.<name>] tables
+  // Model parameters Codex has no key for.
+  const temp = ast.defaults?.temperature ?? agents[0]?.temperature;
+  const maxTok = ast.defaults?.maxTokens ?? agents[0]?.maxTokens;
+  const comments: string[] = [];
+  if (temp != null || maxTok != null) {
+    comments.push("# Not expressible in Codex config: temperature and max tokens have no key.");
+    if (temp != null) comments.push(`#   temperature = ${temp}`);
+    if (maxTok != null) comments.push(`#   max_tokens = ${maxTok}`);
+    comments.push("");
+  }
+
+  // MCP servers — [mcp_servers.<id>] with its env table nested under it.
   if (ast.mcpServers && Object.keys(ast.mcpServers).length > 0) {
     for (const [name, config] of Object.entries(ast.mcpServers)) {
-      lines.push(`[mcp_servers.${name}]`);
-      for (const [ck, cv] of Object.entries(config)) {
-        if (typeof cv === "string") {
-          lines.push(`${ck} = ${tomlString(cv)}`);
-        } else if (typeof cv === "boolean") {
-          lines.push(`${ck} = ${cv}`);
-        } else if (typeof cv === "number") {
-          lines.push(`${ck} = ${cv}`);
-        } else if (Array.isArray(cv)) {
-          lines.push(`${ck} = ${tomlStringArray(cv.map(String))}`);
-        }
+      const server: Record<string, unknown> = {};
+      for (const [ck, cv] of Object.entries(config as Record<string, unknown>)) {
+        const key = snakeKey(ck);
+        if (MCP_DROPPED_KEYS.has(key)) continue;
+        server[key] = cv;
       }
-      lines.push("");
+      tables.push(...tomlTable(["mcp_servers", name], server));
     }
   }
 
-  // Fallback chain — document if present (Codex doesn't natively support it)
   const fallbackChain = ast.settings?.["fallback-chain"] as string[] | undefined;
   if (fallbackChain && fallbackChain.length > 0) {
-    lines.push(`# Model fallback chain: ${fallbackChain.join(" -> ")}`);
-    lines.push("");
+    comments.push(`# Model fallback chain (Codex has no such key): ${fallbackChain.join(" -> ")}`);
+    comments.push("");
   }
 
-  // Merge any remaining extension fields as top-level TOML keys
-  if (codexTopologyExt) {
-    const handled = new Set([
-      "disable_response_storage",
-      "history",
-      "sandbox_type",
-      "providers",
-    ]);
-    for (const [key, value] of Object.entries(codexTopologyExt)) {
-      if (handled.has(key)) continue;
-      if (typeof value === "string") {
-        lines.push(`${key} = ${tomlString(value)}`);
-      } else if (typeof value === "boolean") {
-        lines.push(`${key} = ${value}`);
-      } else if (typeof value === "number") {
-        lines.push(`${key} = ${value}`);
-      }
-    }
-  }
-
-  // Multi-agent support: [agents] section with per-agent references
+  // Multi-agent support: [agents] with one entry per agent.
   if (agents.length > 0) {
-    lines.push("");
-    lines.push("[agents]");
-    lines.push(`max_threads = ${Math.min(agents.length, 10)}`);
-    lines.push(`max_depth = 1`);
-    lines.push("");
-
+    tables.push("[agents]", `max_concurrent_threads_per_session = ${Math.min(agents.length, 10)}`, "");
     for (const agent of agents) {
       const desc = agent.description
         ?? ast.roles[agent.role ?? ""]
         ?? ast.roles[agent.id]
         ?? agent.role
         ?? toTitle(agent.id);
-      lines.push(`[agents.${agent.id}]`);
-      lines.push(`description = ${tomlString(desc)}`);
-      lines.push(`config_file = ${tomlString(`agents/${agent.id}.toml`)}`);
-      lines.push("");
+      tables.push(`[agents.${tomlKey(agent.id)}]`, `description = ${tomlString(desc)}`, `config_file = ${tomlString(`agents/${agent.id}.toml`)}`, "");
     }
   }
 
+  // Sanity: nothing the contract forbids or does not allow leaves here.
+  if (!APPROVAL_POLICIES.has(String(scalars.approval_policy))) throw new Error("codex binding: illegal approval_policy");
+  if (scalars.sandbox_mode !== undefined && !SANDBOX_MODES.has(String(scalars.sandbox_mode))) {
+    codexWarn(`[codex] sandbox mode "${scalars.sandbox_mode}" is not a Codex sandbox_mode; left out`);
+    delete scalars.sandbox_mode;
+  }
+
+  const scalarLines = tomlTable([], scalars);
   return {
     path: ".codex/config.toml",
-    content: lines.join("\n") + "\n",
+    content: [...header, ...scalarLines, ...comments, ...tables].join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n*$/, "\n"),
     category: "machine",
   };
 }
@@ -1735,6 +1629,7 @@ export const codexBinding: BindingTarget = {
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     warnSessionsNotCompiled(ast, "codex");
+    pendingWarnings = [];
     const files: GeneratedFile[] = [];
 
     // 1. .codex/config.toml — main configuration
@@ -1770,6 +1665,8 @@ export const codexBinding: BindingTarget = {
     const meteringFile = generateMetering(ast);
     if (meteringFile) files.push(meteringFile);
 
+    for (const w of pendingWarnings) console.warn(w);
+    pendingWarnings = [];
     return deduplicateFiles(files);
   },
 };

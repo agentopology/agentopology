@@ -947,7 +947,7 @@ describe("codex binding", () => {
     expect(toml).toBeDefined();
     expect(toml!.content).toContain("model");
     // Must use valid Codex approval_policy values
-    expect(toml!.content).toMatch(/approval_policy\s*=\s*"(untrusted|on-request|on-failure|never)"/);
+    expect(toml!.content).toMatch(/approval_policy\s*=\s*"(on-request|never)"/);
     // Must NOT contain legacy values
     expect(toml!.content).not.toContain('"suggest"');
     expect(toml!.content).not.toContain('"auto-edit"');
