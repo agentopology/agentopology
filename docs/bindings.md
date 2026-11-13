@@ -255,6 +255,29 @@ An Agent SDK binding would generate `agents/writer.json`:
 
 ---
 
+## The `codex` Binding
+
+`codex` is experimental. It is written against Codex CLI 0.156.1. A project scaffolded with `--target codex` gets:
+
+| File | What it holds |
+|------|---------------|
+| `.codex/config.toml` | `model`, `approval_policy` (`on-request` or `never`), `sandbox_mode`, `[mcp_servers.<id>]` (with `env` as its own table), `[agents]` |
+| `.codex/agents/<id>.toml` | `name`, `description`, `developer_instructions`, and `model` / `model_reasoning_effort` when set |
+| `.codex/hooks.json` | The topology's `hooks {}` block, for the events and handler types Codex runs |
+| `.codex/rules/<topology>.rules` | `settings { allow / ask / deny }` entries of the form `Bash(command *)` as `prefix_rule(...)` |
+| `scripts/schedule-<job>.sh`, `crontab.fragment` | Schedule jobs with `carrier: cron` that run an agent, through `codex -a never exec --sandbox <mode>` |
+
+What to know:
+
+- **Models.** Codex runs no Claude model. `scaffold --target codex` refuses `opus`, `sonnet`, `haiku`, `fable` and `claude-*`, names the agent, exits 1 and writes nothing. Set a Codex model such as `gpt-5.2`.
+- **One approval policy per project.** Codex has no per-agent approval policy or sandbox: an agent file cannot override either. When agents differ in `permissions`, the strictest applies to all and scaffold warns. `sandbox:` and `mcp-servers:` on an agent are not written to its file; MCP servers are written once in `config.toml`.
+- **Hooks need trust.** Codex skips a new or changed hook until you review it with `/hooks`. A hook's `if: "Tool(pattern)"` is kept through `.codex/scripts/at-if.sh`, which needs `jq`. A hook on an event Codex lacks, a `prompt` / `agent` / `http` handler, or a per-agent hook gets a warning and no entry. Codex itself calls tool hooks a guardrail, not a complete enforcement boundary.
+- **Providers are not written.** A project `.codex/config.toml` may not set `model_providers`, `notify`, `profiles`, `otel` and a few other keys; set them in your user config.
+- **What Codex cannot express** (sampling settings, a thinking token budget, output format, max turns, fallback chain, rate limit and more) gives one `validate` warning per field. Run `agentopology validate` with a Codex target, or read the warnings `scaffold` prints.
+- **`codex exec` is read-only by default.** A scheduled job whose agent writes, in a topology that names no sandbox, gets a warning and runs with `--sandbox read-only`. Set `settings { sandbox: workspace-write }`.
+
+---
+
 ## The `claude-workflow` Binding
 
 `claude-workflow` is the second half of a **hybrid** that pairs with `claude-code`. One `.at` topology can compile to both targets.

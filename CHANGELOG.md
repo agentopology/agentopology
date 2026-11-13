@@ -4,6 +4,12 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Permission rules for Codex (CX-13)
+
+- `settings { allow / ask / deny }` entries of the form `Bash(command *)` now scaffold `.codex/rules/<topology>.rules` as `prefix_rule(...)` calls: deny is `forbidden`, ask is `prompt`, allow is `allow`. Each rule carries a `match` example (for `git push`, `git push origin main`) that Codex checks when it loads the file; where the `codex` binary is installed the test runs `codex execpolicy check` against it. When one command is in two lists, the strictest decision is written.
+- An entry a command-prefix rule cannot hold (a tool name such as `WebFetch`, a wildcard inside the command) is reported with a warning instead of dropped.
+- When agents differ in `permissions`, the one warning now names the agents that set the strictest policy. A new "The `codex` binding" section in `docs/bindings.md` describes what is written and what is not.
+
 ### [feature] Hooks compile to .codex/hooks.json (CX-8)
 
 - On `--target codex`, the topology's `hooks {}` block is now registered in `.codex/hooks.json` in the shape Codex reads. Before, the scaffold wrote no hook file at all. A hook with `run: "exit 2"` is written as that command; it no longer becomes a stub file named `exit` that exits 0.

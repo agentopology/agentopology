@@ -44,6 +44,7 @@ import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
 import { buildCodexHooks } from "./lib/codex-hooks.js";
+import { buildCodexRules } from "./lib/codex-rules.js";
 import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
@@ -182,7 +183,11 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   scalars.approval_policy = projectApprovalPolicy(agents);
   const distinct = new Set(agents.map((a) => mapApprovalPolicy(a.permissions ?? "autonomous")));
   if (distinct.size > 1) {
-    codexWarn(`[codex] agents differ in permissions; Codex has one approval_policy per project, so the strictest ("${scalars.approval_policy}") applies to all`);
+    const strictest = agents.filter((a) => mapApprovalPolicy(a.permissions ?? "autonomous") === scalars.approval_policy).map((a) => `"${a.id}"`);
+    codexWarn(
+      `[codex] agents differ in permissions (${agents.map((a) => `${a.id}: ${a.permissions ?? "autonomous"}`).join(", ")}); ` +
+      `Codex has one approval_policy per project, so the strictest, "${scalars.approval_policy}" from ${strictest.join(", ")}, applies to all agents`,
+    );
   }
 
   const ext = getTopologyExtensions(ast);
@@ -1663,6 +1668,10 @@ export const codexBinding: BindingTarget = {
     // 9. Workspace protocol
     const wsProtocol = generateWorkspaceProtocol(ast);
     if (wsProtocol) files.push(wsProtocol);
+
+    // 9a. Permission rules
+    const rules = buildCodexRules(ast);
+    if (rules.file) files.push(rules.file);
 
     // 10a. Schedules
     files.push(...generateScheduleScripts(ast));
