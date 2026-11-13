@@ -38,6 +38,7 @@ import {
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
   generateBeforeAgentScript as buildBeforeAgentScript,
+  generateBeforeEditScript as buildBeforeEditScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
   isRegisteredSubagentType,
@@ -2414,6 +2415,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // F-4: an edit of a gate's ledger is refused on the file-edit tools.
+  if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "Write|Edit|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
+    });
+  }
+
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
   for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -3407,6 +3417,8 @@ export const claudeCodeBinding: BindingTarget = {
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAction) files.push(beforeAction);
+    const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeEdit) files.push(beforeEdit);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

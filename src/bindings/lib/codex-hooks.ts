@@ -25,9 +25,10 @@ import {
   gateWiring,
   generateBeforeActionScript,
   generateBeforeAgentScript,
+  generateBeforeEditScript,
   generateGateWrapperScripts,
   getDelegationMode,
-  spawnHeldAgents, MATCH_FUNCTIONS } from "./guards.js";
+  spawnHeldAgents, MATCH_FUNCTIONS, CANON_FUNCTION } from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
 const UNIVERSAL_EVENTS: Record<string, string | null> = {
@@ -321,20 +322,7 @@ export function ifFilterScript(): GeneratedFile {
       "else",
       "  values=\"$(printf '%s' \"$payload\" | jq -r '.tool_input.file_path // .tool_input.path // empty')\"",
       "fi",
-      "# canon PATH (F-12): the path made absolute (from $PWD; /proc/self/cwd is the root), with `.`, `..` and",
-      "# `//` resolved lexically, then relative to the project root when it is inside it.",
-      "canon() {",
-      '  local v=$1 part out=""',
-      '  case "$v" in /proc/self/cwd) v=$ROOT ;; /proc/self/cwd/*) v="$ROOT/${v#/proc/self/cwd/}" ;; /*) ;; *) v="$PWD/$v" ;; esac',
-      "  local IFS=/; set -f # always called in $(...): neither leaks out",
-      "  for part in $v; do",
-      '    case "$part" in ""|.) ;; ..) out="${out%/*}" ;; *) out="$out/$part" ;; esac',
-      "  done",
-      '  [ -n "$out" ] || out=/',
-      '  case "$out" in "$CROOT") out=. ;; "$CROOT"/*) out="${out#"$CROOT"/}" ;; esac',
-      "  printf '%s' \"$out\"",
-      "}",
-      'CROOT=/; CROOT="$(ROOT=/ PWD=/ canon "$ROOT")"',
+      ...CANON_FUNCTION,
       "matched=0",
       'if [ "$name" = apply_patch ] || [ "$tool" != Bash ]; then',
       "  # A pattern with no slash (`.env*`) names a file at any depth: it is matched against the basename too.",
@@ -499,6 +487,12 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
     scripts.push(beforeAction);
     const gates = runGates(ast, (g) => checkableActionGate(ast, g));
     entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates)] } });
+  }
+  // F-4: an apply_patch that adds, updates, deletes or moves to a gate's ledger is refused.
+  const beforeEdit = generateBeforeEditScript(ast, CODEX_GUARDS);
+  if (beforeEdit) {
+    scripts.push(beforeEdit);
+    entries.push({ event: "PreToolUse", entry: { matcher: "apply_patch", hooks: [guardHandler(ast, "before-edit.sh", [])] } });
   }
   // A gate after an agent also runs when that agent stops (SubagentStop; the matcher is the agent type,
   // probe P4). That hook cannot block on Codex; what holds is before-agent.sh at the next agent's spawn (R-1).
