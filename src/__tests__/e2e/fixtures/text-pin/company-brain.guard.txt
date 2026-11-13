@@ -1,10 +1,10 @@
 guard --check examples/company-brain.at (project: empty)
 
 
-enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.319
 --- exit 0
 guard --check examples/company-brain.at (project: proj)
 
 
-enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+enforcement: 0 of 0 steps refuse · checked against Claude Code 2.1.319
 --- exit 0

@@ -20,6 +20,5 @@ Validating kitchen-sink.at (incident-response v2.0.0)
     }
     → agentopology docs agent
 
-Claude Code not installed
 checked against Claude Code 2.1.319 (supports 2.1.295 and later)
 --- exit 0

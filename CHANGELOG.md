@@ -4,6 +4,14 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] README rule count matches the registered rules (I011)
+
+- README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
+
+### [fix] Text-output snapshots no longer depend on the machine (I011)
+
+- Setting `AGENTOPOLOGY_CLAUDE_VERSION` to a version (or `none`) replaces the `claude --version` check, so validate and guard --check print the same lines on every machine. The text-output snapshot test sets it to the verified version, and the snapshots are re-recorded with the padded strength column.
+
 ### [fix] Review fixes for the 0.10.1 session and import work (N44e)
 
 - The talk guard now accepts a flow target whose id has letters, digits, `_` and `-` (for example a subagent `code_reviewer` or `Helper2`), matched exactly as declared. Session ids stay lowercase kebab-case and match exactly.

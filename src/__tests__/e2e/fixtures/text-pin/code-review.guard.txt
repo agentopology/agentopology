@@ -1,25 +1,25 @@
 guard --check examples/code-review.at (project: empty)
 
-  gate human-approval  none    by: hook      SubagentStop on reviewer → gate-human-approval.sh
+  gate human-approval  none        by: hook      SubagentStop on reviewer → gate-human-approval.sh
                        ✗ no SubagentStop entry for reviewer running gate-human-approval.sh in .claude/settings.json
                        ✗ .claude/skills/code-review/scripts/gate-human-approval.sh is missing
-  deny Write           none    by: settings  permissions.deny in .claude/settings.json
+  deny Write           none        by: settings  permissions.deny in .claude/settings.json
                        ✗ .claude/settings.json has no deny rule Write
-  deny Edit            none    by: settings  permissions.deny in .claude/settings.json
+  deny Edit            none        by: settings  permissions.deny in .claude/settings.json
                        ✗ .claude/settings.json has no deny rule Edit
-  deny Bash            none    by: settings  permissions.deny in .claude/settings.json
+  deny Bash            none        by: settings  permissions.deny in .claude/settings.json
                        ✗ .claude/settings.json has no deny rule Bash
 
-enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.319
 4 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check examples/code-review.at (project: proj)
 
-  gate human-approval  refuse  by: hook      SubagentStop on reviewer → gate-human-approval.sh · Claude Code not installed
+  gate human-approval  refuse      by: hook      SubagentStop on reviewer → gate-human-approval.sh
                        ⚠ its check script .claude/skills/code-review/scripts/human-approve.sh is still a stub, so it blocks every run until it is written
-  deny Write           refuse  by: settings  permissions.deny in .claude/settings.json · Claude Code not installed
-  deny Edit            refuse  by: settings  permissions.deny in .claude/settings.json · Claude Code not installed
-  deny Bash            refuse  by: settings  permissions.deny in .claude/settings.json · Claude Code not installed
+  deny Write           refuse      by: settings  permissions.deny in .claude/settings.json
+  deny Edit            refuse      by: settings  permissions.deny in .claude/settings.json
+  deny Bash            refuse      by: settings  permissions.deny in .claude/settings.json
 
-enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.319 · Claude Code not installed
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.319
 --- exit 0

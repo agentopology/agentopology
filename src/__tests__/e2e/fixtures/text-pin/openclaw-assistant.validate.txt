@@ -4,6 +4,5 @@ Validating openclaw-assistant.at (personal-assistant v1.0.0)
 
   0 error(s), 1 warning(s)
 
-Claude Code not installed
 checked against Claude Code 2.1.319 (supports 2.1.295 and later)
 --- exit 0
