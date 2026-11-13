@@ -267,3 +267,18 @@ Files owned: `src/bindings/codex.ts`, `src/bindings/lib/toml.ts`, `src/bindings/
 ### CXe: the version line per target and Codex inventory: CX-1, CX-18
 Build both as their rows say. CX-1: the Claude Code output stays byte-identical (the text-pin tests prove it). CX-18 builds on the inventory roots that T-08 added.
 Files owned: `src/conformance/index.ts` (new), `src/conformance/claude-code.ts`, `src/cli/index.ts`, `src/inventory/index.ts`, their tests.
+
+## Lanes, wave 3 (base: `origin/feat/icx2-candidate`: the rest of 0.11, CX-1 to CX-8, CX-10, CX-13, CX-14, CX-18, CX-20, CX-23 and the CX-3 probe pack)
+
+### CXf: gates on Codex and the conformance suite: CX-9, CX-11, CX-17, CX-15 (in this order), then the release 1 check
+First the full gate on your base; fix any red at its cause in its own commit.
+
+The probe facts are in `spec/codex/probes.json` (measured live on Codex 0.156.1). Three of them change how the guards must be written:
+- **P10:** on `PreToolUse`, exit 1, exit 127 and a timeout all let the command run, and only exit 2 blocks. So every generated Codex guard script must exit 2 on any error of its own: `set -u` plus a trap on ERR and EXIT that turns any failure into exit 2 with a reason on stderr, a missing `jq` gives exit 2, unparsable stdin gives exit 2, and the hook timeout in `hooks.json` stays well above the script's own time. Planted tests: break the script's input in each of those ways, and assert exit 2.
+- **P7:** a project hook that has not been trusted is skipped with no warning. Every Codex guard therefore grades "unverified" in release 1, and the generated `AGENTS.md` names the manual `/hooks` trust step. AT never writes `trusted_hash`.
+- **P2/P3/P4:** the tool names are `Bash`, `apply_patch` (patch text in `tool_input.command`) and `collaborationspawn_agent` (input `{task_name, agent_type, message, fork_turns}`; `message` is encrypted). `agent_type` equals the agent file's `name`.
+
+Build each ticket as its row says. CX-9 uses the guard library from CX-10 with the Codex platform record. CX-11: no generated script prints `"ask"`. CX-15: tiers A to D, where tier D is skipped with a clear message when `codex` is not installed (try `npm i -g @openai/codex@0.156.1` first).
+
+Then the **release 1 check**: for every release 1 ticket (CX-1 to CX-11, CX-13 to CX-15, CX-17, CX-18, CX-20, CX-23), find the planted test that proves its row's done-when and list it, PASS or FAIL. Build any done-when item that has no test or fails, as long as it is inside the files you own; list the rest. Codex stays marked experimental, and no Codex line reads "refuse".
+Files owned: `src/bindings/codex.ts`, `src/bindings/lib/guards.ts`, `src/bindings/lib/codex-hooks.ts`, `src/step/check.ts`, `src/guard/target.ts`, `src/cli/index.ts` (guard --target only), `src/conformance/codex.ts`, `src/__tests__/e2e/codex-conformance.test.ts`, the Codex fixtures and tests, `docs/bindings.md`.
