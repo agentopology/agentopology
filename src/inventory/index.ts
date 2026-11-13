@@ -24,6 +24,7 @@ import * as os from "node:os";
 import { spawnSync } from "node:child_process";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
+import { codexBinding } from "../bindings/codex.js";
 import { runParts, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
 import { sessionAgentsOf } from "../bindings/lib/session.js";
@@ -200,11 +201,67 @@ function scheduled(root: string, opts: CollectOptions): InventoryItem[] {
   return items;
 }
 
+/** Hook entries of a hooks.json-shaped object `{ hooks: { Event: [{ matcher?, hooks: [...] }] } }`. */
+function hookItems(hooks: unknown, file: string, tag?: InventoryTag): InventoryItem[] {
+  const items: InventoryItem[] = [];
+  for (const [event, entries] of Object.entries((hooks ?? {}) as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries as Array<Record<string, any>>)
+      for (const h of (entry.hooks ?? []) as Array<Record<string, any>>)
+        items.push({ id: hookId(event, entry.matcher, h), kind: "hook", path: file, ...(tag ? { tag } : {}) });
+  }
+  return items;
+}
+
+/** Server names in a Codex config.toml: the `[mcp_servers.<name>]` table headers. */
+export function codexMcpServers(toml: string): string[] {
+  const names: string[] = [];
+  for (const m of toml.matchAll(/^\s*\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))(?:\.[^\]]*)?\]\s*$/gm)) names.push(m[1] ?? m[2]);
+  return [...new Set(names)];
+}
+
+/** What a file under .codex is, from where it sits. */
+function classifyCodex(rel: string): Pick<InventoryItem, "id" | "kind" | "tag"> {
+  const p = rel.split("/");
+  if (p[1] === "agents" && p.length === 3 && p[2].endsWith(".toml")) return { id: `agent:${p[2].replace(/\.toml$/, "")}`, kind: "agent" };
+  if (p[1] === "rules" && p.length >= 3) return { id: `rule:${p.slice(2).join("/").replace(/\.rules$/, "")}`, kind: "rule" };
+  if (p.length === 2 && /\.(json|toml)$/.test(p[1])) return { id: `config:codex/${p[1]}`, kind: "config" };
+  return { id: `claude-file:${p.join("/")}`, kind: "claude-file" };
+}
+
+/** The Codex project files: .codex tree, hooks.json entries, config.toml MCP servers, .agents/skills, AGENTS.md. */
+function codexItems(root: string): InventoryItem[] {
+  const items: InventoryItem[] = [];
+  const relOf = (full: string) => path.relative(root, full).split(path.sep).join("/");
+  for (const full of walk(path.join(root, ".codex")).files) {
+    const rel = relOf(full);
+    if (rel === ".codex/hooks.json") continue; // its entries are listed one by one below
+    items.push({ ...classifyCodex(rel), path: rel, fingerprint: sha256(full) });
+  }
+  const skills = walk(path.join(root, ".agents", "skills"), ["skills"]);
+  for (const full of skills.files) {
+    const rel = relOf(full);
+    items.push({ ...classify(rel), path: rel, fingerprint: sha256(full) });
+  }
+  for (const full of skills.dirs) {
+    const rel = relOf(full);
+    items.push({ id: `skill-dir:${rel.split("/").slice(2).join("/")}`, kind: "skill-dir", path: rel });
+  }
+  items.push(...hookItems(readJson(path.join(root, ".codex", "hooks.json"))?.hooks, ".codex/hooks.json"));
+  try {
+    for (const name of codexMcpServers(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8")))
+      items.push({ id: `mcp:${name}`, kind: "mcp-server", path: ".codex/config.toml" });
+  } catch { /* no config.toml */ }
+  if (fs.existsSync(path.join(root, "AGENTS.md"))) items.push({ id: "config:AGENTS.md", kind: "config", path: "AGENTS.md", fingerprint: sha256(path.join(root, "AGENTS.md")) });
+  return items;
+}
+
 /** List every live thing under `root`, sorted by id. Reads only. */
 export function collectInventory(root: string, opts: CollectOptions = {}): InventoryItem[] {
   const items: InventoryItem[] = [...scheduled(path.resolve(root), opts)];
   if (opts.roots?.length) items.push(...rootFiles(root, opts.roots));
   if (opts.user) items.push(...userItems(opts.home ?? process.env.HOME ?? os.homedir()));
+  items.push(...codexItems(root));
   const tree = walk(path.join(root, ".claude"));
   const relOf = (full: string) => path.relative(root, full).split(path.sep).join("/");
   for (const full of tree.files) {
@@ -335,7 +392,11 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
   const checkUser = opts.user ?? opts.home !== undefined;
   const outside = outsideChecks(ast, checkUser, home);
   const userSkills = new Set(outside.filter((o) => o.kind === "user-skill" && o.status === "mapped").map((o) => o.name));
-  const generated = claudeCodeBinding.scaffold(ast);
+  // What scaffold writes for either target. A target that refuses this topology (an error)
+  // contributes nothing: its files, if present, then show as unmapped.
+  let codexGenerated: Array<{ path: string; content: string }> = [];
+  try { codexGenerated = codexBinding.scaffold(ast); } catch { /* not scaffoldable for Codex */ }
+  const generated = [...claudeCodeBinding.scaffold(ast), ...codexGenerated];
   const genPaths = new Set(generated.map((f) => norm(f.path)));
   const genHooks = new Set<string>();
   const genSettings = generated.find((f) => f.path === ".claude/settings.json");
@@ -345,8 +406,12 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
       for (const entry of entries as Array<Record<string, any>>)
         for (const h of entry.hooks ?? []) genHooks.add(hookId(event, entry.matcher, h));
   }
+  const genCodexHooks = generated.find((f) => f.path === ".codex/hooks.json");
+  if (genCodexHooks) { try { for (const h of hookItems(JSON.parse(genCodexHooks.content).hooks, "")) genHooks.add(h.id); } catch { /* not JSON */ } }
+  const genCodexConfig = generated.find((f) => f.path === ".codex/config.toml");
   const genMcp = generated.find((f) => f.path === ".mcp.json");
   const servers = new Set([
+    ...(genCodexConfig ? codexMcpServers(genCodexConfig.content) : []),
     ...Object.keys(ast.mcpServers ?? {}),
     ...Object.keys(genMcp ? JSON.parse(genMcp.content).mcpServers ?? {} : {}),
     ...ast.nodes.flatMap((n) => (n.type === "agent" ? n.mcpServers ?? [] : [])),
@@ -355,7 +420,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
   const handPaths = new Set(declared.map((d) => d.path));
   const skillDirs = new Set([
     ...(ast.skills ?? []).map((s) => s.id),
-    ...[...genPaths].filter((p) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(p)).map((p) => p.split("/")[2]),
+    ...[...genPaths].filter((p) => /^\.(?:claude|agents)\/skills\/[^/]+\/SKILL\.md$/.test(p)).map((p) => p.split("/")[2]),
   ]);
   // A store's data lives under its path; the store is declared, its rows are not listed one by one.
   const storeDirs = (ast.stores ?? []).filter((st) => st.path).map((st) => norm(st.path!).replace(/\/?$/, "/"));
@@ -383,7 +448,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
         if (p === ".claude/state/talk.jsonl" && hasSessions) return true;
         if (genPaths.has(p) || handPaths.has(p)) return true;
         if (storeDirs.some((d) => p.startsWith(d))) return true;
-        const folder = p.match(/^\.claude\/skills\/([^/]+)\//)?.[1];
+        const folder = p.match(/^\.(?:claude|agents)\/skills\/([^/]+)\//)?.[1];
         return !!folder && skillDirs.has(folder);
       }
     }
