@@ -20,10 +20,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
 import { runParts, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
+import { sessionAgentsOf } from "../bindings/lib/session.js";
 
 export { matcherGaps, type MatcherGap };
 
@@ -33,7 +35,7 @@ export type InventoryTag = "h" | "instrument" | "e";
 export interface InventoryItem {
   /** Stable id, `<kind>:<name>`. */
   id: string;
-  kind: "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script";
+  kind: "launchd" | "cron" | "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script";
   /** Project-relative file, for things that are files. */
   path?: string;
   /** sha256 of the file's bytes. */
@@ -105,9 +107,41 @@ function hookId(event: string, matcher: string | undefined, h: Record<string, an
   return `hook:${event}${matcher ? `[${matcher}]` : ""} ${what}`;
 }
 
-/** List every live thing under `root`, sorted by id. Reads only. */
-export function collectInventory(root: string): InventoryItem[] {
+export interface CollectOptions {
+  /** Folder of launchd plists; default `~/Library/LaunchAgents`. */
+  launchAgentsDir?: string;
+  /** The crontab text; default the output of `crontab -l`. */
+  crontab?: string;
+}
+
+/** launchd plists and crontab lines whose command points into the project dir. Tagged e: the machine's, not the harness's. */
+function scheduled(root: string, opts: CollectOptions): InventoryItem[] {
   const items: InventoryItem[] = [];
+  const dir = opts.launchAgentsDir ?? path.join(process.env.HOME ?? "", "Library", "LaunchAgents");
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith(".plist")) continue;
+      let text: string;
+      try { text = fs.readFileSync(path.join(dir, name), "utf8"); } catch { continue; }
+      if (!text.includes(root)) continue;
+      const label = text.match(/<key>Label<\/key>\s*<string>([^<]*)<\/string>/)?.[1] ?? name.replace(/\.plist$/, "");
+      items.push({ id: `launchd:${label}`, kind: "launchd", path: path.join(dir, name), tag: "e" });
+    }
+  } catch { /* no such folder: nothing to list */ }
+  let tab = opts.crontab;
+  if (tab === undefined) {
+    try { tab = spawnSync("crontab", ["-l"], { encoding: "utf8", timeout: 3000 }).stdout ?? ""; } catch { tab = ""; }
+  }
+  for (const line of tab.split("\n")) {
+    const t = line.trim();
+    if (t && !t.startsWith("#") && t.includes(root)) items.push({ id: `cron:${t}`, kind: "cron", tag: "e" });
+  }
+  return items;
+}
+
+/** List every live thing under `root`, sorted by id. Reads only. */
+export function collectInventory(root: string, opts: CollectOptions = {}): InventoryItem[] {
+  const items: InventoryItem[] = [...scheduled(path.resolve(root), opts)];
   const tree = walk(path.join(root, ".claude"));
   const relOf = (full: string) => path.relative(root, full).split(path.sep).join("/");
   for (const full of tree.files) {
@@ -225,6 +259,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
   // A store's data lives under its path; the store is declared, its rows are not listed one by one.
   const storeDirs = (ast.stores ?? []).filter((st) => st.path).map((st) => norm(st.path!).replace(/\/?$/, "/"));
   const scripts = runScripts(ast);
+  const hasSessions = sessionAgentsOf(ast).length > 0;
   const mentioned = [
     ...ast.nodes.flatMap((n) => (n.type === "action" ? n.commands ?? [] : [])),
     ...(ast.hooks ?? []).map((h) => h.run ?? ""),
@@ -243,6 +278,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string)
       case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${i.id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
       default: {
         const p = norm(i.path ?? "");
+        // The generated talk guard appends to this log whenever session agents exist.
+        if (p === ".claude/state/talk.jsonl" && hasSessions) return true;
         if (genPaths.has(p) || handPaths.has(p)) return true;
         if (storeDirs.some((d) => p.startsWith(d))) return true;
         const folder = p.match(/^\.claude\/skills\/([^/]+)\//)?.[1];

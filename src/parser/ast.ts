@@ -184,6 +184,19 @@ export interface ScheduleJobDef {
   action?: string;
   /** Whether this job is enabled. Defaults to true. */
   enabled: boolean;
+  /** The machine the job runs on (a `machines` entry, V122). */
+  machine?: string;
+  /** What fires the job: session | cron | launchd | cloud | calendar (V124). */
+  carrier?: string;
+  /** What the job outlives: pane-close | reboot | away (V124, V125). */
+  survives?: string;
+}
+
+/** A machine from the top-level `machines` block. */
+export interface MachineDef {
+  id: string;
+  /** Operating system, as written (macos, linux, windows). */
+  os?: string;
 }
 
 /** An external interface definition (webhook, HTTP, etc.). */
@@ -377,6 +390,10 @@ export interface StoreNode {
   sources?: Record<string, SourceStyle>;
   /** Backend-specific passthrough configuration. */
   backendConfig?: Record<string, unknown>;
+  /** The one agent that may share this store with another writer (V121). */
+  owner?: string;
+  /** The machine this store lives on (T-07, V122). */
+  machine?: string;
 }
 
 /** Presentation styling for one provenance source (e.g. gmail) in the graph. */
@@ -611,6 +628,8 @@ export interface AgentNode extends BaseNode {
    * together (`place: ops`). Only meaningful with `runs: session`.
    */
   place?: string;
+  /** The machine a session agent runs on (a `machines` entry, V122). */
+  machine?: string;
   /** Decisions this agent holds the seat for (`decides: [package-yes]`). */
   decides?: string[];
   /**
@@ -832,6 +851,17 @@ export interface HumanNode extends BaseNode {
   timeout?: string;
   /** What to do if human doesn't respond: "halt" | "skip" | "fallback <id>". */
   onTimeout?: string;
+  /** The person this step waits on (a `person` block, V127). */
+  who?: string;
+  /** Window `"YYYY-MM-DD..YYYY-MM-DD"` this human's approval holds; `step check` refuses a guarded step after it. */
+  valid?: string;
+}
+
+/** A person from a top-level `person <id> { away: "YYYY-MM-DD..YYYY-MM-DD" }` block. */
+export interface PersonDef {
+  id: string;
+  /** Window the person is away, as written. */
+  away?: string;
 }
 
 /** Topology-level defaults for sampling params and shared agent config. */
@@ -1128,6 +1158,10 @@ export interface TopologyAST {
    * resolve imports when no `filePath` option is given.
    */
   sourcePath?: string;
+  /** Machines from the top-level `machines` block (T-07). */
+  machines?: MachineDef[];
+  /** People from the top-level `person` blocks (T-09). */
+  persons?: PersonDef[];
 }
 
 // ---------------------------------------------------------------------------

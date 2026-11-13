@@ -27,6 +27,42 @@ All notable changes to agentopology are documented here.
 - The talk guard refuses to write through a hard-linked `talk.jsonl`. When the log cannot be written (hard link, symlink, or an unwritable folder) an allowed send still goes through and prints `talk log not written` to stderr.
 - A `[ref]` suffix on a `SendMessage` target must be only letters, digits, `_` and `-`, otherwise the send is refused. The spawn guard now refuses `subagent_type: false` and any other non-string value. A place name with unsafe characters is not printed in the `sessions.md` heading. `scaffold --prune` removes a stale `scripts/start-sessions.sh` when no session agents remain.
 
+### [feature] People who are away, and approvals that expire (T-09)
+
+- A top-level `person <id> { away: "2026-01-31..2026-02-14" }` block. A `human` takes `who: <person>`.
+  Validate warns for every human step whose person is away today or later, with what the step does on
+  timeout (V126). An unknown person or a malformed window is an error (V127).
+- A human may declare `valid: "YYYY-MM-DD..YYYY-MM-DD"`. `step check` refuses a step that human guards
+  once today is past the window.
+
+### [feature] Schedule jobs say what carries them and what they survive (T-06)
+
+- A schedule `job` takes `carrier: session | cron | launchd | cloud | calendar` and
+  `survives: pane-close | reboot | away`. Other values are a validate error (V124).
+- `carrier: session` with any `survives:` is an error (V125): a session cron dies with its session and
+  after 7 days.
+- `inventory` now lists launchd plists and crontab lines whose command points into the project folder,
+  counted as the machine's and never required.
+
+### [feature] Machines, and home-folder paths are an error (T-07)
+
+- A top-level `machines { machine mac { os: macos } }` block, and `machine:` on session agents, schedule
+  jobs and stores. A machine that is not declared is a validate error (V122).
+- A hook, gate, tool or action command with an absolute path into one person's home folder
+  (`/Users/<name>/`, `/home/<name>/`, `C:\Users\`) is a validate error (V123), because it only works
+  on that machine.
+
+### [feature] A store can name its owner (T-10)
+
+- `owner: <agent>` on a store. If two agents that are not the owner both write the store, validate now
+  reports an error (V121) that names both. An owner that is not an agent is an error too. Stores with no
+  owner are checked as before.
+
+### [fix] The validate inventory knows the talk log (N44c)
+
+- `validate --inventory` no longer lists `.claude/state/talk.jsonl` as unmapped when the topology declares
+  session agents, since the generated talk guard writes it.
+
 ### [fix] Every documented import form is read, at the top of the file too (T02b)
 
 - `import reviewer from ./review.at`, the quoted path, `import linter from registry:@org/linter@1.2.0`

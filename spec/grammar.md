@@ -681,6 +681,7 @@ memory {
 | `connection` | secret-string | no | -- | Connection URI for remote backends (V34) |
 | `extraction` | extraction-enum | no | -- | Entity/fact extraction method |
 | `format` | string | no | -- | File format/convention for file-native stores. For `brain`, typically `obsidian` ([[wikilinks]], #tags, YAML frontmatter) — a promise the store round-trips as a real Obsidian vault. |
+| `owner` | agent id | no | -- | The one agent that may share this store. Two other agents writing it (listing it under `memory:`, `custodian-of:` or `writes:`) is an error naming both, unless one of the two is the owner (V121). An owner that is no agent is an error. |
 | `sources` | sources-block | no | -- | **Presentation only** — provenance styling for the brain graph view. Maps a note's `source:` frontmatter to a color/icon. Visualizer-only; bindings ignore it. See below. |
 | `embedding` | embedding-block | no | -- | Embedding configuration (V31 warning if omitted for semantic/episodic/procedural) |
 | `index` | index-block | no | -- | Index/collection configuration |

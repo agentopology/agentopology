@@ -132,6 +132,7 @@ agent NAME {
 | skip | string | no | -- | Skip condition: "not identifier" or "identifier.identifier op value" |
 | runs | string | no | "subagent" | \`subagent\`, \`session\`, \`inline\` or \`fork\`. A \`session\` agent is its own named Claude Code session (V113) |
 | place | identifier | no | -- | Where a session agent lives (\`place: ops\`); agents sharing a place run together |
+| machine | identifier | no | -- | The machine a session agent runs on; must be in the top-level \`machines { machine mac { os: macos } }\` block (V122) |
 | decides | list | no | -- | Decisions this agent holds the seat for (\`decides: [package-yes]\`); two claimants warn (V116) |
 | permission-mode | string | no | -- | Session agents: \`default\`, \`acceptEdits\`, \`plan\`, \`bypassPermissions\` or \`auto\` (V113); differing modes on a talk edge warn (V118) |
 
@@ -544,6 +545,8 @@ human NAME {
 | description | string | no | -- | What the human should do |
 | timeout | string | no | -- | How long to wait (e.g. "1h", "30m") |
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
+| who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
+| valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it |
 
 ## Example
 
@@ -977,6 +980,8 @@ store <id> {
 | isolation | string | no | Isolation level: strict, soft, none |
 | backend | string | yes | Storage backend identifier |
 | path | string | no | File system path for local backends |
+| owner | agent id | no | The one agent that may share this store; two other agents writing it is an error (V121) |
+| machine | identifier | no | The machine the store lives on; must be in \`machines { }\` (V122) |
 | connection | string | no | Connection string or \`secret "..."\` reference for remote backends |
 | extraction | string | no | Entity/fact extraction method: llm, regex, hybrid |
 
@@ -2776,6 +2781,9 @@ schedule {
 | agent | identifier | conditional (V20) | -- | Agent ID to invoke |
 | action | identifier | conditional (V20) | -- | Action ID to invoke |
 | enabled | boolean | no | true | Whether this job is active |
+| machine | identifier | no | -- | The machine the job runs on; must be in \`machines { }\` (V122) |
+| carrier | string | no | -- | What fires the job: \`session\`, \`cron\`, \`launchd\`, \`cloud\` or \`calendar\` (V124) |
+| survives | string | no | -- | What the job outlives: \`pane-close\`, \`reboot\` or \`away\` (V124). \`carrier: session\` with any \`survives:\` is an error: a session cron dies with its session and after 7 days (V125) |
 
 ## Validation Rules
 

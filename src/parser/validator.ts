@@ -27,6 +27,7 @@ import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
+import { parseWindow, today } from "./window.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -4055,6 +4056,13 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v118TalkPermissionModes(ast),
     ...v119ModelAliases(ast),
     ...v120DecisionArrives(ast),
+    ...v121StoreOwner(ast),
+    ...v122MachineKnown(ast),
+    ...v123HomePaths(ast),
+    ...v124ScheduleCarrier(ast),
+    ...v125SessionCronSurvives(ast),
+    ...v126AwayWaits(ast),
+    ...v127PersonWindows(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
     ...v27AgentPermissionsEnum(ast),
@@ -4138,6 +4146,151 @@ function v120DecisionArrives(ast: TopologyAST): ValidationResult[] {
       rule: "V120", level: "warning", node: a.id, line: lookupLine(ast, a.id),
       message: `Agent "${a.id}" holds ${a.decides.join(", ")} and ${[...new Set(incoming.get(a.id))].join(", ")} can message it: a decision can arrive here as a message.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V121 (T-10): a store with `owner:` has one agent that may share it. Two
+ * agents that write it (list it under `memory:`, `custodian-of:` or `writes:`)
+ * are an error naming both, unless one of the two is the owner. An owner that
+ * is not an agent is an error too. A store with no `owner:` is unchecked.
+ */
+function v121StoreOwner(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
+  const ids = new Set(agents.map((a) => a.id));
+  for (const store of ast.stores ?? []) {
+    if (!store.owner) continue;
+    if (!ids.has(store.owner)) {
+      results.push({ rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id), message: `Store "${store.id}" has owner "${store.owner}", which is not an agent.` });
+      continue;
+    }
+    const writers = agents
+      .filter((a) => [...(a.memory ?? []), ...(a.custodianOf ?? []), ...(a.writes ?? [])].includes(store.id))
+      .map((a) => a.id)
+      .filter((id) => id !== store.owner);
+    if (writers.length >= 2) {
+      results.push({
+        rule: "V121", level: "error", node: store.id, line: lookupLine(ast, store.id),
+        message: `Store "${store.id}" is owned by "${store.owner}", but "${writers[0]}" and "${writers[1]}" both write it and neither is the owner.`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V122 (T-07): `machine:` on a session agent, a schedule job or a store must name a `machines` entry. */
+function v122MachineKnown(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const known = new Set((ast.machines ?? []).map((m) => m.id));
+  const check = (kind: string, id: string, machine: string | undefined) => {
+    if (machine === undefined || known.has(machine)) return;
+    const have = known.size ? `declared: ${[...known].join(", ")}` : "the topology declares no machines";
+    results.push({ rule: "V122", level: "error", node: id, line: lookupLine(ast, id), message: `${kind} "${id}" runs on machine "${machine}", which is not in machines { } (${have}).` });
+  };
+  for (const n of ast.nodes) if (n.type === "agent") check("Agent", n.id, (n as AgentNode).machine);
+  for (const j of ast.schedules ?? []) check("Schedule job", j.id, j.machine);
+  for (const st of ast.stores ?? []) check("Store", st.id, st.machine);
+  return results;
+}
+
+const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
+
+/**
+ * V123 (T-07): an absolute path into one person's home folder
+ * (`/Users/<x>/`, `/home/<x>/`, `C:\Users\`) in a hook, gate, tool or action
+ * command only works on that person's machine.
+ */
+function v123HomePaths(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const check = (what: string, id: string, text: string | undefined) => {
+    if (!text) return;
+    const m = text.match(HOME_PATH);
+    if (!m) return;
+    results.push({ rule: "V123", level: "error", node: id, line: lookupLine(ast, id), message: `${what} has a home-folder absolute path (${m[0].replace(/^[^/A-Za-z]/, "")}...): it only works on one machine. Use a project-relative path or declare a machine.` });
+  };
+  for (const h of ast.hooks ?? []) check(`Hook "${h.name}" command`, h.name, h.run);
+  for (const n of ast.nodes) {
+    if (n.type === "agent") for (const h of (n as AgentNode).hooks ?? []) check(`Hook "${h.name}" command`, n.id, h.run);
+    if (n.type === "gate") {
+      check(`Gate "${n.id}" run`, n.id, (n as { run?: string }).run);
+      for (const c of (n as { checks?: string[] }).checks ?? []) check(`Gate "${n.id}" check`, n.id, c);
+    }
+    if (n.type === "action") for (const c of (n as { commands?: string[] }).commands ?? []) check(`Action "${n.id}" command`, n.id, c);
+  }
+  for (const t of ast.toolDefs ?? []) {
+    check(`Tool "${t.id}" script`, t.id, t.script);
+    for (const a of t.args ?? []) check(`Tool "${t.id}" argument`, t.id, a);
+  }
+  return results;
+}
+
+const CARRIERS = ["session", "cron", "launchd", "cloud", "calendar"];
+const SURVIVES = ["pane-close", "reboot", "away"];
+
+/** V124 (T-06): a schedule job's `carrier:` and `survives:` must be one of the known values. */
+function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== undefined && !CARRIERS.includes(j.carrier))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has carrier "${j.carrier}"; use one of: ${CARRIERS.join(", ")}.` });
+    if (j.survives !== undefined && !SURVIVES.includes(j.survives))
+      results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has survives "${j.survives}"; use one of: ${SURVIVES.join(", ")}.` });
+  }
+  return results;
+}
+
+/** V125 (L-2): a job carried by a session cannot outlive it. */
+function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.carrier !== "session" || !j.survives || !SURVIVES.includes(j.survives)) continue;
+    results.push({
+      rule: "V125", level: "error", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" has carrier: session and survives: ${j.survives}, but a session cron dies with its session and after 7 days. Use carrier: cron, launchd or cloud for a job that must survive.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V126 (T-09): a human step whose `who:` person is away today or later waits on
+ * someone who may not answer. The warning names the step, the person, the
+ * window and what the step does on timeout.
+ */
+function v126AwayWaits(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Map((ast.persons ?? []).map((p) => [p.id, p]));
+  const now = today();
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || !n.who) continue;
+    const person = people.get(n.who);
+    const w = parseWindow(person?.away);
+    if (!person || !w || w.end < now) continue;
+    const behavior = n.timeout
+      ? `on timeout (${n.timeout}) it will ${n.onTimeout ?? "halt"}`
+      : "it has no timeout, so it waits until they are back";
+    results.push({
+      rule: "V126", level: "warning", node: n.id, line: lookupLine(ast, n.id),
+      message: `Step "${n.id}" waits on ${person.id}, who is away ${person.away}: ${behavior}.`,
+    });
+  }
+  return results;
+}
+
+/** V127 (T-09): `who:` must name a `person`; `away:` and `valid:` must be real `YYYY-MM-DD..YYYY-MM-DD` windows. */
+function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Set((ast.persons ?? []).map((p) => p.id));
+  const bad = (id: string, what: string, value: string) =>
+    results.push({ rule: "V127", level: "error", node: id, line: lookupLine(ast, id), message: `${what} "${value}" is not a window like "2026-01-31..2026-02-14" (two real dates, the first not after the second).` });
+  for (const p of ast.persons ?? []) if (p.away !== undefined && !parseWindow(p.away)) bad(p.id, `Person "${p.id}" away:`, p.away);
+  for (const n of ast.nodes) {
+    if (n.type !== "human") continue;
+    if (n.who && !people.has(n.who))
+      results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message: `Human "${n.id}" has who: ${n.who}, which is not a person block.` });
+    if (n.valid !== undefined && !parseWindow(n.valid)) bad(n.id, `Human "${n.id}" valid:`, n.valid);
   }
   return results;
 }
