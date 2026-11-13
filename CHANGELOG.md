@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: two approval steps before one agent make one ask decision (D-4)
+
+- With two `human` steps before one agent, `before-agent.sh` printed two `ask` JSON objects, which is not one JSON document, so Claude Code could ignore the decision and launch the agent. The script now collects each step's reason and prints a single decision whose reason joins them. Every Claude Code `before-agent.sh` with an approval step changes.
+
 ### [fix] Fixed: guard --check credits a cited hook's refuse only when it can block (D-3)
 
 - A gate credited by a hook its edge cites read `refuse` whenever that hook declared `strength: refuse` and sat in `.claude/settings.json`, whatever its event: a `PostToolUse`, `async: true` hook printed `refuse`. Now a cited hook gives `refuse` only as a non-async `command` hook on `PreToolUse`, `UserPromptSubmit` or `PermissionRequest`; on an event that cannot block a call, or async, the gate grades `none` with a note naming why; a `prompt`/`agent`/`http` hook grades `unverified`. `validate` warns (V104) for `strength: refuse` on an event that cannot block, or with `async: true`.

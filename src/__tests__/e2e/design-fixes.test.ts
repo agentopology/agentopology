@@ -243,3 +243,69 @@ describe("[D-3] guard --check credits a cited hook's refuse only when it can blo
     expect(warn(CITE("      on: PreToolUse")).length).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-4
+// ---------------------------------------------------------------------------
+
+/** design.VKjX/two.at: two approval steps before one agent. */
+const TWO = `topology two : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Two approvals"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [a, b, editor]
+  }
+  action a {
+    kind: inline
+    description: "A"
+  }
+  action b {
+    kind: inline
+    description: "B"
+  }
+  human legal {
+    description: "Legal approves"
+  }
+  human brand {
+    description: "Brand approves"
+  }
+  agent editor {
+    model: sonnet
+    description: "Edits"
+  }
+  flow {
+    a -> legal -> editor
+    b -> brand -> editor
+  }
+}
+`;
+
+describe.skipIf(!hasJq)("[D-4] Claude Code: two approval steps before one agent print one decision", () => {
+  it("[D-4] before-agent.sh prints exactly one JSON object carrying both reasons", () => {
+    scaffold("claude-code", TWO);
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: root } as Record<string, string>;
+    const r = spawnSync("bash", [at(".claude/skills/two/scripts/before-agent.sh")], {
+      cwd: root, env, encoding: "utf8",
+      input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { subagent_type: "editor", prompt: "x" } }),
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out.hookSpecificOutput.permissionDecision).toBe("ask");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("legal");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("brand");
+  });
+  it("[D-4] one approval step still prints one ask, and an agent with none prints nothing", () => {
+    scaffold("claude-code", TWO.replace("b -> brand -> editor", "b -> editor"));
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: root } as Record<string, string>;
+    const run = (agent: string) => spawnSync("bash", [at(".claude/skills/two/scripts/before-agent.sh")], {
+      cwd: root, env, encoding: "utf8",
+      input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { subagent_type: agent } }),
+    });
+    const one = JSON.parse(run("editor").stdout);
+    expect(one.hookSpecificOutput.permissionDecisionReason).toBe('Approval step "legal": Legal approves');
+    expect(run("general-purpose").stdout).toBe("");
+  });
+});

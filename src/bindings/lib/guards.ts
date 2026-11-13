@@ -279,9 +279,9 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     "",
     ...(p.supportsAsk
       ? [
-          "ask() {",
-          "  jq -n --arg r \"$1\" '{hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"ask\", permissionDecisionReason: $r}}'",
-          "}",
+          // D-4: one decision per run. Each approval step adds its reason; one JSON object is printed at the end.
+          "ASK=''",
+          "ask() { ASK=\"${ASK:+$ASK; }$1\"; }",
           "",
         ]
       : hasHuman(ast)
@@ -303,7 +303,15 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
   for (const [agent, body] of steps) {
     lines.push(`  ${agent})`, ...body, "    ;;");
   }
-  lines.push("esac", FAIL_CLOSED_DONE, "exit 0", "");
+  lines.push("esac");
+  if (p.supportsAsk) {
+    lines.push(
+      "if [ -n \"$ASK\" ]; then",
+      "  jq -n --arg r \"$ASK\" '{hookSpecificOutput: {hookEventName: \"PreToolUse\", permissionDecision: \"ask\", permissionDecisionReason: $r}}'",
+      "fi",
+    );
+  }
+  lines.push(FAIL_CLOSED_DONE, "exit 0", "");
   return {
     path: `${p.scriptsDir(name)}/before-agent.sh`,
     content: lines.join("\n"),
