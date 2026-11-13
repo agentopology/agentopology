@@ -4,6 +4,18 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex guards are graded unverified, and a gate with no blocking event reads none (R-1)
+
+- `AGENTS.md` called every Codex gate "Enforcement: hook". No live Codex run has proven a guard holds yet, and Codex skips an untrusted project's hooks silently, so every Codex guard on disk now reads `unverified` in `AGENTS.md`, in the gate wrapper's comment and in `guard --check`, never `hook` or `refuse`. A gate whose only event is `SubagentStop` (after the last agent, with nothing after it to hold) reads `none`, and `validate` / `scaffold` warn with `CX9-noblock`.
+
+### [fix] Fixed: `guard --check --target codex` wrote files (E-2)
+
+- With `--target`, `guard` took the write path before it looked at `--check`, so `guard <file> --check --target codex` wrote the guards into the project. `--check` now never writes, on any target.
+
+### [feature] `guard --check` grades a Codex project (E-5)
+
+- On a Codex scaffold `guard --check` graded `.claude/` only: it printed "0 of 4 refuse", listed missing `.claude` entries and exited 1. `guard --check --target codex`, or a project with `.codex/` and no `.claude/`, now reads `.codex/hooks.json` and `.codex/scripts/<topology>/`: a guard on disk reads `unverified`, a missing one `none` (exit 1), a gate with no blocking event `none` without failing, and the version line names Codex CLI. It exits 0 when nothing is missing.
+
 ### [fix] The Codex human gate does not hand the model its own approval (R-11)
 
 - When an approval step blocked a spawn, `before-agent.sh` printed the exact `printf … >> .codex/state/approvals.jsonl` command to stderr, which Codex shows the model. With `permissions: unrestricted` (so `sandbox_mode = "danger-full-access"`), or no sandbox and `approval_policy = "never"`, the model could run it and approve itself. Now stderr says a person must add the record and the model must not; the record format and the command are in `AGENTS.md` under Human Checkpoints. `validate --target codex` (and scaffold) warns with `CX11-forgeable` when a human step stands before an agent and the sandbox lets the model write `.codex/`.

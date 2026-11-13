@@ -43,7 +43,7 @@ import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES, isClaudeModel
 import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
-import { buildCodexHooks } from "./lib/codex-hooks.js";
+import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
 import { CODEX_GUARDS, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
@@ -1111,19 +1111,19 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
 // Gate scripts
 // ---------------------------------------------------------------------------
 
-/** How a gate is held on Codex, in one sentence for AGENTS.md. */
+/** How a gate is held on Codex, in one sentence for AGENTS.md. Release 1 proves no Codex guard live, so none reads "hook" or "refuse" (R-1). */
 function gateEnforcementNote(ast: TopologyAST, gate: GateNode): string {
-  if (gate.behavior === "advisory") return "advisory — reported, never blocks";
-  if (checkableActionGate(ast, gate)) return "hook — `.codex/scripts/" + ast.topology.name + "/before-action.sh` refuses the step's command until the ledger shows the gate held (active once you trust the hook with `/hooks`)";
-  const wiring = gateWiring(ast, gate);
-  if (wiring.kind === "before-agent") return "hook — `before-agent.sh` refuses to start the agent until the gate script passes (active once you trust the hook with `/hooks`)";
-  if (wiring.kind === "subagent-stop") {
-    // R-1: Codex cannot block a SubagentStop, so the hold is at the next agent's spawn.
-    const held = spawnHeldAgents(ast, gate, CODEX_GUARDS);
-    if (held.length > 0) return "hook — `before-agent.sh` refuses to start " + held.map((a) => `\`${a}\``).join(", ") + " until the gate script passes; `gate-" + gate.id + ".sh` also runs when the agent stops, which only reports (active once you trust the hook with `/hooks`)";
-    return "reported only — `gate-" + gate.id + ".sh` runs when the agent stops, but Codex cannot block a stop and no agent follows; run `.codex/scripts/" + ast.topology.name + "/gate-" + gate.id + ".sh` before the next step";
+  const t = ast.topology.name;
+  const trust = "not yet proven on a live Codex run, and active only after you trust `.codex/hooks.json` in `/hooks`";
+  const hold = codexGateHold(ast, gate);
+  switch (hold.kind) {
+    case "advisory": return "advisory — reported, never blocks";
+    case "action": return "unverified — `.codex/scripts/" + t + "/before-action.sh` (PreToolUse on Bash) refuses the step's command until the ledger shows the gate held; " + trust;
+    case "spawn": return "unverified — `.codex/scripts/" + t + "/before-agent.sh` (PreToolUse on `collaborationspawn_agent`) refuses to start " + hold.agents.map((a) => `\`${a}\``).join(", ") + " until the gate script passes; " + trust;
+    case "none": return "none — `gate-" + gate.id + ".sh` runs when " + hold.anchors.map((a) => `\`${a}\``).join(", ") + " stops, but Codex cannot block a SubagentStop and nothing after it can be held, so nothing stops the next step; run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` yourself before it";
+    case "prose": return "prose — its run: names no script; follow it by hand";
+    case "script": return "script-level — run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` between the steps";
   }
-  return "script-level — run `.codex/scripts/" + ast.topology.name + "/gate-" + gate.id + ".sh` between the steps";
 }
 
 /** Generate gate script stubs under .codex/scripts/. */

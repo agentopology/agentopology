@@ -518,3 +518,83 @@ describe.skipIf(!hasJq)("[R-11] the human gate on Codex does not hand the model 
     expect(md).toContain('{"step":"approve","ok":true');
   });
 });
+
+const CLI_JS = resolve(here, "../../../dist/cli/index.js");
+const cliIn = (args: string[], env: Record<string, string> = {}) =>
+  spawnSync("node", [CLI_JS, ...args], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CODEX_VERSION: "0.156.1", ...env } });
+const writeAt = (src: string) => { const f = join(root, "t.at"); fs.writeFileSync(f, src); return f; };
+const listAll = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? listAll(join(dir, e.name)).map((p) => `${e.name}/${p}`) : [e.name]);
+const enforcementLine = (md: string) => md.split("\n").find((l) => l.includes("**Enforcement:**"))!;
+
+describe("[R-1] honesty: on Codex a gate that holds reads unverified, and one that cannot hold reads none", () => {
+  it("[R-1] (a) the agent-to-agent gate is graded unverified by guard --check, and AGENTS.md does not call it a hook", () => {
+    const f = writeAt(AGENT_GATE("writer"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(AGENT_GATE("writer"), proj);
+    const line = enforcementLine(fs.readFileSync(join(proj, "AGENTS.md"), "utf8"));
+    expect(line).toMatch(/\*\*Enforcement:\*\* unverified/);
+    expect(line).not.toMatch(/\bhook\b/);
+    const r = cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+    expect(r.stdout).toMatch(/gate checked\s+unverified/);
+    expect(r.stdout).not.toMatch(/gate checked\s+refuse/);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+  });
+
+  it("[R-1] (b) a gate after the last agent, with no blocking event, is graded none and scaffold warns", () => {
+    const src = AGENT_GATE("reviewer").replace("      before: reviewer\n", "");
+    const w = validate(parse(src), { target: "codex" }).filter((r) => r.rule === "CX9-noblock");
+    expect(w).toHaveLength(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const files = codexBinding.scaffold(parse(src));
+    const printed = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(printed.some((m) => m.includes("CX9-noblock") || m.includes("cannot block"))).toBe(true);
+    expect(enforcementLine(files.find((x) => x.path === "AGENTS.md")!.content)).toMatch(/\*\*Enforcement:\*\* none/);
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(src, proj);
+    const r = cliIn(["guard", writeAt(src), "--check", "--target", "codex", "--dir", proj]);
+    expect(r.stdout).toMatch(/gate checked\s+none/);
+  });
+});
+
+describe("[E-2] guard --check never writes, on any target", () => {
+  it("[E-2] guard --check --target codex on an empty folder writes no file", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = fs.mkdtempSync(join(os.tmpdir(), "at-e2-"));
+    try {
+      cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+      cliIn(["guard", f, "--check", "--target", "claude-code", "--dir", proj]);
+      expect(listAll(proj)).toEqual([]);
+    } finally { fs.rmSync(proj, { recursive: true, force: true }); }
+  });
+});
+
+describe("[E-5] guard --check grades a Codex project from .codex/", () => {
+  it("[E-5] on a fresh Codex scaffold (found from .codex/, no --target) every guard reads unverified and the exit is 0", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj);
+    const r = cliIn(["guard", f, "--check", "--dir", proj]);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/gate publish-ready\s+unverified/);
+    expect(r.stdout).toMatch(/gate render-check\s+unverified/);
+    expect(r.stdout).toMatch(/human approve\s+unverified/);
+    expect(r.stdout).not.toContain(".claude");
+    expect(r.stdout).toContain("checked against Codex CLI");
+    expect(r.stdout).not.toContain("checked against Claude Code");
+  });
+
+  it("[E-5] a Codex project missing its hooks.json grades none and exits 1", () => {
+    const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
+    const proj = join(root, "p");
+    fs.mkdirSync(proj);
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj);
+    fs.rmSync(join(proj, ".codex/hooks.json"));
+    const r = cliIn(["guard", f, "--check", "--target", "codex", "--dir", proj]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toMatch(/gate publish-ready\s+none/);
+  });
+});

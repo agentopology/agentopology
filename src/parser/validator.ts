@@ -30,7 +30,7 @@ import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
 import { planCodexRules } from "../bindings/lib/codex-rules.js";
-import { GUARD_TIMEOUT, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
+import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
@@ -4365,6 +4365,14 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   const forgeable = humanGateForgeable(ast);
   if (forgeable) {
     warn("CX11-forgeable", "approvals", `a human step stands before an agent, but ${forgeable}, so the model can write .codex/state/approvals.jsonl and approve itself; the human gate cannot hold. Set settings { sandbox: workspace-write }, which keeps .codex read-only for the agent.`);
+  }
+  // R-1: a gate Codex can only run on SubagentStop holds nothing; say so instead of looking like it holds.
+  for (const n of ast.nodes) {
+    if (n.type !== "gate") continue;
+    const hold = codexGateHold(ast, n as GateNode);
+    if (hold.kind === "none") {
+      warn("CX9-noblock", n.id, `gate "${n.id}" can only run when ${hold.anchors.join(", ")} stops; Codex cannot block a SubagentStop, and no agent spawn or script step follows it to hold, so nothing stops the next step (graded none). Give it a before: agent or script step, or run its script by hand.`);
+    }
   }
   // R-3: a long gate check holds every guarded call that long; Codex lets the call run if the hook times out.
   for (const n of ast.nodes) {

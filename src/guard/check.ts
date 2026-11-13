@@ -41,6 +41,8 @@ export interface GuardItem {
   by: "hook" | "settings" | "code" | "gate" | "prose";
   /** The file wrote this strength down itself (an edge's [strength: none]): reported, never a failure. */
   declared?: boolean;
+  /** "none" because the host has no event that can block here, not because a file is missing: reported, never a failure (E-5). */
+  structural?: boolean;
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
@@ -59,6 +61,8 @@ export interface GuardReport {
    */
   unattributed: string[];
   verifiedOn: string;
+  /** The host graded, when it is not Claude Code: its name, the version line, the installed mark, its hook file (E-5). */
+  platform?: { label: string; line: string; mark: string | null; config: string };
 }
 
 interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string }> }
@@ -367,7 +371,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none" && !i.declared).length,
+    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
   };
@@ -379,15 +383,22 @@ export function renderGuardReport(report: GuardReport): string[] {
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
   const lines: string[] = [];
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
-  const mark = installedMark();
+  const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
     lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(STRENGTH_WIDTH)}  by: ${i.by.padEnd(8)}  ${i.where}`);
-    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
+    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
-  lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
+  if (report.platform) {
+    const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");
+    const unverified = steps.filter((i) => i.strength === "unverified").length;
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse, ${unverified} unverified · ${report.platform.line}`);
+  } else {
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
+  }
+  const config = report.platform?.config ?? ".claude/settings.json";
   if (report.unattributed.length) {
-    lines.push(`${report.unattributed.length} hook(s) in .claude/settings.json are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none. Declare them in hooks { } with a strength and cite them on the edge with [guard: name]:`);
+    lines.push(`${report.unattributed.length} hook(s) in ${config} are not tied to any step here (hand-built guards?). They may refuse steps shown as hope or none. Declare them in hooks { } with a strength and cite them on the edge with [guard: name]:`);
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);

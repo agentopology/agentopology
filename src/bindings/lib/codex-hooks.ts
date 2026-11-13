@@ -335,6 +335,30 @@ export function codexGateCommand(run: string, _topology: string): string {
   return [interp, where, ...args].join(" ");
 }
 
+/**
+ * What holds a gate on Codex (R-1 honesty):
+ * - `action`: before-action.sh, a PreToolUse hook on Bash, refuses the step's command.
+ * - `spawn`: before-agent.sh, a PreToolUse hook on collaborationspawn_agent, refuses `agents`.
+ * - `none`: the gate runs only on SubagentStop, which Codex cannot block, and nothing after it can be held.
+ * - `script`: no event marks its moment (inline delegation, no agent on either side); run by hand.
+ * - `advisory` / `prose`: it never blocks, or its run: names no script.
+ * Codex release 1 grades every `action` and `spawn` hold "unverified", never "refuse".
+ */
+export type CodexGateHold =
+  | { kind: "action" } | { kind: "spawn"; agents: string[] } | { kind: "none"; anchors: string[] }
+  | { kind: "script" } | { kind: "advisory" } | { kind: "prose" };
+
+export function codexGateHold(ast: TopologyAST, gate: GateNode): CodexGateHold {
+  if (gate.behavior === "advisory") return { kind: "advisory" };
+  if (checkableActionGate(ast, gate)) return { kind: "action" };
+  if (!gate.run || !scriptNameFromRun(gate.run)) return { kind: "prose" };
+  const wiring = gateWiring(ast, gate);
+  const agents = spawnHeldAgents(ast, gate, CODEX_GUARDS);
+  if (agents.length > 0) return { kind: "spawn", agents };
+  if (wiring.kind === "subagent-stop") return { kind: "none", anchors: wiring.anchors };
+  return { kind: "script" };
+}
+
 /** The guard scripts and their `hooks.json` entries (CX-9, CX-11). */
 export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; entries: Array<{ event: string; entry: Record<string, unknown> }> } {
   const scripts: GeneratedFile[] = [...generateGateWrapperScripts(ast, CODEX_GUARDS, codexGateCommand)];

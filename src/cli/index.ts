@@ -53,6 +53,7 @@ import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
+import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
@@ -1369,11 +1370,17 @@ function printInstalledMark(): void {
  * removing it (after implementing the script) flips the file out of stub
  * state. Designed for CI: exits 1 if stubs remain, 0 if clean.
  */
-function cmdGuardCheck(filePath: string, dirPath: string): void {
+function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): void {
   const source = fs.readFileSync(path.resolve(filePath), "utf-8");
   const ast = parseAt(source, filePath);
   const root = path.resolve(dirPath);
-  const report = checkGuards(ast, root);
+  // E-5: a Codex project is graded from .codex/; with no --target, a project with .codex/ and no .claude/ is one.
+  const target = targetName ?? (!fs.existsSync(path.join(root, ".claude")) && fs.existsSync(path.join(root, ".codex")) ? "codex" : "claude-code");
+  if (target !== "claude-code" && target !== "codex") {
+    console.error(c.red(`Error: guard --check supports claude-code and codex only (got "${target}").`));
+    process.exit(1);
+  }
+  const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root);
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
@@ -1657,6 +1664,11 @@ function main(): void {
       if (!args.file) {
         console.error(c.red("Error: guard requires a file argument."));
         process.exit(1);
+      }
+      // E-2: --check reads and never writes, on any target.
+      if (args.check) {
+        cmdGuardCheck(args.file, args.dir ?? ".", args.target);
+        break;
       }
       if (args.target) {
         cmdGuardTarget(args.file, args.target, args.dir ?? ".", args.dryRun);

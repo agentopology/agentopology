@@ -53,6 +53,8 @@ export interface GuardPlatform {
    * two agents is held at the second agent's spawn instead (R-1).
    */
   stopCanBlock: boolean;
+  /** True when a live run has proven the host's guards hold; false grades them "unverified" (Codex release 1). */
+  liveProven: boolean;
 }
 
 export const CLAUDE_CODE_GUARDS: GuardPlatform = {
@@ -68,6 +70,7 @@ export const CLAUDE_CODE_GUARDS: GuardPlatform = {
   payload: { command: ".tool_input.command", subagentType: ".tool_input.subagent_type" },
   supportsAsk: true,
   stopCanBlock: true,
+  liveProven: true,
 };
 
 /**
@@ -90,6 +93,7 @@ export const CODEX_GUARDS: GuardPlatform = {
   payload: { command: ".tool_input.command", subagentType: ".tool_input.agent_type" },
   supportsAsk: false,
   stopCanBlock: false,
+  liveProven: false,
 };
 
 /** Single-quote a string for bash. */
@@ -502,6 +506,8 @@ export function generateGateWrapperScripts(
       enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
     }
 
+    // R-1: a platform whose guards no live run has proven says so where it describes the hold.
+    if (!p.liveProven && !/NONE|NOT wired/.test(enforcementNote)) enforcementNote = enforcementNote.replace("# Enforcement: ", `# Enforcement (unverified on ${p.label}): `);
     const contentLines = [
       "#!/usr/bin/env bash",
       `# Gate wrapper: ${gate.id}`,
