@@ -57,7 +57,7 @@ import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
-import { verifiedOnLine, installedMark } from "../conformance/claude-code.js";
+import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
 import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
@@ -422,7 +422,12 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     console.error(c.red(`Error: unknown target "${target}".`));
     process.exit(1);
   }
-  const { results, errors: errorCount, warnings: warningCount } = validateResult(ast, path.resolve(filePath), target);
+  const checked = validateResult(ast, path.resolve(filePath), target);
+  // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
+  const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+  const results = [...checked.results, ...ccExtra];
+  const errorCount = checked.errors;
+  const warningCount = checked.warnings + ccExtra.length;
   if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
   const covered = inventory ? printCoverage(ast, inventory, dir, user) : true;
 
@@ -480,7 +485,11 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log(c.bold(`Validating ${path.basename(f)} (${ast.topology.name} v${ast.topology.version})`));
     console.log("");
     if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
-    const { results, errors, warnings } = validateResult(ast, path.resolve(f), target);
+    const checked = validateResult(ast, path.resolve(f), target);
+    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+    const results = [...checked.results, ...ccExtra];
+    const { errors } = checked;
+    const warnings = checked.warnings + ccExtra.length;
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;

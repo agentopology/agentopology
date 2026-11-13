@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Claude Code `strength: refuse` hook blocks when it cannot run (F-14)
+
+- Only the generated guards carried `"onFailure": "block"`. A user's `PreToolUse` hook with `strength: refuse`, in `hooks {}` or on an agent, had none, so a script that could not start or timed out let the call run. Every such hook now gets it; no existing `onFailure` is removed. `validate` warns with `CC-onfailure` when the installed Claude Code is older than 2.1.295, which ignores the field.
+- Claude Code `before-agent.sh` compared `subagent_type` as sent, so ` Reviewer `, `REVIEWER` or `agents/reviewer:` launched a gated agent. It now normalizes the name as Codex does (F-15). The Claude Code `before-agent.sh` of `codex-gates.at` and `compile.at` changes.
+
 ### [fix] Fixed: Codex `before-agent.sh` holds an agent however its name is spelled (F-15)
 
 - The spawn guard compared `agent_type` after trimming and lowercasing only, so `re\u200bviewer`, `\ufeffreviewer`, `./reviewer`, `agents/reviewer` and `reviewer:` started a gated agent. It now drops format characters (`\p{Cf}`), a leading path, trailing punctuation and a `plugin:` prefix too. A missing or `null` `agent_type` is still let through: it is Codex's default agent, and the docs now say so.

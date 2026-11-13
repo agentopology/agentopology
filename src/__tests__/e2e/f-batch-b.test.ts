@@ -337,3 +337,83 @@ describe.skipIf(!hasJq)("[F-15] Codex before-agent.sh normalizes agent_type befo
     expect(runHook(spawnCommand(), root, spawnPayload("writer")).status).toBe(0);
   });
 });
+
+describe("[F-14] Claude Code: a refuse PreToolUse hook blocks when it cannot run", () => {
+  const src = asClaude(HOOKED([
+    hookDef("guard", "Bash", "scripts/guard.sh", "      strength: refuse\n"),
+    hookDef("note", "Bash", "scripts/note.sh"),
+    hookDef("inline", "Bash", "exit 2", "      strength: refuse\n"),
+  ].join("\n")));
+  it("[F-14] a strength: refuse hook gets onFailure: block; a hook without strength does not", () => {
+    scaffoldInto(src, root, claudeCodeBinding);
+    const pre = ccHooksOf().PreToolUse;
+    const of = (s: string) => pre.find((e) => e.hooks[0].command.includes(s))!.hooks[0];
+    expect(of("guard.sh").onFailure).toBe("block");
+    expect(of("exit 2").onFailure).toBe("block");
+    expect(of("note.sh").onFailure).toBeUndefined();
+  });
+  it("[F-14] a per-agent refuse PreToolUse hook gets onFailure: block in the agent file", () => {
+    const withAgentHook = asClaude(HOOKED("").replace("    tools: [Read]\n", `    tools: [Read]\n    hooks {\n${hookDef("agent-guard", "Bash", "scripts/ag.sh", "      strength: refuse\n")}\n    }\n`));
+    const md = quiet(() => claudeCodeBinding.scaffold(parse(withAgentHook))).find((f) => f.path.includes("agents/worker"))!.content;
+    expect(md).toMatch(/onFailure: "block"/);
+  });
+  it("[F-14] the existing guards keep their onFailure", () => {
+    scaffoldInto(asClaude(fs.readFileSync(FIXTURE, "utf8")), root, claudeCodeBinding);
+    for (const e of ccHooksOf().PreToolUse) expect(e.hooks[0].onFailure, e.hooks[0].command).toBe("block");
+  });
+  it("[F-14] validate warns when the Claude Code it checks against is below 2.1.295", () => {
+    const f = join(root, "t.at");
+    fs.writeFileSync(f, src);
+    const env = { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CLAUDE_VERSION: "2.1.280" };
+    const old = spawnSync("node", [CLI, "validate", f], { encoding: "utf8", env });
+    expect(plain(old.stdout)).toMatch(/CC-onfailure.*2\.1\.295/);
+    const fresh = spawnSync("node", [CLI, "validate", f], { encoding: "utf8", env: { ...env, AGENTOPOLOGY_CLAUDE_VERSION: "2.1.300" } });
+    expect(plain(fresh.stdout)).not.toMatch(/CC-onfailure/);
+  });
+});
+
+const CC_STEP_GATE = `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Render, then review"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [render, writer, reviewer]
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  agent writer {
+    model: sonnet
+    description: "Writes"
+  }
+  agent reviewer {
+    model: sonnet
+    description: "Reviews"
+  }
+  gates {
+    gate checked {
+      after: render
+      before: reviewer
+      run: "scripts/review.sh"
+      on-fail: halt
+    }
+  }
+  flow { writer -> render -> reviewer }
+}
+`;
+describe.skipIf(!hasJq)("[F-14] Claude Code before-agent.sh normalizes subagent_type", () => {
+  const ccSpawn = (t: unknown) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { subagent_type: t, prompt: "p" } });
+  for (const name of [" Reviewer ", "REVIEWER", "re​viewer", "agents/reviewer", "reviewer:"]) {
+    it(`[F-14] subagent_type ${JSON.stringify(name)} is held like reviewer`, () => {
+      // A gate after a script step and before an agent is held at that agent's launch on Claude Code.
+      scaffoldInto(CC_STEP_GATE, root, claudeCodeBinding);
+      const cmd = ccHooksOf().PreToolUse.find((e) => e.matcher === "Agent|Task")!.hooks[0].command;
+      const r = runHook(cmd, root, ccSpawn(name), 30_000, { CLAUDE_PROJECT_DIR: root });
+      expect(r.status, r.stderr).toBe(2);
+      expect(runHook(cmd, root, ccSpawn("writer"), 30_000, { CLAUDE_PROJECT_DIR: root }).status).toBe(0);
+    });
+  }
+});

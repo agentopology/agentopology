@@ -15,6 +15,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { AgentNode, GateNode, TopologyAST } from "../parser/ast.js";
 
 /** The Claude Code version this contract was last checked against. */
 export const VERIFIED_ON = "2.1.323";
@@ -371,4 +372,37 @@ export function sessionHooksProven(): { sendMessage: boolean; agent: boolean } {
   const s = installedStatus();
   const ok = (s.state === "verified" || s.state === "different") && LIVE_CHECKS.some((c) => c.version === s.version);
   return { sendMessage: ok, agent: ok };
+}
+
+/** True when version a is lower than version b (x.y.z, numeric per part). */
+export function versionBelow(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+  return false;
+}
+
+/** The first Claude Code release that reads a hook's `onFailure` field. */
+export const ON_FAILURE_SINCE = "2.1.295";
+
+/**
+ * F-14: the scaffold marks every refusing PreToolUse hook (a `strength: refuse`
+ * hook, the gate and approval guards, the session guards) `onFailure: "block"`.
+ * A Claude Code older than 2.1.295 ignores the field, so such a hook that cannot
+ * start or times out lets the call run. One warning when the Claude Code this
+ * runs against (the installed one, or AGENTOPOLOGY_CLAUDE_VERSION) is older.
+ */
+export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level: "warning"; message: string }> {
+  const s = installedStatus();
+  if (s.state !== "different" || !versionBelow(s.version, ON_FAILURE_SINCE)) return [];
+  const hooks = [...(ast.hooks ?? []), ...ast.nodes.flatMap((n) => (n.type === "agent" ? (n as AgentNode).hooks ?? [] : []))];
+  const refusing = hooks.filter((h) => h.strength === "refuse" && (h.on === "PreToolUse")).map((h) => `hook ${h.name}`);
+  const guarded = ast.nodes.some((n) => (n.type === "gate" && (n as GateNode).behavior !== "advisory") || n.type === "human");
+  if (refusing.length === 0 && !guarded) return [];
+  const what = [...refusing, ...(guarded ? ["the gate and approval guards"] : [])].join(", ");
+  return [{
+    rule: "CC-onfailure",
+    level: "warning",
+    message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook cannot start or times out. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
+  }];
 }

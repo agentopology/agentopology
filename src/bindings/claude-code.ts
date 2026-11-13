@@ -116,8 +116,12 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
       return { type: "http", url: hook.url, ...timeout, ...filter };
     case "mcp_tool":
       return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout, ...filter };
-    default:
-      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter };
+    default: {
+      // F-14: a refuse hook on PreToolUse that cannot start, times out or exits other than 0/2 blocks the
+      // call (onFailure, Claude Code 2.1.295+) instead of letting it run. No effect on async hooks.
+      const block = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !hook.async ? { onFailure: "block" } : {};
+      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
+    }
   }
 }
 

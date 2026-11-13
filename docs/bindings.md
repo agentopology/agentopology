@@ -112,6 +112,9 @@ The `hooks` block maps to the platform's event system. The binding must:
 1. Map universal events (`AgentStart`, `AgentStop`, `ToolUse`, etc.) to platform events
 2. Handle platform-specific events if accepted
 3. Generate hook configuration in the platform's format
+4. Make a `strength: refuse` hook fail closed: where the platform lets a hook that cannot start or times out through, the binding asks for the strongest block it has
+
+On Claude Code, every `PreToolUse` hook with `strength: refuse` (in `hooks {}` or on an agent), and every generated guard, gets `"onFailure": "block"`: a hook that cannot start, times out or exits other than 0 or 2 then blocks the call. Claude Code reads that field from 2.1.295; `validate` warns with `CC-onfailure` when the Claude Code it checks against (the installed one) is older. `before-agent.sh` normalizes `subagent_type` before it compares, as on Codex (format characters, case, space, a leading path, trailing punctuation).
 
 ---
 
