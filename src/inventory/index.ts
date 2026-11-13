@@ -144,7 +144,19 @@ function rootFiles(root: string, roots: string[]): InventoryItem[] {
       }
     }
   };
-  for (const r of roots) { const c = cleanRoot(r); if (c) visit(path.join(root, c)); }
+  // A root that is (or sits behind) a symlink to somewhere outside the project is not walked.
+  let realRoot: string;
+  try { realRoot = fs.realpathSync(root); } catch { return items; }
+  for (const r of roots) {
+    const c = cleanRoot(r);
+    if (!c) continue;
+    const start = path.join(root, c);
+    let real: string;
+    try { real = fs.realpathSync(start); } catch { continue; }
+    const rel = path.relative(realRoot, real);
+    if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) continue;
+    visit(start);
+  }
   return items;
 }
 
