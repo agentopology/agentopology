@@ -298,9 +298,12 @@ describe.skipIf(!hasJq)("[N42] before-action.sh sees a step inside a chained com
     expect(r.stderr).toContain("ep2");
   });
 
-  it("[N42] AG23 a command word that is not at a segment start is not a step", () => {
-    expect(hook(bash("echo ./tool publish ep1")).status).toBe(0);
-    expect(hook(bash("cd sub && echo ./tool publish ep1")).status).toBe(0);
+  it("[N42] AG23 the step's words anywhere in a segment count: it over-blocks, never under-blocks (R-4)", () => {
+    // Since R-4 a prefix (`if`, `sudo`, `nice -n 5`, `bash -c`) no longer hides the step, so the step's
+    // words are matched anywhere in a segment. An echo of them is refused while the gate is unmet.
+    expect(hook(bash("echo ./tool publish ep1")).status).toBe(2);
+    expect(hook(bash("cd sub && echo ./tool publish ep1")).status).toBe(2);
+    expect(hook(bash("echo ./tool publisher ep1")).status).toBe(0);
   });
 
   it("[N42] AG24 two guarded steps in one command need both gates", () => {
@@ -339,6 +342,6 @@ describe.skipIf(!hasJq)("[N42] before-action.sh sees a step inside a chained com
   it("[N42] AG25 guard --check notes that an indirect run is not seen", () => {
     const ast = scaffold(topology());
     const g = checkGuards(ast, root).items.find((i) => i.id === "publish-ready")!;
-    expect(g.notes.join(" ")).toContain("a command that runs the step indirectly (bash -c, eval, a script that calls it) is not seen");
+    expect(g.notes.join(" ")).toContain("a step named through a variable, an alias, a function or a script that calls it is not seen (bash -c and eval with the step written out are)");
   });
 });

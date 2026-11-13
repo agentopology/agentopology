@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] before-action.sh sees a guarded step however the command is written; Claude Code guard scripts changed (R-4)
+
+- `before-action.sh` (shared by Claude Code and Codex) compared each segment's start with the step's command after stripping a few prefixes. With no ledger record, these ran the step with exit 0: two spaces or a tab between words, `if …; then`, `while …; do`, `! …`, `$(…)`, backticks, a `command` / `nice -n 5` / `sudo -u x` / `env -i` / `xargs` prefix, `"./tool" publish`, `./tool 'publish'`, and the tool named by an absolute path. Now the command is also cut at `(`, `)`, `$(` and backticks, each segment has its quotes and backslashes dropped and its whitespace made single spaces, and the step's words are found anywhere in the segment, its program also by any path ending in its name. `bash -c '…'` and `eval …` with the step written out are refused too. This over-blocks on purpose: `echo ./tool publish ep1` is now refused while the gate is unmet (it used to pass). A step named through a variable, an alias, a function or another script is still not seen.
+- **Claude Code output changed:** the generated `.claude/skills/<t>/scripts/before-action.sh` is different, the only Claude Code file that changed (`guards-golden.json` regenerated on purpose; the two changed hashes are that script, for `codex-gates.at` and the inline action-gate topology). The fix wins over byte-identical output because the old matcher let a gated step run.
+
 ### [fix] The Codex if: filter runs its command as argv (R-7)
 
 - `at-if.sh` ran the hook's command with `sh -c "$*"`, which joins the words again: in a project whose path holds a space ("fx 3") the script path split, the run exited 127, and Codex let the call run. The filter now runs the command as given (`"$@"`); an inline shell command such as `exit 2` is passed as one `sh -c` word. On a `strength: refuse` hook, a command that cannot be found or run (126, 127) blocks with exit 2, and the filter itself is found the way the guards are (R-2).

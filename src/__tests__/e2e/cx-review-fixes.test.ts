@@ -407,3 +407,82 @@ describe.skipIf(!hasJq)("[R-7] the if: filter runs its command as argv, so a pat
     expect(runHook(cmd, root, bashPayload("ls")).status).toBe(0);
   });
 });
+
+describe.skipIf(!hasJq)("[R-4] before-action.sh sees a guarded step however the command is written", () => {
+  const BLOCK: string[] = [
+    "./tool  publish ep1",
+    "./tool\tpublish ep1",
+    "if ./tool publish ep1; then :; fi",
+    "while ./tool publish ep1; do break; done",
+    "until ./tool publish ep1; do :; done",
+    "! ./tool publish ep1",
+    "echo $(./tool publish ep1)",
+    "echo `./tool publish ep1`",
+    "command ./tool publish ep1",
+    "nice ./tool publish ep1",
+    "nice -n 5 ./tool publish ep1",
+    "sudo ./tool publish ep1",
+    "sudo -u bot ./tool publish ep1",
+    "env -i ./tool publish ep1",
+    "echo ep1 | xargs ./tool publish",
+    "\"./tool\" publish ep1",
+    "./tool 'publish' ep1",
+    "/opt/project/tool publish ep1",
+    "cd x && ./tool publish ep1",
+    "(./tool publish ep1)",
+    "{ ./tool publish ep1; }",
+    "FOO=1 ./tool publish ep1",
+    "ls\n./tool publish ep1",
+    "bash -c './tool publish ep1'",
+    "eval ./tool publish ep1",
+  ];
+  const PASS: string[] = ["ls -la", "git status", "./tool render ep1", "./tool publisher ep1", "echo done"];
+  const ast = () => parse(fs.readFileSync(FIXTURE, "utf8"));
+
+  const platforms = [
+    {
+      name: "Codex",
+      setup: () => { scaffoldInto(fs.readFileSync(FIXTURE, "utf8")); fs.mkdirSync(at("src/deep"), { recursive: true }); return at(".codex/scripts/ship/before-action.sh"); },
+      env: {} as Record<string, string>,
+    },
+    {
+      name: "Claude Code",
+      setup: async () => {
+        const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+        const f = generateBeforeActionScript(ast(), CLAUDE_CODE_GUARDS)!;
+        fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+        fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+        fs.mkdirSync(at("src/deep"), { recursive: true });
+        return at(f.path);
+      },
+      env: { CLAUDE_PROJECT_DIR: "" } as Record<string, string>,
+    },
+  ];
+
+  for (const p of platforms) {
+    const run = (script: string, command: string) => {
+      const env = { ...process.env, ...p.env } as Record<string, string>;
+      if (p.name === "Claude Code") env.CLAUDE_PROJECT_DIR = root; else delete env.CLAUDE_PROJECT_DIR;
+      return spawnSync("bash", [script], { cwd: at("src/deep"), input: bashPayload(command), env, encoding: "utf8" });
+    };
+    it.each(BLOCK)(`[R-4] ${p.name}: %j exits 2 while the gate's ledger has no ok record`, async (command) => {
+      const script = await p.setup();
+      const r = run(script, command);
+      expect(r.status, r.stderr).toBe(2);
+    });
+    it.each(PASS)(`[R-4] ${p.name}: %j is no guarded step and passes`, async (command) => {
+      const script = await p.setup();
+      const r = run(script, command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+    it(`[R-4] ${p.name}: with an ok ledger record the step passes in its unusual forms too`, async () => {
+      const script = await p.setup();
+      fs.mkdirSync(at("logs/ep1"), { recursive: true });
+      fs.writeFileSync(at("logs/ep1/trace.jsonl"), JSON.stringify({ step: "render", unit: "ep1", ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+      for (const c of ["./tool  publish ep1", "echo $(./tool publish ep1)", "if ./tool publish ep1; then :; fi", "/opt/project/tool publish ep1"]) {
+        const r = run(script, c);
+        expect(r.status, `${c}: ${r.stderr}`).toBe(0);
+      }
+    });
+  }
+});
