@@ -28,6 +28,9 @@ All notable changes to agentopology are documented here.
 
 - A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).
 - Grammar only: no rule reads these fields yet, and nothing is generated from them. `src/compose`, `src/records` and `src/human` are rule modules that `validate` calls and that find nothing yet. `alias.node` (a lane's node, named from the importing file) is kept whole in a flow edge and a gate anchor and is documented, but still reported undeclared (V3, V13) until the resolver lands.
+### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
+
+- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
 
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
@@ -701,7 +704,7 @@ All notable changes to agentopology are documented here.
 - **Experimental:** `codex`, `cursor` and `claude-workflow` stay. `targets` labels them and
   scaffold warns, because they are not verified against their platform the way claude-code is.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
-  hybrid seam in `examples/matchmat-ship.at`.
+  hybrid seam in an example hybrid harness (now `examples/hybrid-release.at`).
 
 ### [feature] `guard --target claude-code` writes only the guards
 
@@ -1377,7 +1380,7 @@ observer, and the LOSSY report names the human split. (1310 tests total.)
   (Terraform-for-agents) and Claude Workflow is its first compile target.
 - `docs/bindings/claude-workflow-mapping.md` — the complete bidirectional mapping:
   every `.at` primitive + design pattern classified CLEAN / LOSSY / UNREPRESENTABLE.
-- `examples/matchmat-ship.at` — the dogfood hybrid topology.
+- An example hybrid harness topology (now `examples/hybrid-release.at`).
 
 ## [0.2.4] — 2026-05-19
 

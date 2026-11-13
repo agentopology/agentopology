@@ -77,7 +77,7 @@ Tested whether the .at DESIGN PATTERNS survive .at → Claude Workflow. Verdicts
 - **★ THE CANONICAL HARD CASE** (fan-out-N + concurrent observers + dual-stream reduce + hotfix gate) → **UNREPRESENTABLE.** The crux is the concurrent observability listener tapping a shared metrics substrate written by workers *while they run*. The Workflow tool has NO concurrent-listener primitive, NO shared metrics substrate, NO pub-sub/append-log subscriber. Agent teams have SendMessage peer-to-peer, but Workflows don't integrate with agent-team SendMessage. Parts 1/3/4 (fan-out, dual-stream reduce, hotfix gate) are CLEAN/LOSSY; part 2 (concurrent observation) sinks the whole pattern.
 
 ## The headline conclusion (validates the thesis)
-The Workflow tool is excellent at **phase-structured orchestration** (fan-out, map-reduce, pipeline, gates-as-imperative-checks) — which is ~80% of real ship pipelines, and exactly what MatchMat's ship-harness needs.
+The Workflow tool is excellent at **phase-structured orchestration** (fan-out, map-reduce, pipeline, gates-as-imperative-checks) — which is ~80% of real ship pipelines, and exactly what an example hybrid harness needs.
 
 But it is **phase-based (sequential | parallel-with-barrier), NOT event-driven**. So an entire CLASS of .at patterns — anything needing **concurrent listeners on a live shared substrate** (Blackboard, Stigmergy, Gossip, concurrent Observability, the autonomy dial) — is LOSSY-to-UNREPRESENTABLE.
 

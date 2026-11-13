@@ -57,7 +57,7 @@ are at **different layers**, so they COMPOSE rather than compete. One `.at`
 topology compiles to BOTH:
 
 ```
-matchmat-ship.at  (one source of truth)
+hybrid-release.at (one source of truth)
         │ compile (dual-emitter + seam)
         ▼
 ┌───────────────────────────────────────────────────────────┐
