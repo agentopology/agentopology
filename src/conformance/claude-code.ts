@@ -34,10 +34,10 @@ export function verifiedOnLine(): string {
 /** One version the output was checked on, and the proof (RW-7). */
 export interface VerifiedEntry {
   version: string;
-  proof: { run: string; date: string; suite?: { passed: number; failed: number; skipped: number }; note?: string };
+  proof: { run: string; date: string; suite: { passed: number; failed: number; skipped: number }; note?: string };
 }
 
-/** What is wrong with a verified list; empty when every entry names a version and carries a proof. */
+/** What is wrong with a verified list; empty when every entry names a version and carries a proof whose suite has failed: 0. */
 export function verifiedListProblems(doc: unknown): string[] {
   const versions = (doc as { versions?: unknown })?.versions;
   if (!Array.isArray(versions)) return ["the list has no `versions` array"];
@@ -49,7 +49,10 @@ export function verifiedListProblems(doc: unknown): string[] {
     else if (!e.proof || typeof e.proof !== "object") out.push(`entry ${label}: no proof field`);
     else if (typeof e.proof.run !== "string" || !e.proof.run) out.push(`entry ${label}: proof has no run id`);
     else if (typeof e.proof.date !== "string" || !e.proof.date) out.push(`entry ${label}: proof has no date`);
-    else if (e.proof.suite && !["passed", "failed", "skipped"].every((k) => Number.isInteger(e.proof.suite[k]))) out.push(`entry ${label}: proof.suite needs passed, failed and skipped counts`);
+    else if (!e.proof.suite || typeof e.proof.suite !== "object") out.push(`entry ${label}: proof has no suite, so nothing shows the checks passed`);
+    else if (!["passed", "failed", "skipped"].every((k) => Number.isInteger(e.proof.suite[k]))) out.push(`entry ${label}: proof.suite needs passed, failed and skipped counts`);
+    // R-10: a proof whose suite failed proves nothing; the version stays unverified.
+    else if (e.proof.suite.failed !== 0) out.push(`entry ${label}: proof.suite has ${e.proof.suite.failed} failed test(s); only a suite with failed: 0 verifies a version`);
   }
   return out;
 }

@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A verified-list entry counts only with a clean suite (R-10)
+
+- `spec/claude-code/verified.json` entries were checked for shape only, so an entry whose suite had `failed: 12`, or had no suite at all, made that Claude Code version read "verified". Now an entry counts only when its proof carries a suite with `failed: 0`; any other entry is reported as a problem and the version reads unverified.
+
 ### [fix] The Codex surface map knows where the guards live (RW-2, CX-9)
 
 - Guard scripts are written to `.codex/scripts/<topology>/`. The surface map now reads that folder as a name (`.codex/scripts/*/*.sh`) and holds one entry for it, graded `check`: a guard that is not where `hooks.json` points exits 127, and Codex lets the call through.
