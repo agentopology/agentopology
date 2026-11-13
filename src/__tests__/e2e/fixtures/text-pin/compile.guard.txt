@@ -18,14 +18,15 @@ enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.323
 --- exit 1
 guard --check src/__tests__/e2e/fixtures/compile.at (project: proj)
 
-  gate brief-check         refuse      by: hook      PreToolUse on launching drafter → before-agent.sh
+  gate brief-check         refuse                                        by: hook      PreToolUse on launching drafter → before-agent.sh
                            ⚠ its check script .claude/skills/compile/scripts/brief-check.sh is still a stub, so it blocks every run until it is written
-  gate copy-check          refuse      by: hook      SubagentStop on drafter → gate-copy-check.sh
+  gate copy-check          refuse, a stop event: it cannot block a call  by: hook      SubagentStop on drafter → gate-copy-check.sh
+                           ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
                            ⚠ its check script docs/tools/check.py is still a stub, so it blocks every run until it is written
-  human approve            refuse      by: hook      PreToolUse on launching drafter → ask
+  human approve            refuse                                        by: hook      PreToolUse on launching drafter → ask
                            ⚠ Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied
-  deny mcp__notes__delete  refuse      by: settings  permissions.deny in .claude/settings.json
-  ask Bash(git push:*)     refuse      by: settings  permissions.ask in .claude/settings.json
+  deny mcp__notes__delete  refuse                                        by: settings  permissions.deny in .claude/settings.json
+  ask Bash(git push:*)     refuse                                        by: settings  permissions.ask in .claude/settings.json
 
 enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.323
 --- exit 0

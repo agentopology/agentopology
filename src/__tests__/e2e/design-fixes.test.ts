@@ -450,3 +450,77 @@ describe.skipIf(!hasJq)("[D-7] before-edit.sh compares paths without regard to c
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// D-8
+// ---------------------------------------------------------------------------
+
+const STOP_GATE = `topology review : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "A gate between two agents"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [writer, editor]
+  }
+  agent writer {
+    model: sonnet
+    description: "Writes"
+  }
+  agent editor {
+    model: sonnet
+    description: "Edits"
+  }
+  gates {
+    gate checked {
+      after: writer
+      before: editor
+      run: "scripts/check.sh"
+      on-fail: halt
+    }
+  }
+  flow { writer -> editor }
+}
+`;
+
+describe("[D-8] guard --check says on the grade line when a refuse fails open or sits on a stop event", () => {
+  const FAILS_OPEN = "fails open on a crash (no onFailure: block)";
+  const grades = async (src: string, strip: boolean) => {
+    const { checkGuards, renderGuardReport } = await import("../../guard/check.js");
+    const { ast } = scaffold("claude-code", src);
+    if (strip) {
+      const p = at(".claude/settings.json");
+      const settings = JSON.parse(fs.readFileSync(p, "utf8"));
+      for (const entries of Object.values(settings.hooks) as Array<Array<{ hooks: Array<Record<string, unknown>> }>>) {
+        for (const e of entries) for (const h of e.hooks) delete h.onFailure;
+      }
+      fs.writeFileSync(p, JSON.stringify(settings, null, 2));
+    }
+    const report = checkGuards(ast, root);
+    return { items: report.items, lines: renderGuardReport(report) };
+  };
+  it("[D-8] with no onFailure: block, the before-action, before-agent and approval grades read 'refuse, fails open on a crash'", async () => {
+    const { items, lines } = await grades(SRC, true);
+    for (const id of ["publish-ready", "render-check", "approve"]) {
+      const item = items.find((i) => i.id === id)!;
+      expect(item.strength, id).toBe("refuse");
+      expect(item.gradeNote, id).toContain(FAILS_OPEN);
+      expect(lines.find((l) => l.includes(` ${id} `)), id).toContain(`refuse, ${FAILS_OPEN}`.slice(0, 20));
+    }
+    // the ledger note stays beside it
+    expect(items.find((i) => i.id === "publish-ready")!.gradeNote).toContain("ledger agent-writable until the signed gate");
+  });
+  it("[D-8] with onFailure: block, no fails-open note", async () => {
+    const { items } = await grades(SRC, false);
+    for (const id of ["render-check", "approve"]) expect(items.find((i) => i.id === id)!.gradeNote ?? "").not.toContain("fails open");
+  });
+  it("[D-8] a SubagentStop gate's grade says a stop event cannot block a call", async () => {
+    fs.mkdirSync(at("scripts"), { recursive: true });
+    const { items } = await grades(STOP_GATE, false);
+    const item = items.find((i) => i.id === "checked")!;
+    expect(item.where).toMatch(/SubagentStop/);
+    expect(item.strength).toBe("refuse");
+    expect(item.gradeNote).toMatch(/stop event: it cannot block a call/);
+  });
+});

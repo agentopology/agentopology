@@ -67,7 +67,7 @@ export function summaryLines(ast: TopologyAST, facts: Facts): string[] {
     const by = new Map<string, number>();
     for (const g of Object.values(facts.guard)) by.set(g.strength, (by.get(g.strength) ?? 0) + 1);
     // D-6: a refuse count says how many rest on a ledger the agent can write (F-4).
-    const ledger = Object.values(facts.guard).filter((g) => g.strength === "refuse" && g.gradeNote === LEDGER_WRITABLE_NOTE).length;
+    const ledger = Object.values(facts.guard).filter((g) => g.strength === "refuse" && !!g.gradeNote?.includes(LEDGER_WRITABLE_NOTE)).length;
     const word = (k: string, n: number) => `${k} ${n}${k === "refuse" && ledger ? ` (${ledger} with an agent-writable ledger)` : ""}`;
     lines.push(`guard: ${by.size ? [...by].map(([k, n]) => word(k, n)).join(", ") : "no items"}`);
   }

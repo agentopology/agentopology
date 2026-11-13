@@ -134,6 +134,19 @@ function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): NonNul
   return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher);
 }
 
+/** The note on an entry with no onFailure: "block" (D-8 puts FAILS_OPEN on the grade line for it). */
+const NO_BLOCK_NOTE = 'the entry has no onFailure: "block", so the step goes through if the hook cannot start';
+/** D-8: on the grade line of a refuse whose PreToolUse entry lets the call through when the hook crashes. */
+export const FAILS_OPEN_NOTE = "fails open on a crash (no onFailure: block)";
+/** D-8: on the grade line of a gate held at SubagentStop. */
+export const STOP_EVENT_NOTE = "a stop event: it cannot block a call";
+
+/** Add a note to an item's grade line, after any it has (F-4, D-8). */
+function noteGrade(item: GuardItem, note: string, first = false): void {
+  if (item.gradeNote?.includes(note)) return;
+  item.gradeNote = item.gradeNote ? (first ? `${note}, ${item.gradeNote}` : `${item.gradeNote}, ${note}`) : note;
+}
+
 /** Claude Code events whose hook can stop the call it runs before (exit 2). */
 const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
 
@@ -171,7 +184,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     const bad = commandProblem(hooks[0].command);
     if (bad) return { ok: false, notes: [bad] };
     if (beforeAgent === null) return { ok: false, notes: [`${scriptsDir}/before-agent.sh is missing`] };
-    const notes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+    const notes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
     return { ok: true, notes };
   };
 
@@ -204,7 +217,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       if (problems.length) {
         items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect] });
       } else {
-        const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : ['the entry has no onFailure: "block", so the step goes through if the hook cannot start'];
+        const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
         items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
       }
       continue;
@@ -232,7 +245,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const where = `SubagentStop on ${wiring.anchors.join(", ")} → ${file}`;
       items.push(problems.length
         ? { ...base, strength: "none", by: "hook", where, notes: problems }
-        : { ...base, strength: "refuse", by: "hook", where, notes: scriptNotes });
+        : { ...base, strength: "refuse", by: "hook", where, notes: ["exit 2 keeps the agent working until the gate passes; a call it already made is not undone", ...scriptNotes], gradeNote: STOP_EVENT_NOTE });
       continue;
     }
     // before-agent
@@ -280,7 +293,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const where = `PreToolUse on ${matcher} → ${file}`;
       const notes = [...extra];
       if (problems.length) return items.push({ kind: "session", id, strength: "none", by: "hook", where, notes: [...problems, ...notes] });
-      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift('the entry has no onFailure: "block", so the step goes through if the hook cannot start');
+      if (!hooks.some((h) => h.onFailure === "block")) notes.unshift(NO_BLOCK_NOTE);
       if (!proven) notes.unshift(`${event} is not proven to stop a call in the installed Claude Code (conformance facts), so this is unverified`);
       items.push({ kind: "session", id, strength: proven ? "refuse" : "unverified", by: "hook", where, notes });
     };
@@ -374,7 +387,8 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
             break;
           }
           if (hook.strength === "refuse" || hook.strength === "detect") {
-            Object.assign(item, { strength: hook.strength, by: "hook", where, notes: ["cited, not proven", ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            const failsOpen = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !onDisk.some((h) => h.onFailure === "block");
+            Object.assign(item, { strength: hook.strength, by: "hook", where, notes: ["cited, not proven", ...(failsOpen ? [NO_BLOCK_NOTE] : []), ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
           }
         } else {
           const other = gateItem(g);
@@ -404,7 +418,11 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   for (const item of items) {
     if (item.kind !== "gate" || item.strength !== "refuse" || item.by !== "hook") continue;
     const gate = ast.nodes.find((n) => n.type === "gate" && n.id === item.id) as GateNode;
-    if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) item.gradeNote = LEDGER_WRITABLE_NOTE;
+    if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) noteGrade(item, LEDGER_WRITABLE_NOTE);
+  }
+  // D-8: a refuse whose PreToolUse entry fails open says so on the grade line, not only in a note.
+  for (const item of items) {
+    if (item.strength === "refuse" && item.notes.includes(NO_BLOCK_NOTE)) noteGrade(item, FAILS_OPEN_NOTE, true);
   }
 
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
@@ -432,7 +450,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   }
   lines.push("");
   // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
-  const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && i.gradeNote === LEDGER_WRITABLE_NOTE).length;
+  const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && !!i.gradeNote?.includes(LEDGER_WRITABLE_NOTE)).length;
   const ledgerSuffix = ledgered ? ` (${ledgered} with an agent-writable ledger)` : "";
   if (report.platform) {
     const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");

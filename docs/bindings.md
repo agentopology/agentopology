@@ -99,6 +99,8 @@ Gates are injected between flow nodes. The binding generates:
 
 **Approval steps on Claude Code ask once (D-4).** A `human` step before an agent makes `before-agent.sh` answer `ask` before Claude Code launches that agent. When several approval steps stand before one agent, the script prints one JSON decision whose reason joins theirs (`Approval step "legal": ...; Approval step "brand": ...`): two JSON objects on stdout are not one document, and Claude Code could ignore the decision.
 
+**What the grade line says beside `refuse` on Claude Code (D-8).** A `PreToolUse` guard entry without `"onFailure": "block"` (Claude Code 2.1.295+) lets the call run when the hook cannot start or crashes, so its grade reads `refuse, fails open on a crash (no onFailure: block)`. A gate held at `SubagentStop` reads `refuse, a stop event: it cannot block a call`: exit 2 keeps the agent working until the gate passes, but a call it already made is not undone. These notes sit on the grade itself, with the ledger note (F-4) when both apply.
+
 **What `guard --check` credits a cited hook with (D-3).** A gate the binding gives no hook can be credited by a hook its flow edge cites (`[guard: lock-bash]`). On Claude Code, a cited hook that declares `strength: refuse` grades `refuse` only when it can stop the call: a non-async `command` hook on `PreToolUse`, `UserPromptSubmit` or `PermissionRequest`. A hook on `PostToolUse`, `Stop`, `SubagentStop` (or any event that runs after the call), or one with `async: true`, grades `none`, with a note naming why; a `prompt`, `agent` or `http` hook grades `unverified`. `validate` warns (V104) for `strength: refuse` on such a hook.
 
 ### Settings

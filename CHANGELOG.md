@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: guard --check says on the grade line when a refuse fails open or sits on a stop event (D-8)
+
+- A `PreToolUse` guard entry without `"onFailure": "block"` kept the grade `refuse`, with only a ⚠ note below it, though Claude Code lets the call run when such a hook crashes. Its grade now reads `refuse, fails open on a crash (no onFailure: block)` (the before-action, before-agent, approval and session guards, and a cited hook). A gate held at `SubagentStop` reads `refuse, a stop event: it cannot block a call`, with a note that exit 2 keeps the agent working. The `guard --check` text pins for every example with a SubagentStop gate change.
+
 ### [fix] Fixed: before-edit.sh refuses a ledger edit in any letter case (D-7)
 
 - `before-edit.sh` compared an edit's path with the ledger's pattern case-sensitively, so on a case-insensitive disk (macOS) a `Write` to `logs/ep1/TRACE.JSONL` reached the ledger. Path and pattern are now compared lower-cased, on both targets. Every `before-edit.sh` changes.

@@ -10,9 +10,10 @@ enforcement: 0 of 2 steps refuse · checked against Claude Code 2.1.323
 --- exit 1
 guard --check examples/matchmat-ship.at (project: proj)
 
-  gate verify-gate  refuse      by: hook      SubagentStop on closed-loop-verifier → gate-verify-gate.sh
+  gate verify-gate  refuse, a stop event: it cannot block a call  by: hook      SubagentStop on closed-loop-verifier → gate-verify-gate.sh
+                    ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
                     ⚠ its check script .claude/skills/matchmat-ship/scripts/verify-gate.sh is still a stub, so it blocks every run until it is written
-  human promote     hope        by: prose     no agent follows it, so no launch to ask before; the playbook asks
+  human promote     hope                                          by: prose     no agent follows it, so no launch to ask before; the playbook asks
 
 enforcement: 1 of 2 steps refuse · checked against Claude Code 2.1.323
 --- exit 0
