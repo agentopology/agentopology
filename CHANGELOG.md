@@ -56,6 +56,12 @@ All notable changes to agentopology are documented here.
 
 - The before-agent, before-action and gate-wrapper scripts, and the session spawn, talk and prompt-log guards, are now built in `src/bindings/lib/guards.ts` from a platform record (project-dir variable, folders, hook payload field names, whether a hook can ask). The Claude Code scaffold is byte-identical to before for every example and fixture, held by a golden test. A Codex platform record builds the same guards with no `CLAUDE_PROJECT_DIR` and no `.claude` paths in them. Nothing is wired into the Codex binding yet.
 
+### [feature] The Codex contract: constants, snapshots and a drift watch (CX-2)
+
+- A new module holds what Codex CLI 0.156.1 documents: the 14 hook events, which of them ignore a matcher, which handler types run and which are skipped, the legal approval and sandbox values, and the keys a project config may not set. `checkHooks` reports an unknown event, a matcher on an event that ignores it, and a handler that Codex skips.
+- Snapshots of the hook contract, the config keys and the feature flags are committed under `spec/codex/`. A test holds the constants to them, and `scripts/codex-drift.mjs` compares the snapshot with the live hooks page and prints each difference.
+- The four URL keys that a project config may not set are not yet listed, because the page that names them could not be read when this was written.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).

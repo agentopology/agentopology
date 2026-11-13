@@ -1,0 +1,32 @@
+{
+  "source": "https://learn.chatgpt.com/docs/hooks.md",
+  "fetched": "2026-11-13",
+  "codex": "0.156.1",
+  "events": [
+    "Interrupt",
+    "PermissionRequest",
+    "PostCompact",
+    "PostModelRequest",
+    "PostToolUse",
+    "PreCompact",
+    "PreModelRequest",
+    "PreToolUse",
+    "SessionEnd",
+    "SessionStart",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+    "UserPromptSubmit"
+  ],
+  "noMatcherEvents": [
+    "Interrupt",
+    "PostModelRequest",
+    "PreModelRequest",
+    "Stop",
+    "UserPromptSubmit"
+  ],
+  "runningHandlers": ["command", "mcp_tool"],
+  "skippedHandlers": ["agent", "prompt"],
+  "blockingEvents": ["PreToolUse", "UserPromptSubmit"],
+  "preToolDecisions": ["allow", "deny"]
+}
