@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Known gap, narrowed: the agent can write a gate's ledger (F-4)
+
+- In 0.11.0 a gate's ledger (`records { record trace { path: "logs/{unit}/trace.jsonl" } }`) and the Codex approvals file (`.codex/state/approvals.jsonl`) are files in the workspace, and the agent could write an ok line into them. The guards now refuse commands and edits that name them: `before-action.sh` refuses a `Bash` command that names a ledger unless it only reads it (`cat` and `jq .` still run; `>`, `tee`, `cp`, `sed -i`, `python3 -c` and the like are refused), and a new `before-edit.sh` refuses a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` (Claude Code) or an `apply_patch` (Codex) that touches one. `guard --check` says so on the grade itself: `refuse, ledger agent-writable until the signed gate` on Claude Code, `unverified, ledger agent-writable until the signed gate` on Codex.
+- A determined agent can still write them through a path the guard can't see (a variable set elsewhere, another script). The signed gate in the next release closes this.
+
 ### [fix] Fixed: the step guard looks for the tool where bash runs it, so reading a script is no step (P1-d)
 
 - The deny-on-doubt matcher refused 18 of 42 ordinary commands on a real topology while a gate was unmet: `cat`, `ls`, `grep`, `git diff`/`log`/`add`/`commit` on the step's script, and commands whose letters merely held the tool's name (`docs/media-engine/*.py`, `echo $HOME immediately`). The guard now looks for the tool where bash runs a program, or as an interpreter's script; a program that only reads or prints its arguments runs no step unless a flag can make it run one; a program that can run its arguments, or one it does not know, is still scanned; doubt comes from an expansion or glob among the tool's own words, not from letters anywhere in the command. `echo ./tool publish ep1` is no step again ([N42] AG23).
