@@ -382,6 +382,26 @@ export function versionBelow(a: string, b: string): boolean {
   return false;
 }
 
+/**
+ * The first Claude Code release in which a PreToolUse hook with a Bash matcher
+ * also runs on the shell commands Claude starts with the Monitor tool (hooks
+ * reference, 0.11.1). From the docs, not measured.
+ */
+export const MONITOR_HOOK_SINCE = "2.1.314";
+
+/**
+ * Why Monitor's shell commands are not checked by a Bash-matched guard on the
+ * installed Claude Code, or null when its version is MONITOR_HOOK_SINCE or later.
+ * An unknown version, or none installed, is not assumed new enough.
+ */
+export function monitorUncheckedNote(): string | null {
+  const s = installedStatus();
+  const where = s.state === "verified" || s.state === "different"
+    ? (versionBelow(s.version, MONITOR_HOOK_SINCE) ? `Claude Code ${s.version}` : null)
+    : s.state === "unknown" ? "an unknown Claude Code version" : "no installed Claude Code";
+  return where ? `Monitor commands not checked on ${where} (needs ${MONITOR_HOOK_SINCE})` : null;
+}
+
 /** The first Claude Code release that reads a hook's `onFailure` field. */
 export const ON_FAILURE_SINCE = "2.1.295";
 

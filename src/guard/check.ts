@@ -27,7 +27,7 @@ import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, 
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
@@ -170,12 +170,37 @@ function commandProblem(command = ""): string | null {
   return loose ? `the hook names ${loose} by a relative path, so it is skipped once Claude changes directory` : null;
 }
 
+/** The matcher scaffold writes for before-action.sh: every Claude Code tool that runs a shell command (0.11.1). */
+const SHELL_MATCHER = "Bash|Monitor|PowerShell";
+
+/**
+ * 0.11.1: what a before-action.sh refuse holds on, per shell tool, said on the grade line:
+ * `refuse (Bash), unverified (PowerShell: not measured)`, plus Monitor when the installed
+ * Claude Code is below 2.1.314 or unknown. PowerShell's payload is from the docs, never measured.
+ */
+function shellToolGrade(matcher: string | undefined): string {
+  const parts = ["(Bash)"];
+  parts.push(matcherMatches("PreToolUse", matcher, "PowerShell")
+    ? "unverified (PowerShell: not measured)"
+    : "none (PowerShell: not in the matcher; rerun guard --target claude-code)");
+  const monitor = monitorUncheckedNote();
+  if (monitor) parts.push(monitor);
+  return parts.join(", ");
+}
+
+/** The grade as one line: a note that opens with "(" binds to the strength, any other follows a comma. */
+export function gradeText(strength: string, gradeNote?: string): string {
+  return gradeNote ? `${strength}${gradeNote.startsWith("(") ? " " : ", "}${gradeNote}` : strength;
+}
+
 export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   const name = ast.topology.name;
   const scriptsDir = `.claude/skills/${name}/scripts`;
   const settings = readJson(join(root, ".claude/settings.json"));
   const beforeAgent = readText(join(root, scriptsDir, "before-agent.sh"));
   const items: GuardItem[] = [];
+  /** 0.11.1: the shell-tool grade of each gate before-action.sh refuses, put first on its grade line. */
+  const shellGrades = new Map<string, string>();
 
   /** The before-agent PreToolUse entry: present and anchored, with onFailure noted. */
   const guardEntry = (): { ok: boolean; notes: string[] } => {
@@ -200,9 +225,11 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     // with nothing to check (V110) compiles to no line, and falls through to
     // the cases below (prose, or a citation).
     if (checkableActionGate(ast, gate)) {
-      const where = `PreToolUse on Bash running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
       const problems: string[] = [];
-      const hooks = findHooks(settings, "PreToolUse", "before-action.sh", (m) => !!m && /\bBash\b/.test(m));
+      const covers = (m?: string) => !!m && matcherMatches("PreToolUse", m, "Bash");
+      const hooks = findHooks(settings, "PreToolUse", "before-action.sh", covers);
+      const matcher = ((settings?.hooks?.PreToolUse ?? []) as HookEntry[]).find((e) => covers(e.matcher) && (e.hooks ?? []).some((h) => h.command?.includes("before-action.sh")))?.matcher;
+      const where = `PreToolUse on ${matcher ?? SHELL_MATCHER} running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
       if (hooks.length === 0) problems.push("no PreToolUse entry on Bash for before-action.sh in .claude/settings.json");
       else {
         const bad = commandProblem(hooks[0].command);
@@ -219,6 +246,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       } else {
         const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
         items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
+        shellGrades.set(gate.id, shellToolGrade(matcher));
       }
       continue;
     }
@@ -425,6 +453,12 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if (item.strength === "refuse" && item.notes.includes(NO_BLOCK_NOTE)) noteGrade(item, FAILS_OPEN_NOTE, true);
   }
 
+  // 0.11.1: a before-action.sh refuse names the shell tools it holds on, first on the grade line.
+  for (const item of items) {
+    const shell = item.kind === "gate" && item.strength === "refuse" && item.by === "hook" ? shellGrades.get(item.id) : undefined;
+    if (shell) item.gradeNote = item.gradeNote ? `${shell}, ${item.gradeNote}` : shell;
+  }
+
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
   return {
     items,
@@ -439,7 +473,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
 export function renderGuardReport(report: GuardReport): string[] {
   const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
-  const grade = (i: GuardItem) => (i.gradeNote ? `${i.strength}, ${i.gradeNote}` : i.strength);
+  const grade = (i: GuardItem) => gradeText(i.strength, i.gradeNote);
   const gradeWidth = Math.max(STRENGTH_WIDTH, ...report.items.map((i) => grade(i).length));
   const lines: string[] = [];
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.

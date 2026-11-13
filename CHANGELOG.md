@@ -4,10 +4,6 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
-### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
-
-- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
-
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
 - Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.
@@ -32,6 +28,20 @@ All notable changes to agentopology are documented here.
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)
 
 - `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.
+
+## [0.11.1] - 2026-11-13
+
+
+### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
+
+- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
+
+### [fix] Fixed: the step and ledger guards fire for PowerShell and Monitor
+
+- Fixed: the step and ledger guards fire for PowerShell and Monitor. On PowerShell setups (Windows without Git Bash, or pwsh enabled), 0.11.0's step and ledger guards did not fire; on Claude Code before 2.1.314 a Bash hook does not fire for Monitor, and guard --check now says so.
+- `before-action.sh` is registered on `Bash|Monitor|PowerShell` (was `Bash`), still with `"onFailure": "block"`. A Monitor call with no command (a `ws` input) passes. A PowerShell command is read the same way as a Bash one, with a backslash read as a path separator (`.\tool publish ep1`), and any mention of the tool not read as a declared step (`& ./tool @(...)`, `Start-Process ./tool -ArgumentList "publish","ep1"`, `.\tool.exe`) is refused as doubt. `Get-Content`, `gc`, `Select-String` and `sls` count as reading only, so `Get-Content` of a ledger passes the ledger guard.
+- `guard --check` grades a before-action gate `refuse (Bash), unverified (PowerShell: not measured)`: the PowerShell payload is from the Claude Code docs, not measured. Below Claude Code 2.1.314, or with the version unknown, the line adds `Monitor commands not checked on …`. A project scaffolded by 0.11.0 reads `none (PowerShell: not in the matcher; rerun guard --target claude-code)`. The generated SKILL.md Enforcement line of a ledger gate says the same.
+- Scaffold output changes for every topology with a before-action guard: `.claude/settings.json` (the matcher), `before-action.sh` (the header and the PowerShell reading) and the skill's `SKILL.md` (the Enforcement line). Rerun `scaffold` or `guard --target claude-code`.
 
 ## [0.11.0] - 2026-11-13
 

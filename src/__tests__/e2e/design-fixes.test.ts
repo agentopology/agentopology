@@ -517,7 +517,9 @@ describe("[D-8] guard --check says on the grade line when a refuse fails open or
       const item = items.find((i) => i.id === id)!;
       expect(item.strength, id).toBe("refuse");
       expect(item.gradeNote, id).toContain(FAILS_OPEN);
-      expect(lines.find((l) => l.includes(` ${id} `)), id).toContain(`refuse, ${FAILS_OPEN}`.slice(0, 20));
+      // 0.11.1: the before-action gate names its shell tools first, then the fails-open note.
+      const head = id === "publish-ready" ? "refuse (Bash), unverified (PowerShell: not measured), " : "refuse, ";
+      expect(lines.find((l) => l.includes(` ${id} `)), id).toContain(`${head}${FAILS_OPEN}`.slice(0, head.length + 10));
     }
     // the ledger note stays beside it
     expect(items.find((i) => i.id === "publish-ready")!.gradeNote).toContain("ledger agent-writable until the signed gate");
