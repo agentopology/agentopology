@@ -1137,3 +1137,31 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
     }, 45_000);
   }
 });
+
+// Mutation pass 2: rules whose inputs no other rule catches (F1, V1), and the lead-word skips that keep
+// read-only commands from being refused (L1-L3).
+describe.skipIf(!hasJq)("[F-17] the matcher's single-rule refusals and the reads its skips allow", () => {
+  const script = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(READS_AT), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  it("[F-17] F1: git -c can make a reading subcommand run the tool (a pager), so it is refused", async () => {
+    // The pager runs the step itself; without the -c rule `git log` would read as a read-only command.
+    expect(run(await script(), "git -c core.pager='./media kit s1' log").status).toBe(2);
+  });
+  it("[F-17] V1: a variable the command sets to the tool, used through eval, is refused", async () => {
+    expect(run(await script(), "X=./media; eval \"$X kit s1\"").status).toBe(2);
+  });
+  // The step's words are present but only read as file names by cat: without the lead-word skip, `if`,
+  // `!` or `FOO=1` would be taken for an unknown program and the step words after it for a run.
+  it.each(["if cat ./media kit; then :; fi", "! cat ./media kit", "FOO=1 cat ./media kit", "while cat ./media kit; do break; done"])(
+    "[F-17] L1-L3: %j only reads the tool and passes", async (command) => {
+      const r = run(await script(), command);
+      expect(r.status, r.stderr).toBe(0);
+    });
+});

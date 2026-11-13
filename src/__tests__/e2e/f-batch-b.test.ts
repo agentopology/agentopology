@@ -596,11 +596,15 @@ describe("[F-9/F-17] the deadline frees the hook's output pipe on time", async (
   }
   it("[F-9] the POSIX watchdog's sleep does not outlive the hook (F-20b)", () => {
     const bin = pathWithoutTimeout();
-    const cmd = check("exit 0").replace(/AT_D=\d+/, "AT_D=47");
+    // A deadline no other run uses, so a parallel suite's own watchdog is never counted; the kill is
+    // asynchronous, so the check polls for up to 3 s before it calls a sleep a leftover.
+    const d = String(1000 + ((process.pid * 7919 + Date.now()) % 8000));
+    const cmd = check("exit 0").replace(/AT_D=\d+/, `AT_D=${d}`);
     const r = runHook(cmd, root, "{}", 30_000, { PATH: bin });
     expect(r.status).toBe(0);
-    const left = spawnSync("ps", ["-eo", "args"], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.trim() === "sleep 47");
-    expect(left).toEqual([]);
+    const leftover = () => spawnSync("ps", ["-eo", "args"], { encoding: "utf8" }).stdout.split("\n").filter((l) => l.trim() === `sleep ${d}`);
+    for (let i = 0; i < 30 && leftover().length > 0; i++) spawnSync("sleep", ["0.1"]);
+    expect(leftover()).toEqual([]);
   });
 });
 
