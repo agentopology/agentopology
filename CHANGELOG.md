@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex refuse hook whose matcher is a regex of Claude tool names no longer goes silent (F-7)
+
+- A matcher such as `(Write|Edit)`, `^Write$`, `Ed.*` or `Task.*` was written to `.codex/hooks.json` unchanged with no warning, so it never fired on Codex, which calls those tools `apply_patch` and `collaborationspawn_agent`. Names inside one group or between `^` and `$` are now rewritten (`(apply_patch)`, `^apply_patch$`). A real regex that matches a Claude tool but not its Codex name gets `CX8-regex` from `validate --target codex`: an ERROR for `strength: refuse`, a warning for any other strength.
+
 ### [fix] Fixed: a Claude Code `strength: refuse` hook blocks when it cannot run (F-14)
 
 - Only the generated guards carried `"onFailure": "block"`. A user's `PreToolUse` hook with `strength: refuse`, in `hooks {}` or on an agent, had none, so a script that could not start or timed out let the call run. Every such hook now gets it; no existing `onFailure` is removed. `validate` warns with `CC-onfailure` when the installed Claude Code is older than 2.1.295, which ignores the field.

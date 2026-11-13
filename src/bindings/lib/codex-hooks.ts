@@ -96,11 +96,13 @@ export const IF_FILTER_PATH = ".codex/scripts/at-if.sh";
 
 /** One thing that stops a hook from being registered as written. */
 export interface CodexHookProblem {
-  rule: "CX8-event" | "CX8-handler" | "CX8-matcher" | "CX8-if" | "CX8-async" | "CX8-run" | "CX8-tool";
+  rule: "CX8-event" | "CX8-handler" | "CX8-matcher" | "CX8-if" | "CX8-async" | "CX8-run" | "CX8-tool" | "CX8-regex";
   hook: string;
   message: string;
   /** True when the hook gets no entry at all. */
   skipped: boolean;
+  /** "error" for a refusal that can never happen on Codex (F-7); a warning otherwise. */
+  level?: "error";
 }
 
 /**
@@ -124,15 +126,36 @@ export const CLAUDE_TO_CODEX_TOOL: Readonly<Record<string, string | null>> = {
  * written. `dropped` lists Claude names Codex has no tool for.
  */
 export function codexMatcher(matcher: string): { matcher: string | null; dropped: string[] } {
-  if (!/^[A-Za-z0-9_]+(\|[A-Za-z0-9_]+)*$/.test(matcher)) return { matcher, dropped: [] };
+  // F-7: an alternation may sit in one group, `(…)` or `(?:…)`, between `^` and `$`; the names are
+  // rewritten and the anchors and group kept. Anything else is a real regex and is kept as written
+  // (codexRegexMisses says which Claude tools it then never sees).
+  const m = /^(\^?)(?:(\((?:\?:)?)([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*)\)|([A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*))(\$?)$/.exec(matcher);
+  if (!m) return { matcher, dropped: [] };
+  const [, caret, open = "", grouped, bare, dollar] = m;
   const out: string[] = [];
   const dropped: string[] = [];
-  for (const name of matcher.split("|")) {
+  for (const name of (grouped ?? bare).split("|")) {
     const mapped = name in CLAUDE_TO_CODEX_TOOL ? CLAUDE_TO_CODEX_TOOL[name] : name;
     if (mapped === null) dropped.push(name);
     else if (!out.includes(mapped)) out.push(mapped);
   }
-  return { matcher: out.length > 0 ? out.join("|") : null, dropped };
+  if (out.length === 0) return { matcher: null, dropped };
+  return { matcher: `${caret}${open}${out.join("|")}${open ? ")" : ""}${dollar}`, dropped };
+}
+
+/**
+ * The Claude tools a matcher regex that codexMatcher keeps as written would
+ * fire on in Claude Code but never on Codex (F-7): it matches the Claude name
+ * (`Ed.*` matches Edit) and not the Codex name of the same tool (apply_patch).
+ * Empty for a plain alternation (rewritten) or a regex that does not compile.
+ */
+export function codexRegexMisses(matcher: string): string[] {
+  if (codexMatcher(matcher).matcher !== matcher || /^[A-Za-z0-9_|]*$/.test(matcher)) return [];
+  let re: RegExp;
+  try { re = new RegExp(matcher); } catch { return []; }
+  return Object.entries(CLAUDE_TO_CODEX_TOOL)
+    .filter(([claude, codex]) => codex !== null && codex !== claude && re.test(claude) && !re.test(codex))
+    .map(([claude]) => claude);
 }
 
 /** `Tool(glob)` parsed from an `if:`, or null. */
@@ -164,6 +187,15 @@ export function codexHookProblems(hook: HookDef): CodexHookProblem[] {
       add("CX8-tool", matcher === null
         ? `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks, so it would never fire and gets no entry`
         : `hook "${hook.name}" matches ${names}, which Codex has no tool for behind its hooks; the entry matches "${matcher}" only`, matcher === null);
+    }
+    const misses = codexRegexMisses(hook.matcher);
+    if (misses.length > 0) {
+      const names = misses.map((d) => `"${d}"`).join(", ");
+      const codex = [...new Set(misses.map((d) => CLAUDE_TO_CODEX_TOOL[d]))].map((c) => `"${c}"`).join(", ");
+      out.push({
+        rule: "CX8-regex", hook: hook.name, skipped: false, ...(hook.strength === "refuse" ? { level: "error" as const } : {}),
+        message: `hook "${hook.name}" has the matcher regex "${hook.matcher}", which matches the Claude tool ${names} but not its Codex name ${codex}, so on Codex it can never fire for that tool. It is too complex to rewrite safely: write the Codex name into the matcher (for example "${codex.split(", ")[0].replace(/"/g, "")}") or a plain list such as "Edit|Write".`,
+      });
     }
   }
   if (hook.if) {

@@ -4382,7 +4382,10 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
     }
   }
   for (const hook of ast.hooks) {
-    for (const p of codexHookProblems(hook)) warn(p.rule, hook.name, p.message);
+    for (const p of codexHookProblems(hook)) {
+      if (p.level === "error") results.push({ rule: p.rule, level: "error", node: hook.name, message: `[codex] ${p.message}` });
+      else warn(p.rule, hook.name, p.message);
+    }
   }
   // R-11: a human step is a line in .codex/state/approvals.jsonl; a sandbox that lets the model write .codex lets it approve itself.
   const forgeable = humanGateForgeable(ast);

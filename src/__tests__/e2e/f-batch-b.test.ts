@@ -417,3 +417,29 @@ describe.skipIf(!hasJq)("[F-14] Claude Code before-agent.sh normalizes subagent_
     });
   }
 });
+
+describe("[F-7] a Codex matcher that is a regex naming Claude tools", () => {
+  const refuse = (m: string) => HOOKED(hookDef("files", m, "scripts/files.sh", "      strength: refuse\n"));
+  const plainHook = (m: string) => HOOKED(hookDef("files", m, "scripts/files.sh"));
+  for (const [m, want] of [["(Write|Edit)", "(apply_patch)"], ["^Write$", "^apply_patch$"], ["^(Edit|Write|Bash)$", "^(apply_patch|Bash)$"], ["(?:Task|Agent)", "(?:collaborationspawn_agent)"]] as const) {
+    it(`[F-7] ${m} is rewritten to ${want}, with no error`, () => {
+      scaffoldInto(refuse(m));
+      expect(hooksOf().PreToolUse[0].matcher).toBe(want);
+      expect(validate(parse(refuse(m)), { target: "codex" }).filter((r) => r.level === "error")).toEqual([]);
+    });
+  }
+  for (const m of ["Ed.*", "Task.*", "(Write|Edit)+", "W.ite"]) {
+    it(`[F-7] ${m} cannot be rewritten: an ERROR for strength: refuse, a warning otherwise`, () => {
+      const errs = validate(parse(refuse(m)), { target: "codex" }).filter((r) => r.rule === "CX8-regex");
+      expect(errs).toHaveLength(1);
+      expect(errs[0].level).toBe("error");
+      expect(errs[0].message).toMatch(/never fire/);
+      const warns = validate(parse(plainHook(m)), { target: "codex" }).filter((r) => r.rule === "CX8-regex");
+      expect(warns).toHaveLength(1);
+      expect(warns[0].level).toBe("warning");
+    });
+  }
+  it("[F-7] a regex that also matches the Codex tool is fine (.*, apply_.*)", () => {
+    for (const m of [".*", "apply_.*|Bash"]) expect(validate(parse(refuse(m)), { target: "codex" }).filter((r) => r.rule === "CX8-regex")).toEqual([]);
+  });
+});
