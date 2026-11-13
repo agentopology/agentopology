@@ -219,16 +219,8 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
     codexWarn("[codex] providers are dropped: a project .codex/config.toml may not set model_providers; set them in your user config");
   }
 
-  // Model parameters Codex has no key for.
-  const temp = ast.defaults?.temperature ?? agents[0]?.temperature;
-  const maxTok = ast.defaults?.maxTokens ?? agents[0]?.maxTokens;
+  // Model parameters, providers and a fallback chain have no Codex key; `validate` warns (CX-23).
   const comments: string[] = [];
-  if (temp != null || maxTok != null) {
-    comments.push("# Not expressible in Codex config: temperature and max tokens have no key.");
-    if (temp != null) comments.push(`#   temperature = ${temp}`);
-    if (maxTok != null) comments.push(`#   max_tokens = ${maxTok}`);
-    comments.push("");
-  }
 
   // MCP servers — [mcp_servers.<id>] with its env table nested under it.
   if (ast.mcpServers && Object.keys(ast.mcpServers).length > 0) {
@@ -241,12 +233,6 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
       }
       tables.push(...tomlTable(["mcp_servers", name], server));
     }
-  }
-
-  const fallbackChain = ast.settings?.["fallback-chain"] as string[] | undefined;
-  if (fallbackChain && fallbackChain.length > 0) {
-    comments.push(`# Model fallback chain (Codex has no such key): ${fallbackChain.join(" -> ")}`);
-    comments.push("");
   }
 
   // Multi-agent support: [agents] with one entry per agent.

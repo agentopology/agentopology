@@ -29,6 +29,7 @@ import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
+import { notExpressibleHits } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -4353,6 +4354,13 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
     if (agent.mcpServers && agent.mcpServers.length > 0) {
       warn("CX5-mcp", agent.id, `agent "${agent.id}" lists mcp-servers; a Codex agent file cannot scope MCP servers, so they are written once in config.toml for every agent.`);
     }
+  }
+  for (const hit of notExpressibleHits(ast)) {
+    const label = hit.scope === "agent" ? "agent field" : hit.scope === "defaults" ? "defaults field" : "topology field";
+    results.push({
+      rule: "CX23", level: "warning",
+      message: `[codex] ${label} "${hit.field}" is not expressible on Codex: ${hit.reason}. Set by: ${hit.where.join(", ")}.`,
+    });
   }
   return results;
 }

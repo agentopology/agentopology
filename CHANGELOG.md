@@ -4,6 +4,12 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Codex says what it cannot express (CX-23)
+
+- `validate` with a Codex target (and `scaffold --target codex`) now gives one warning for each field Codex has no key for: sampling settings (temperature, max tokens, top-p, top-k, stop, seed), a thinking token budget, output format, max turns, log level, fallback chain, rate limit, circuit breaker, background and isolation on an agent, the same sampling settings under `defaults`, and `providers`. Each warning names the field, why, and which agents set it.
+- Temperature and max tokens are no longer left as commented-out lines in `config.toml`.
+- A zero-drop test holds every field set in `kitchen-sink.at` to "found in the Codex output" or "on the not-expressible list".
+
 ### [feature] Full MCP tables for Codex (CX-14)
 
 - A Codex `[mcp_servers.<id>]` table now carries every field of the server: `env` as its own table, `args` and tool lists as arrays, `startup_timeout_sec` as a number, and `bearer_token_env_var` for a URL server. The Claude Code `type` key is left out.
