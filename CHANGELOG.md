@@ -52,6 +52,10 @@ All notable changes to agentopology are documented here.
 - Each skill is now `.agents/skills/<id>/SKILL.md` with `name` and `description` frontmatter. Nothing is written under `.codex/skills/` any more, since Codex never loaded those files.
 - A skill with `disable-model-invocation` also gets `agents/openai.yaml` with `policy.allow_implicit_invocation: false`.
 
+### [feature] One guard-script library for the bindings (CX-10)
+
+- The before-agent, before-action and gate-wrapper scripts, and the session spawn, talk and prompt-log guards, are now built in `src/bindings/lib/guards.ts` from a platform record (project-dir variable, folders, hook payload field names, whether a hook can ask). The Claude Code scaffold is byte-identical to before for every example and fixture, held by a golden test. A Codex platform record builds the same guards with no `CLAUDE_PROJECT_DIR` and no `.claude` paths in them. Nothing is wired into the Codex binding yet.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
