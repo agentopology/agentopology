@@ -31,7 +31,7 @@ import type {
 } from "../parser/ast.js";
 import type { PlatformFile } from "../sync/index.js";
 import { extractSectionUntilKnownHeading, CLAUDE_CODE_STRUCTURAL_HEADINGS } from "../sync/index.js";
-import { runParts } from "../parser/run.js";
+import { runParts, isShellCommand } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // YAML frontmatter parser (minimal, no deps)
@@ -753,6 +753,19 @@ export function hookId(event: string, matcher: string, type: string, command: st
   return /^[a-z]/.test(id) ? id : `hook-${id}`;
 }
 
+/**
+ * A command hook whose script word is a bare name (no '/', no script
+ * extension, no interpreter before it) that is not a file in the project and
+ * that isShellCommand does not already run as written: a tool on PATH.
+ */
+function isBarePathTool(hook: HookDef, onDisk: Set<string>): boolean {
+  if ((hook.type ?? "command") !== "command" || !hook.run || isShellCommand(hook.run)) return false;
+  const { interpreter, script } = runParts(hook.run);
+  if (interpreter || !script || script.includes("/")) return false;
+  if (/\.(?:sh|bash|py|mjs|cjs|js|ts|rb|pl)$/.test(script)) return false;
+  return /^[A-Za-z0-9_][A-Za-z0-9_.@+-]*$/.test(script) && !onDisk.has(script);
+}
+
 /** `id`, or `id-2`, `id-3`... when it is already taken; records the result. */
 function uniqueId(id: string, taken: Set<string>): string {
   let out = id;
@@ -991,7 +1004,12 @@ export function importClaudeCode(
   if (settingsFile) {
     const parsed = parseSettingsJson(settingsFile.content);
     settings = parsed.settings;
-    hooks = parsed.hooks;
+    // S-11 (c): a bare PATH tool (`chunk validate`) would scaffold as the
+    // topology's own scripts/chunk stub. Unless the project holds that file,
+    // write it as `command chunk validate`: the shell runs it identically,
+    // and every binding emits it as written.
+    const onDisk = new Set(files.map((f) => f.path.replace(/\\/g, "/").replace(/^.*\//, "")));
+    hooks = parsed.hooks.map((h) => (isBarePathTool(h, onDisk) ? { ...h, run: `command ${h.run.trim()}` } : h));
   }
 
   // 4. Parse .mcp.json

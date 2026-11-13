@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a hook that is plain shell scaffolds as written, not as a stub script (S-11)
+
+- Scaffold read the first word of every command hook as a script of the topology: `jq -r ... | ...` became `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/jq" ...` with a TODO stub named `jq`, so the hook stopped working while `validate` passed. In the 12-repo scan this hit 14 of 32 imported hooks in 6 repos. A `run:` is now emitted as written, with no stub, when its first word is a shell builtin or keyword (`for`, `if`, `case`, `while`, `until`, `cd`, `export`, `source`, `.`, `eval`, `exec`, `command`, and the earlier `exit`, `true`, `echo`, ...), an assignment, or a package runner (`uv`, `npx`, `pnpm`, `yarn`, `bunx`, `pipx`, `poetry`, `bun`, `deno`), or when it holds `|`, `&&`, `||`, `;`, `>`, `<`, `$(` or a backtick outside quotes, on Claude Code and Codex. A bare name keeps its meaning (the topology's `scripts/<name>`); `import` writes a bare PATH tool that is not a file in the project as `command <tool> ...`.
+
 ### [fix] Fixed: a hook that opens with a shell assignment validates and scaffolds as written (S-10)
 
 - Found in the same scan: an inline settings.json hook such as `branch=$(git rev-parse ...); if [ ... ]; then ...; fi` failed V96 ("its first word is not a command or path"), and a binding would have stubbed a script named after it. A `run:` whose first word is a variable assignment (`NAME=...`) is now a shell command run as written, like `exit 2`; the unquoted-text checks (non-ASCII, arrows, a bare parenthesis) still apply.
@@ -14,7 +18,7 @@ All notable changes to agentopology are documented here.
 
 ### [fix] Fixed: hook commands with quotes and variables survive import exactly (S-01)
 
-- The serializer wrote a `"` inside a value as `\"`, but the parser never decoded it, so `node "$CLAUDE_PROJECT_DIR/a.mjs"` came back as `node \"$CLAUDE_PROJECT_DIR/a.mjs\"`. A quoted value now decodes `\"` and `\\`, and the serializer escapes `\` as well as `"`, so import → serialize → parse gives the same command. A hand-written quoted value that held `\\` now reads as one backslash.
+- The serializer wrote a `"` inside a value as `\"`, but the parser never decoded it, so `node "$CLAUDE_PROJECT_DIR/a.mjs"` came back as `node \"$CLAUDE_PROJECT_DIR/a.mjs\"`. A quoted value now decodes `\"` and `\\`, and the serializer escapes `\` as well as `"`, so import → serialize → parse gives the same command. `\"` inside a quoted value now reads as `"`, and `\\` as one backslash: an existing .at with `\"` in a description reads more correctly; no .at in this repo holds `\\`.
 - V96 read `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` as "not a command or path", and took the script of `node "$CLAUDE_PROJECT_DIR/x.mjs"` to be `x.mjs"`. A word that starts with the project-dir variable (quoted or not, `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PROJECT_DIR:-.}`) is now read as the project path `./…` by V96 and the bindings. Prose is still refused; other variables (`"$HOME"/x.sh`) are unchanged.
 
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)

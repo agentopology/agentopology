@@ -120,17 +120,35 @@ export function proseInRun(run: string): string | null {
 /** A shell variable assignment opening a line: `branch=$(git ...)`. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** Shell builtins a `run:` may be written as directly (`exit 2`, `true`). */
-const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
+/**
+ * First words that make `run:` shell, not a script (S-11): builtins and
+ * keywords (`exit 2`, `for f in ...`, `cd dir && ...`, `command tool`), and
+ * package runners, which run a package and never a project script
+ * (`uv run x`, `npx tool@1`).
+ */
+const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:|for|if|case|while|until|cd|export|source|\.|eval|exec|command)$/;
+const PACKAGE_RUNNER = /^(?:uv|npx|pnpm|yarn|bunx|pipx|poetry|bun|deno)$/;
+
+/** A shell operator outside quotes: | && || ; > < $( or a backtick. */
+function hasShellOperator(run: string): boolean {
+  const bare = run.replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
+  return /[|;<>`]|&&|\$\(/.test(bare);
+}
 
 /**
- * Whether `run` is a shell command to run as written rather than a script:
- * its first word is a builtin. `run: "exit 2"` used to scaffold a stub script
- * named `exit` that exited 0, so a hook meant to block let everything through.
+ * Whether `run` is a shell command to run as written rather than a script
+ * this topology scaffolds. `run: "exit 2"` used to scaffold a stub script
+ * named `exit` that exited 0, so a hook meant to block let everything
+ * through; `jq ... | ...` and `uv run x` became `bash .../scripts/jq` and a
+ * TODO stub. True when the first word is a builtin, keyword, assignment or
+ * package runner, or the line holds a shell operator outside quotes. A bare
+ * name (`check-review`) still means the topology's own scripts/check-review.
  */
 export function isShellCommand(run: string | undefined): boolean {
-  const first = run?.trim().split(/\s+/)[0] ?? "";
-  return SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first);
+  const text = run?.trim() ?? "";
+  const first = text.split(/\s+/)[0] ?? "";
+  if (!first) return false;
+  return SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first) || PACKAGE_RUNNER.test(first) || hasShellOperator(text);
 }
 
 /**

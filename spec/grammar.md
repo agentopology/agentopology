@@ -1247,7 +1247,16 @@ regex. An MCP tool is `mcp__<server>__<tool>`. Permission-rule syntax
 (`Bash(rm -rf *)`) goes in `if:`, which Claude Code reads on tool events only.
 V107 refuses a matcher that can never match and an `if:` that is never read.
 `run: "exit 2"` runs as written; only exit 2 blocks, and V108 warns on any
-other code. V109 warns when a hook with `strength: refuse` guards a server but
+other code. A command hook's `run:` is emitted as written, with no script
+stub, when its first word is a shell builtin or keyword (`exit`, `true`,
+`false`, `echo`, `printf`, `test`, `[`, `:`, `for`, `if`, `case`, `while`,
+`until`, `cd`, `export`, `source`, `.`, `eval`, `exec`, `command`), a variable
+assignment, or a package runner (`uv`, `npx`, `pnpm`, `yarn`, `bunx`, `pipx`,
+`poetry`, `bun`, `deno`), or when it holds a shell operator outside quotes
+(`|`, `&&`, `||`, `;`, `>`, `<`, `$(`, a backtick). Otherwise its script word
+is a script: a path runs that file (a leading `$CLAUDE_PROJECT_DIR`, quoted or
+braced, is the project root), and a bare name is the topology's own
+`scripts/<name>`. Write a tool on PATH as `command <tool> ...`. V109 warns when a hook with `strength: refuse` guards a server but
 its matcher misses one of the server's tools that the topology names.
 
 ---

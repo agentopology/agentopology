@@ -11,7 +11,7 @@ import { serializeAST } from "../serializer.js";
 import { importFromPlatform, importClaudeCodeWithReport } from "../index.js";
 import type { PlatformFile } from "../../sync/index.js";
 import { isShellCommand, proseInRun } from "../../parser/run.js";
-import { hookCommand } from "../../bindings/claude-code.js";
+import { hookCommand, claudeCodeBinding } from "../../bindings/claude-code.js";
 
 type Entry = [event: string, matcher: string | undefined, command: string];
 
@@ -167,5 +167,56 @@ describe("S-10: a hook one-liner that starts with a shell variable assignment", 
 
   it("still refuses prose", () => {
     expect(proseInRun("x=1 → then retry")).not.toBeNull();
+  });
+});
+
+describe("S-11: a hook that is plain shell scaffolds as written", () => {
+  const scaffoldOf = (ast: ReturnType<typeof parse>) => claudeCodeBinding.scaffold(ast);
+  const settingsCommands = (ast: ReturnType<typeof parse>): string[] => {
+    const file = scaffoldOf(ast).find((f) => f.path === ".claude/settings.json")!;
+    const hooks = JSON.parse(file.content).hooks as Record<string, Array<{ hooks: Array<{ command?: string }> }>>;
+    return Object.values(hooks).flat().flatMap((h) => h.hooks.map((x) => x.command ?? "")).filter((c) => !/gate-|before-/.test(c));
+  };
+
+  // (a) a shell keyword or a package runner, (b) a shell operator outside quotes
+  const verbatim: Array<[form: string, run: string]> = [
+    ["pipeline", "jq -r '.tool_input.file_path' | { read -r f; echo \"$f\"; }"],
+    ["or-chain", "lint-tool update --quiet 2>/dev/null || true"],
+    ["runner", "uv run --no-sync session-start"],
+    ["runner", "npx block-commit@1.0.0"],
+    ["for-loop", "for f in $CLAUDE_FILE_PATHS; do echo \"$f\"; done"],
+    ["cd &&", "cd ${CLAUDE_PROJECT_DIR:-.} && npm test"],
+  ];
+
+  it.each(verbatim)("%s: hookCommand keeps the run as written", (_form, run) => {
+    expect(isShellCommand(run)).toBe(true);
+    expect(hookCommand(run, "pilot")).toBe(run);
+  });
+
+  it("a script run is still a script, and an operator inside quotes is data", () => {
+    expect(isShellCommand("scripts/check.sh")).toBe(false);
+    expect(isShellCommand("check-review")).toBe(false);
+    expect(isShellCommand('scripts/check.sh "a|b"')).toBe(false);
+    expect(isShellCommand("python3 scripts/x.py --mode 'a;b'")).toBe(false);
+  });
+
+  it("import then scaffold: settings.json commands equal the originals, no stubs", () => {
+    const ast = parse(importAt([settingsWith(verbatim.map(([, run]) => ["PreToolUse", "Bash", run]))]));
+    expect(settingsCommands(ast).sort()).toEqual(verbatim.map(([, run]) => run).sort());
+    expect(scaffoldOf(ast).filter((f) => /\/scripts\/(jq|lint-tool|uv|npx|for|cd)$/.test(f.path))).toEqual([]);
+  });
+
+  it("(c) import writes `command <run>` for a bare PATH tool, and scaffold keeps it", () => {
+    const ast = parse(importAt([settingsWith([["Stop", undefined, "chunk validate"]])]));
+    expect(ast.hooks[0].run).toBe("command chunk validate");
+    expect(settingsCommands(ast)).toEqual(["command chunk validate"]);
+    expect(scaffoldOf(ast).some((f) => f.path.endsWith("/scripts/chunk") || f.path.endsWith("/scripts/command"))).toBe(false);
+    expect(errors(importAt([settingsWith([["Stop", undefined, "chunk validate"]])]))).toEqual([]);
+  });
+
+  it("(c) a bare name that is a file in the project is left alone", () => {
+    const tool = { path: "tools/chunk", content: "#!/bin/sh\n" } as PlatformFile;
+    const ast = parse(importAt([settingsWith([["Stop", undefined, "chunk validate"]]), tool]));
+    expect(ast.hooks[0].run).toBe("chunk validate");
   });
 });
