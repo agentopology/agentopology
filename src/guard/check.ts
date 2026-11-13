@@ -175,7 +175,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
       const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
-      const indirect = "a command that runs the step indirectly (bash -c, eval, a script that calls it) is not seen";
+      const indirect = "a step named through a variable, an alias, a function or a script that calls it is not seen (bash -c and eval with the step written out are)";
       if (problems.length) {
         items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect] });
       } else {
