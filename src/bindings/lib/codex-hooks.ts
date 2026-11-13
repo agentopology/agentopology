@@ -13,11 +13,21 @@
  * @module
  */
 
-import type { AgentNode, HookDef, TopologyAST } from "../../parser/ast.js";
+import type { AgentNode, GateNode, HookDef, TopologyAST } from "../../parser/ast.js";
+import { gateAnchors } from "../../parser/ast.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
 import { HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
 import type { GeneratedFile } from "../types.js";
 import { shellStub } from "./stub.js";
+import {
+  CODEX_GUARDS,
+  checkableActionGate,
+  gateWiring,
+  generateBeforeActionScript,
+  generateBeforeAgentScript,
+  generateGateWrapperScripts,
+  getDelegationMode,
+} from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
 const UNIVERSAL_EVENTS: Record<string, string | null> = {
@@ -163,6 +173,58 @@ export function ifFilterScript(): GeneratedFile {
   };
 }
 
+/**
+ * Hook timeout for the generated guards, in seconds. A guard that is cut off
+ * lets the command run (probe P10), so this stays well above what a guard
+ * needs: jq, a ledger read, and a gate's own check script.
+ */
+export const GUARD_TIMEOUT = 120;
+
+/** The command a guard script is registered with: anchored at the repository root. */
+function guardCommand(ast: TopologyAST, file: string): string {
+  return `bash ${REPO_ROOT.slice(0, -1)}/${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}"`;
+}
+
+/** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
+export function codexGateCommand(run: string, _topology: string): string {
+  if (isShellCommand(run)) return run.trim();
+  const { interpreter, script, args } = runParts(run);
+  const interp = interpreter ?? (script.endsWith(".py") ? "python3" : "bash");
+  const where = script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
+  return [interp, where, ...args].join(" ");
+}
+
+/** The guard scripts and their `hooks.json` entries (CX-9, CX-11). */
+export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; entries: Array<{ event: string; entry: Record<string, unknown> }> } {
+  const scripts: GeneratedFile[] = [...generateGateWrapperScripts(ast, CODEX_GUARDS, codexGateCommand)];
+  for (const s of scripts) s.executable = true;
+  const entries: Array<{ event: string; entry: Record<string, unknown> }> = [];
+  const beforeAgent = generateBeforeAgentScript(ast, CODEX_GUARDS);
+  if (beforeAgent) {
+    scripts.push(beforeAgent);
+    // Probe P3: a subagent spawn is the tool collaborationspawn_agent.
+    entries.push({ event: "PreToolUse", entry: { matcher: "collaborationspawn_agent", hooks: [{ type: "command", command: guardCommand(ast, "before-agent.sh"), timeout: GUARD_TIMEOUT }] } });
+  }
+  const beforeAction = generateBeforeActionScript(ast, CODEX_GUARDS);
+  if (beforeAction) {
+    scripts.push(beforeAction);
+    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [{ type: "command", command: guardCommand(ast, "before-action.sh"), timeout: GUARD_TIMEOUT }] } });
+  }
+  // A gate after an agent runs when that agent stops (SubagentStop; the matcher is the agent type, probe P4).
+  if (getDelegationMode(ast) !== "inline") {
+    for (const node of ast.nodes) {
+      if (node.type !== "gate") continue;
+      const gate = node as GateNode;
+      if (!scriptNameFromRun(gate.run) || gate.behavior === "advisory") continue;
+      if (checkableActionGate(ast, gate) || gateWiring(ast, gate).kind !== "subagent-stop") continue;
+      for (const anchor of gateAnchors(gate, "after")) {
+        entries.push({ event: "SubagentStop", entry: { matcher: anchor, hooks: [{ type: "command", command: guardCommand(ast, `gate-${gate.id}.sh`), timeout: GUARD_TIMEOUT }] } });
+      }
+    }
+  }
+  return { scripts, entries };
+}
+
 /** What the Codex binding writes for the topology's hooks. */
 export interface CodexHooksOutput {
   /** The `.codex/hooks.json` file, or null when no hook is registered. */
@@ -207,6 +269,10 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
     (hooks[event] ??= []).push(entry);
   }
   if (usesFilter) scripts.push(ifFilterScript());
+
+  const guards = buildCodexGuards(ast);
+  scripts.push(...guards.scripts);
+  for (const { event, entry } of guards.entries) (hooks[event] ??= []).push(entry);
 
   const hooksJson = Object.keys(hooks).length > 0
     ? { path: ".codex/hooks.json", content: JSON.stringify({ hooks }, null, 2) + "\n", category: "machine" as const }

@@ -1,0 +1,43 @@
+# codex-gates.at: public fixture for the Codex gates (CX-9, CX-11, CX-15).
+# A script step behind a ledger gate, a gate before an agent, and a human
+# approval before an agent. Models are Codex ones: the Codex scaffold refuses
+# Claude model names.
+
+topology ship : [pipeline] {
+  meta { version: "1.0.0" description: "Render, approve, then publish" }
+  orchestrator { model: gpt-5.2 handles: [render, publish, editor] }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  action publish {
+    kind: external
+    commands: ["./tool publish", "./tool republish"]
+    unit-from: "./tool (?:re)?publish (\S+)"
+  }
+  human approve {
+    description: "The editor approves before editing"
+  }
+  agent editor {
+    model: gpt-5.2
+    description: "Edits the rendered piece"
+  }
+  records {
+    record trace { path: "logs/{unit}/trace.jsonl" }
+  }
+  gates {
+    gate publish-ready {
+      after: render
+      before: publish
+      ledger: trace
+      on-fail: halt
+    }
+    gate render-check {
+      after: render
+      before: editor
+      run: "scripts/render-check.sh"
+      on-fail: halt
+    }
+  }
+  flow { render -> approve -> editor -> publish }
+}

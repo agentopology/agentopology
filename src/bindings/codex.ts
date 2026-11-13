@@ -44,6 +44,7 @@ import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
 import { buildCodexHooks } from "./lib/codex-hooks.js";
+import { checkableActionGate, gateWiring } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
 
@@ -417,6 +418,15 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     sections.push("");
   }
   sections.push(`Version: ${ast.topology.version}`);
+  if (buildCodexHooks(ast).hooksJson) {
+    sections.push("");
+    sections.push(
+      "**Hooks need your trust.** Codex skips a project hook that has not been reviewed, with no warning. " +
+        "Open `/hooks` in Codex, review the hooks in `.codex/hooks.json`, and trust them. " +
+        "Until you do, none of the guards below is active, so treat every guard as unverified. " +
+        "A hook is a guardrail, not a sandbox. agentopology never writes a trust entry for you.",
+    );
+  }
   if (ast.topology.patterns.length > 0) {
     sections.push(`Patterns: ${ast.topology.patterns.join(", ")}`);
   }
@@ -849,7 +859,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (gate.onFail) sections.push(`- **On fail:** ${gate.onFail}`);
       if (gate.retry != null) sections.push(`- **Retry:** ${gate.retry}`);
       if (gate.timeout) sections.push(`- **Timeout:** ${gate.timeout}`);
-      sections.push(`- **Enforcement:** script-level — run gate script manually between agents`);
+      sections.push(`- **Enforcement:** ${gateEnforcementNote(ast, gate)}`);
       sections.push("");
     }
   }
@@ -1178,6 +1188,16 @@ function generateMemory(ast: TopologyAST): GeneratedFile[] {
 // Gate scripts
 // ---------------------------------------------------------------------------
 
+/** How a gate is held on Codex, in one sentence for AGENTS.md. */
+function gateEnforcementNote(ast: TopologyAST, gate: GateNode): string {
+  if (gate.behavior === "advisory") return "advisory — reported, never blocks";
+  if (checkableActionGate(ast, gate)) return "hook — `.codex/scripts/" + ast.topology.name + "/before-action.sh` refuses the step's command until the ledger shows the gate held (active once you trust the hook with `/hooks`)";
+  const wiring = gateWiring(ast, gate);
+  if (wiring.kind === "before-agent") return "hook — `before-agent.sh` refuses to start the agent until the gate script passes (active once you trust the hook with `/hooks`)";
+  if (wiring.kind === "subagent-stop") return "hook — `gate-" + gate.id + ".sh` runs when the agent stops (active once you trust the hook with `/hooks`)";
+  return "script-level — run `.codex/scripts/" + ast.topology.name + "/gate-" + gate.id + ".sh` between the steps";
+}
+
 /** Generate gate script stubs under .codex/scripts/. */
 function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -1191,7 +1211,8 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!scriptName) continue;
     files.push({
       path: `.codex/scripts/${scriptName}`,
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`),
+      // A gate nobody has written must not pass (probe P10: only exit 2 blocks).
+      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
       category: "script",
       executable: true,
     });
@@ -1657,8 +1678,9 @@ export const codexBinding: BindingTarget = {
 
     // 7. Hooks: .codex/hooks.json and the scripts behind it
     const hooks = buildCodexHooks(ast);
+    files.push(...hooks.scripts);
     if (hooks.hooksJson) {
-      files.push(hooks.hooksJson, ...hooks.scripts);
+      files.push(hooks.hooksJson);
       codexWarn("[codex] .codex/hooks.json written: Codex skips a new or changed hook until you review and trust it with /hooks");
     }
 

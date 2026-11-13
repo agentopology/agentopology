@@ -176,6 +176,18 @@
   ".claude/settings.json": "806fb9518c635b8190f2f5db7bf2a31a99ee108c66b151bcbf3b4f291c618b89",
   ".claude/rules/simple-pipeline.md": "dab304ffd9ba1344a9a96a3a1f078f65235157bbb564a6aa3f92efc2ba099bdc"
  },
+ "src/__tests__/e2e/fixtures/codex-gates.at": {
+  ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
+  ".claude/skills/ship/scripts/action-publish.sh": "2c7ef4222439479a316dc465e5c3f08be80dd4197c6180f8189017bc1725a618",
+  ".claude/agents/editor/AGENT.md": "2f96436d7154307e5b406a38116a13e6eb966bc20b85ccb5172319074e96dbf4",
+  ".claude/skills/ship/SKILL.md": "b4008a03ec825a4168e3ed9aad4cbb80a11016a5b055897ef1989e197d52822d",
+  ".claude/skills/ship/scripts/render-check.sh": "b7b7fbb4de0856551ec6b7f9dcf0a2be2b4d2b3a0fff883685084a45f5761549",
+  ".claude/skills/ship/scripts/gate-render-check.sh": "cbd13fc545c01207bdaa284247e9b58023459f4542c5ff1a8f49edeb65b41a54",
+  ".claude/skills/ship/scripts/before-agent.sh": "32046f11cb11d261e26aeb3287e16a5b1766e2efa74217a7ac833b5f087f7de4",
+  ".claude/skills/ship/scripts/before-action.sh": "97a5c0a820253d7b0f276611dcf6feb62808b65d7ee0b1c39a0a2aad376f825b",
+  ".claude/settings.json": "e7a2cf95d890a4f989da6f62b392f72439bb96871e399845236dfa76a69a4ca9",
+  ".claude/rules/ship.md": "9002c5e22cbb2de4f56401e5c6fd19a8d61890d1c04b3367f55123078b780127"
+ },
  "src/__tests__/e2e/fixtures/compile.at": {
   ".claude/skills/compile/scripts/action-intake.sh": "9a3ab1f296020ed58f7f8868dd35dd8c2672e6f09ffe2062d627a97d68be8516",
   ".claude/skills/compile/scripts/action-fetch.sh": "4c5726cfc935d3ca2247e41b7a35ae0c29dea16bdd6f16dd628378f2a27e4ec7",
