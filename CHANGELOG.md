@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a hook that opens with a shell assignment validates and scaffolds as written (S-10)
+
+- Found in the same scan: an inline settings.json hook such as `branch=$(git rev-parse ...); if [ ... ]; then ...; fi` failed V96 ("its first word is not a command or path"), and a binding would have stubbed a script named after it. A `run:` whose first word is a variable assignment (`NAME=...`) is now a shell command run as written, like `exit 2`; the unquoted-text checks (non-ASCII, arrows, a bare parenthesis) still apply.
+
 ### [fix] Fixed: an imported agent's output-format is never a markdown fence (S-09)
 
 - The importer read `Output format:` from an agent file's body with a pattern that crossed the newline, so a brief that says "Output format:" above a fenced example imported as `output-format: ```` and failed V36. The value must now be on the same line and be one of `text`, `json`, `json-schema`; any other value is dropped, and the import says so in its header (`# Import warning: agent x: "Output format: markdown" is not text, json or json-schema; dropped`). The body is still read, because scaffold writes `Output format: json` there.

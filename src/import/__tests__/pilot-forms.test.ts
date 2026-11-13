@@ -10,6 +10,8 @@ import { validate } from "../../parser/validator.js";
 import { serializeAST } from "../serializer.js";
 import { importFromPlatform, importClaudeCodeWithReport } from "../index.js";
 import type { PlatformFile } from "../../sync/index.js";
+import { isShellCommand, proseInRun } from "../../parser/run.js";
+import { hookCommand } from "../../bindings/claude-code.js";
 
 type Entry = [event: string, matcher: string | undefined, command: string];
 
@@ -138,5 +140,32 @@ describe("S-09: an agent's output-format is never a markdown fence", () => {
       'agent prose: "Output format: markdown" is not text, json or json-schema; dropped',
     ]);
     expect(importAt([prose])).toContain('# Import warning: agent prose: "Output format: markdown"');
+  });
+});
+
+describe("S-10: a hook one-liner that starts with a shell variable assignment", () => {
+  const commands = [
+    "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true); if [ \"$branch\" = \"main\" ]; then echo 'on main' >&2; fi",
+    "files=$(echo \"$CLAUDE_FILE_PATHS\" | tr ' ' '\\n' | grep '\\.py$' || true); [ -z \"$files\" ] || ruff format $files",
+  ];
+  const entries: Entry[] = commands.map((c) => ["PostToolUse", "Edit|Write", c]);
+
+  it("validates with 0 errors (V96) and round-trips", () => {
+    const source = importAt([settingsWith(entries)]);
+    expect(errors(source)).toEqual([]);
+    const first = parse(source);
+    expect(first.hooks.map((h) => h.run)).toEqual(commands);
+    expect(parse(serializeAST(first)).hooks).toEqual(first.hooks);
+  });
+
+  it("scaffolds as written, not as a script stub", () => {
+    for (const c of commands) {
+      expect(isShellCommand(c)).toBe(true);
+      expect(hookCommand(c, "pilot")).toBe(c);
+    }
+  });
+
+  it("still refuses prose", () => {
+    expect(proseInRun("x=1 → then retry")).not.toBeNull();
   });
 });

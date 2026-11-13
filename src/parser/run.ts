@@ -102,17 +102,23 @@ export function proseInRun(run: string): string | null {
   if (/\r|\n/.test(text)) return "it spans several lines";
 
   const first = projectWord(text.split(/\s+/)[0]);
-  if (/[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
-  if (!EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
+  // A shell line that opens with an assignment (`f=$(...); ...`) runs as
+  // written (isShellCommand): no first word or script name to judge (S-10).
+  const assigns = ASSIGNMENT.test(first);
+  if (!assigns && /[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
+  if (!assigns && !EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
 
   // Judge only what the shell would see unquoted.
   const bare = text.replace(/'[^']*'|"[^"]*"/g, "''");
   if (/[^\x00-\x7F]/.test(bare)) return "it contains non-ASCII text outside quotes";
   if (/\s->\s|\s=>\s|\s<=\s|\s>=\s/.test(bare)) return "it contains an arrow or comparison (->, >=, <=)";
   if (/(^|[^$])\(/.test(bare)) return "it contains an unquoted parenthesis";
-  if (scriptNameFromRun(text) === null) return "no script file name can be derived from it";
+  if (!assigns && scriptNameFromRun(text) === null) return "no script file name can be derived from it";
   return null;
 }
+
+/** A shell variable assignment opening a line: `branch=$(git ...)`. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /** Shell builtins a `run:` may be written as directly (`exit 2`, `true`). */
 const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
@@ -123,7 +129,8 @@ const SHELL_BUILTIN = /^(?:exit|true|false|echo|printf|test|\[|:)$/;
  * named `exit` that exited 0, so a hook meant to block let everything through.
  */
 export function isShellCommand(run: string | undefined): boolean {
-  return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
+  const first = run?.trim().split(/\s+/)[0] ?? "";
+  return SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first);
 }
 
 /**
