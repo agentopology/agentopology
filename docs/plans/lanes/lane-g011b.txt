@@ -1,0 +1,21 @@
+You are a cloud build lane for the agentopology repo (TypeScript, the .at compiler, public Apache-2.0). You start with zero context; everything you need is here and in the spec.
+
+SPEC: run `git fetch origin plan/overnight && git show origin/plan/overnight:docs/plans/0.11-continuous.md`. Read the whole file, then build ONLY the section(s) named below. The repo's CLAUDE.md explains the layout.
+
+BRANCHES: base = origin/feat/i011b-candidate. Create your branch feat/i011b-integration-fixes from it. Push ONLY that branch: `git push -u origin feat/i011b-integration-fixes`. Never push main, plan/* or integrate/* branches. Never force-push, never git stash, never open PRs or issues, never edit .github/, never use secrets, never deploy or publish. Do not add the docs/plans file to your branch.
+
+METHOD (TDD): for each "Done when" item, write the planted test first (vitest, under src/**/__tests__ or src/__tests__/e2e), run it, see it fail, then implement until it passes. Prefix test names with the ticket id in brackets, e.g. "[N44a] ...". Commit after each green item, small commits; message style "feat(scope): what (TICKET)". End every commit message with:
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+FILES: you may edit any file needed to make the merged tree green and correct, minimally; never delete or skip a test. Add a CHANGELOG block only for real fixes you make.
+
+GATES before your final push, with real exit codes: `npm ci`, `npx tsc --noEmit`, `npx vitest run` (full suite). Known pre-existing failure when running as root: import-project.test.ts [I5] (EACCES); ignore only that one. Any other red: fix it or report it, never skip or delete a test.
+
+PUSH after every green item (so work survives), and finish by verifying with `git ls-remote origin feat/i011b-integration-fixes` that the remote head equals your local HEAD.
+
+FINAL REPORT (your last message): branch and head sha; commits (one line each); files changed; each Done-when item with PASS/FAIL and the test name; gate exit codes and the vitest counts (passed/failed/skipped); anything unfinished or any decision you made that the spec left open.
+
+YOUR SECTION(S): integration gate for the rest of 0.11. Your base merges three lanes on top of integrate/0.11: M1 (VERIFIED_ON 2.1.323, N47), G1 (T-08 inventory roots/--user/union, L-4 needs block) and V1 (VZ-4 offline shell, VZ-7 Guards lens). Read sections M1, G1 and V1 of the spec for what each promised.
+1. GATE: `rm -rf node_modules dist && npm ci && npx tsc --noEmit && npm run build && npx vitest run`, real exit codes, full counts, every failing test name. Known root-only failure: import-project.test.ts [I5]. Likely reds from the merge: text-pin or inventory-pin snapshots recorded before another lane's change (VERIFIED_ON moved to 2.1.323; new validate lines); README or spec rule counts (G1 added rules). Fix each at its cause; when you re-record a snapshot, the report lists exactly which lines changed and why each is expected.
+2. REVIEW: read `git diff origin/integrate/0.11...HEAD` for correctness bugs, the way a strict reviewer would: guards that fail open, a validate rule that never fires, a path check that can be walked around (absolute paths, `..`, symlinks in inventory roots), HTML injection in the visualizer page (any field inlined without the existing escaping), `--user` reading the real home in a test, a done-when in the spec that has no test. For each P0 or P1 you find: a planted test first (name it "[I011b] ..."), then the fix. List P2 findings in the report without fixing them.
+3. Re-run the full GATE at the end and report it.
