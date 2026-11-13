@@ -660,3 +660,46 @@ describe("[F-13] Claude Code: a rescaffold replaces the topology's own SubagentS
     expect(after.filter((g) => g.hooks.some((h) => h.command.includes("my-hooks/on-stop.sh"))).map((g) => g.matcher)).toEqual(["writer"]);
   });
 });
+
+describe.skipIf(!hasJq)("[F-6] Claude Code: a gated step's action script checks the gate itself", () => {
+  const run = (args: string[], env: Record<string, string> = {}) => {
+    const e = { ...process.env } as Record<string, string>;
+    delete e.CLAUDE_PROJECT_DIR;
+    return spawnSync("bash", [".claude/skills/ship/scripts/action-publish.sh", ...args], { cwd: root, env: { ...e, ...env }, encoding: "utf8" });
+  };
+  const setup = () => {
+    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), root, claudeCodeBinding);
+    // the step's side effect: ./tool records what it ran
+    fs.writeFileSync(at("tool"), `#!/usr/bin/env bash\necho "$*" >> "${root}/ran.txt"\n`, { mode: 0o755 });
+  };
+  it("[F-6] with no ledger, bash action-publish.sh ep1 exits non-zero and ./tool publish never runs", () => {
+    setup();
+    const r = run(["ep1"]);
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(r.stderr).toMatch(/publish-ready/);
+    expect(fs.existsSync(at("ran.txt"))).toBe(false);
+  });
+  it("[F-6] with a not-ok last record it still does not run", () => {
+    setup();
+    fs.mkdirSync(at("logs/ep1"), { recursive: true });
+    fs.writeFileSync(at("logs/ep1/trace.jsonl"), JSON.stringify({ step: "render", unit: "ep1", ok: false }) + "\n");
+    expect(run(["ep1"]).status).not.toBe(0);
+    expect(fs.existsSync(at("ran.txt"))).toBe(false);
+  });
+  it("[F-6] with an ok record for the unit it runs, from any cwd and with CLAUDE_PROJECT_DIR set or not", () => {
+    setup();
+    fs.mkdirSync(at("logs/ep1"), { recursive: true });
+    fs.writeFileSync(at("logs/ep1/trace.jsonl"), JSON.stringify({ step: "render", unit: "ep1", ok: true }) + "\n");
+    const r = run(["ep1"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.readFileSync(at("ran.txt"), "utf8")).toContain("publish");
+    expect(run(["ep1"], { CLAUDE_PROJECT_DIR: root }).status).toBe(0);
+    // an ok record for another unit does not open ep2
+    expect(run(["ep2"]).status).not.toBe(0);
+  });
+  it("[F-6] an ungated step's script has no gate check", () => {
+    const files = quiet(() => claudeCodeBinding.scaffold(parse(fs.readFileSync(FIXTURE, "utf8"))));
+    expect(files.find((f) => f.path.endsWith("action-render.sh"))!.content).not.toContain("before-action.sh");
+    expect(files.find((f) => f.path.endsWith("action-publish.sh"))!.content).toContain("before-action.sh");
+  });
+});

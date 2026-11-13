@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a gated step's generated action script checks the gate itself (F-6)
+
+- Claude Code scaffold writes `.claude/skills/<t>/scripts/action-<step>.sh`, whose body runs the step's commands. Only the `PreToolUse` hook on Bash checked the gate, so `bash .claude/skills/ship/scripts/action-publish.sh ep1` reached `./tool publish` with no ledger at all. The script of a gated step now hands each command, with its arguments, to `before-action.sh` (the same check, reused, not copied) and exits 2 before running anything when a gate is not met. The `action-<step>.sh` of every gated step in the examples and fixtures changes.
+
 ### [fix] Fixed: a Claude Code rescaffold replaces a gate's old SubagentStop group (F-13)
 
 - R-8 ownership read a Claude Code command as whitespace tokens equal to a script path, but scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`, which has no such token. After a gate's `after:` moved, the rescaffold kept the stale group next to the new one, and the gate ran on both agents. A path right after `$CLAUDE_PROJECT_DIR/` is now read too. The new test scaffolds with the CLI, moves `after: writer` to `after: editor`, rescaffolds, and finds exactly one group for the gate, with the user's own group untouched; the old test fed a form the generator never writes.

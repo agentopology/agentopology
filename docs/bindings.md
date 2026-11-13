@@ -114,6 +114,8 @@ The `hooks` block maps to the platform's event system. The binding must:
 3. Generate hook configuration in the platform's format
 4. Make a `strength: refuse` hook fail closed: where the platform lets a hook that cannot start or times out through, the binding asks for the strongest block it has
 
+On Claude Code, the script scaffold writes for a gated step (`.claude/skills/<topology>/scripts/action-<step>.sh`) checks the step's gates itself before it runs anything: it hands each of its commands, with the script's arguments (the unit), to `before-action.sh`, the same check the `PreToolUse` hook on Bash makes, and exits 2 when that refuses. Running the script by hand, or from another script, does not skip the gate. It needs `jq`, and without it the step does not run.
+
 On Claude Code, every `PreToolUse` hook with `strength: refuse` (in `hooks {}` or on an agent), and every generated guard, gets `"onFailure": "block"`: a hook that cannot start, times out or exits other than 0 or 2 then blocks the call. Claude Code reads that field from 2.1.295; `validate` warns with `CC-onfailure` when the Claude Code it checks against (the installed one) is older. `before-agent.sh` normalizes `subagent_type` before it compares, as on Codex (format characters, case, space, a leading path, trailing punctuation).
 
 ---

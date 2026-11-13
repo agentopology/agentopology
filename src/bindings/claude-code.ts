@@ -43,6 +43,7 @@ import {
   isRegisteredSubagentType,
   runsAsSkill,
   shellQuote,
+  stepMatchWords,
 } from "./lib/guards.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
@@ -416,6 +417,35 @@ function formatSchemaField(f: SchemaFieldDef): string {
 // Section generators
 // ---------------------------------------------------------------------------
 
+/**
+ * F-6: lines that hold a gated step's own script to its gates. Running
+ * `action-<id>.sh` by hand reached the step without the gate, since only the
+ * PreToolUse hook on Bash checked it. The script now hands each of its commands
+ * (the words before any placeholder, then the script's arguments, which carry
+ * the unit) to before-action.sh, the same check the hook makes, and exits 2
+ * before running anything when that refuses. Empty for an ungated step.
+ */
+function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
+  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
+  if (!gated || !buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) return [];
+  const name = ast.topology.name;
+  const words = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))];
+  return [
+    "# Gate check (agentopology): this step runs only when its gates hold. Its commands go to",
+    "# before-action.sh, the check the PreToolUse hook on Bash makes, so running this script by",
+    "# hand does not skip a gate. Arguments are added to each command (the unit, e.g. ep1).",
+    'AT_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"',
+    'AT_PROJECT="${CLAUDE_PROJECT_DIR:-$AT_HERE}"',
+    "at_gate() {",
+    `  command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check the gates of step ${action.id}, so it does not run" >&2; exit 2; }`,
+    `  jq -n --arg c "$*" '{tool_name: "Bash", tool_input: {command: $c}}' | CLAUDE_PROJECT_DIR="$AT_PROJECT" bash "$AT_PROJECT/.claude/skills/${name}/scripts/before-action.sh" \\`,
+    `    || { echo "agentopology: step ${action.id} does not run: a gate before it is not met" >&2; exit 2; }`,
+    "}",
+    ...words.map((w) => `at_gate ${shellQuote(w)} "$@"`),
+    "",
+  ];
+}
+
 /** Generate script stubs for each ActionNode. */
 function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -446,6 +476,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
     // The action's own commands, whatever its kind: an external or report
     // action used to drop them for a TODO line.
     if (action.commands && action.commands.length > 0) {
+      lines.push(...actionGateCheck(ast, action));
       lines.push(...action.commands);
     } else if (!action.kind || action.kind === "inline") {
       // Done by the orchestrator in conversation (the playbook says how).
