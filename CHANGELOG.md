@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Talk guard reads both target fields (N44d)
+
+- Claude Code sends the `SendMessage` target twice, as `to` and `recipient`. The talk guard now uses `to`, or `recipient` when `to` is absent, so a send that names only `recipient` is checked against the talk edges instead of slipping through. When both are present and differ after removing a `[ref]` suffix, trimming and lowercasing, the send is refused with `talk guard: to and recipient disagree` and logged as refused.
+
 ### [fix] Session guards: second review follow-ups (N44c)
 
 - A `permission-mode` with characters other than letters, digits and `-` is no longer written into `.claude/sessions.md` or `scripts/start-sessions.sh`, even with `--allow-invalid`; the launcher is not written and the session gets no start line.

@@ -153,6 +153,37 @@ describe.skipIf(!hasJq)("[N44b-fix] talk guard", () => {
     expect(JSON.stringify(l[0]).length).toBeLessThan(500);
   });
 
+  const both = (to: unknown, recipient: unknown) => JSON.stringify({ tool_name: "SendMessage", tool_input: { to, recipient, recipient_kind: "name", summary: "s", message: "hi", content: "hi", type: "message" } });
+  const recOnly = (recipient: unknown) => JSON.stringify({ tool_name: "SendMessage", tool_input: { recipient, message: "hi" } });
+
+  it("[N44d] to and recipient that disagree are refused and logged", () => {
+    scaffold();
+    const r = run(talkCmd(), both("lane-manager", "lane-text"), as("lane-video"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("talk guard: to and recipient disagree");
+    expect(lines()[0]).toMatchObject({ from: "lane-video", result: "refused" });
+    expect(run(talkCmd(), both("lane-text", "lane-manager"), as("lane-video")).status).toBe(2);
+  });
+
+  it("[N44d] recipient alone on a declared edge is allowed", () => {
+    scaffold();
+    expect(run(talkCmd(), recOnly("lane-manager"), as("lane-video")).status).toBe(0);
+    expect(lines()[0]).toMatchObject({ to: "lane-manager", result: "allowed" });
+  });
+
+  it("[N44d] recipient alone off the edges is refused", () => {
+    scaffold();
+    expect(run(talkCmd(), recOnly("lane-text"), as("lane-video")).status).toBe(2);
+    expect(run(talkCmd(), recOnly(5), as("lane-video")).status).toBe(2);
+  });
+
+  it("[N44d] to and recipient that agree are allowed (also after ref strip and case)", () => {
+    scaffold();
+    expect(run(talkCmd(), both("lane-manager", "lane-manager"), as("lane-video")).status).toBe(0);
+    expect(run(talkCmd(), both("lane-manager", "lane-manager [abc123]"), as("lane-video")).status).toBe(0);
+    expect(run(talkCmd(), both("lane-manager", "Lane-Manager "), as("lane-video")).status).toBe(0);
+  });
+
   it("[N44b-fix] F9 with CLAUDE_PROJECT_DIR unset the log goes to the script's own project root", () => {
     scaffold();
     const r = run(`bash ${at(`${SCRIPTS}/talk-guard.sh`)}`, send("lane-manager"), { AT_SESSION: "lane-video", CLAUDE_PROJECT_DIR: undefined }, "work/deep");
