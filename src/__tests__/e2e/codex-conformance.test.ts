@@ -172,12 +172,12 @@ for (const file of CORPUS) {
       expect(timeouts.filter((t) => t < 60)).toEqual([]);
     });
 
-    it.skipIf(!hasJq)("[CX-15] [C] every command hook runs from a subfolder: found, exits 0 or 2, and its stdout is valid for its event", () => {
+    it.skipIf(!hasJq)("[CX-15] [C] every command hook runs from a subfolder: found, exits 0 or 2 (1 for an unwritten stub, E-1), and its stdout is valid for its event", () => {
       const results = hooks.map((h) => {
         const env = { ...process.env } as Record<string, string>;
         delete env.CLAUDE_PROJECT_DIR;
         const r = spawnSync("/bin/sh", ["-c", h.command], { cwd: sub, input: JSON.stringify(payloadFor(h.event, sub, h.matcher)), env, encoding: "utf8", timeout: 30_000 });
-        const bad = r.status !== 0 && r.status !== 2
+        const bad = r.status !== 0 && r.status !== 2 && !(r.status === 1 && /TODO: /.test(r.stderr))
           ? `exit ${r.status}: ${r.stderr.trim().split("\n").pop()}`
           : r.status === 0 ? checkStdout(h.event, r.stdout) : null;
         return bad ? `${h.event} ${h.matcher ?? ""} ${h.command} → ${bad}` : null;

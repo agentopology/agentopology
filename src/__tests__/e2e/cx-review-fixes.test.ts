@@ -598,3 +598,91 @@ describe("[E-5] guard --check grades a Codex project from .codex/", () => {
     expect(r.stdout).toMatch(/gate publish-ready\s+none/);
   });
 });
+
+const STUB_GATE = `topology ship : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Check, then publish"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [render, publish]
+  }
+  tools {
+    tool render-check {
+      script: "./scripts/render-check.py"
+      lang: python
+      description: "Checks the render"
+    }
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  action publish {
+    kind: external
+    commands: ["./tool publish"]
+  }
+  gates {
+    gate checked {
+      after: render
+      before: publish
+      run: "python3 ./scripts/render-check.py"
+      on-fail: halt
+    }
+  }
+  flow { render -> publish }
+}
+`;
+
+describe("[E-1] every generated stub fails, so a gate that runs one blocks", () => {
+  const hasPy = spawnSync("/bin/sh", ["-c", "command -v python3"]).status === 0;
+  const hasNode = true;
+
+  it.skipIf(!hasJq || !hasPy)("[E-1] Claude Code: a gate whose run: is an unwritten python tool stub blocks the step (exit 2), and guard --check's 'blocks every run' holds", async () => {
+    const { claudeCodeBinding } = await import("../../bindings/claude-code.js");
+    const files = quiet(() => claudeCodeBinding.scaffold(parse(STUB_GATE)));
+    for (const f of files) { fs.mkdirSync(dirname(at(f.path)), { recursive: true }); fs.writeFileSync(at(f.path), f.content); if (f.executable) fs.chmodSync(at(f.path), 0o755); }
+    const script = files.find((f) => f.path.endsWith("/before-action.sh"))!.path;
+    // The check the gate runs is the tool's own stub (the file the tool's script: names, as a tool scaffold writes it).
+    const kitchen = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8");
+    const toolStub = quiet(() => claudeCodeBinding.scaffold(parse(kitchen))).find((f) => f.path.endsWith("/rollback-deploy.py"))!.content;
+    fs.writeFileSync(at("scripts/render-check.py"), toolStub);
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: root } as Record<string, string>;
+    const r = spawnSync("bash", [at(script)], { cwd: root, input: bashPayload("./tool publish"), env, encoding: "utf8" });
+    expect(r.status, r.stdout + r.stderr).toBe(2);
+    const check = cliIn(["guard", writeAt(STUB_GATE), "--check", "--target", "claude-code", "--dir", root]);
+    expect(check.stdout).toContain("blocks every run");
+  });
+
+  it.skipIf(!hasJq || !hasPy)("[E-1] Codex: the same gate blocks the step (exit 2)", () => {
+    scaffoldInto(STUB_GATE);
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "Bash")!.hooks[0].command;
+    const r = runHook(cmd, root, bashPayload("./tool publish"));
+    expect(r.status, r.stderr).toBe(2);
+  });
+
+  it("[E-1] every file carrying the stub marker, from either target, exits non-zero when run", async () => {
+    const { claudeCodeBinding } = await import("../../bindings/claude-code.js");
+    const kitchen = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8");
+    const { codexSource } = await import("../../bindings/__tests__/codex-models.js");
+    const all = [
+      ...quiet(() => claudeCodeBinding.scaffold(parse(kitchen))),
+      ...quiet(() => codexBinding.scaffold(parse(codexSource(kitchen)))),
+      ...quiet(() => codexBinding.scaffold(parse(STUB_GATE))),
+    ];
+    const stubs = all.filter((f) => f.content.includes("AGENTOPOLOGY_STUB"));
+    expect(stubs.length).toBeGreaterThan(5);
+    const passed: string[] = [];
+    for (const f of stubs) {
+      const p = join(root, "stub-" + Math.random().toString(36).slice(2) + f.path.replace(/^.*\./, "."));
+      fs.writeFileSync(p, f.content);
+      const interp = f.path.endsWith(".py") ? "python3" : f.path.endsWith(".js") || f.path.endsWith(".mjs") ? "node" : "bash";
+      if (interp === "python3" && !hasPy) continue;
+      if (interp === "node" && !hasNode) continue;
+      const r = spawnSync(interp, [p], { cwd: root, input: "{}", encoding: "utf8", timeout: 10_000 });
+      if (r.status === 0) passed.push(f.path);
+    }
+    expect(passed, `stubs that exit 0: ${passed.join(", ")}`).toEqual([]);
+  });
+});
