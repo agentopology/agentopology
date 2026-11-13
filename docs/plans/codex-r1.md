@@ -255,3 +255,15 @@ Files owned: `src/bindings/lib/guards.ts` (new), `src/bindings/claude-code.ts`, 
 ### CXc: CX-2 (the Codex contract)
 Build `src/conformance/codex.ts` with the constants of section 4.1, `src/conformance/extract-codex.ts`, `spec/codex/hooks-contract.json`, `spec/codex/config-keys.json`, `spec/codex/features.json`, and `scripts/codex-drift.mjs`, as the CX-2 row says. Fill the snapshot files from the facts in sections 1.1 and 1.2; if learn.chatgpt.com is reachable from your sandbox, extract from the live pages and report any difference from section 1.2; if it is not, say so and build from section 1.2. `PROJECT_FORBIDDEN_KEYS`: the 6 named keys plus the 4 URL keys if you can read them from the config-advanced page; otherwise the 6 and a TODO naming the gap in the report. Do not edit `package.json` (another lane owns it); the report names the npm script line to add. Do not edit `src/conformance/claude-code.ts`.
 Files owned: `src/conformance/codex.ts`, `src/conformance/extract-codex.ts`, `spec/codex/*`, `scripts/codex-drift.mjs`, a new test file `src/__tests__/e2e/codex-contract.test.ts`.
+
+## Lanes, wave 2 (base: `origin/feat/icx-candidate`, which merges the rest of 0.11 and wave 1: CX-2, CX-6, CX-7, CX-10)
+
+First run the full gate on your base. If anything is red besides the known root-only [I5], fix it at its cause before your own tickets, in its own commit ("fix(integration): ..."), and list it in the report.
+
+### CXd: the Codex config and hook chain: CX-4, CX-5, CX-14, CX-23, CX-20, CX-8, CX-13 (in this order)
+Build each ticket exactly as its row says, one commit or more per ticket, pushing after each green ticket. The facts are in sections 1.1, 1.2 and 4.1; the defects (W1-W18, M1-M19) are in section 2. Use the constants in `src/conformance/codex.ts` (built by CX-2) instead of new copies. For CX-4 add a small TOML parser as a devDependency (for tests only; the binding writes TOML itself in `src/bindings/lib/toml.ts`). CX-5: the Codex scaffold refuses a Claude model name (`opus`, `sonnet`, `haiku`, `fable`, any `claude-*`) with exit 1 and a message naming the agent; it does not invent a Codex model. CX-13: where the `codex` binary is not installed, the `execpolicy` part of the test is skipped with a message; the rest runs. Fix W1-W18 as their tickets cover them; a test that pins one of those bugs (for example `bindings.test.ts` pinning `untrusted` or `"opus"`) is changed in the same commit with the reason.
+Files owned: `src/bindings/codex.ts`, `src/bindings/lib/toml.ts`, `src/bindings/lib/codex-hooks.ts`, `src/bindings/lib/codex-rules.ts`, `src/bindings/lib/not-expressible.ts`, `src/conformance/codex.ts`, `src/parser/validator.ts` (Codex warnings only), `package.json`, `package-lock.json`, the Codex tests.
+
+### CXe: the version line per target and Codex inventory: CX-1, CX-18
+Build both as their rows say. CX-1: the Claude Code output stays byte-identical (the text-pin tests prove it). CX-18 builds on the inventory roots that T-08 added.
+Files owned: `src/conformance/index.ts` (new), `src/conformance/claude-code.ts`, `src/cli/index.ts`, `src/inventory/index.ts`, their tests.
