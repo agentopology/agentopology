@@ -37,7 +37,7 @@ afterAll(() => {
 
 const page = (dir?: string) => drawPage(generateVisualization(ast, { facts: collectFacts(ast, { source: SRC, dir }) }));
 
-describe("[VZ-6] the sessions lens, read from the page data", () => {
+describe("[VZ6] the sessions lens, read from the page data", () => {
   it("[VZ-6] which sessions may message which matches the talk edges the binding compiles", () => {
     const m = page().read<any>("sessionsModel()");
     const pageTalks = m.talks.map((t: any) => `${t.from}->${t.to}:${t.kind ?? ""}`).sort();

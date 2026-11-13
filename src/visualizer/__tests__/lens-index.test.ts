@@ -25,7 +25,7 @@ function declaredLine(src: string, type: string, id: string): number | null {
   return null;
 }
 
-describe("[VZ-10] the index lens", () => {
+describe("[VZ10] the index lens", () => {
   for (const file of files) {
     const name = path.relative(ROOT, file);
     it(`[VZ-10] ${name}: every node id has an index row with the parser's line`, () => {

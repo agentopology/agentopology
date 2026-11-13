@@ -42,7 +42,7 @@ function boxes(svg: string): Array<{ id: string; x: number; y: number; w: number
   });
 }
 
-describe("[VZ-5] kitchen-sink.at opens readable", () => {
+describe("[VZ5] kitchen-sink.at opens readable", () => {
   const html = generateVisualization(parse(KITCHEN));
   const out = drawPage(html, { width: 1440, height: 900 });
   const bs = boxes(out.svg);
@@ -145,7 +145,7 @@ const PLANTED = `topology flow-lens : [pipeline] {
   }
 }`;
 
-describe("[VZ-5] the flow lens shows what sits on the flow", () => {
+describe("[VZ5] the flow lens shows what sits on the flow", () => {
   const ast = parse(PLANTED);
   const html = generateVisualization(ast);
   const out = drawPage(html, { width: 1440, height: 900 });

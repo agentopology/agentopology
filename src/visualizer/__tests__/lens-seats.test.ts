@@ -12,7 +12,7 @@ const FILES: Record<string, string> = {
   "kitchen-sink.at": path.join(ROOT, "kitchen-sink.at"),
 };
 
-describe("[VZ-8] the seats lens", () => {
+describe("[VZ8] the seats lens", () => {
   for (const [name, file] of Object.entries(FILES)) {
     const src = fs.readFileSync(file, "utf8");
     const ast = parse(src);

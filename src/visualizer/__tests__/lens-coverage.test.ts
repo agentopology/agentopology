@@ -77,7 +77,7 @@ function printed(args: string[]) {
   return r.stdout;
 }
 
-describe("[VZ-9] the coverage lens", () => {
+describe("[VZ9] the coverage lens", () => {
   it("[VZ-9] the numbers on the page equal the numbers validate --inventory prints", () => {
     const out = printed([]);
     const m = out.match(/coverage: (\d+) of (\d+) live things/)!;
