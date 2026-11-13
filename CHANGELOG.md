@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] `validate --target <binding>` (E-6)
+
+- The Codex warnings (`CX5-*`, `CX8-*`, `CX9-*`, `CX11-*`, `CX13`, `CX20`, `CX23`) appeared only at scaffold, though the CX-23 entry says `validate` with a Codex target shows them. `agentopology validate <file> --target codex` now adds them; plain `validate` stays target-neutral.
+
 ### [fix] Fixed: the Codex scaffold drops no gate description, gate behavior or tool script path (E-4)
 
 - The `AGENTS.md` gate section never printed a gate's `description` or `behavior`, and a tool's stub was written to `.codex/scripts/<id>.<ext>` instead of its declared `script:` path. Both gate fields are now printed, and the tool stub is written where `script:` says, as on Claude Code: a project path is created once and never overwritten, an absolute path is never touched. The Codex zero-drop test now also checks tool scripts, with a fixture that sets all three.

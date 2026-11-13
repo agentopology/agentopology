@@ -87,7 +87,7 @@ ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
-  agentopology validate <file.at> [more.at ...] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user]
+  agentopology validate <file.at> [more.at ...] [--target <binding>] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user]
                        With --inventory: how many live things in the project the .at
                        accounts for (unmapped warns), and what it points at that is not
                        on disk (missing, exits 1). Folders the .at lists in
@@ -400,8 +400,8 @@ function parseArgs(argv: string[]): ParsedArgs {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = []): void {
-  if (more.length) return cmdValidateMany([filePath, ...more], inventory, dir, user);
+function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string): void {
+  if (more.length) return cmdValidateMany([filePath, ...more], inventory, dir, user, target);
   const source = readFile(filePath);
 
   let ast;
@@ -417,7 +417,12 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   );
   console.log("");
 
-  const { results, errors: errorCount, warnings: warningCount } = validateResult(ast, path.resolve(filePath));
+  // E-6: --target <binding> adds that binding's warnings (CX* for codex).
+  if (target && !(target in bindings)) {
+    console.error(c.red(`Error: unknown target "${target}".`));
+    process.exit(1);
+  }
+  const { results, errors: errorCount, warnings: warningCount } = validateResult(ast, path.resolve(filePath), target);
   if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
   const covered = inventory ? printCoverage(ast, inventory, dir, user) : true;
 
@@ -464,7 +469,7 @@ function printFindings(results: ReturnType<typeof validateResult>["results"], er
  * --inventory the per-file coverage numbers print, then one union number (a
  * live thing is mapped when any of the files maps it).
  */
-function cmdValidateMany(files: string[], inventory?: string, dir?: string, user = false): void {
+function cmdValidateMany(files: string[], inventory?: string, dir?: string, user = false, target?: string): void {
   const asts: TopologyAST[] = [];
   let failed = false;
   for (const f of files) {
@@ -477,7 +482,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log(c.bold(`Validating ${path.basename(f)} (${ast.topology.name} v${ast.topology.version})`));
     console.log("");
     if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
-    const { results, errors, warnings } = validateResult(ast, path.resolve(f));
+    const { results, errors, warnings } = validateResult(ast, path.resolve(f), target);
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;
@@ -1549,7 +1554,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more);
+      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target);
       break;
 
     case "inventory":

@@ -749,3 +749,15 @@ describe.skipIf(!hasJq)("[E-3] a step's command with placeholders matches on the
     expect(w[0].message).toContain('"./media episode render"');
   });
 });
+
+describe("[E-6] validate --target codex adds the Codex warnings", () => {
+  it("[E-6] kitchen-sink with a Codex model: --target codex prints the CX23 warnings, plain validate does not", () => {
+    const src = fs.readFileSync(resolve(here, "../../../kitchen-sink.at"), "utf8").replace(/\bmodel: (opus|sonnet|haiku)\b/g, "model: gpt-5.2");
+    const f = writeAt(src);
+    const withTarget = cliIn(["validate", f, "--target", "codex"]);
+    const plain = cliIn(["validate", f]);
+    expect(withTarget.stdout).toContain("CX23");
+    expect(withTarget.stdout).toContain("not expressible on Codex");
+    expect(plain.stdout).not.toContain("CX23");
+  });
+});
