@@ -21,7 +21,8 @@ const BRAIN = resolve(here, "../../../examples/company-brain-team.at");
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 function scaffoldTo(file: string): { root: string; ast: ReturnType<typeof parse> } {
-  const ast = parse(fs.readFileSync(file, "utf8"));
+  // Codex refuses Claude model names (CX-5), so the fixtures get a Codex one.
+  const ast = parse(fs.readFileSync(file, "utf8").replace(/^(\s*model:\s*)(opus|sonnet|haiku|fable)\b.*$/gm, "$1gpt-5.2"));
   const root = fs.mkdtempSync(join(os.tmpdir(), "at-cx18-"));
   for (const f of codexBinding.scaffold(ast)) {
     fs.mkdirSync(dirname(join(root, f.path)), { recursive: true });
@@ -74,7 +75,9 @@ describe("[CX-18] Codex inventory", () => {
   });
 
   it("[CX-18] validate --inventory on a Codex project maps everything", () => {
-    const out = spawnSync("node", [CLI, "validate", FIXTURE, "--inventory", root], { encoding: "utf8" });
+    const at = join(fs.mkdtempSync(join(os.tmpdir(), "at-cx18-src-")), "compile.at");
+    fs.writeFileSync(at, fs.readFileSync(FIXTURE, "utf8").replace(/^(\s*model:\s*)(opus|sonnet|haiku|fable)\b.*$/gm, "$1gpt-5.2"));
+    const out = spawnSync("node", [CLI, "validate", at, "--inventory", root], { encoding: "utf8" });
     const text = plain(out.stdout);
     expect(text).toMatch(/coverage: ([1-9]\d*) of \1 live things/);
     expect(text).not.toContain("unmapped (");
