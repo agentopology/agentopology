@@ -146,6 +146,7 @@ agentopology scaffold my-team.at --target claude-code
 ```bash
 agentopology visualize my-team.at
 ```
+The page is one offline HTML file (light and dark themes, no network). Use the lens bar to switch between Flow and Guards; the Guards lens grades every gate, approval step, permission rule and session guard (refuse, hope, none, unverified) from `guard --check`. Link straight to a view with `#lens=guards` or `#node=<id>`.
 
 **List targets** — see all supported platforms:
 ```bash
