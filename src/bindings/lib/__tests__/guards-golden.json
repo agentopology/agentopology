@@ -178,7 +178,7 @@
  },
  "src/__tests__/e2e/fixtures/codex-gates.at": {
   ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
-  ".claude/skills/ship/scripts/action-publish.sh": "c9aab46391dd18d50baaefa6c15cf15ad683a268e05301a8ac4727566670a3fa",
+  ".claude/skills/ship/scripts/action-publish.sh": "7800a227d2ba9de339091fa8a8c06bc4250023050c5183c4f4a18a610ce49ce8",
   ".claude/agents/editor/AGENT.md": "2f96436d7154307e5b406a38116a13e6eb966bc20b85ccb5172319074e96dbf4",
   ".claude/skills/ship/SKILL.md": "a223df4d34cd9ef472a338a0abc46f72c20c625e5d2f34d7d1e320ba9bccdf3e",
   ".claude/skills/ship/scripts/render-check.sh": "b7b7fbb4de0856551ec6b7f9dcf0a2be2b4d2b3a0fff883685084a45f5761549",
@@ -251,7 +251,7 @@
  },
  "inline:action-gate": {
   ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
-  ".claude/skills/ship/scripts/action-publish.sh": "c9aab46391dd18d50baaefa6c15cf15ad683a268e05301a8ac4727566670a3fa",
+  ".claude/skills/ship/scripts/action-publish.sh": "7800a227d2ba9de339091fa8a8c06bc4250023050c5183c4f4a18a610ce49ce8",
   ".claude/skills/ship/SKILL.md": "a21a683a7512aaa778cc192053a3e6cdd314c3e989c6693b2cc0a82da1b64f0a",
   ".claude/skills/ship/scripts/before-action.sh": "6c390d14ce0988df387d920121813601016293aeec53af6c8f064c10ba6941f3",
   ".claude/skills/ship/scripts/before-edit.sh": "d2a3161751ec0acd2de31f1f6a3d93c69340551b4ddafd312d89bfb30b516140",
