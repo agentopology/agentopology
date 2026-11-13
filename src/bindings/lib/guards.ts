@@ -271,7 +271,8 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     // A platform whose hooks let a failed hook through (Codex, probe P10) must not read bad input as "no agent".
     p.supportsAsk
       ? `AGENT=$(jq -r '${p.payload.subagentType} // ""')`
-      : `AGENT=$(jq -er '${p.payload.subagentType} // ""') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
+      // R-12: trimmed and lowercased like spawn-guard, so " Reviewer " is still reviewer.
+      : `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
     "",
     ...(p.supportsAsk
       ? [

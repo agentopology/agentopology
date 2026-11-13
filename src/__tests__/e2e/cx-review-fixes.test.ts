@@ -248,3 +248,12 @@ describe.skipIf(!hasJq)("[R-1] a gate between two agents holds the second agent'
     expect(line).toMatch(/cannot block/);
   });
 });
+
+describe.skipIf(!hasJq)("[R-12] before-agent.sh reads agent_type trimmed and lowercased on Codex", () => {
+  it("[R-12] agent_type \" Reviewer \" is held like reviewer", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
+    expect(runHook(cmd, root, spawnPayload(" Reviewer ")).status).toBe(2);
+  });
+});

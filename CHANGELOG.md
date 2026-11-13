@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Codex before-agent.sh reads agent_type trimmed and lowercased (R-12)
+
+- `before-agent.sh` on Codex compared `agent_type` exactly, so `" Reviewer "` missed the `reviewer` case and the spawn went through. It is now trimmed and lowercased the way the spawn guard reads it.
+
 ### [fix] A gate between two agents holds the second agent on Codex (R-1)
 
 - A gate `after: writer, before: reviewer` compiled only to a `SubagentStop` hook on `writer`. Codex cannot block a `SubagentStop`, so `reviewer` was spawned whether the gate passed or failed, while `AGENTS.md` said "Enforcement: hook". Now `before-agent.sh`, a `PreToolUse` hook on `collaborationspawn_agent`, refuses to spawn `reviewer` (exit 2) until the gate script passes. The `SubagentStop` hook still runs and only reports. A gate after the last agent, with no agent after it, is now described as reported only. The Codex gate wrapper also changes to the project root first, so its check is found from the session's folder.

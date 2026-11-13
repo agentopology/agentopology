@@ -282,7 +282,7 @@ What to know:
 Gates are held by hook scripts, written by the same library as for Claude Code and registered in `.codex/hooks.json` with a 120 second timeout:
 
 - `before-action.sh` (a `PreToolUse` hook on `Bash`) refuses a script step's command, also inside an `&&` or `;` chain, until the gate's ledger shows its `after:` step finished ok for the same unit.
-- `before-agent.sh` (a `PreToolUse` hook on the subagent spawn tool, `collaborationspawn_agent`) runs the gate scripts that stand before an agent. It matches on `agent_type`, which Codex sets to the agent file's `name`.
+- `before-agent.sh` (a `PreToolUse` hook on the subagent spawn tool, `collaborationspawn_agent`) runs the gate scripts that stand before an agent. It matches on `agent_type`, which Codex sets to the agent file's `name`, trimmed and lowercased.
 - `gate-<id>.sh` runs when the agent it follows stops (`SubagentStop`). Codex cannot block a stop, so that hook only reports. A gate between two agents (`after: writer, before: reviewer`) is held by `before-agent.sh` instead: it refuses to spawn `reviewer` until the gate script passes. A gate after the last agent, with no agent after it, is reported only.
 
 Codex lets a command run when a `PreToolUse` hook exits 1, exits 127 or times out. Only exit 2 blocks. Every generated guard therefore turns any error of its own into exit 2 with a reason on stderr: a missing `jq`, input that is not JSON, an unreadable ledger, a gate script that cannot start. The hook command itself climbs from the repository root (or the current folder) to find its script, so a nested git repository or a project outside git still runs the guard; a script found nowhere above exits 2.
