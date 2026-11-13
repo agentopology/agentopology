@@ -30,12 +30,12 @@ metrics/
 scripts/collect-metrics.sh
 
 
-# MatchMat QA (wrong repo)
+# Local QA tooling from another project (never part of this package)
 .claude/agents/db-verifier/
 .claude/agents/issue-collector/
 .claude/agents/qa-*/
 .claude/agents/qa-analyst/
-.claude/skills/matchmat-qa/
+.claude/skills/*-qa/
 .claude/commands/e2e-*.md
 
 # Claude local / generated

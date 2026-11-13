@@ -24,7 +24,7 @@ import { seamFiles, isWorkflowSeamAgent, isHybridTopology } from "../lib/seam.js
 import type { AgentNode } from "../../parser/ast.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fixturePath = path.resolve(here, "../../../examples/matchmat-ship.at");
+const fixturePath = path.resolve(here, "../../../examples/hybrid-release.at");
 const ast = parse(readFileSync(fixturePath, "utf-8"));
 const name = ast.topology.name;
 
@@ -37,7 +37,7 @@ const agents = ast.nodes.filter((n): n is AgentNode => n.type === "agent");
 const wfAgents = agents.filter(isWorkflowSeamAgent).map((a) => a.id);
 const hostAgents = agents.filter((a) => !isWorkflowSeamAgent(a)).map((a) => a.id);
 
-describe("hybrid e2e: matchmat-ship.at → claude-code + claude-workflow", () => {
+describe("hybrid e2e: hybrid-release.at → claude-code + claude-workflow", () => {
   it("the fixture is a hybrid topology", () => {
     expect(isHybridTopology(ast)).toBe(true);
     expect(wfAgents.length).toBeGreaterThan(0);

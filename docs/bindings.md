@@ -359,7 +359,7 @@ extensions {
 
 **Backward compatible.** Topologies with no `execution: workflow` marker compile to pure `claude-code`, exactly as before — the hybrid is opt-in.
 
-See [`docs/bindings/claude-workflow-mapping.md`](bindings/claude-workflow-mapping.md) for the full primitive mapping and [`docs/AT_VS_WORKFLOW_STRATEGY.md`](AT_VS_WORKFLOW_STRATEGY.md) for the rationale. The dogfood example is [`examples/matchmat-ship.at`](../examples/matchmat-ship.at).
+See [`docs/bindings/claude-workflow-mapping.md`](bindings/claude-workflow-mapping.md) for the full primitive mapping and [`docs/AT_VS_WORKFLOW_STRATEGY.md`](AT_VS_WORKFLOW_STRATEGY.md) for the rationale. The example hybrid harness is [`examples/hybrid-release.at`](../examples/hybrid-release.at).
 
 ---
 
