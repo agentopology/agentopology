@@ -635,6 +635,29 @@
       "grade": "cosmetic"
     },
     {
+      "id": "cx.files.path:.codex/scripts/*/*.sh",
+      "area": "files",
+      "tokens": [
+        "path:.codex/scripts/*/*.sh"
+      ],
+      "contract": {
+        "doc": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+        "snapshot": "spec/codex/config.schema.json#/definitions/HooksToml"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts",
+        "src/bindings/lib/codex-hooks.ts"
+      ],
+      "language": [
+        "gate",
+        "human",
+        "session"
+      ],
+      "proof": "src/__tests__/e2e/codex-gates.test.ts",
+      "ifBroken": "a guard script is not where hooks.json points, the hook exits 127 and Codex lets the call through (P10)",
+      "grade": "check"
+    },
+    {
       "id": "cx.files.path:crontab.fragment",
       "area": "files",
       "tokens": [

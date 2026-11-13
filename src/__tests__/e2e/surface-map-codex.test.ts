@@ -116,4 +116,11 @@ describe("[RW-2] surface map, Codex", () => {
     }
     for (const k of m.knownDrift ?? []) expect(k.ticket, k.id).toMatch(/^CX-?\d+/);
   });
+
+  it("[RW-2] a guard script under .codex/scripts/<topology>/ maps to one entry whatever the topology is called", async () => {
+    const { codexPathPattern } = await import("../../conformance/surface.js");
+    expect(codexPathPattern(".codex/scripts/incident-response/before-action.sh")).toBe(".codex/scripts/*/*.sh");
+    expect(codexPathPattern(".codex/scripts/ship/gate-render-check.sh")).toBe(".codex/scripts/*/*.sh");
+    expect(codexPathPattern(".codex/scripts/at-if.sh")).toBe(".codex/scripts/*.sh");
+  });
 });

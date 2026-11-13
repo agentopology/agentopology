@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] The Codex surface map knows where the guards live (RW-2, CX-9)
+
+- Guard scripts are written to `.codex/scripts/<topology>/`. The surface map now reads that folder as a name (`.codex/scripts/*/*.sh`) and holds one entry for it, graded `check`: a guard that is not where `hooks.json` points exits 127, and Codex lets the call through.
+
 ### [feature] Gates on Codex (CX-9)
 
 - On `--target codex`, gates are now enforced by hook scripts instead of a note to run them by hand. `before-action.sh` refuses a script step's command until the gate's ledger shows the step finished ok, also inside an `&&` chain. `before-agent.sh` runs the gates that stand before an agent when Codex spawns it, and `gate-<id>.sh` runs when the agent it follows stops. All are registered in `.codex/hooks.json` with a 120 second timeout.

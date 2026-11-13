@@ -271,6 +271,8 @@ const CODEX_FIXED = new Set(["config.toml", "hooks.json", "AGENTS.md", "metrics.
 export function codexPathPattern(path: string): string {
   const seg = path.split("/");
   if (seg[0] === ".agents" && seg[1] === "skills" && seg.length > 2) seg[2] = "*";
+  // The guards live in .codex/scripts/<topology>/ (CX-9): the folder is a name, not a contract.
+  if (seg[0] === ".codex" && seg[1] === "scripts" && seg.length > 3) seg[2] = "*";
   const last = seg.length - 1;
   const base = seg[last];
   if (!CODEX_FIXED.has(base)) {
