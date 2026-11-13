@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the ledger note appears wherever a grade is shown (D-6)
+
+- The F-4 note (`ledger agent-writable until the signed gate`) was on the `guard --check` grade line and in the visualizer's node panel, but the Guards lens table showed a bare `refuse` chip, and the counts (`enforcement: N of M steps refuse`, the visualizer headline, `visualize --print-summary`) counted ledger gates unqualified. The Guards lens row now carries the note under the chip, and each refuse count adds `(K with an agent-writable ledger)` when K > 0.
+
 ### [fix] Fixed: a Codex refuse hook that can never fire, or never block, is a validate error (D-5)
 
 - Five hook shapes compiled for Codex with no error and then never refused: a regex over tools Codex lacks (`Web.*`), a list with spaces (`Edit , Write`, kept as written), `if: "Read(secrets/**)"` with no matcher (the filter passes every call), `on: PostToolUse` with `strength: refuse`, and a regex with lookaround. Now a list with spaces is trimmed and rewritten (`apply_patch`); for `strength: refuse`, a regex matching no Codex tool (`CX8-regex`), a plain list or an `if:` naming a tool Codex lacks (`CX8-tool`; the `if:` hook gets no entry) and an event that cannot block (`CX8-event`) are `validate --target codex` ERRORs, warnings on other hooks; lookaround is a `CX8-regex` warning.

@@ -2494,13 +2494,25 @@ function guardCounts() {
   });
   return counts;
 }
+// D-6: how many refuse grades rest on a ledger the agent can write (F-4), so a count never reads bare.
+function ledgerRefuseCount() {
+  if (!factsChecked()) return 0;
+  return Object.keys(data.facts.guard).filter(function(id) {
+    var g = data.facts.guard[id];
+    return g.strength === 'refuse' && g.gradeNote && g.gradeNote.indexOf('agent-writable') >= 0;
+  }).length;
+}
+function gradeCountWord(grade, count) {
+  var k = grade === 'refuse' ? ledgerRefuseCount() : 0;
+  return grade + ' ' + count + (k ? ' (' + k + ' with an agent-writable ledger)' : '');
+}
 function headlineFacts() {
   var f = data.facts;
   var nodes = data.nodes || [];
   var NC = 'not checked';
   var counts = guardCounts();
   var grades = ['refuse', 'hope', 'none'].concat(['detect', 'unverified'].filter(function(g) { return counts[g]; }));
-  var guards = factsChecked() ? grades.map(function(g) { return g + ' ' + (counts[g] || 0); }).join(' · ') : NC;
+  var guards = factsChecked() ? grades.map(function(g) { return gradeCountWord(g, counts[g] || 0); }).join(' · ') : NC;
   var cov = f && f.inventory && f.inventory !== NC ? f.inventory.mapped + ' of ' + f.inventory.total + ' mapped' : NC;
   var val = f && f.validate && f.validate !== NC ? f.validate.errors + ' errors, ' + f.validate.warnings + ' warnings' : NC;
   var ver = NC;
@@ -2523,7 +2535,7 @@ function renderHeadline() {
     h += '<div class="hl-fact" data-fact="' + esc(f.key) + '"><span class="hl-label">' + esc(f.label) + '</span>';
     if (f.grades && f.grades.length) {
       h += '<span>' + f.grades.map(function(g) {
-        return '<button class="hl-num' + (guardFilter === g.grade ? ' on' : '') + '" data-grade="' + esc(g.grade) + '" onclick="onGradeClick(\\'' + esc(g.grade) + '\\')">' + esc(g.grade) + ' ' + g.count + '</button>';
+        return '<button class="hl-num' + (guardFilter === g.grade ? ' on' : '') + '" data-grade="' + esc(g.grade) + '" onclick="onGradeClick(\\'' + esc(g.grade) + '\\')">' + esc(gradeCountWord(g.grade, g.count)) + '</button>';
       }).join('') + '</span>';
     } else {
       h += '<span class="hl-value">' + esc(f.value) + '</span>';
@@ -2597,7 +2609,7 @@ function renderGuardsView() {
     data.nodes.forEach(function(n) { ids[n.id] = true; });
     L.rows.forEach(function(r) {
       var link = ids[r.id] ? ' link" onclick="onNodeClick(\\'' + esc(r.id) + '\\')' : '';
-      h += '<tr data-grade="' + esc(r.grade) + '"><td>' + chipHtml(r.grade) + '</td><td>' + esc(r.kind) + '</td><td class="idcell' + link + '">' + esc(r.id) + '</td><td>' + esc(r.by) + '</td><td class="where">' + esc(r.where);
+      h += '<tr data-grade="' + esc(r.grade) + '"><td>' + chipHtml(r.grade) + (r.word && r.word.indexOf(r.grade + ', ') === 0 ? '<div class="note">' + esc(r.word.slice(r.grade.length + 2)) + '</div>' : '') + '</td><td>' + esc(r.kind) + '</td><td class="idcell' + link + '">' + esc(r.id) + '</td><td>' + esc(r.by) + '</td><td class="where">' + esc(r.where);
       r.notes.forEach(function(n) { h += '<div class="note">' + esc(n) + '</div>'; });
       h += '</td></tr>';
     });

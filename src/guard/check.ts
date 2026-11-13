@@ -431,12 +431,15 @@ export function renderGuardReport(report: GuardReport): string[] {
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
+  // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
+  const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && i.gradeNote === LEDGER_WRITABLE_NOTE).length;
+  const ledgerSuffix = ledgered ? ` (${ledgered} with an agent-writable ledger)` : "";
   if (report.platform) {
     const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");
     const unverified = steps.filter((i) => i.strength === "unverified").length;
-    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse, ${unverified} unverified · ${report.platform.line}`);
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse${ledgerSuffix}, ${unverified} unverified · ${report.platform.line}`);
   } else {
-    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse · checked against Claude Code ${report.verifiedOn}`);
+    lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse${ledgerSuffix} · checked against Claude Code ${report.verifiedOn}`);
   }
   const config = report.platform?.config ?? ".claude/settings.json";
   if (report.unattributed.length) {

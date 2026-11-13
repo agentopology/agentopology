@@ -391,3 +391,42 @@ describe("[D-5] Codex: a refuse hook that can never fire, or never block, is a v
     expect((await codexIssues(MX('      on: PreToolUse\n      matcher: "Read"'))).filter((r) => r.rule === "CX8-tool").map((r) => r.level)).toEqual(["warning"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-6
+// ---------------------------------------------------------------------------
+
+describe("[D-6] the ledger note appears wherever a grade is shown", () => {
+  const NOTE = "ledger agent-writable until the signed gate";
+  const page = async () => {
+    const { generateVisualization } = await import("../../visualizer/index.js");
+    const { collectFacts } = await import("../../visualizer/facts.js");
+    const { drawPage } = await import("../../visualizer/__tests__/vm-draw.js");
+    const ast = parse(SRC);
+    scaffold("claude-code");
+    const facts = collectFacts(ast, { source: SRC, dir: root });
+    return { ast, facts, page: drawPage(generateVisualization(ast, { facts })) };
+  };
+  it("[D-6] the Guards lens table row shows the note beside the grade chip", async () => {
+    const { page: p } = await page();
+    const html = p.read<string>("renderGuardsView()");
+    const row = html.split("<tr").find((r) => r.includes(">publish-ready<"))!;
+    expect(row, html).toBeDefined();
+    expect(row.split('class="where"')[0]).toContain(NOTE);
+  });
+  it("[D-6] the headline qualifies the refuse count with the ledger gates", async () => {
+    const { page: p } = await page();
+    const guards = p.read<Array<{ key: string; value: string }>>("headlineFacts()").find((f) => f.key === "guards")!;
+    expect(guards.value).toMatch(/refuse \d+ \(1 with an agent-writable ledger\)/);
+    p.read("(renderHeadline(), 0)");
+    expect(p.read<string>("document.getElementById('headline').innerHTML")).toContain("(1 with an agent-writable ledger)");
+  });
+  it("[D-6] visualize --print-summary and guard --check qualify the refuse count too", async () => {
+    const { ast, facts } = await page();
+    const { summaryLines } = await import("../../visualizer/command.js");
+    expect(summaryLines(ast, facts).find((l) => l.startsWith("guard:"))).toMatch(/refuse \d+ \(1 with an agent-writable ledger\)/);
+    const { checkGuards, renderGuardReport } = await import("../../guard/check.js");
+    const lines = renderGuardReport(checkGuards(ast, root));
+    expect(lines.find((l) => l.startsWith("enforcement:"))).toMatch(/steps refuse \(1 with an agent-writable ledger\)/);
+  });
+});

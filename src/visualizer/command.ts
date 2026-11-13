@@ -11,6 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { TopologyAST } from "../parser/ast.js";
 import type { Facts } from "./facts.js";
+import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 
 /** `~/.cache/agentopology/visualize/` */
 export function defaultOutputDir(home: string = os.homedir()): string {
@@ -65,7 +66,10 @@ export function summaryLines(ast: TopologyAST, facts: Facts): string[] {
   else {
     const by = new Map<string, number>();
     for (const g of Object.values(facts.guard)) by.set(g.strength, (by.get(g.strength) ?? 0) + 1);
-    lines.push(`guard: ${by.size ? [...by].map(([k, n]) => `${k} ${n}`).join(", ") : "no items"}`);
+    // D-6: a refuse count says how many rest on a ledger the agent can write (F-4).
+    const ledger = Object.values(facts.guard).filter((g) => g.strength === "refuse" && g.gradeNote === LEDGER_WRITABLE_NOTE).length;
+    const word = (k: string, n: number) => `${k} ${n}${k === "refuse" && ledger ? ` (${ledger} with an agent-writable ledger)` : ""}`;
+    lines.push(`guard: ${by.size ? [...by].map(([k, n]) => word(k, n)).join(", ") : "no items"}`);
   }
   if (facts.inventory === "not checked") lines.push("inventory: not checked");
   else lines.push(`inventory: ${facts.inventory.mapped} of ${facts.inventory.total} mapped, ${facts.inventory.missing.length} missing`);
