@@ -29,7 +29,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { shellStub, stubFor, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
   CLAUDE_CODE_GUARDS,
@@ -1899,9 +1899,10 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     // A project path names the user's script: a stub only fills the gap until
     // it exists, and is never written over it.
     const project = isProjectPath(script);
+    const path = project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`;
     files.push({
-      path: project ? script.replace(/^\.\//, "") : `.claude/skills/${name}/scripts/${scriptName}`,
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      path,
+      content: stubFor(path, `Gate: ${gate.id} — ${gate.run}`, { fail: true }),
       category: "script",
       ...(project ? { createOnly: true } : {}),
     });

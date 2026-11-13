@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: Codex writes a gate's check stub where the gate runs it, in the file's language (F-22, F-25)
+
+- F-22: the Codex scaffold wrote every gate-check stub to `.codex/scripts/<basename>`, while the gate wrapper ran the declared project path (`tools/checks/ready.sh`). A user who filled in the stub never saw the gate pass. The stub now goes at the declared project path, created once and never overwritten (as Claude Code does); a bare name still goes to `.codex/scripts/`.
+- F-25: a gate-check stub named `.py` had a bash body, so it failed through a Python `SyntaxError`. Both targets now write a Python stub for `.py` and a node stub for `.js`/`.mjs`/`.cjs`; it still carries the stub marker and exits 2.
+
 ### [feature] `validate --target <binding>` (E-6)
 
 - The Codex warnings (`CX5-*`, `CX8-*`, `CX9-*`, `CX11-*`, `CX13`, `CX20`, `CX23`) appeared only at scaffold, though the CX-23 entry says `validate` with a Codex target shows them. `agentopology validate <file> --target codex` now adds them; plain `validate` stays target-neutral.

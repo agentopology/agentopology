@@ -36,7 +36,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { shellStub, toolStub } from "./lib/stub.js";
+import { shellStub, stubFor, toolStub } from "./lib/stub.js";
 import { PROMPT_FENCE_OPEN, PROMPT_FENCE_CLOSE } from "./lib/prompt-fence.js";
 import { tomlString, tomlStringArray, tomlTable, tomlKey, tomlMultiline } from "./lib/toml.js";
 import { APPROVAL_POLICIES, PROJECT_FORBIDDEN_KEYS, SANDBOX_MODES, isClaudeModelName } from "../conformance/codex.js";
@@ -1140,12 +1140,20 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!gate.run || isShellCommand(gate.run) || proseInRun(gate.run)) continue;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
+    const { script } = runParts(gate.run);
+    // The user's own script, outside the project: never stubbed.
+    if (script.startsWith("/")) continue;
+    // F-22: a project path is where the gate wrapper runs the check (codexGateCommand), so the stub
+    // goes there, and is never written over the user's script; a bare name lives in .codex/scripts/.
+    const project = isProjectPath(script);
+    const path = project ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptName}`;
     files.push({
-      path: `.codex/scripts/${scriptName}`,
+      path,
       // A gate nobody has written must not pass (probe P10: only exit 2 blocks).
-      content: shellStub(`Gate: ${gate.id} — ${gate.run}`, { fail: true }),
+      content: stubFor(path, `Gate: ${gate.id} — ${gate.run}`, { fail: true }),
       category: "script",
       executable: true,
+      ...(project ? { createOnly: true } : {}),
     });
   }
 
