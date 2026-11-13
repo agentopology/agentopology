@@ -273,7 +273,7 @@ describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook t
   it("[R-3] the hook command has its own deadline below the hook timeout", () => {
     scaffoldInto(AGENT_GATE("writer"));
     const e = spawnEntry();
-    const m = /-k \d+ (\d+) /.exec(e.command);
+    const m = /-s KILL (\d+) /.exec(e.command);
     expect(m, e.command).not.toBeNull();
     expect(Number(m![1])).toBeLessThan(e.timeout!);
   });
@@ -281,7 +281,7 @@ describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook t
   it("[R-3] a check that sleeps 200 s is cut at the deadline and the guard exits 2 (deadline set to 3 s here)", () => {
     scaffoldInto(AGENT_GATE("writer"));
     fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
-    const cmd = spawnEntry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ");
+    const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ");
     const t0 = Date.now();
     const r = runHook(cmd, root, spawnPayload("reviewer"), 30_000);
     expect(r.status, r.stderr).toBe(2);
@@ -311,7 +311,7 @@ describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook t
 
     scaffoldInto(AGENT_GATE("writer"));
     fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
-    const cmd = spawnEntry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ").replace(/AT_D=\d+/, "AT_D=3");
+    const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
     const t0 = Date.now();
     const slowRun = noTimeout(cmd, spawnPayload("reviewer"));
     expect(slowRun.status, slowRun.stderr).toBe(2);
@@ -1068,4 +1068,72 @@ describe.skipIf(!hasJq)("[P1-d] the guard looks for the tool where bash would ru
     const r = run(await script(), command);
     expect(r.status, r.stderr).toBe(2);
   });
+});
+
+// Mutation pass (Fable, 34 mutants): behaviour tests for the rows only the golden hash killed, or none.
+describe.skipIf(!hasJq)("[F-17] tests that kill the surviving and hash-only mutants", () => {
+  const setup = async () => {
+    const { generateBeforeActionScript, CLAUDE_CODE_GUARDS } = await import("../../bindings/lib/guards.js");
+    const f = generateBeforeActionScript(parse(fs.readFileSync(FIXTURE, "utf8")), CLAUDE_CODE_GUARDS)!;
+    fs.mkdirSync(dirname(at(f.path)), { recursive: true });
+    fs.writeFileSync(at(f.path), f.content, { mode: 0o755 });
+    return at(f.path);
+  };
+  const run = (s: string, command: string) =>
+    spawnSync("bash", [s], { cwd: root, input: bashPayload(command), env: { ...process.env, CLAUDE_PROJECT_DIR: root }, encoding: "utf8" });
+  const ok = (rel: string, unit: string) => {
+    fs.mkdirSync(dirname(at(rel)), { recursive: true });
+    fs.writeFileSync(at(rel), JSON.stringify({ step: "render", unit, ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+  };
+  it("[F-17] C3: --help in the middle of a step is no usage request; the step is refused", async () => {
+    expect(run(await setup(), "./tool publish --help ep1").status).toBe(2);
+  });
+  it("[F-17] K2: a second mention of the tool hidden in a command substitution is refused although the first is read", async () => {
+    const s = await setup();
+    ok("logs/ok1/trace.jsonl", "ok1");
+    expect(run(s, "./tool publish ok1").status).toBe(0);
+    expect(run(s, "./tool publish ok1; `echo ./tool` publish ep2").status).toBe(2);
+  });
+  it("[F-17] U3: a unit of '..' is refused, so logs/../trace.jsonl is never read", async () => {
+    const s = await setup();
+    ok("trace.jsonl", "..");
+    const r = run(s, "./tool publish ..");
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/safe file name/);
+  });
+});
+
+describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after the run is dead", () => {
+  const spawnEntry = () => hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0];
+  const pathWithout = (...hide: string[]) => {
+    const bin = fs.mkdtempSync(join(os.tmpdir(), "at-f9d-path-"));
+    for (const d of ["/usr/bin", "/bin"]) {
+      for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+        if (hide.includes(f) || fs.existsSync(join(bin, f))) continue;
+        try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
+      }
+    }
+    for (const tool of ["jq", "git", "bash", "pgrep"]) {
+      const w = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+      if (w && !fs.existsSync(join(bin, tool))) fs.symlinkSync(w, join(bin, tool));
+    }
+    return bin;
+  };
+  const alive = (pid: number) => spawnSync("sh", ["-c", `kill -0 ${pid} 2>/dev/null`]).status === 0;
+  for (const mode of ["POSIX watchdog", "GNU timeout"]) {
+    it(`[F-17] ${mode}: a check that ignores TERM is dead when the hook exits 2`, () => {
+      scaffoldInto(AGENT_GATE("writer"));
+      const pidFile = at("check.pid");
+      fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\ntrap "" TERM\necho $$ > "${pidFile}"\nsleep 30\nexit 0\n`, { mode: 0o755 });
+      const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
+      const env = { ...process.env } as Record<string, string>;
+      delete env.CLAUDE_PROJECT_DIR;
+      if (mode === "POSIX watchdog") env.PATH = pathWithout("timeout", "gtimeout");
+      const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: root, input: spawnPayload("reviewer"), env, encoding: "utf8", timeout: 40_000 });
+      expect(r.status, r.stderr).toBe(2);
+      const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      expect(pid).toBeGreaterThan(0);
+      expect(alive(pid), `check ${pid} still running after the hook returned`).toBe(false);
+    }, 45_000);
+  }
 });

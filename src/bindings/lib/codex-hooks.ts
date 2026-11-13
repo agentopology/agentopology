@@ -84,8 +84,10 @@ export function launchCommand(interp: string, rel: string, args: string[], guard
       `AT_O="$(mktemp)" && AT_E="$(mktemp)" && AT_F="$(mktemp)" || { echo "agentopology: no temp file for ${rel}, so this call is blocked" >&2; exit 2; }`,
       `at_out() { cat "$AT_O"; cat "$AT_E" >&2; rm -f "$AT_O" "$AT_E" "$AT_F"; }`,
       `AT_T="$(command -v timeout || command -v gtimeout || true)"`,
-      // GNU path: 124 (TERM) and 137 (KILL after -k) are the deadline; any other non-zero exit blocks too.
-      `if [ -n "$AT_T" ]; then "$AT_T" -k ${DEADLINE_KILL} ${deadline} ${interp} "${file}"${tail} >"$AT_O" 2>"$AT_E"; AT_RC=$?; at_out; ` +
+      // GNU path: KILL at the deadline, sent to timeout's whole process group, so a check that ignores TERM
+      // and every process it started are gone when the hook returns (F-17). 124 and 137 are the deadline;
+      // any other non-zero exit blocks too.
+      `if [ -n "$AT_T" ]; then "$AT_T" -s KILL ${deadline} ${interp} "${file}"${tail} >"$AT_O" 2>"$AT_E"; AT_RC=$?; at_out; ` +
         `case "$AT_RC" in 0) ;; 124|137) ${late} ;; *) exit 2 ;; esac; ` +
         `else AT_D=${deadline}; AT_IN="$(cat)"; ` +
         // kill the run and everything it started: a grandchild left alive would keep running
@@ -93,7 +95,8 @@ export function launchCommand(interp: string, rel: string, args: string[], guard
         `printf '%s' "$AT_IN" | ${interp} "${file}"${tail} >"$AT_O" 2>"$AT_E" & AT_P=$!; ` +
         // the watchdog's own sleep is killed with it (F-20b), so it never outlives the hook
         `( sleep "$AT_D" & AT_S=$!; trap 'kill "$AT_S" 2>/dev/null; exit 0' TERM; wait "$AT_S"; ` +
-        `kill -0 "$AT_P" 2>/dev/null && { echo late > "$AT_F"; at_kill TERM "$AT_P"; sleep ${DEADLINE_KILL}; at_kill KILL "$AT_P"; } ) >/dev/null 2>&1 & AT_W=$!; ` +
+        // KILL, not TERM: the tree is walked while the run is alive; after a TERM its children are orphans
+        `kill -0 "$AT_P" 2>/dev/null && { echo late > "$AT_F"; at_kill KILL "$AT_P"; } ) >/dev/null 2>&1 & AT_W=$!; ` +
         `wait "$AT_P"; AT_RC=$?; ` +
         // after the deadline fired, the watchdog's KILL stage runs to its end; otherwise it is stopped now
         `if [ -s "$AT_F" ]; then wait "$AT_W"; at_out; ${late}; fi; ` +

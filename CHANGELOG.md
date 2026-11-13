@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: at a guard's deadline nothing the check started is left running (F-17)
+
+- A mutation pass on the release candidate found that no test checked the deadline's kill stage, and a new test showed why it mattered: a gate check that ignored TERM was still running after the hook returned, on both paths. GNU `timeout -k` sends its KILL only when its direct child survives, and the watchdog walked the process tree from a launcher that had already exited. The deadline now sends KILL at once (`timeout -s KILL`, which signals the whole process group; the watchdog kills the tree while the run is alive), so the hook returns only when every process the check started is gone. The call was refused in both cases; what changes is the leftover process.
+- New behaviour tests also kill three mutants that only the golden hash caught: `--help` inside a step's words (still a step), a second mention of the tool hidden in a command substitution, and a unit of `..`.
+
 ### [fix] Known gap, narrowed: the agent can write a gate's ledger (F-4)
 
 - In 0.11.0 a gate's ledger (`records { record trace { path: "logs/{unit}/trace.jsonl" } }`) and the Codex approvals file (`.codex/state/approvals.jsonl`) are files in the workspace, and the agent could write an ok line into them. The guards now refuse commands and edits that name them: `before-action.sh` refuses a `Bash` command that names a ledger unless it only reads it (`cat` and `jq .` still run; `>`, `tee`, `cp`, `sed -i`, `python3 -c` and the like are refused), and a new `before-edit.sh` refuses a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` (Claude Code) or an `apply_patch` (Codex) that touches one. `guard --check` says so on the grade itself: `refuse, ledger agent-writable until the signed gate` on Claude Code, `unverified, ledger agent-writable until the signed gate` on Codex.

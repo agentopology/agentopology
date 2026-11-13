@@ -459,7 +459,7 @@ describe.skipIf(!hasJq)("[F-8/F-16] every Codex refuse PreToolUse hook goes thro
       scaffoldInto(src);
       const e = entry();
       expect(e.timeout).toBeGreaterThan(0);
-      const m = /-k \d+ (\d+) /.exec(e.command);
+      const m = /-s KILL (\d+) /.exec(e.command);
       expect(m, e.command).not.toBeNull();
       expect(Number(m![1])).toBeLessThan(e.timeout!);
     });
@@ -481,7 +481,7 @@ describe.skipIf(!hasJq)("[F-8/F-16] every Codex refuse PreToolUse hook goes thro
     it(`[F-8] ${label}: a slow refuse script is cut at the deadline (3 s here) with exit 2`, () => {
       scaffoldInto(src);
       fs.writeFileSync(at(".codex/scripts/guard.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
-      const cmd = entry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ").replace(/AT_D=\d+/, "AT_D=3");
+      const cmd = entry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
       const t0 = Date.now();
       const r = runHook(cmd, root, push);
       expect(r.status, r.stderr).toBe(2);
