@@ -111,7 +111,10 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     const by = (gate.by ?? "code") as GuardItem["by"];
     const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
     if (bad || item.strength === "hope" || item.strength === "none") {
-      Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes, structural: false, gradeNote: undefined });
+      // D-9: release 1 grades every Codex guard unverified or none; a cited refusal is unverified too.
+      const declared = gate.strength ?? "refuse";
+      const strength = bad ? "none" : declared === "refuse" ? "unverified" : declared;
+      Object.assign(item, { strength, by, where: `${by} at ${gate.at}`, notes: strength === "unverified" ? [UNVERIFIED, ...notes] : notes, structural: false, gradeNote: undefined });
     } else {
       item.notes.push(...notes.map((n) => `also ${n}`));
     }

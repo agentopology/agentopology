@@ -314,7 +314,7 @@ Every script scaffold writes as a placeholder (a tool's script, a hook's or gate
 
 Until a live run proves a guard holds under those conditions, none is graded `refuse`. Hooks also see only the tools Codex runs through its hook layer: `apply_patch` and MCP tools need their own matchers, and a hook is a guardrail, not a sandbox.
 
-A gate that cites the code refusing it (`at:`, with `match:` and `bypass:`) gets `Refused by` and `Bypass` lines in `AGENTS.md`, and `guard --check --target codex` checks the citation on disk as it does on Claude Code: a missing file, a line past the end, or a `match:` text no longer near the line reads `none`; a gate no hook holds is credited with its declared strength, "cited, not proven", with the bypass in its notes.
+A gate that cites the code refusing it (`at:`, with `match:` and `bypass:`) gets `Refused by` and `Bypass` lines in `AGENTS.md`, and `guard --check --target codex` checks the citation on disk as it does on Claude Code: a missing file, a line past the end, or a `match:` text no longer near the line reads `none`; a gate no hook holds grades `unverified` (release 1 grades every Codex guard `unverified` or `none`, D-9), with "cited, not proven" and the bypass in its notes; a declared `detect` or `hope` is kept as written.
 
 `agentopology guard <file.at> --check [--target codex] [--dir <project>]` grades a Codex project from `.codex/hooks.json` and `.codex/scripts/` (it is picked without `--target` when the project has `.codex/` and no `.claude/`). It writes nothing, on any target. A guard whose entry and scripts are on disk reads `unverified`; one that is missing reads `none` and the exit is 1; a gate with no blocking event reads `none` but does not fail the check, since no file can fix it.
 

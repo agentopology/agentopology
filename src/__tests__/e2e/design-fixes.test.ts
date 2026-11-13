@@ -524,3 +524,57 @@ describe("[D-8] guard --check says on the grade line when a refuse fails open or
     expect(item.gradeNote).toMatch(/stop event: it cannot block a call/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-9
+// ---------------------------------------------------------------------------
+
+const CITED_CODEX = `topology strong : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "A gate held by cited code"
+  }
+  orchestrator {
+    model: gpt-5.2
+    handles: [publish]
+  }
+  agent writer {
+    model: gpt-5.2
+    description: "Writes the post"
+  }
+  action publish {
+    kind: inline
+    description: "Posts it"
+  }
+  gates {
+    gate doctrine {
+      after: writer
+      before: publish
+      at: "harness/lock.py:2"
+      match: "sys.exit(2)"
+      bypass: "an admin flag"
+      on-fail: halt
+    }
+  }
+  flow { writer -> publish }
+}
+`;
+
+describe("[D-9] Codex: a gate held by cited code grades unverified, never refuse", () => {
+  it("[D-9] the citation holds: unverified, with the citation and bypass in the notes", async () => {
+    const { checkCodexGuards } = await import("../../guard/check-codex.js");
+    const { ast } = scaffold("codex", CITED_CODEX);
+    fs.mkdirSync(at("harness"), { recursive: true });
+    fs.writeFileSync(at("harness/lock.py"), "import sys\nsys.exit(2)\n");
+    const item = checkCodexGuards(ast, root).items.find((i) => i.id === "doctrine")!;
+    expect(item.strength).toBe("unverified");
+    expect(item.where).toContain("harness/lock.py:2");
+    expect(item.notes.join(" ")).toMatch(/cited, not proven/);
+    expect(item.notes.join(" ")).toContain("bypass: an admin flag");
+  });
+  it("[D-9] a broken citation is still none", async () => {
+    const { checkCodexGuards } = await import("../../guard/check-codex.js");
+    const { ast } = scaffold("codex", CITED_CODEX);
+    expect(checkCodexGuards(ast, root).items.find((i) => i.id === "doctrine")!.strength).toBe("none");
+  });
+});

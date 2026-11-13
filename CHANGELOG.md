@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex gate held by cited code grades unverified, not refuse (D-9)
+
+- `guard --check --target codex` gave a gate with an `at:` citation its declared strength, so a cited refusal read `refuse` on Codex, where release 1 grades every guard `unverified` or `none`. It now reads `unverified`, with the citation ("cited, not proven") and the bypass kept in the notes; a broken citation still reads `none`.
+
 ### [fix] Fixed: guard --check says on the grade line when a refuse fails open or sits on a stop event (D-8)
 
 - A `PreToolUse` guard entry without `"onFailure": "block"` kept the grade `refuse`, with only a ⚠ note below it, though Claude Code lets the call run when such a hook crashes. Its grade now reads `refuse, fails open on a crash (no onFailure: block)` (the before-action, before-agent, approval and session guards, and a cited hook). A gate held at `SubagentStop` reads `refuse, a stop event: it cannot block a call`, with a note that exit 2 keeps the agent working. The `guard --check` text pins for every example with a SubagentStop gate change.
