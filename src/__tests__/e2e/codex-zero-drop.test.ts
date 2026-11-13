@@ -39,6 +39,7 @@ function unaccounted(ast: TopologyAST, files: GeneratedFile[]): string[] {
   const out = norm(files
     .map((f) => (f.path.endsWith(".toml") ? f.content.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n") : f.content))
     .join("\n"));
+  const paths = new Set(files.map((f) => f.path));
   const listed = new Set(NOT_EXPRESSIBLE.map((n) => `${n.scope}.${n.field}`));
   const missing: string[] = [];
   for (const node of ast.nodes) {
@@ -51,6 +52,11 @@ function unaccounted(ast: TopologyAST, files: GeneratedFile[]): string[] {
       if (EXPRESSED_AS[key]?.(files)) continue;
       if (!ls.some((l) => out.includes(norm(l)))) missing.push(`${key} (${node.id})`);
     }
+  }
+  // E-4: a tool's script is a file at its declared path (a project path, not one under .codex/scripts/).
+  for (const tool of ast.toolDefs ?? []) {
+    const declared = tool.script.replace(/^\.\//, "").split(/\s+/).find((w) => /\.(sh|py|js|mjs)$/.test(w)) ?? tool.script;
+    if (!declared.startsWith("/") && !paths.has(declared) && !paths.has(`.codex/scripts/${declared.replace(/^.*\//, "")}`)) missing.push(`tool.script (${tool.id}: ${tool.script})`);
   }
   return missing;
 }
@@ -94,5 +100,33 @@ describe("[CX-23] zero drop on Codex", () => {
     const toml = files.find((f) => f.path === ".codex/config.toml")!.content;
     expect(toml).not.toMatch(/^#\s+temperature = /m);
     expect(toml).not.toMatch(/^#\s+max_tokens = /m);
+  });
+});
+
+/** E-4: a topology that sets what kitchen-sink.at does not: a gate's description and behavior, and a tool script at a project path. */
+const DROP = fs.readFileSync(resolve(here, "fixtures/codex-gates.at"), "utf8")
+  .replace('      run: "scripts/render-check.sh"\n', '      run: "scripts/render-check.sh"\n      description: "Zzgate checks the render frames"\n      behavior: blocking\n')
+  .replace("  records {", '  tools {\n    tool render-tool {\n      script: "tools/render.py"\n      lang: python\n      description: "Renders a piece"\n    }\n  }\n  records {');
+
+describe("[E-4] zero drop: gate description and behavior, and a tool's declared script path", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const ast = parse(DROP);
+  const files = codexBinding.scaffold(ast);
+  warn.mockRestore();
+
+  it("[E-4] the fixture sets the three fields", () => {
+    const gate = ast.nodes.find((n) => n.id === "render-check") as any;
+    expect(gate.description).toContain("Zzgate");
+    expect(gate.behavior).toBe("blocking");
+    expect(ast.toolDefs[0].script).toBe("tools/render.py");
+  });
+
+  it("[E-4] every field it sets is in the Codex output: the gate fields in AGENTS.md, the tool script at tools/render.py", () => {
+    expect(unaccounted(ast, files)).toEqual([]);
+    const md = files.find((f) => f.path === "AGENTS.md")!.content;
+    expect(md).toContain("Zzgate checks the render frames");
+    expect(md).toMatch(/\*\*Behavior:\*\* blocking/);
+    const tool = files.find((f) => f.path === "tools/render.py");
+    expect(tool?.content).toContain("AGENTOPOLOGY_STUB");
   });
 });

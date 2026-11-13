@@ -47,7 +47,7 @@ import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
 import { CODEX_GUARDS, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
-import { isShellCommand, proseInRun, scriptNameFromRun } from "../parser/run.js";
+import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -775,6 +775,9 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       sections.push("");
       if (gate.after) sections.push(`- **After:** ${gateAnchors(gate, "after").join(", ")}`);
       if (gate.before) sections.push(`- **Before:** ${gateAnchors(gate, "before").join(", ")}`);
+      // E-4: the gate's own words and its behavior are not dropped.
+      if (gate.description) sections.push(`- **Description:** ${gate.description}`);
+      if (gate.behavior) sections.push(`- **Behavior:** ${gate.behavior}`);
       if (gate.run) sections.push(`- **Run:** ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
         sections.push(`- **Checks:** ${gate.checks.join(", ")}`);
@@ -1162,11 +1165,18 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
     // E-1: the stub carries the marker and fails until it is written.
     const lines = [toolStub(tool)];
+    // E-4: the stub goes where the tool's script: says, as on Claude Code: a project path is the
+    // user's script (create-only), an absolute one is never touched, a bare name lives in .codex/scripts/.
+    const script = tool.script ? runParts(tool.script).script : "";
+    if (script.startsWith("/")) continue;
+    const project = isProjectPath(script);
+    const base = script.replace(/^.*\//, "");
     files.push({
-      path: `.codex/scripts/${tool.id}.${ext}`,
+      path: project ? script.replace(/^\.\//, "") : `.codex/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
       executable: true,
+      ...(project ? { createOnly: true } : {}),
     });
   }
 

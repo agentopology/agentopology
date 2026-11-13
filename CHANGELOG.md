@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: the Codex scaffold drops no gate description, gate behavior or tool script path (E-4)
+
+- The `AGENTS.md` gate section never printed a gate's `description` or `behavior`, and a tool's stub was written to `.codex/scripts/<id>.<ext>` instead of its declared `script:` path. Both gate fields are now printed, and the tool stub is written where `script:` says, as on Claude Code: a project path is created once and never overwritten, an absolute path is never touched. The Codex zero-drop test now also checks tool scripts, with a fixture that sets all three.
+
 ### [fix] Fixed: a guarded step's command with placeholders matches the real call (E-3)
 
 - `before-action.sh` (both targets) compared a step's command literally, so `commands: ["./media episode render EP.json OUT.mp4"]` never matched the real call `./media episode render show/ep7/ep.json out.mp4`, and the gate never held. Now the command is matched on its words before the first placeholder: an ALL-CAPS word (`EP`, `PID`, `OUT.mp4`) or a word holding `< > { } [ ]`, and everything after it. `validate` warns with `AG-placeholder` and names the words matched. The Claude Code `before-action.sh` of such a topology changes too.
