@@ -60,3 +60,38 @@ describe("[N40] verified on", () => {
     expect(t).toContain(LINE);
   });
 });
+
+// [RW-7] spec/claude-code/verified.json
+import { verifiedListProblems, loadVerifiedList } from "../../conformance/claude-code.js";
+
+describe("[RW-7] spec/claude-code/verified.json", () => {
+  const file = resolve(dirname(fileURLToPath(import.meta.url)), "../../../spec/claude-code/verified.json");
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+
+  it("[RW-7] every entry has a proof: run id, date, and suite counts", () => {
+    expect(verifiedListProblems(doc)).toEqual([]);
+    expect(doc.versions.length).toBeGreaterThan(0);
+  });
+
+  it("[RW-7] VERIFIED_ON is on the list", () => {
+    expect(doc.versions.map((v: any) => v.version)).toContain(VERIFIED_ON);
+  });
+
+  it("[RW-7] planted: an entry with no proof field fails", () => {
+    const planted = { versions: [...doc.versions, { version: "2.1.999" }] };
+    const problems = verifiedListProblems(planted);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("2.1.999");
+    expect(problems[0]).toContain("proof");
+  });
+
+  it("[RW-7] planted: a proof with no run id or date fails", () => {
+    expect(verifiedListProblems({ versions: [{ version: "2.1.1", proof: { date: "2026-11-13" } }] })).toHaveLength(1);
+    expect(verifiedListProblems({ versions: [{ version: "2.1.1", proof: { run: "r" } }] })).toHaveLength(1);
+    expect(verifiedListProblems({ versions: [{ version: "x", proof: { run: "r", date: "d" } }] })).toHaveLength(1);
+  });
+
+  it("[RW-7] the loader returns the file's proven entries", () => {
+    expect(loadVerifiedList().map((e) => e.version)).toContain(VERIFIED_ON);
+  });
+});
