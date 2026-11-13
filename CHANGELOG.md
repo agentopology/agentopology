@@ -676,7 +676,7 @@ All notable changes to agentopology are documented here.
 - **Experimental:** `codex`, `cursor` and `claude-workflow` stay. `targets` labels them and
   scaffold warns, because they are not verified against their platform the way claude-code is.
   `claude-workflow` is kept: it is a Claude target, the theory runs used it, and it feeds the
-  hybrid seam in `examples/matchmat-ship.at`.
+  hybrid seam in an example hybrid harness (now `examples/hybrid-release.at`).
 
 ### [feature] `guard --target claude-code` writes only the guards
 
@@ -1352,7 +1352,7 @@ observer, and the LOSSY report names the human split. (1310 tests total.)
   (Terraform-for-agents) and Claude Workflow is its first compile target.
 - `docs/bindings/claude-workflow-mapping.md` — the complete bidirectional mapping:
   every `.at` primitive + design pattern classified CLEAN / LOSSY / UNREPRESENTABLE.
-- `examples/matchmat-ship.at` — the dogfood hybrid topology.
+- An example hybrid harness topology (now `examples/hybrid-release.at`).
 
 ## [0.2.4] — 2026-05-19
 

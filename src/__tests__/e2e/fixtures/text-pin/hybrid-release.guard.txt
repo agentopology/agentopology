@@ -1,0 +1,19 @@
+guard --check examples/hybrid-release.at (project: empty)
+
+  gate release-check     none        by: hook      SubagentStop on license-checker → gate-release-check.sh
+                         ✗ no SubagentStop entry for license-checker running gate-release-check.sh in .claude/settings.json
+                         ✗ .claude/skills/hybrid-release/scripts/gate-release-check.sh is missing
+  human approve-release  hope        by: prose     no agent follows it, so no launch to ask before; the playbook asks
+
+enforcement: 0 of 2 steps refuse · checked against Claude Code 2.1.323
+1 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
+--- exit 1
+guard --check examples/hybrid-release.at (project: proj)
+
+  gate release-check     refuse, a stop event: it cannot block a call  by: hook      SubagentStop on license-checker → gate-release-check.sh
+                         ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
+                         ⚠ its check script .claude/skills/hybrid-release/scripts/release-check.sh is still a stub, so it blocks every run until it is written
+  human approve-release  hope                                          by: prose     no agent follows it, so no launch to ask before; the playbook asks
+
+enforcement: 1 of 2 steps refuse · checked against Claude Code 2.1.323
+--- exit 0

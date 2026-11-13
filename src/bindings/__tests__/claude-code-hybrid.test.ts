@@ -8,12 +8,12 @@ import type { GeneratedFile } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Hybrid-awareness of the claude-code binding (host half of the host+workflow
-// model). Fixture: examples/matchmat-ship.at — builder (phase 2) is
+// model). Fixture: examples/hybrid-release.at — packager (phase 2) is
 // execution:workflow; phases 1 & 3 + the human node are host-side.
 // ---------------------------------------------------------------------------
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fixturePath = path.resolve(here, "../../../examples/matchmat-ship.at");
+const fixturePath = path.resolve(here, "../../../examples/hybrid-release.at");
 const source = readFileSync(fixturePath, "utf-8");
 const ast = parse(source);
 const files: GeneratedFile[] = claudeCodeBinding.scaffold(ast);
@@ -22,22 +22,20 @@ function find(suffix: string): GeneratedFile | undefined {
   return files.find((f) => f.path.endsWith(suffix));
 }
 
-describe("claude-code binding — HYBRID awareness (matchmat-ship)", () => {
-  // (a) workflow-marked agent (builder) is NOT emitted as a host subagent.
-  it("does NOT emit .claude/agents/builder/AGENT.md (builder is execution:workflow)", () => {
-    const builderAgent = files.find((f) => f.path === ".claude/agents/builder/AGENT.md");
-    expect(builderAgent).toBeUndefined();
+describe("claude-code binding — HYBRID awareness (hybrid-release)", () => {
+  // (a) workflow-marked agent (packager) is NOT emitted as a host subagent.
+  it("does NOT emit .claude/agents/packager/AGENT.md (packager is execution:workflow)", () => {
+    const packagerAgent = files.find((f) => f.path === ".claude/agents/packager/AGENT.md");
+    expect(packagerAgent).toBeUndefined();
   });
 
   // (b) host phase-1 + phase-3 agents ARE still emitted as subagents.
   it("still emits AGENT.md for host phase-1 and phase-3 agents", () => {
     const expected = [
-      ".claude/agents/contract-scout/AGENT.md",
-      ".claude/agents/blast-radius-mapper/AGENT.md",
-      ".claude/agents/boundary-drafter/AGENT.md",
-      ".claude/agents/security-verifier/AGENT.md",
-      ".claude/agents/contract-verifier/AGENT.md",
-      ".claude/agents/closed-loop-verifier/AGENT.md",
+      ".claude/agents/change-lister/AGENT.md",
+      ".claude/agents/dependency-auditor/AGENT.md",
+      ".claude/agents/smoke-tester/AGENT.md",
+      ".claude/agents/license-checker/AGENT.md",
     ];
     for (const p of expected) {
       expect(files.find((f) => f.path === p), `expected ${p} to be emitted`).toBeDefined();
@@ -46,18 +44,18 @@ describe("claude-code binding — HYBRID awareness (matchmat-ship)", () => {
 
   // (c) a launch-workflow stub/skill artifact for the build phase IS emitted.
   it("emits a launch-<phase>-workflow.sh stub for the workflow phase", () => {
-    const launch = find("launch-builder-workflow.sh");
+    const launch = find("launch-packager-workflow.sh");
     expect(launch).toBeDefined();
-    expect(launch!.path).toBe(".claude/skills/matchmat-ship/scripts/launch-builder-workflow.sh");
+    expect(launch!.path).toBe(".claude/skills/hybrid-release/scripts/launch-packager-workflow.sh");
     expect(launch!.executable).toBe(true);
     // It's a detectable scaffold stub.
     expect(launch!.content).toContain("# AGENTOPOLOGY_STUB");
     // It documents launching the SAME workflow.js filename the sibling binding emits.
-    expect(launch!.content).toContain("matchmat-ship.workflow.js");
-    expect(launch!.content).toContain("/workflow matchmat-ship.workflow.js");
+    expect(launch!.content).toContain("hybrid-release.workflow.js");
+    expect(launch!.content).toContain("/workflow hybrid-release.workflow.js");
     // It points at the shared Blackboard root + the seam doc.
     expect(launch!.content).toContain("workspace/");
-    expect(launch!.content).toContain("matchmat-ship-SEAM.md");
+    expect(launch!.content).toContain("hybrid-release-SEAM.md");
   });
 
   // (d) CLAUDE.md carries the hybrid run-order block referencing the workflow.js.
@@ -65,21 +63,21 @@ describe("claude-code binding — HYBRID awareness (matchmat-ship)", () => {
     const ctx = files.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path));
     expect(ctx).toBeDefined();
     expect(ctx!.content).toContain("## Hybrid run order");
-    expect(ctx!.content).toContain("matchmat-ship.workflow.js");
+    expect(ctx!.content).toContain("hybrid-release.workflow.js");
     expect(ctx!.content).toContain("Host launches");
     // host phases described as in-session; workflow phase described as launched.
-    expect(ctx!.content).toContain("phase 1 (contract-scout, blast-radius-mapper, boundary-drafter)");
-    expect(ctx!.content).toContain("phase 2 (builder)");
-    expect(ctx!.content).toContain("phase 3 (security-verifier, contract-verifier, closed-loop-verifier)");
+    expect(ctx!.content).toContain("phase 1 (change-lister, dependency-auditor)");
+    expect(ctx!.content).toContain("phase 2 (packager)");
+    expect(ctx!.content).toContain("phase 3 (smoke-tester, license-checker)");
     // points at the seam doc both bindings honor.
-    expect(ctx!.content).toContain("matchmat-ship-SEAM.md");
+    expect(ctx!.content).toContain("hybrid-release-SEAM.md");
   });
 
   it("also mirrors the Hybrid run order block into the topology SKILL.md", () => {
-    const skill = files.find((f) => f.path === ".claude/skills/matchmat-ship/SKILL.md");
+    const skill = files.find((f) => f.path === ".claude/skills/hybrid-release/SKILL.md");
     expect(skill).toBeDefined();
     expect(skill!.content).toContain("## Hybrid run order");
-    expect(skill!.content).toContain("matchmat-ship.workflow.js");
+    expect(skill!.content).toContain("hybrid-release.workflow.js");
   });
 
   // (e) the observe-hook is in settings.json (host-layer concurrent observer).
@@ -100,7 +98,7 @@ describe("claude-code binding — HYBRID awareness (matchmat-ship)", () => {
   it("emits the observe-blackboard.sh script the hook points at", () => {
     const observe = find("observe-blackboard.sh");
     expect(observe).toBeDefined();
-    expect(observe!.path).toBe(".claude/skills/matchmat-ship/scripts/observe-blackboard.sh");
+    expect(observe!.path).toBe(".claude/skills/hybrid-release/scripts/observe-blackboard.sh");
     expect(observe!.executable).toBe(true);
     expect(observe!.content).toContain("# AGENTOPOLOGY_STUB");
     // documents the Blackboard root it watches.
@@ -139,18 +137,18 @@ describe("claude-code + claude-workflow — the two bindings AGREE on the seam",
   const hostFiles = claudeCodeBinding.scaffold(ast);
   const wfFiles = claudeWorkflowBinding.scaffold(ast);
 
-  it("host omits builder/AGENT.md while the workflow.js OWNS builder", () => {
-    expect(hostFiles.find((f) => f.path === ".claude/agents/builder/AGENT.md")).toBeUndefined();
+  it("host omits packager/AGENT.md while the workflow.js OWNS packager", () => {
+    expect(hostFiles.find((f) => f.path === ".claude/agents/packager/AGENT.md")).toBeUndefined();
     const wf = wfFiles.find((f) => f.path.endsWith(".workflow.js"));
     expect(wf).toBeDefined();
-    expect(wf!.content).toContain("{ phase: 2, agents: ['builder'] }");
+    expect(wf!.content).toContain("{ phase: 2, agents: ['packager'] }");
   });
 
   it("both reference the same workflow.js filename", () => {
     const wf = wfFiles.find((f) => f.path.endsWith(".workflow.js"))!;
-    expect(wf.path).toBe("matchmat-ship.workflow.js");
+    expect(wf.path).toBe("hybrid-release.workflow.js");
     const ctx = hostFiles.find((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f.path))!;
-    expect(ctx.content).toContain("matchmat-ship.workflow.js");
+    expect(ctx.content).toContain("hybrid-release.workflow.js");
   });
 
   it("both reference the same Blackboard workspace root and SEAM doc", () => {
@@ -160,8 +158,8 @@ describe("claude-code + claude-workflow — the two bindings AGREE on the seam",
     expect(seam.content).toContain("`workspace/`");
     expect(ctx.content).toContain("`workspace/`");
     // seam doc filename
-    expect(seam.path).toBe("matchmat-ship-SEAM.md");
-    expect(ctx.content).toContain("matchmat-ship-SEAM.md");
+    expect(seam.path).toBe("hybrid-release-SEAM.md");
+    expect(ctx.content).toContain("hybrid-release-SEAM.md");
   });
 
   it("both use the same 'Host launches ... LIVE' run-order phrasing", () => {

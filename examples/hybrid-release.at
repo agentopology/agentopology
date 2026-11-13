@@ -1,0 +1,162 @@
+# hybrid-release.at: a software release, split between a host session and an
+# embedded workflow.
+#
+# Two bindings compile this one file:
+#   claude-code      the host: subagents, flow, the gate, the human approval
+#   claude-workflow  the agents marked `execution: workflow`, as a workflow.js
+# The two halves exchange files under workspace/ (memory.workspace).
+
+topology hybrid-release : [pipeline, fan-out, blackboard, human-gate] {
+
+  meta {
+    version: "1.0.0"
+    description: "Release a package: survey the changes on the host, build the artifacts in a workflow, test them on the host, then a person approves."
+    domain: devops
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [collect-changes, release-notes]
+  }
+
+  roles {
+    change-lister: "List the merged changes since the last release"
+    dependency-auditor: "List dependency updates since the last release"
+    packager: "Build the release package for one target"
+    smoke-tester: "Run the smoke tests against the built artifacts"
+    license-checker: "Check the licenses of bundled dependencies"
+  }
+
+  action collect-changes {
+    kind: git
+    description: "Read the commits since the last release tag into workspace/commits.md"
+  }
+
+  action release-notes {
+    kind: report
+    description: "Write the release notes from the workspace files"
+  }
+
+  # Phase 1 runs on the host.
+
+  agent change-lister {
+    role: change-lister
+    model: sonnet
+    permissions: supervised
+    phase: 1
+    prompt {
+      Group the commits into features, fixes and breaking changes.
+    }
+    tools: [Read, Write]
+    reads: ["workspace/commits.md"]
+    writes: ["workspace/changes.md"]
+  }
+
+  agent dependency-auditor {
+    role: dependency-auditor
+    model: sonnet
+    permissions: supervised
+    phase: 1
+    prompt {
+      Compare the lockfile with the one at the last release tag.
+    }
+    tools: [Read, Grep, Write]
+    reads: ["workspace/commits.md"]
+    writes: ["workspace/dependencies.md"]
+  }
+
+  # Phase 2 runs inside the workflow: one copy per target, each in its own worktree.
+
+  agent packager {
+    role: packager
+    model: sonnet
+    permissions: autonomous
+    phase: 2
+    isolation: worktree
+    prompt {
+      Build the artifact for your target and record its path and checksum.
+    }
+    tools: [Read, Write, Bash]
+    reads: ["workspace/changes.md", "workspace/dependencies.md"]
+    writes: ["workspace/artifacts.md"]
+    scale {
+      mode: auto
+      by: batch-count
+      min: 1
+      max: 4
+    }
+    extensions {
+      claude-workflow {
+        execution: workflow
+      }
+    }
+  }
+
+  # Phase 3 runs on the host.
+
+  agent smoke-tester {
+    role: smoke-tester
+    model: sonnet
+    permissions: supervised
+    phase: 3
+    prompt {
+      Install each artifact in a clean directory and run the smoke tests.
+    }
+    tools: [Read, Bash, Write]
+    reads: ["workspace/artifacts.md"]
+    writes: ["workspace/smoke.md"]
+    outputs: {
+      result: pass | fail
+    }
+  }
+
+  agent license-checker {
+    role: license-checker
+    model: sonnet
+    permissions: supervised
+    phase: 3
+    prompt {
+      Flag any dependency bundled in the artifacts whose license is not on
+      the allow list.
+    }
+    tools: [Read, Grep, Write]
+    reads: ["workspace/artifacts.md", "workspace/dependencies.md"]
+    writes: ["workspace/licenses.md"]
+    outputs: {
+      result: pass | fail
+    }
+  }
+
+  human approve-release {
+    description: "A maintainer reads the release notes and publishes the release."
+  }
+
+  flow {
+    collect-changes -> [change-lister, dependency-auditor]
+    change-lister -> packager
+    dependency-auditor -> packager
+    packager -> [smoke-tester, license-checker]
+    smoke-tester -> release-notes
+    license-checker -> release-notes
+    release-notes -> approve-release
+  }
+
+  gates {
+    gate release-check {
+      after: license-checker
+      before: release-notes
+      run: "scripts/release-check.sh"
+      checks: [smoke, licenses]
+      retry: 1
+      on-fail: bounce-back
+      behavior: blocking
+    }
+  }
+
+  memory {
+    workspace {
+      path: "workspace/"
+      structure: [commits, changes, dependencies, artifacts, smoke, licenses]
+    }
+  }
+}
