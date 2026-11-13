@@ -30,6 +30,10 @@ import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
 
+/** Every strength word, so the report can pad its column to the longest. */
+const STRENGTH_WORDS: Strength[] = ["refuse", "detect", "hope", "none", "unverified"];
+const STRENGTH_WIDTH = Math.max(...STRENGTH_WORDS.map((w) => w.length));
+
 export interface GuardItem {
   kind: "gate" | "human" | "permission" | "edge" | "session";
   id: string;
@@ -377,7 +381,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
   const mark = installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(6)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(STRENGTH_WIDTH)}  by: ${i.by.padEnd(8)}  ${i.where}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");

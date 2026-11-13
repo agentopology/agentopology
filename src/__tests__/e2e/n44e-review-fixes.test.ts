@@ -248,3 +248,14 @@ describe("[N44e] import resolution cost and fragments", () => {
     expect(bad.some((x) => x.rule === "V8" && x.level === "error" && /frag\.at/.test(x.message) && /bogus/.test(x.message))).toBe(true);
   });
 });
+
+import { renderGuardReport, type GuardReport } from "../../guard/check.js";
+
+describe("[N44e] guard --check column padding", () => {
+  it("[N44e] the by: column lines up for every strength word, including unverified", () => {
+    const item = (id: string, strength: any) => ({ kind: "gate", id, strength, by: "hook", where: "w", notes: [] });
+    const report = { items: ["refuse", "detect", "hope", "none", "unverified"].map((s) => item("g", s)), missing: 0, enforcement: { refuse: 0, of: 0 }, unattributed: [], verifiedOn: "x" } as unknown as GuardReport;
+    const cols = renderGuardReport(report).filter((l) => l.includes("by:")).map((l) => l.indexOf("by:"));
+    expect(new Set(cols).size).toBe(1);
+  });
+});
