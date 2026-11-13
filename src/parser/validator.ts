@@ -1477,8 +1477,26 @@ function v104StrengthWords(ast: TopologyAST): ValidationResult[] {
   }
   for (const hook of ast.hooks ?? []) check(`Hook "${hook.name}"`, "strength", hook.strength);
   for (const edge of ast.edges) check(`Edge ${edge.from} -> ${edge.to}`, "strength", edge.strength);
+  // D-3: strength: refuse on a hook that cannot stop a call is a claim nothing holds.
+  for (const hook of ast.hooks ?? []) {
+    if (hook.strength !== "refuse") continue;
+    const event = HOOK_EVENT_ALIASES[hook.on] ?? hook.on;
+    const why = NON_BLOCKING_EVENTS.has(event)
+      ? `${event} cannot block a call (it runs ${event === "PostToolUse" || event === "PostToolUseFailure" ? "after the tool" : "where no call waits on it"})`
+      : hook.async ? "it is async: the host does not wait for it, so it cannot block" : null;
+    if (!why) continue;
+    results.push({
+      rule: "V104", level: "warning",
+      message: `Hook "${hook.name}" declares strength: refuse, but ${why}. Use PreToolUse (not async) for a hook that refuses, or say strength: detect.`,
+    });
+  }
   return results;
 }
+
+/** Universal hook event names and the host event they mean (as the Claude Code binding maps them). */
+const HOOK_EVENT_ALIASES: Record<string, string> = { AgentStart: "SubagentStart", AgentStop: "SubagentStop", ToolUse: "PostToolUse", Error: "PostToolUseFailure" };
+/** Events whose hook runs after the call or at a stop: exit 2 there does not stop a call (D-3). */
+const NON_BLOCKING_EVENTS = new Set(["PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop", "SubagentStart", "SessionStart", "SessionEnd", "Notification", "PreCompact"]);
 
 /**
  * V105: an edge's `guard:` names a hook or gate this file declares.

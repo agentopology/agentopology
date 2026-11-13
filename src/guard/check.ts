@@ -69,7 +69,7 @@ export interface GuardReport {
   platform?: { label: string; line: string; mark: string | null; config: string };
 }
 
-interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string }> }
+interface HookEntry { matcher?: string; hooks?: Array<{ type?: string; command?: string; onFailure?: string; async?: boolean }> }
 
 function readJson(path: string): Record<string, any> | null {
   try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
@@ -127,11 +127,28 @@ export function citationProblem(root: string, at: string, match?: string): strin
     : `"${match}" is not within ${MATCH_WINDOW} lines of line ${line} in ${file}; the check may have moved or gone`;
 }
 
-/** Whether a declared hook is in settings.json: same event, same matcher, a command naming its script. */
-function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): boolean {
+/** A declared hook's handlers in settings.json: same event, same matcher, a command naming its script. */
+function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): NonNullable<HookEntry["hooks"]> {
   const script = runParts(hook.run).script.replace(/^\.\//, "");
-  if (!script) return false;
-  return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher).length > 0;
+  if (!script) return [];
+  return findHooks(settings, claudeEvent(hook.on), script, (m) => !hook.matcher || m === hook.matcher);
+}
+
+/** Claude Code events whose hook can stop the call it runs before (exit 2). */
+const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
+
+/**
+ * D-3: why a cited hook that declares strength: refuse cannot refuse, or null when it can: a
+ * non-async command hook on an event that runs before the call.
+ */
+export function hookCannotBlock(hook: HookDef, onDisk: Array<{ async?: boolean }> = []): string | null {
+  const event = claudeEvent(hook.on);
+  if (!BLOCKING_EVENTS.has(event)) {
+    const stop = event === "Stop" || event === "SubagentStop";
+    return `${event} cannot block a call: it runs ${stop ? "when an agent stops" : event === "PostToolUse" ? "after the tool has run" : "where no call waits on it"}${hook.async || onDisk.some((h) => h.async) ? ", and it is async" : ""}`;
+  }
+  if (hook.async || onDisk.some((h) => h.async)) return "it is async: Claude Code does not wait for it, so it cannot block";
+  return null;
 }
 
 /** Notes on a hook's command: a relative path is skipped off the project root. */
@@ -343,9 +360,21 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
         const hook = hooksByName.get(g);
         if (hook) {
           if (!hook.strength) { why.push(`its edge cites ${g}, but ${g} declares no strength`); continue; }
-          if (!hookOnDisk(settings, hook)) { why.push(`its edge cites ${g}, but ${g} is not in .claude/settings.json`); continue; }
+          const onDisk = hookOnDisk(settings, hook);
+          if (onDisk.length === 0) { why.push(`its edge cites ${g}, but ${g} is not in .claude/settings.json`); continue; }
+          const where = `${hook.on}${hook.matcher ? ` ${hook.matcher}` : ""} hook ${g}, cited on ${edge.from} -> ${edge.to}`;
+          const blockless = hook.strength === "refuse" ? hookCannotBlock(hook, onDisk) : null;
+          if (blockless) {
+            // D-3: the file says refuse, but the hook cannot stop the call.
+            Object.assign(item, { strength: "none", by: "hook", where, notes: [`${g} declares strength: refuse, but ${blockless}`] });
+            break;
+          }
+          if (hook.strength === "refuse" && (hook.type ?? "command") !== "command") {
+            Object.assign(item, { strength: "unverified", by: "hook", where, notes: [`${g} is a ${hook.type} hook; only a command hook is graded refuse here`, ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            break;
+          }
           if (hook.strength === "refuse" || hook.strength === "detect") {
-            Object.assign(item, { strength: hook.strength, by: "hook", where: `${hook.on}${hook.matcher ? ` ${hook.matcher}` : ""} hook ${g}, cited on ${edge.from} -> ${edge.to}`, notes: ["cited, not proven", ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            Object.assign(item, { strength: hook.strength, by: "hook", where, notes: ["cited, not proven", ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
           }
         } else {
           const other = gateItem(g);

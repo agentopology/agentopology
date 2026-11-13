@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: guard --check credits a cited hook's refuse only when it can block (D-3)
+
+- A gate credited by a hook its edge cites read `refuse` whenever that hook declared `strength: refuse` and sat in `.claude/settings.json`, whatever its event: a `PostToolUse`, `async: true` hook printed `refuse`. Now a cited hook gives `refuse` only as a non-async `command` hook on `PreToolUse`, `UserPromptSubmit` or `PermissionRequest`; on an event that cannot block a call, or async, the gate grades `none` with a note naming why; a `prompt`/`agent`/`http` hook grades `unverified`. `validate` warns (V104) for `strength: refuse` on an event that cannot block, or with `async: true`.
+
 ### [fix] Fixed: a unit-from step on a flat ledger needs its own unit (D-2)
 
 - With `record trace { path: "logs/trace.jsonl" }` (no `{unit}`) and a step with `unit-from`, a command the guard saw as the step but read no unit from (`./tool -v publish ep1`) was checked with an empty unit, and the ledger filter then took the last record of any unit. An empty capture was dropped rather than denied. Now, on both targets, a `unit-from` step with no unit read, or an empty one, is refused whatever the ledger path; `agentopology step check` asks for `--unit` for such a step; and `validate` warns (V111) when a `unit-from` step's gate ledger path has no `{unit}`, naming the step, the gate and the path. Every `before-action.sh` with a `unit-from` step changes.

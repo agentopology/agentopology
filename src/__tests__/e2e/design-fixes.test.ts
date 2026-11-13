@@ -161,3 +161,85 @@ describe.skipIf(!hasJq)("[D-2] a flat ledger on a unit-from step: no unit read i
     expect(validate(parse(SRC)).some((r) => /unit-from/.test(r.message) && /\{unit\}/.test(r.message))).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-3
+// ---------------------------------------------------------------------------
+
+/** design.VKjX/cite.at: a gate credited by a PostToolUse, async hook that declares strength: refuse. */
+const CITE = (hook: string) => `topology strong : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Strength probe"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [publish]
+  }
+  agent writer {
+    model: sonnet
+    description: "Writes the post"
+  }
+  action publish {
+    kind: inline
+    description: "Posts it"
+  }
+  hooks {
+    hook lock-bash {
+${hook}
+      matcher: "Bash"
+      run: "harness/lock/hook.py"
+      strength: refuse
+    }
+  }
+  gates {
+    gate doctrine {
+      after: writer
+      before: publish
+      on-fail: halt
+    }
+  }
+  flow { writer -> publish [guard: lock-bash] }
+}
+`;
+const POST_ASYNC = '      on: PostToolUse\n      async: true';
+
+describe("[D-3] guard --check credits a cited hook's refuse only when it can block", () => {
+  const gradeOf = async (src: string) => {
+    const { checkGuards } = await import("../../guard/check.js");
+    const ast = parse(src);
+    const files = quiet(() => claudeCodeBinding.scaffold(ast));
+    for (const f of files) { fs.mkdirSync(dirname(at(f.path)), { recursive: true }); fs.writeFileSync(at(f.path), f.content); }
+    fs.mkdirSync(at("harness/lock"), { recursive: true });
+    fs.writeFileSync(at("harness/lock/hook.py"), "import sys\nsys.exit(2)\n");
+    return checkGuards(ast, root).items.find((i) => i.kind === "gate" && i.id === "doctrine")!;
+  };
+  it("[D-3] the o-cite shape (PostToolUse, async) grades none, with a note naming why", async () => {
+    const item = await gradeOf(CITE(POST_ASYNC));
+    expect(item.strength).toBe("none");
+    expect(item.notes.join(" ")).toMatch(/PostToolUse/);
+    expect(item.notes.join(" ")).toMatch(/async/);
+  });
+  it("[D-3] a PostToolUse hook that is not async grades none too", async () => {
+    const item = await gradeOf(CITE("      on: PostToolUse"));
+    expect(item.strength).toBe("none");
+    expect(item.notes.join(" ")).toMatch(/PostToolUse cannot block/);
+  });
+  it("[D-3] an async PreToolUse hook grades none", async () => {
+    const item = await gradeOf(CITE("      on: PreToolUse\n      async: true"));
+    expect(item.strength).toBe("none");
+    expect(item.notes.join(" ")).toMatch(/async/);
+  });
+  it("[D-3] a PreToolUse command hook with onFailure: block grades refuse", async () => {
+    const item = await gradeOf(CITE("      on: PreToolUse"));
+    expect(item.strength).toBe("refuse");
+    expect(item.gradeNote).toBeUndefined();
+  });
+  it("[D-3] validate warns for strength: refuse on an event that cannot block", async () => {
+    const { validate } = await import("../../parser/validator.js");
+    const warn = (src: string) => validate(parse(src)).filter((r) => r.level === "warning" && /cannot block/.test(r.message));
+    expect(warn(CITE(POST_ASYNC)).length).toBe(1);
+    expect(warn(CITE(POST_ASYNC))[0].message).toContain("lock-bash");
+    expect(warn(CITE("      on: PreToolUse")).length).toBe(0);
+  });
+});
