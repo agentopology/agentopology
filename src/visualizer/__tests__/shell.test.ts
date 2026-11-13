@@ -26,7 +26,10 @@ let dir: string;
 let prevEnv: string | undefined;
 beforeAll(() => {
   prevEnv = process.env.AGENTOPOLOGY_CLAUDE_VERSION;
-  process.env.AGENTOPOLOGY_CLAUDE_VERSION = VERIFIED_ON;
+  // The installed-version read is cached per process. VERIFIED_ON is 2.1.323, where the
+  // talk and spawn guards grade refuse; this file also needs the "unverified" grade, so it
+  // stands in for a Claude Code version nobody has verified.
+  process.env.AGENTOPOLOGY_CLAUDE_VERSION = "2.1.999";
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "viz-shell-"));
   for (const f of claudeCodeBinding.scaffold(ast)) {
     const p = path.join(dir, f.path);
