@@ -33,11 +33,13 @@ import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
   CLAUDE_CODE_GUARDS,
+  LEDGER_WRITABLE_NOTE,
   approvalTargets,
   checkableActionGate,
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
   generateBeforeAgentScript as buildBeforeAgentScript,
+  generateBeforeEditScript as buildBeforeEditScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
   isRegisteredSubagentType,
@@ -1409,6 +1411,10 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
+      if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
+        sections.push(`Enforcement: refuse, ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
+      }
       sections.push("");
     }
   }
@@ -2414,6 +2420,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // F-4: an edit of a gate's ledger is refused on the file-edit tools.
+  if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "Write|Edit|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
+    });
+  }
+
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
   for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -3407,6 +3422,8 @@ export const claudeCodeBinding: BindingTarget = {
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAction) files.push(beforeAction);
+    const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeEdit) files.push(beforeEdit);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

@@ -24,6 +24,8 @@ import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { installedMark, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
@@ -43,6 +45,8 @@ export interface GuardItem {
   declared?: boolean;
   /** "none" because the host has no event that can block here, not because a file is missing: reported, never a failure (E-5). */
   structural?: boolean;
+  /** Said on the grade line itself, after the strength: `refuse, <gradeNote>` (F-4). */
+  gradeNote?: string;
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
@@ -367,6 +371,13 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if ((ast.hooks ?? []).some((h) => { const sc = runParts(h.run).script.replace(/^\.\//, ""); return !!sc && u.startsWith(claudeEvent(h.on)) && u.includes(sc); })) unattributed.splice(i, 1);
   }
 
+  // F-4: a gate whose check reads a ledger says so on its grade: the agent can write that file.
+  for (const item of items) {
+    if (item.kind !== "gate" || item.strength !== "refuse" || item.by !== "hook") continue;
+    const gate = ast.nodes.find((n) => n.type === "gate" && n.id === item.id) as GateNode;
+    if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) item.gradeNote = LEDGER_WRITABLE_NOTE;
+  }
+
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
   return {
     items,
@@ -381,11 +392,13 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
 export function renderGuardReport(report: GuardReport): string[] {
   const label = (i: GuardItem) => `${i.kind === "permission" ? "" : i.kind + " "}${i.id}`;
   const width = Math.max(10, ...report.items.map((i) => label(i).length));
+  const grade = (i: GuardItem) => (i.gradeNote ? `${i.strength}, ${i.gradeNote}` : i.strength);
+  const gradeWidth = Math.max(STRENGTH_WIDTH, ...report.items.map((i) => grade(i).length));
   const lines: string[] = [];
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
   const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${i.strength.padEnd(STRENGTH_WIDTH)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
@@ -413,6 +426,7 @@ export interface GuardFact {
   where: string;
   notes: string[];
   declared?: boolean;
+  gradeNote?: string;
 }
 
 /**
@@ -423,7 +437,7 @@ export interface GuardFact {
 export function guardFacts(report: GuardReport): Record<string, GuardFact> {
   const out: Record<string, GuardFact> = {};
   for (const i of report.items) {
-    out[i.id] = { kind: i.kind, strength: i.strength, by: i.by, where: i.where, notes: [...i.notes], ...(i.declared ? { declared: true } : {}) };
+    out[i.id] = { kind: i.kind, strength: i.strength, by: i.by, where: i.where, notes: [...i.notes], ...(i.declared ? { declared: true } : {}), ...(i.gradeNote ? { gradeNote: i.gradeNote } : {}) };
   }
   return out;
 }

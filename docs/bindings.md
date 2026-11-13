@@ -95,6 +95,8 @@ Gates are injected between flow nodes. The binding generates:
 - Retry logic
 - Failure handling (halt or bounce-back)
 
+**Known gap: the agent can write a gate's ledger (F-4).** A gate's ledger (`records { record trace { path: "logs/{unit}/trace.jsonl" } }`) and the Codex approval record (`.codex/state/approvals.jsonl`) are files in the workspace, and the guards trust an ok line in them. On both targets the generated guards narrow this: `before-action.sh` refuses a `Bash` command that names a ledger (its path with `{unit}` as `*`, or the letters of its file name anywhere in the command, so `tr""ace.jsonl` and `f=trace.jsonl; echo x >> logs/ep1/$f` are caught) unless every program in it only reads its arguments and it holds no `>` and no `tee` (`cat` and `jq .` still run); `before-edit.sh`, a `PreToolUse` hook on `Write|Edit|MultiEdit|NotebookEdit` on Claude Code and on `apply_patch` on Codex (every `*** Add File`, `Update File`, `Delete File` and `Move to` path in the patch), refuses an edit of a ledger. Both are written whenever a gate has a ledger, or a Codex approval step exists, with or without a guarded step. A write through a path the guard cannot see (a variable set elsewhere, another script) still gets through, so `guard --check` and the generated docs say so on the grade itself: `refuse, ledger agent-writable until the signed gate` on Claude Code, `unverified, ledger agent-writable until the signed gate` on Codex. The signed gate in the next release closes this.
+
 ### Settings
 
 The `settings` block maps to the platform's global permission configuration:
@@ -249,9 +251,9 @@ An Agent SDK binding would generate `agents/writer.json`:
 
 | Binding | Status | Target | Description |
 |---------|--------|--------|-------------|
-| `claude-code` | **Stable** | Claude Code | Generates `.claude/agents/`, `.claude/settings.json`, `.mcp.json` — the event-driven HOST layer |
+| `claude-code` | **Stable** | Claude Code | Generates `.claude/agents/`, `.claude/settings.json`, `.mcp.json` — the event-driven HOST layer; a gate that reads a ledger is graded `refuse, ledger agent-writable until the signed gate` |
 | `claude-workflow` | Experimental | Claude Workflow | Compiles the deterministic fan-out phases into `<topology>.workflow.js`, plus SEAM/README/LOSSY-REPORT companion files |
-| `codex` | Experimental | Codex | Codex agent definitions and config; every guard is graded `unverified` in release 1, `none` where Codex has no blocking event |
+| `codex` | Experimental | Codex | Codex agent definitions and config; every guard is graded `unverified` in release 1, `none` where Codex has no blocking event; a gate that reads a ledger, and an approval step, read `unverified, ledger agent-writable until the signed gate` |
 | `cursor` | Experimental | Cursor | Cursor rules and agent config |
 | `gemini-cli`, `copilot-cli`, `openclaw`, `kiro` | Removed in 0.10.0 | — | Use agentopology 0.9.x |
 | `agent-sdk` | Planned | Anthropic Agent SDK | Tool definitions and agent configs for the Agent SDK |

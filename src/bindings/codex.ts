@@ -44,7 +44,7 @@ import { codexWarnings } from "../parser/validator.js";
 import { BindingRefusal } from "./types.js";
 import { everyToCron } from "./claude-code.js";
 import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
-import { CODEX_GUARDS, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
+import { CODEX_GUARDS, LEDGER_WRITABLE_NOTE, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
 import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath, interpreterFor } from "../parser/run.js";
@@ -723,6 +723,8 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         // R-11, F-10: AGENTS.md is loaded into the model's context, so the record is described for the
         // person in words (file, fields, meaning) and no line here writes it.
         sections.push(`- **Approval record:** Codex cannot ask, so ${targets.map((t) => `\`${t}\``).join(", ")} is not started until the last record for \`${human.id}\` in \`.codex/state/approvals.jsonl\` approves it. A person, not the model, adds that record by hand: one line holding one JSON object, with \`step\` set to the step id \`${human.id}\`, \`ok\` set to true (false withdraws an approval), and \`at\` set to the time of the approval as an ISO 8601 UTC string. The model must not write this file; when it is asked to, it asks the person instead.`);
+        // F-4: the guards refuse a command or an edit that writes the file, but the agent could still reach it another way.
+        sections.push(`- **Enforcement:** unverified, ${LEDGER_WRITABLE_NOTE} — \`.codex/scripts/${ast.topology.name}/before-agent.sh\` (PreToolUse on \`collaborationspawn_agent\`) refuses to start ${targets.map((t) => `\`${t}\``).join(", ")} until the record approves it, and the guards refuse a command or a patch that writes \`.codex/state/approvals.jsonl\`; a write through a path they cannot see is not stopped`);
       }
       if (human.timeout) {
         sections.push(`- **Timeout:** ${human.timeout}`);
@@ -1129,7 +1131,8 @@ function gateEnforcementNote(ast: TopologyAST, gate: GateNode): string {
       // F-29: say what before-action.sh checks for this gate: its ledger, its script, or both.
       const ledger = gateLedger(ast, gate) ? "the ledger shows " + gateAnchors(gate, "after").map((a) => `\`${a}\``).join(", ") + " finished ok" : null;
       const script = scriptNameFromRun(gate.run) ? "the gate script passes" : null;
-      return "unverified — `.codex/scripts/" + t + "/before-action.sh` (PreToolUse on Bash) refuses the step's command until " + [ledger, script].filter(Boolean).join(" and ") + "; " + trust;
+      // F-4: a ledger is a file the agent can write; the grade says so.
+      return (ledger ? `unverified, ${LEDGER_WRITABLE_NOTE}` : "unverified") + " — `.codex/scripts/" + t + "/before-action.sh` (PreToolUse on Bash) refuses the step's command until " + [ledger, script].filter(Boolean).join(" and ") + "; " + trust;
     }
     case "spawn": return "unverified — `.codex/scripts/" + t + "/before-agent.sh` (PreToolUse on `collaborationspawn_agent`) refuses to start " + hold.agents.map((a) => `\`${a}\``).join(", ") + " until the gate script passes; " + trust;
     case "none": return "none — `gate-" + gate.id + ".sh` runs when " + hold.anchors.map((a) => `\`${a}\``).join(", ") + " stops, but Codex cannot block a SubagentStop and nothing after it can be held, so nothing stops the next step; run `.codex/scripts/" + t + "/gate-" + gate.id + ".sh` yourself before it";

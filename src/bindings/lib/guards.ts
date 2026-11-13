@@ -363,7 +363,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "# Where bash runs a program in a segment: after variable assignments and these words.",
   "AT_LEAD=\" if then elif else while until do ! { time \"",
   "# Programs that only read or print their arguments, never run them (unless a flag below says so).",
-  "AT_READS=\" cat ls head tail wc echo printf grep egrep fgrep rg ag stat file diff cmp md5sum sha1sum sha256sum shasum du tree realpath basename dirname readlink test [ true false bat \"",
+  "AT_READS=\" cat ls head tail wc echo printf grep egrep fgrep rg ag stat file diff cmp md5sum sha1sum sha256sum shasum du tree realpath basename dirname readlink test [ true false bat jq \"",
   "# git subcommands that read or record, run with none of the flags that make git run a command.",
   "AT_GIT_READS=\" status diff log show add commit blame ls-files grep restore rm mv branch tag \"",
   "at_special() { [[ $1 == *[\\$\\`\\*\\?\\[\\{\\~]* ]]; }",
@@ -448,6 +448,165 @@ export const MATCH_FUNCTIONS: string[] = [
   "}",
 ];
 
+/**
+ * canon PATH (F-12): one source for the Codex `if:` filter and before-edit.sh. It needs $ROOT, the
+ * project root, and sets $CROOT.
+ */
+export const CANON_FUNCTION: string[] = [
+  "# canon PATH (F-12): the path made absolute (from $PWD; /proc/self/cwd is the root), with `.`, `..` and",
+  "# `//` resolved lexically, then relative to the project root when it is inside it.",
+  "canon() {",
+  '  local v=$1 part out=""',
+  '  case "$v" in /proc/self/cwd) v=$ROOT ;; /proc/self/cwd/*) v="$ROOT/${v#/proc/self/cwd/}" ;; /*) ;; *) v="$PWD/$v" ;; esac',
+  "  local IFS=/; set -f # always called in $(...): neither leaks out",
+  "  for part in $v; do",
+  '    case "$part" in ""|.) ;; ..) out="${out%/*}" ;; *) out="$out/$part" ;; esac',
+  "  done",
+  '  [ -n "$out" ] || out=/',
+  '  case "$out" in "$CROOT") out=. ;; "$CROOT"/*) out="${out#"$CROOT"/}" ;; esac',
+  "  printf '%s' \"$out\"",
+  "}",
+  'CROOT=/; CROOT="$(ROOT=/ PWD=/ canon "$ROOT")"',
+];
+
+/** What a grade says, on the grade itself, for a step whose check reads a ledger the agent can write (F-4). */
+export const LEDGER_WRITABLE_NOTE = "ledger agent-writable until the signed gate";
+
+/** A file a guard trusts that the agent could write (F-4): a gate's ledger, or the Codex approval record. */
+export interface ProtectedLedger {
+  /** The project-relative path as declared (`logs/{unit}/trace.jsonl`), for messages. */
+  path: string;
+  /** The path as a shell pattern, `{unit}` made `*` and the rest quoted. */
+  glob: string;
+  /** The file name as a shell pattern. */
+  name: string;
+  /** The letters of the file name (`tracejsonl`): the fallback a quoted or split name cannot hide from. */
+  letters: string;
+}
+
+/** A path with `{unit}` as a shell `case` pattern: `*` for the unit, every other part quoted. */
+function unitPattern(path: string): string {
+  return path.split("{unit}").map((part) => (part ? shellQuote(part) : "")).join("*");
+}
+
+/**
+ * Every ledger a gate of this topology reads, and, on a platform that cannot ask, the approvals file a
+ * human step reads (F-4). The guards refuse a command or an edit that names one; until the signed gate
+ * these files are the gap. Empty when the topology has neither.
+ */
+export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedLedger[] {
+  const paths: string[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const rec = gateLedger(ast, node as GateNode);
+    if (rec) paths.push(rec.path.replace(/^\.\//, ""));
+  }
+  if (!p.supportsAsk && hasHuman(ast)) paths.push(`${p.stateDir}/approvals.jsonl`);
+  return [...new Set(paths)].map((path) => {
+    const base = path.replace(/^.*\//, "");
+    const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
+    // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
+    const unitInName = base.includes("{unit}");
+    // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
+    const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
+    return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
+  });
+}
+
+/**
+ * The before-action.sh lines that refuse a command naming a ledger (F-4): its pattern among the words,
+ * or its file name's letters anywhere in the command's letters. Reading stays allowed: every program in
+ * the command only reads its arguments (AT_READS, a reading git subcommand) and the command holds no
+ * `>` and no `tee`. Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS, and runs under `set -f`.
+ */
+function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
+  if (ledgers.length === 0) return [];
+  return [
+    "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
+    "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
+    "at_only_reads() {",
+    "  local seg x base; local -a ws",
+    "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
+    "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+    "    read -ra ws <<< \"$(lower \"$(norm \"$seg\")\")\"",
+    "    x=0",
+    "    while [ \"$x\" -lt \"${#ws[@]}\" ] && [[ \"$AT_LEAD\" == *\" ${ws[x]} \"* ]]; do x=$((x+1)); done",
+    "    [ \"$x\" -lt \"${#ws[@]}\" ] || continue",
+    "    [[ ${ws[x]} =~ ^[a-z_][a-z0-9_]*= ]] && return 1",
+    "    at_special \"${ws[x]}\" && return 1",
+    "    base=${ws[x]##*/}",
+    "    at_reads_only \"$base\" \"${ws[@]:x+1}\" || return 1",
+    "  done <<< \"$SEGS\"",
+    "  return 0",
+    "}",
+    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
+    "ledger_guard() {",
+    "  local hit=0 w",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  [ \"$hit\" = 1 ] || return 0",
+    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    "",
+  ];
+}
+
+/**
+ * One PreToolUse hook on the file-edit tools (F-4): an edit whose path, made project-relative, matches
+ * a ledger's pattern, or whose file name is a ledger's, is refused (exit 2). Claude Code sends the path
+ * in `tool_input.file_path` (`notebook_path` for NotebookEdit); Codex sends apply_patch with the patch
+ * text in `tool_input.command`, and every file it adds, updates, deletes or moves to is read, the way
+ * the `if:` filter reads them. Input it cannot read blocks. Null when the topology has no ledger.
+ */
+export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
+  const ledgers = protectedLedgers(ast, p);
+  if (ledgers.length === 0) return null;
+  const name = ast.topology.name;
+  const v = p.projectDirVar;
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Before ${p.label} edits a file in a project of topology "${name}" (F-4).`,
+    `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on`,
+    `# ${p.supportsAsk ? "Write|Edit|MultiEdit|NotebookEdit" : "apply_patch"}. A gate's ledger is a file the agent could write, so an edit`,
+    `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
+    "set -euo pipefail",
+    ...FAIL_CLOSED,
+    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this edit, so it is blocked" >&2; exit 2; }',
+    ...(v === null
+      ? [`ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, name)}" && pwd)"`]
+      : [
+          `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this edit cannot be checked and is blocked" >&2; exit 2; fi`,
+          `ROOT="$(cd "$${v}" && pwd)"`,
+        ]),
+    "INPUT=$(cat)",
+    '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
+    "TOOL=$(printf '%s' \"$INPUT\" | jq -er '.tool_name | strings') || { echo \"agentopology: the hook input is not valid JSON, so the edit is blocked\" >&2; exit 2; }",
+    'if [ "$TOOL" = apply_patch ]; then',
+    "  PATCH=$(printf '%s' \"$INPUT\" | jq -er '.tool_input | objects | (.command // .input // .patch) | strings') || { echo \"agentopology: no patch text could be read, so the edit is blocked\" >&2; exit 2; }",
+    "  PATHS=$(printf '%s\\n' \"$PATCH\" | sed -nE 's/^\\*\\*\\* (Add File|Update File|Delete File|Move to): (.*[^[:space:]])[[:space:]]*$/\\2/p')",
+    "else",
+    "  PATHS=$(printf '%s' \"$INPUT\" | jq -er '.tool_input | objects | (.file_path // .notebook_path // .path) | strings') || PATHS=''",
+    "fi",
+    '[ -n "$PATHS" ] || { echo "agentopology: no file path could be read from the edit, so it is blocked" >&2; exit 2; }',
+    ...CANON_FUNCTION,
+    "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
+    "while IFS= read -r P || [ -n \"$P\" ]; do",
+    '  [ -n "$P" ] || continue',
+    '  R="$(canon "$P")"',
+  ];
+  for (const l of ledgers) {
+    // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
+    lines.push(`  PAT=${shellQuote(l.glob)}; if [[ $R == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+    if (l.name) lines.push(`  PAT=${shellQuote(l.name)}; if [[ \${R##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+  }
+  lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
+  return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
+}
+
 /** Programs that run a script: for these the step's tool is the script, not the program (F-21). */
 const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpm|yarn)$/;
 
@@ -493,7 +652,9 @@ function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: Gate
  */
 export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const guards = actionGuards(ast);
-  if (guards.length === 0) return null;
+  // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
+  const ledgers = protectedLedgers(ast, p);
+  if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
 
   const lines = [
@@ -557,6 +718,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
+    ...ledgerGuardLines(ledgers),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
