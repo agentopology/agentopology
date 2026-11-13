@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -69,7 +69,7 @@ describe("[VZ-4] one file, no network", () => {
     expect(html).toContain('id="theme-toggle"');
     expect(html).toContain("dataset.theme");
   });
-  it("[VZ-4] has a lens bar with six lenses; only Flow and Guards are active", () => {
+  it("[VZ-4] has a lens bar with six lenses; each active one renders and none shows a coming panel", () => {
     const html = plain();
     for (const l of ["flow", "sessions", "guards", "seats", "coverage", "index"]) {
       expect(html).toContain(`data-lens="${l}"`);
@@ -77,7 +77,14 @@ describe("[VZ-4] one file, no network", () => {
     const page = drawPage(plain());
     const lenses = page.read<Array<{ id: string; active: boolean }>>("LENSES");
     expect(lenses.map((l) => l.id)).toEqual(["flow", "sessions", "guards", "seats", "coverage", "index"]);
-    expect(lenses.filter((l) => l.active).map((l) => l.id)).toEqual(["flow", "guards"]);
+    // Flow and Guards were first (V1); each 0.12 lens joins as it lands (V2).
+    const active = lenses.filter((l) => l.active).map((l) => l.id);
+    expect(active.slice(0, 1)).toEqual(["flow"]);
+    expect(active).toContain("guards");
+    for (const id of active.filter((x) => x !== "flow")) {
+      page.run(`setLens(${JSON.stringify(id)}, true)`);
+      expect(page.run("document.getElementById('lens-view').innerHTML")).not.toContain('class="coming"');
+    }
   });
   it("[VZ-4] the headline strip has 7 facts computed from the projection and the facts", () => {
     const page = drawPage(checked());
@@ -129,7 +136,7 @@ describe("[VZ-7] the guards lens", () => {
     return counts;
   };
 
-  it("[VZ-7] counts in the page equal the counts guard --check prints", () => {
+  it("[VZ-7] counts in the page equal the counts guard --check prints", async () => {
     const page = drawPage(checked());
     const counts = page.read<Record<string, number>>("guardCounts()");
     const printed = printedCounts();
@@ -138,7 +145,20 @@ describe("[VZ-7] the guards lens", () => {
       expect(counts[g] ?? 0).toBe(printed[g] ?? 0);
     }
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(Object.values(printed).reduce((a, b) => a + b, 0));
-    expect(counts.unverified ?? 0).toBeGreaterThan(0);
+    // With the verified version installed nothing reads unverified, so the "?"
+    // count is checked against a version that is not the verified one. The
+    // installed version is read once per process, so load a fresh copy.
+    const prev = process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+    process.env.AGENTOPOLOGY_CLAUDE_VERSION = "2.1.999";
+    try {
+      vi.resetModules();
+      const fresh = await import("../facts.js");
+      const other = drawPage(generateVisualization(ast, { facts: fresh.collectFacts(ast, { source: SRC, dir }) })).read<Record<string, number>>("guardCounts()");
+      expect(other.unverified ?? 0).toBeGreaterThan(0);
+    } finally {
+      if (prev === undefined) delete process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+      else process.env.AGENTOPOLOGY_CLAUDE_VERSION = prev;
+    }
   });
 
   it("[VZ-7] each chip pairs a shape, a word and a color; unverified is the same shape with a ?", () => {

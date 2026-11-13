@@ -146,7 +146,7 @@ agentopology scaffold my-team.at --target claude-code
 ```bash
 agentopology visualize my-team.at
 ```
-The page is one offline HTML file (light and dark themes, no network). Use the lens bar to switch between Flow and Guards; the Guards lens grades every gate, approval step, permission rule and session guard (refuse, hope, none, unverified) from `guard --check`. Link straight to a view with `#lens=guards` or `#node=<id>`.
+The page is one offline HTML file (light and dark themes, no network). Six lenses switch from the lens bar: **Flow** (gates and their grades as chips on the edges they guard, human steps in a seat lane, stores on a rail, phase stages collapsed until you open them), **Sessions** (places, who may message whom with the message kind, the hub, who decides what, and which sessions have no talk guard on disk), **Guards** (a grade for every gate, approval step, permission rule and session guard: refuse, hope, none, unverified, from `guard --check`), **Seats** (one row per human step and declared decision, with its timeout and grade), **Coverage** (what the project holds against what the `.at` accounts for, by kind, from `validate --inventory`) and **Index** (every item with its line, and the `.at` text with a jump to each line). Run `visualize` with `--dir` in the project to fill in the grades and coverage; without it they read "not checked". Link straight to a view with `#lens=sessions`, `#node=<id>` or `#lens=index&line=<n>`.
 
 **List targets** — see all supported platforms:
 ```bash
