@@ -422,17 +422,34 @@ body{background:var(--bg);color:var(--t);font-family:var(--font-body);line-heigh
 .node-group.dimmed{opacity:.18}
 .node-group.highlighted{opacity:1}
 .node-label{font-family:var(--font-heading);fill:var(--t);font-size:12px;font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none;letter-spacing:-.2px}
-.node-sublabel{font-family:var(--font-mono);fill:var(--t2);font-size:8.5px;text-anchor:middle;dominant-baseline:central;pointer-events:none;letter-spacing:.3px;font-weight:500}
+.node-sublabel{font-family:var(--font-mono);fill:var(--t2);font-size:11px;text-anchor:middle;dominant-baseline:central;pointer-events:none;letter-spacing:.3px;font-weight:500}
 .edge-path{fill:none;stroke-width:1.5}
 .edge-path.unconditional{stroke:var(--edge)}
 .edge-path.conditional{stroke:var(--t3);stroke-dasharray:6 4}
 .edge-path.failure{stroke:var(--red);stroke-dasharray:6 4;opacity:.7}
 .edge-path.loop{stroke:var(--orange);stroke-dasharray:4 4}
+.edge-path.wait{stroke:var(--cyan);stroke-dasharray:2 5}
+.edge-path.error{stroke:var(--red);stroke-dasharray:8 3 2 3}
+.gate-chip .gate-word{font-family:var(--font-mono);font-size:11px;fill:var(--t);dominant-baseline:central;pointer-events:none}
+.gate-chip .grade-word{font-family:var(--font-mono);font-size:11px;fill:var(--t2);dominant-baseline:central;text-anchor:end;pointer-events:none}
+.gate-chip .grade-mark{font-family:var(--font-mono);font-size:11px;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.seat-lane rect{fill:rgba(34,211,238,.04);stroke:rgba(34,211,238,.35);stroke-width:1;stroke-dasharray:2 4}
+.seat-lane text{font-family:var(--font-mono);font-size:11px;letter-spacing:1.5px;fill:var(--cyan);font-weight:600}
+.stage-box rect{fill:rgba(167,139,250,.04);stroke:rgba(167,139,250,.35);stroke-width:1;stroke-dasharray:6 3}
+.stage-box text{font-family:var(--font-mono);font-size:11px;fill:var(--purple);font-weight:600;cursor:pointer}
+.store-rail line{stroke:#14b8a6;stroke-width:2;opacity:.6}
+.store-rail line.rail-drop{stroke-width:1;stroke-dasharray:2 3}
+.store-rail>text{text-anchor:start!important}
+.store-rail text{font-family:var(--font-mono);font-size:11px;fill:#14b8a6;text-anchor:middle;font-weight:600}
+.store-tick line{stroke:#14b8a6;stroke-width:2}
+.flag rect{fill:var(--cyan-bg);stroke:var(--cyan-br);stroke-width:.8}
+.flag text{font-family:var(--font-mono);font-size:11px;fill:var(--cyan);font-weight:600}
+.flag{cursor:default}
 .edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.22}
 .place-box rect{fill:rgba(167,139,250,.04);stroke:rgba(167,139,250,.35);stroke-width:1;stroke-dasharray:2 4}
-.place-box text{font-family:var(--font-mono);font-size:10px;letter-spacing:1.5px;fill:rgba(167,139,250,.75);font-weight:600;text-transform:uppercase}
+.place-box text{font-family:var(--font-mono);font-size:11px;letter-spacing:1.5px;fill:rgba(167,139,250,.75);font-weight:600;text-transform:uppercase}
 .session-mark rect{fill:rgba(96,165,250,.18);stroke:rgba(96,165,250,.5);stroke-width:.5}
-.session-mark text{font-family:var(--font-mono);font-size:7.5px;fill:#93c5fd;font-weight:700}
+.session-mark text{font-family:var(--font-mono);font-size:11px;fill:#93c5fd;font-weight:700}
 .edge-group.dimmed .edge-path{opacity:.06}
 .edge-group.dimmed .edge-label-group{opacity:.06}
 .edge-group.highlighted .edge-path{stroke-width:2.5;opacity:1}
@@ -650,6 +667,7 @@ function typeColor(type) {
     case 'gate': return { main: COLOR_ORANGE, bg: 'rgba(251,146,60,.10)', br: 'rgba(251,146,60,.25)' };
     case 'orchestrator': return { main: COLOR_GOLD, bg: 'rgba(251,191,36,.10)', br: 'rgba(251,191,36,.25)' };
     case 'store': return { main: '#14b8a6', bg: 'rgba(20,184,166,.10)', br: 'rgba(20,184,166,.25)' };
+    case 'stage': return { main: COLOR_PURPLE, bg: 'rgba(167,139,250,.06)', br: 'rgba(167,139,250,.25)' };
     default: return { main: COLOR_GRAY, bg: 'rgba(148,163,184,.08)', br: 'rgba(148,163,184,.2)' };
   }
 }
@@ -663,12 +681,35 @@ function typeIcon(type) {
 }
 function nodeSize(node) {
   if (node.type === 'orchestrator') return { w: ORCH_W, h: ORCH_H };
-  if (node.type === 'gate') return { w: 120, h: 70 };
+  if (node.type === 'gate') return { w: 190, h: 28 };
   if (node.type === 'action') return { w: ACTION_W, h: ACTION_H };
   if (node.type === 'store') return { w: 140, h: 60 };
   return { w: NODE_W, h: NODE_H };
 }
 function isManualNode(node) { return node.invocation === 'manual'; }
+
+// --- Stages: agents that share a phase open collapsed into one block ---
+var expandedStages = {};
+function buildStages() {
+  var byPhase = {};
+  (data.nodes || []).forEach(function(n) {
+    if (n.type === 'agent' && n.phase != null && n.runs !== 'session' && !n.place) (byPhase[n.phase] = byPhase[n.phase] || []).push(n.id);
+  });
+  var list = [], hidden = new Set(), stageOf = {};
+  Object.keys(byPhase).forEach(function(ph) {
+    var members = byPhase[ph];
+    if (members.length < 2) return;
+    var st = { id: 'stage:phase-' + ph, phase: ph, members: members, open: !!expandedStages['stage:phase-' + ph] };
+    st.node = { id: st.id, type: 'stage', label: 'Phase ' + ph + ' \u00b7 ' + members.length + ' agents', members: members, phase: ph };
+    list.push(st);
+    if (!st.open) members.forEach(function(m) { hidden.add(m); stageOf[m] = st.id; });
+  });
+  return { list: list, hidden: hidden, stageOf: stageOf };
+}
+function toggleStage(id) {
+  expandedStages[id] = !expandedStages[id];
+  renderGraph();
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SECTION: Layout Engine
@@ -687,6 +728,8 @@ function layoutNodes(nodes, edges) {
   edges.forEach(function(e) { if (!e.isMemory) { touched.add(e.from); touched.add(e.to); } });
   var manualNodes = nodes.filter(function(n) { return isManualNode(n) && !touched.has(n.id); });
   var triggerNodes = nodes.filter(function(n) { return n.type === 'trigger'; });
+  var humanNodes = nodes.filter(function(n) { return n.type === 'human'; });
+  var humanIds = new Set(humanNodes.map(function(n) { return n.id; }));
 
   var gateIds = new Set(gateNodes.map(function(g) { return g.id; }));
   var manualIds = new Set(manualNodes.map(function(n) { return n.id; }));
@@ -702,7 +745,7 @@ function layoutNodes(nodes, edges) {
   var dagreNodes = nodes.filter(function(n) {
     if (n.type === 'orchestrator' && !orchInFlow) return false;
     if (n.type === 'store') return false;
-    return !gateIds.has(n.id) && !manualIds.has(n.id) && !triggerIds.has(n.id);
+    return !gateIds.has(n.id) && !manualIds.has(n.id) && !triggerIds.has(n.id) && !humanIds.has(n.id);
   });
 
   // Create dagre graph
@@ -747,6 +790,14 @@ function layoutNodes(nodes, edges) {
         });
       }
     }
+  });
+
+  // A human step leaves the flow for the seat lane. Its neighbours stay linked
+  // (predecessor -> successor) so the ranks around it do not move.
+  humanNodes.forEach(function(h) {
+    var preds = edges.filter(function(e) { return e.to === h.id && dagreNodeIds.has(e.from) && !e.isMemory; }).map(function(e) { return e.from; });
+    var succs = edges.filter(function(e) { return e.from === h.id && dagreNodeIds.has(e.to) && !e.isMemory; }).map(function(e) { return e.to; });
+    preds.forEach(function(a) { succs.forEach(function(b) { if (a !== b && !g.hasEdge(a, b)) g.setEdge(a, b, { minlen: 1, weight: 2 }); }); });
   });
 
   // Run dagre layout
@@ -795,8 +846,10 @@ function layoutNodes(nodes, edges) {
     } else if (gate.after && gate.before && positions[gate.after] && positions[gate.before]) {
       var afterPos = positions[gate.after], beforePos = positions[gate.before];
       var sz = nodeSize(gate);
+      var onEdge = edgePoints[gate.after + '->' + gate.before];
+      var gateX = onEdge && onEdge.length ? onEdge[Math.floor(onEdge.length / 2)].x : (afterPos.x + beforePos.x) / 2;
       positions[gate.id] = {
-        x: (afterPos.x + beforePos.x) / 2 + pairOffset(gate, sz.w),
+        x: gateX + pairOffset(gate, sz.w),
         y: afterPos.y + afterPos.h + (beforePos.y - afterPos.y - afterPos.h) / 2 - sz.h / 2,
         w: sz.w, h: sz.h
       };
@@ -824,6 +877,20 @@ function layoutNodes(nodes, edges) {
     });
   }
 
+  // The seat lane: every human decision point in one column to the right.
+  if (humanNodes.length > 0) {
+    var laneRight = 0, laneTop = Infinity;
+    Object.values(positions).forEach(function(p) { laneRight = Math.max(laneRight, p.x + p.w / 2); laneTop = Math.min(laneTop, p.y); });
+    if (laneTop === Infinity) laneTop = 40;
+    var laneX = laneRight + 140 + NODE_W / 2, laneY = laneTop + 30;
+    humanNodes.forEach(function(n) {
+      var sz = nodeSize(n);
+      positions[n.id] = { x: laneX, y: laneY, w: sz.w, h: sz.h };
+      laneY += sz.h + 30;
+    });
+    window.__seatLane = { x: laneX - NODE_W / 2 - 16, y: laneTop - 4, w: NODE_W + 32, h: laneY - laneTop + 4, seats: humanNodes.map(function(n) { return n.id; }) };
+  } else window.__seatLane = null;
+
   // Position orchestrator above the flow when it has no flow edges
   if (orchNode && !orchInFlow) {
     var allPosArr = Object.values(positions);
@@ -844,7 +911,7 @@ function layoutNodes(nodes, edges) {
     var flowPos = Object.values(positions);
     var bandY = 0, sumFX = 0;
     flowPos.forEach(function(p) { bandY = Math.max(bandY, p.y + p.h); sumFX += p.x; });
-    bandY += 110;
+    bandY += 150;
     var cx0 = flowPos.length ? sumFX / flowPos.length : 200;
     var STORE_GAP = 40;
     var totalW = 0;
@@ -885,26 +952,37 @@ function renderGraph() {
   const container = document.getElementById('graph-container');
   const rect = container.getBoundingClientRect();
 
-  // Build combined nodes and edges including memory store pseudo-nodes
-  var allNodes = data.nodes.slice();
-  var allEdges = data.edges.slice();
+  // Stages open collapsed: members of a stage are replaced by one block.
+  var stg = buildStages();
+  var redirect = function(id) { return stg.stageOf[id] || id; };
+  var flowNodes = data.nodes.filter(function(n) { return !stg.hidden.has(n.id); }).map(function(n) {
+    if (n.type !== 'gate') return n;
+    var c = Object.assign({}, n);
+    if (n.after) c.after = redirect(n.after);
+    if (n.before) c.before = redirect(n.before);
+    if (n.afterAll) c.afterAll = n.afterAll.map(redirect).filter(function(v, k, a) { return a.indexOf(v) === k; });
+    if (n.beforeAll) c.beforeAll = n.beforeAll.map(redirect).filter(function(v, k, a) { return a.indexOf(v) === k; });
+    return c;
+  });
+  stg.list.forEach(function(st) { if (!st.open) flowNodes.push(st.node); });
+  var flowEdges = [], seenEdge = {};
+  data.edges.forEach(function(e) {
+    var f = redirect(e.from), t = redirect(e.to);
+    if (f === t) return;
+    var key = [f, t, e.condition || '', e.maxIterations || '', e.isError ? 'x' : '', e.wait || '', e.message || ''].join('|');
+    if (seenEdge[key]) return;
+    seenEdge[key] = true;
+    flowEdges.push(f === e.from && t === e.to ? e : Object.assign({}, e, { from: f, to: t }));
+  });
+  window.__flowNodes = flowNodes;
+  var allNodes = flowNodes.slice();
+  var allEdges = flowEdges.slice();
+  // Stores sit on a rail; their ticks replace the long edges to every reader.
   var storeIds = new Set();
-  if (data.stores && data.stores.length > 0) {
-    data.stores.forEach(function(store) {
-      allNodes.push({ id: store.id, type: 'store', label: store.id, storeType: store.type, backend: store.backend });
-      storeIds.add(store.id);
-    });
-    // Add edges from agents to their memory stores
-    data.nodes.forEach(function(n) {
-      if (n.memory && n.memory.length > 0) {
-        n.memory.forEach(function(storeId) {
-          if (storeIds.has(storeId)) {
-            allEdges.push({ from: n.id, to: storeId, condition: null, maxIterations: null, isMemory: true });
-          }
-        });
-      }
-    });
-  }
+  (data.stores || []).forEach(function(store) {
+    allNodes.push({ id: store.id, type: 'store', label: store.id, storeType: store.type, backend: store.backend });
+    storeIds.add(store.id);
+  });
   nodePositions = layoutNodes(allNodes, allEdges);
   const nodeMap = {};
   allNodes.forEach(n => nodeMap[n.id] = n);
@@ -926,7 +1004,7 @@ function renderGraph() {
   // Place boxes: a titled box around each place's sessions.
   const PLACE_PAD = 24, PLACE_TITLE = 22;
   const placeGroups = {};
-  data.nodes.forEach(function(n) {
+  flowNodes.forEach(function(n) {
     if (n.runs === 'session' && n.place && nodePositions[n.id]) (placeGroups[n.place] = placeGroups[n.place] || []).push(n.id);
   });
   window.__placeBoxes = Object.keys(placeGroups).map(function(pl) {
@@ -974,8 +1052,18 @@ function renderGraph() {
     s += '<text x="' + (b.x + 14) + '" y="' + (b.y + 16) + '">' + esc(b.place) + '</text></g>';
   });
 
+  stg.list.filter(function(st) { return st.open; }).forEach(function(st) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    st.members.forEach(function(id) { var p = nodePositions[id]; if (!p) return; x0 = Math.min(x0, p.x - p.w / 2); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x + p.w / 2); y1 = Math.max(y1, p.y + p.h); });
+    if (x0 === Infinity) return;
+    s += '<g class="stage-box" data-stage="' + esc(st.id) + '" onclick="toggleStage(\\'' + esc(st.id) + '\\')"><rect x="' + (x0 - 16) + '" y="' + (y0 - 34) + '" width="' + (x1 - x0 + 32) + '" height="' + (y1 - y0 + 50) + '" rx="12"/><text x="' + (x0 - 6) + '" y="' + (y0 - 16) + '">Phase ' + esc(st.phase) + ' \\u25BE collapse</text></g>';
+  });
+  if (window.__seatLane) {
+    var sl = window.__seatLane;
+    s += '<g class="seat-lane" data-seats="' + esc(sl.seats.join(',')) + '"><rect x="' + sl.x + '" y="' + sl.y + '" width="' + sl.w + '" height="' + sl.h + '" rx="12"/><text x="' + (sl.x + 12) + '" y="' + (sl.y + 18) + '">SEATS</text></g>';
+  }
   const nodeRanks = {};
-  data.nodes.forEach(n => {
+  flowNodes.forEach(n => {
     const pos = nodePositions[n.id];
     if (pos) nodeRanks[n.id] = Math.round(pos.y / ROW_GAP);
   });
@@ -992,6 +1080,7 @@ function renderGraph() {
 
   // --- Edges ---
   const edgeLabelCount = {};
+  var usedDagre = {};
   allEdges.forEach(edge => {
     const fromPos = nodePositions[edge.from], toPos = nodePositions[edge.to];
     if (!fromPos || !toPos) return;
@@ -1000,11 +1089,15 @@ function renderGraph() {
     const isFailure = edge.condition && edge.condition.includes('fail');
     const isLoop = edge.maxIterations != null;
     const isConditional = edge.condition != null;
+    const isErrorEdge = edge.isError === true;
+    const isWaitEdge = !!edge.wait;
 
     let edgeClass = 'unconditional', markerEnd = 'url(#arrow)';
     if (isMemoryEdge) { edgeClass = 'memory'; markerEnd = 'url(#arrow)'; }
+    else if (isErrorEdge) { edgeClass = 'error'; markerEnd = 'url(#arrow-fail)'; }
     else if (isLoop) { edgeClass = 'loop'; markerEnd = 'url(#arrow-loop)'; }
     else if (isFailure) { edgeClass = 'failure'; markerEnd = 'url(#arrow-fail)'; }
+    else if (isWaitEdge) { edgeClass = 'wait'; markerEnd = 'url(#arrow-trigger)'; }
     else if (isConditional) { edgeClass = 'conditional'; markerEnd = 'url(#arrow-cond)'; }
 
     // Parallel edge offset
@@ -1032,6 +1125,8 @@ function renderGraph() {
       // Try dagre edge points first
       var dagreKey = edge.from + '->' + edge.to;
       var pts = window.__dagreEdgePoints && window.__dagreEdgePoints[dagreKey];
+      if (pts && usedDagre[dagreKey]) pts = null;
+      if (pts) usedDagre[dagreKey] = true;
       if (pts && pts.length >= 2) {
         // Build smooth path through dagre points
         pathD = 'M' + pts[0].x + ',' + pts[0].y;
@@ -1065,12 +1160,12 @@ function renderGraph() {
     }
 
     // Back-edges with maxIterations get dashed stroke, memory edges get dotted
-    const backEdgeDash = isMemoryEdge ? ' stroke-dasharray="4 4"' : isLoop ? ' stroke-dasharray="6 4"' : '';
+    const backEdgeDash = isMemoryEdge ? ' stroke-dasharray="4 4"' : isErrorEdge ? ' stroke-dasharray="8 3 2 3"' : isLoop ? ' stroke-dasharray="4 4"' : isWaitEdge ? ' stroke-dasharray="2 5"' : '';
 
     s += '<g class="edge-group" data-from="' + edge.from + '" data-to="' + edge.to + '">';
     s += '<path d="' + pathD + '" class="edge-path ' + edgeClass + '" marker-end="' + markerEnd + '"' + backEdgeDash + '/>';
 
-    if (edge.condition || isLoop || edge.message) {
+    if (edge.condition || isLoop || edge.message || isErrorEdge || isWaitEdge) {
       const isBack = toPos.y <= fromPos.y + fromPos.h;
       let labelX, labelY;
       if (isBack && (isLoop || isFailure)) {
@@ -1091,7 +1186,9 @@ function renderGraph() {
       }
       let label = '';
       if (edge.condition) label = edge.condition.replace('orchestrator.', '').replace('qa.', '').replace(' == ', '=');
-      if (isLoop) label += (label ? ' ' : '') + 'max ' + edge.maxIterations;
+      if (isErrorEdge) label = 'error' + (edge.errorType ? ' ' + edge.errorType : '') + (label ? ' ' + label : '');
+      if (isLoop) label += (label ? ' ' : '') + 'loop max ' + edge.maxIterations;
+      if (isWaitEdge) label += (label ? ' ' : '') + 'wait ' + edge.wait;
       if (edge.message) label += (label ? ' ' : '') + '[' + edge.message + ']';
       if (label) {
         if (!edgeLabelCount[edge.from]) edgeLabelCount[edge.from] = 0;
@@ -1100,7 +1197,7 @@ function renderGraph() {
         const finalY = labelY + offsetY;
 
         // Collision avoidance: push label right if it overlaps any node
-        const labelHalfW = (label.length * 5.5 + 16) / 2;
+        const labelHalfW = (label.length * 6.8 + 28) / 2;
         Object.values(nodePositions).forEach(function(np) {
           var nLeft = np.x - np.w / 2 - 8, nRight = np.x + np.w / 2 + 8;
           var nTop = np.y - 8, nBot = np.y + np.h + 8;
@@ -1108,22 +1205,22 @@ function renderGraph() {
             labelX = nRight + labelHalfW + 12;
           }
         });
-        const labelLen = label.length * 5.5 + 16;
-        const pillH = 16, pillR = 8;
+        const labelLen = label.length * 6.8 + 28;
+        const pillH = 20, pillR = 10;
         let pillFill = 'rgba(88,88,160,.15)', pillStroke = 'rgba(88,88,160,.3)', textFill = '#8888a8';
         if (isLoop) { pillFill = 'rgba(251,146,60,.12)'; pillStroke = 'rgba(251,146,60,.3)'; textFill = '#fb923c'; }
-        else if (isFailure) { pillFill = 'rgba(248,113,113,.12)'; pillStroke = 'rgba(248,113,113,.3)'; textFill = '#f87171'; }
+        else if (isErrorEdge || isFailure) { pillFill = 'rgba(248,113,113,.12)'; pillStroke = 'rgba(248,113,113,.3)'; textFill = '#f87171'; }
         s += '<g class="edge-label-group">';
         s += '<rect x="' + (labelX - labelLen/2) + '" y="' + (finalY - pillH/2) + '" width="' + labelLen + '" height="' + pillH + '" rx="' + pillR + '" fill="' + pillFill + '" stroke="' + pillStroke + '" stroke-width="0.5"/>';
         let iconOffset = 0;
         if (isLoop) {
-          s += '<text x="' + (labelX - labelLen/2 + 6) + '" y="' + (finalY + 1) + '" font-size="8" fill="' + textFill + '" dominant-baseline="central">\\u21BB</text>';
-          iconOffset = 10;
-        } else if (isFailure) {
-          s += '<text x="' + (labelX - labelLen/2 + 6) + '" y="' + (finalY + 1) + '" font-size="8" fill="#f87171" dominant-baseline="central" font-weight="700">\\u2717</text>';
-          iconOffset = 10;
+          s += '<text x="' + (labelX - labelLen/2 + 6) + '" y="' + (finalY + 1) + '" font-size="11" fill="' + textFill + '" dominant-baseline="central">\\u21BB</text>';
+          iconOffset = 14;
+        } else if (isFailure || isErrorEdge) {
+          s += '<text x="' + (labelX - labelLen/2 + 6) + '" y="' + (finalY + 1) + '" font-size="11" fill="#f87171" dominant-baseline="central" font-weight="700">\\u2717</text>';
+          iconOffset = 14;
         }
-        s += '<text x="' + (labelX + iconOffset/2) + '" y="' + (finalY + 1) + '" font-family="monospace" font-size="8.5" fill="' + textFill + '" text-anchor="middle" dominant-baseline="central" font-weight="500">' + esc(label) + '</text>';
+        s += '<text x="' + (labelX + iconOffset/2) + '" y="' + (finalY + 1) + '" font-family="monospace" font-size="11" fill="' + textFill + '" text-anchor="middle" dominant-baseline="central" font-weight="500">' + esc(label) + '</text>';
         s += '</g>';
       }
     }
@@ -1131,7 +1228,7 @@ function renderGraph() {
   });
 
   // Gate advisory connectors
-  data.nodes.filter(n => n.type === 'gate' && n.after && !n.before).forEach(gate => {
+  flowNodes.filter(n => n.type === 'gate' && n.after && !n.before).forEach(gate => {
     const gatePos = nodePositions[gate.id], afterPos = nodePositions[gate.after];
     if (!gatePos || !afterPos) return;
     const fX = afterPos.x + afterPos.w / 2, fY = afterPos.y + afterPos.h / 2;
@@ -1143,7 +1240,7 @@ function renderGraph() {
 
   // Gate path connectors: a gate with both anchors sits ON the path it guards,
   // so draw after -> gate and gate -> before (every anchor when there are several)
-  data.nodes.filter(n => n.type === 'gate' && n.after && n.before).forEach(gate => {
+  flowNodes.filter(n => n.type === 'gate' && n.after && n.before).forEach(gate => {
     const gatePos = nodePositions[gate.id];
     if (!gatePos) return;
     const gateLink = (from, to, fX, fY, tX, tY) => {
@@ -1161,51 +1258,64 @@ function renderGraph() {
     });
   });
 
-  // --- Trigger badge (compact, not inline) ---
-  // Triggers are shown as a small badge on the entry node, with a popover on click.
-  // This avoids pills stacking on top of nodes in the graph.
+  // --- Flags: jobs and triggers ride on the step they start ---
+  var flagsOf = {};
+  var addFlag = function(id, f) { (flagsOf[id] = flagsOf[id] || []).push(f); };
+  (data.schedules || []).forEach(function(job) {
+    var tgt = job.agent || job.action;
+    if (!tgt) return;
+    addFlag(redirect(tgt), { flag: 'job', text: 'job' + (job.enabled === false ? ' (off)' : ''), tip: job.id + ' · ' + (job.cron || job.every || '') });
+  });
   if (data.triggers && data.triggers.length > 0) {
-    const fwdEdges = data.edges.filter(e => !e.maxIterations);
+    const fwdEdges = flowEdges.filter(e => !e.maxIterations);
     const allFlowIds = new Set();
     fwdEdges.forEach(e => { allFlowIds.add(e.from); allFlowIds.add(e.to); });
-    data.nodes.filter(n => isManualNode(n)).forEach(n => allFlowIds.delete(n.id));
-    data.nodes.filter(n => n.type === 'gate').forEach(n => allFlowIds.delete(n.id));
+    flowNodes.filter(n => isManualNode(n) || n.type === 'gate' || n.type === 'human').forEach(n => allFlowIds.delete(n.id));
     const inDegree = {};
     allFlowIds.forEach(id => { inDegree[id] = 0; });
     fwdEdges.forEach(e => { if (allFlowIds.has(e.to)) inDegree[e.to] = (inDegree[e.to] || 0) + 1; });
     const rootNodes = [...allFlowIds].filter(id => !inDegree[id] || inDegree[id] === 0);
-    const triggerEntryMap = {};
+    const triggersByEntry = {};
     data.triggers.forEach(trigger => {
       const name = trigger.name;
       let entry = rootNodes.find(r => r.startsWith(name + '-'));
       if (!entry && name === 'ship') entry = rootNodes.find(r => r === 'intake');
       if (!entry) entry = rootNodes.find(r => r === name);
       if (!entry && rootNodes.length > 0) entry = rootNodes[0];
-      if (entry) triggerEntryMap[name] = entry;
+      if (!entry) return;
+      (triggersByEntry[entry] = triggersByEntry[entry] || []).push(trigger);
     });
-    // Group triggers by entry node
-    const triggersByEntry = {};
-    data.triggers.forEach(trigger => {
-      const entryId = triggerEntryMap[trigger.name];
-      if (!entryId) return;
-      if (!triggersByEntry[entryId]) triggersByEntry[entryId] = [];
-      triggersByEntry[entryId].push(trigger);
-    });
-    // Render a small "slash" badge on each entry node — clicking shows popover
     Object.keys(triggersByEntry).forEach(entryId => {
-      const triggers = triggersByEntry[entryId];
-      const entryPos = nodePositions[entryId];
-      if (!entryPos) return;
-      const bx = entryPos.x - entryPos.w / 2 + 8;
-      const by = entryPos.y - 2;
-      s += '<g class="trigger-badge" style="cursor:pointer" onclick="toggleTriggerPopover(\\'' + esc(entryId) + '\\')">';
-      s += '<circle cx="' + bx + '" cy="' + by + '" r="9" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.4)" stroke-width="0.8"/>';
-      s += '<text x="' + bx + '" y="' + (by + 1) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="9" fill="#22d3ee" font-weight="700">/' + (triggers.length > 1 ? triggers.length : '') + '</text>';
-      s += '</g>';
+      var ts = triggersByEntry[entryId];
+      addFlag(entryId, { flag: 'trigger', text: ts.length > 1 ? 'triggers ' + ts.length : 'trigger', tip: ts.map(function(t) { return t.name; }).join(', '), popover: true });
     });
-    // Store trigger data for popover rendering
     window.__triggersByEntry = triggersByEntry;
     window.__triggerNodePositions = nodePositions;
+  }
+
+  // --- The store rail: stores on one line, a tick per reader and writer ---
+  var railStores = allNodes.filter(function(n) { return n.type === 'store'; });
+  if (railStores.length) {
+    var railY = nodePositions[railStores[0].id].y - 34;
+    var rx0 = Infinity, rx1 = -Infinity;
+    Object.values(nodePositions).forEach(function(p) { rx0 = Math.min(rx0, p.x - p.w / 2); rx1 = Math.max(rx1, p.x + p.w / 2); });
+    s += '<g class="store-rail"><line x1="' + rx0 + '" y1="' + railY + '" x2="' + rx1 + '" y2="' + railY + '"/><text x="' + rx0 + '" y="' + (railY - 18) + '">STORES</text>';
+    railStores.forEach(function(st) { var sp = nodePositions[st.id]; s += '<line class="rail-drop" x1="' + sp.x + '" y1="' + railY + '" x2="' + sp.x + '" y2="' + sp.y + '"/>'; });
+    var pathOf = {};
+    (data.stores || []).forEach(function(st) { pathOf[st.id] = st.path; });
+    var asList = function(v) { return v == null ? [] : Array.isArray(v) ? v : [v]; };
+    railStores.forEach(function(st) {
+      data.nodes.forEach(function(n) {
+        if (n.type !== 'agent') return;
+        var p = nodePositions[redirect(n.id)];
+        if (!p) return;
+        var reads = asList(n.memory).indexOf(st.id) >= 0 || (pathOf[st.id] && asList(n.reads).indexOf(pathOf[st.id]) >= 0);
+        var writes = (pathOf[st.id] && asList(n.writes).indexOf(pathOf[st.id]) >= 0) || asList(n.custodianOf).indexOf(st.id) >= 0;
+        if (reads) s += '<g class="store-tick" data-store="' + esc(st.id) + '" data-kind="read" data-agent="' + esc(n.id) + '"><title>' + esc(n.id) + ' reads ' + esc(st.id) + '</title><line x1="' + (p.x - 8) + '" y1="' + (railY - 7) + '" x2="' + (p.x - 8) + '" y2="' + (railY + 7) + '"/><text x="' + (p.x - 8) + '" y="' + (railY - 12) + '">r</text></g>';
+        if (writes) s += '<g class="store-tick" data-store="' + esc(st.id) + '" data-kind="write" data-agent="' + esc(n.id) + '"><title>' + esc(n.id) + ' writes ' + esc(st.id) + '</title><line x1="' + (p.x + 8) + '" y1="' + (railY - 7) + '" x2="' + (p.x + 8) + '" y2="' + (railY + 7) + '"/><text x="' + (p.x + 8) + '" y="' + (railY - 12) + '">w</text></g>';
+      });
+    });
+    s += '</g>';
   }
 
   // --- Data flow overlay ---
@@ -1214,11 +1324,11 @@ function renderGraph() {
   // --- Manual agents label ---
   const flowIds = new Set();
   allEdges.forEach(e => { if (!e.isMemory) { flowIds.add(e.from); flowIds.add(e.to); } });
-  const manualNodesArr = data.nodes.filter(n => isManualNode(n) && !flowIds.has(n.id));
+  const manualNodesArr = flowNodes.filter(n => isManualNode(n) && !flowIds.has(n.id));
   if (manualNodesArr.length > 0) {
     const firstManual = nodePositions[manualNodesArr[0].id];
     if (firstManual) {
-      s += '<text x="' + firstManual.x + '" y="' + (firstManual.y - 20) + '" text-anchor="middle" font-family="monospace" font-size="9" fill="rgba(255,255,255,.25)" letter-spacing="2" font-weight="600">MANUAL AGENTS</text>';
+      s += '<text x="' + firstManual.x + '" y="' + (firstManual.y - 20) + '" text-anchor="middle" font-family="monospace" font-size="11" fill="rgba(255,255,255,.25)" letter-spacing="2" font-weight="600">MANUAL AGENTS</text>';
     }
   }
 
@@ -1232,7 +1342,7 @@ function renderGraph() {
     const glowFilter = getGlowFilter(node);
     const staggerDelay = (nodeRanks[node.id] || 0) * NODE_STAGGER_MS;
 
-    s += '<g class="node-group' + (isSelected ? ' node-selected' : '') + '" data-id="' + node.id + '" style="animation:nodeFadeIn .4s ease-out ' + staggerDelay + 'ms both" onmouseenter="onNodeHover(\\'' + node.id + '\\')" onmouseleave="onNodeLeave()" onclick="onNodeClick(\\'' + node.id + '\\')">';
+    s += '<g class="node-group' + (node.type === 'stage' ? ' stage' : '') + (isSelected ? ' node-selected' : '') + '" data-id="' + node.id + '" data-box="' + (pos.x - pos.w / 2) + ',' + pos.y + ',' + pos.w + ',' + pos.h + '" style="animation:nodeFadeIn .4s ease-out ' + staggerDelay + 'ms both" onmouseenter="onNodeHover(\\'' + node.id + '\\')" onmouseleave="onNodeLeave()" onclick="' + (node.type === 'stage' ? 'toggleStage' : 'onNodeClick') + '(\\'' + node.id + '\\')">';
 
     const x = pos.x - pos.w / 2, y = pos.y;
     const strokeDash = isManual ? 'stroke-dasharray="4 3"' : '';
@@ -1242,12 +1352,12 @@ function renderGraph() {
       s += '<rect class="node-shape" x="' + x + '" y="' + y + '" width="' + pos.w + '" height="' + pos.h + '" rx="8" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1.5) + '" data-glow="' + glowFilter + '" ' + dimOpacity + '/>';
       s += '<rect x="' + x + '" y="' + y + '" width="' + pos.w + '" height="3" rx="8" fill="' + colors.main + '" opacity="0.5"/>';
     } else if (node.type === 'gate') {
-      const cx = pos.x, cy = y + pos.h / 2;
-      const hw = pos.w / 2, hh = pos.h / 2;
-      // Diamond shape (rotated square)
-      const diamond = cx + ',' + (cy - hh) + ' ' + (cx + hw) + ',' + cy + ' ' + cx + ',' + (cy + hh) + ' ' + (cx - hw) + ',' + cy;
       const gateDash = node.behavior === 'advisory' ? 'stroke-dasharray="4 3"' : '';
-      s += '<polygon class="node-shape" points="' + diamond + '" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '" ' + gateDash + ' data-glow="' + glowFilter + '"/>';
+      s += '<g class="gate-chip" data-gate="' + esc(node.id) + '" data-from="' + esc(node.after || '') + '" data-to="' + esc(node.before || '') + '">';
+      s += '<rect class="node-shape" x="' + x + '" y="' + y + '" width="' + pos.w + '" height="' + pos.h + '" rx="14" fill="' + colors.bg + '" stroke="' + colors.main + '" stroke-width="' + (isSelected ? 2.5 : 1) + '" ' + gateDash + ' data-glow="' + glowFilter + '"/>';
+      s += '<text class="gate-word" x="' + (x + 12) + '" y="' + (y + pos.h / 2) + '">' + esc((node.label || node.id).length > 11 ? (node.label || node.id).substring(0, 10) + '\\u2026' : (node.label || node.id)) + '</text>';
+      s += gradeChipSvg(node.id, x + pos.w - 12, y + pos.h / 2);
+      s += '</g>';
     } else if (node.type === 'action') {
       const cx = pos.x, cy = y + pos.h / 2;
       const hw = pos.w / 2, hh = pos.h / 2;
@@ -1263,41 +1373,50 @@ function renderGraph() {
     }
 
     const labelY = y + pos.h / 2 - (node.type === 'agent' && node.phase != null ? 4 : 0);
-    const fullLabel = node.label || '';
+    const fullLabel = node.type === 'gate' ? '' : (node.label || '');
     const truncLabel = fullLabel.length > 20 ? fullLabel.substring(0, 20) + '\\u2026' : fullLabel;
     const titleAttr = fullLabel.length > 20 ? ' data-full-label="' + esc(fullLabel) + '"' : '';
-    s += '<text class="node-label" x="' + pos.x + '" y="' + labelY + '" fill="' + colors.main + '" ' + dimOpacity + titleAttr + '><title>' + esc(fullLabel) + '</title>' + esc(truncLabel) + '</text>';
+    if (node.type !== 'gate') s += '<text class="node-label" x="' + pos.x + '" y="' + labelY + '" fill="' + colors.main + '" ' + dimOpacity + titleAttr + '><title>' + esc(fullLabel) + '</title>' + esc(truncLabel) + '</text>';
 
     if (node.type === 'agent' && node.phase != null) {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 14) + '">Phase ' + node.phase + '</text>';
     } else if (node.type === 'action' && node.kind) {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 13) + '">' + esc(node.kind) + '</text>';
-    } else if (node.type === 'gate') {
-      s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 11) + '">gate</text>';
+    } else if (node.type === 'stage') {
+      s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 15) + '">stage \u00b7 click to open</text>';
     } else if (node.type === 'store') {
       s += '<text class="node-sublabel" x="' + pos.x + '" y="' + (labelY + 13) + '">' + esc(node.storeType || 'store') + '</text>';
     }
 
     if (node.runs === 'session') {
-      s += '<g class="session-mark" data-for="' + esc(node.id) + '"><rect x="' + (pos.x - 20) + '" y="' + (y + pos.h - 7) + '" width="40" height="13" rx="6.5"/><text x="' + pos.x + '" y="' + (y + pos.h - 0.5) + '" text-anchor="middle" dominant-baseline="central">session</text></g>';
+      s += '<g class="session-mark" data-for="' + esc(node.id) + '"><rect x="' + (pos.x - 30) + '" y="' + (y + pos.h - 9) + '" width="60" height="17" rx="8.5"/><text x="' + pos.x + '" y="' + (y + pos.h - 0.5) + '" text-anchor="middle" dominant-baseline="central">session</text></g>';
     }
 
     const badgeY = y - 2;
     const nodeBadges = [];
-    if (node.hooks && node.hooks.length > 0) nodeBadges.push({ icon: '\\u26A1', fill: '#22d3ee', bg: 'rgba(34,211,238,.15)', stroke: 'rgba(34,211,238,.35)', tip: node.hooks.map(function(h){return h.name}).join('\\\\n'), font: 'font-size="9"' });
-    if (node.skills && node.skills.length > 0) nodeBadges.push({ icon: 'S', fill: '#4ade80', bg: 'rgba(74,222,128,.15)', stroke: 'rgba(74,222,128,.35)', tip: node.skills.join('\\\\n'), font: 'font-weight="700" font-family="monospace" font-size="8"' });
-    if (node.behavior === 'advisory') nodeBadges.push({ icon: 'A', fill: '#fbbf24', bg: 'rgba(251,191,36,.15)', stroke: 'rgba(251,191,36,.35)', tip: 'Advisory', font: 'font-weight="700" font-family="monospace" font-size="7"' });
-    if (isManual) nodeBadges.push({ icon: 'M', fill: '#94a3b8', bg: 'rgba(148,163,184,.12)', stroke: 'rgba(148,163,184,.25)', tip: 'Manual invocation', font: 'font-weight="700" font-family="monospace" font-size="7"' });
+    if (node.hooks && node.hooks.length > 0) nodeBadges.push({ icon: '\\u26A1', fill: '#22d3ee', bg: 'rgba(34,211,238,.15)', stroke: 'rgba(34,211,238,.35)', tip: node.hooks.map(function(h){return h.name}).join('\\\\n'), font: 'font-size="11"' });
+    if (node.skills && node.skills.length > 0) nodeBadges.push({ icon: 'S', fill: '#4ade80', bg: 'rgba(74,222,128,.15)', stroke: 'rgba(74,222,128,.35)', tip: node.skills.join('\\\\n'), font: 'font-weight="700" font-family="monospace" font-size="11"' });
+    if (node.behavior === 'advisory') nodeBadges.push({ icon: 'A', fill: '#fbbf24', bg: 'rgba(251,191,36,.15)', stroke: 'rgba(251,191,36,.35)', tip: 'Advisory', font: 'font-weight="700" font-family="monospace" font-size="11"' });
+    if (isManual) nodeBadges.push({ icon: 'M', fill: '#94a3b8', bg: 'rgba(148,163,184,.12)', stroke: 'rgba(148,163,184,.25)', tip: 'Manual invocation', font: 'font-weight="700" font-family="monospace" font-size="11"' });
 
     // Lay out badges horizontally from right edge, each spaced 18px apart
-    var badgeSpacing = 18;
+    var badgeSpacing = 22;
     var badgeStartX = x + pos.w - 8;
     nodeBadges.forEach(function(nb, idx) {
       var bx = badgeStartX - idx * badgeSpacing;
       s += '<g class="hook-badge" onmouseenter="showTooltip(event, \\'' + nb.tip + '\\')" onmouseleave="hideTooltip()" style="cursor:pointer">';
-      s += '<circle cx="' + bx + '" cy="' + badgeY + '" r="7" fill="' + nb.bg + '" stroke="' + nb.stroke + '" stroke-width="0.5"/>';
+      s += '<circle cx="' + bx + '" cy="' + badgeY + '" r="9" fill="' + nb.bg + '" stroke="' + nb.stroke + '" stroke-width="0.5"/>';
       s += '<text x="' + bx + '" y="' + (badgeY + 1) + '" text-anchor="middle" dominant-baseline="central" ' + nb.font + ' fill="' + nb.fill + '">' + nb.icon + '</text>';
       s += '</g>';
+    });
+
+    // Flags: jobs and triggers, in a row above the block.
+    var fx = x;
+    (flagsOf[node.id] || []).forEach(function(f) {
+      var fw = f.text.length * 6.8 + 14;
+      var onc = f.popover ? ' onclick="event.stopPropagation();toggleTriggerPopover(\\'' + esc(node.id) + '\\')"' : '';
+      s += '<g class="flag" data-flag="' + f.flag + '" data-for="' + esc(node.id) + '"' + onc + '><title>' + esc(f.tip) + '</title><rect x="' + fx + '" y="' + (y - 26) + '" width="' + fw + '" height="17" rx="8.5"/><text x="' + (fx + fw / 2) + '" y="' + (y - 17) + '" text-anchor="middle" dominant-baseline="central">' + esc(f.text) + '</text></g>';
+      fx += fw + 4;
     });
 
     // Track how far left the node badges extend for scale pill placement
@@ -1310,12 +1429,12 @@ function renderGraph() {
       if (sc.mode === 'fixed') scaleLabel = '\\u00D7' + sc.min;
       else if (sc.mode === 'config') scaleLabel = '\\u00D7?';
       else scaleLabel = '\\u00D7' + sc.min + '\\u2013' + sc.max;
-      const scW = scaleLabel.length * 5.5 + 10;
+      const scW = scaleLabel.length * 6.8 + 12;
       // Place scale pill to the left of all node badges with 6px gap
       const scX = badgesLeftEdge - 6 - scW;
-      const scY = badgeY - 7;
-      s += '<rect x="' + scX + '" y="' + scY + '" width="' + scW + '" height="14" rx="7" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.35)" stroke-width="0.5"/>';
-      s += '<text x="' + (scX + scW / 2) + '" y="' + (scY + 7.5) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="8.5" fill="#22d3ee" font-weight="600">' + esc(scaleLabel) + '</text>';
+      const scY = badgeY - 8;
+      s += '<rect x="' + scX + '" y="' + scY + '" width="' + scW + '" height="17" rx="8.5" fill="rgba(34,211,238,.12)" stroke="rgba(34,211,238,.35)" stroke-width="0.5"/>';
+      s += '<text x="' + (scX + scW / 2) + '" y="' + (scY + 8.5) + '" text-anchor="middle" dominant-baseline="central" font-family="monospace" font-size="11" fill="#22d3ee" font-weight="600">' + esc(scaleLabel) + '</text>';
     }
 
     s += '</g>';
@@ -2211,7 +2330,7 @@ function exportSvg() {
   const clone = svg.cloneNode(true);
   // Add inline styles for standalone SVG
   const styleEl = document.createElementNS(SVG_NS, 'style');
-  styleEl.textContent = 'text{font-family:-apple-system,BlinkMacSystemFont,\\'Segoe UI\\',sans-serif}.node-label{font-weight:600;font-size:12px}.node-sublabel{font-size:8.5px}.edge-path{fill:none;stroke-width:1.5}.edge-path.unconditional{stroke:rgba(255,255,255,.15)}.edge-path.conditional{stroke:#5858a0;stroke-dasharray:6 4}.edge-path.failure{stroke:#f87171;stroke-dasharray:6 4}.edge-path.loop{stroke:#fb923c;stroke-dasharray:4 4}.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.6}';
+  styleEl.textContent = 'text{font-family:-apple-system,BlinkMacSystemFont,\\'Segoe UI\\',sans-serif}.node-label{font-weight:600;font-size:12px}.node-sublabel{font-size:11px}.edge-path{fill:none;stroke-width:1.5}.edge-path.unconditional{stroke:rgba(255,255,255,.15)}.edge-path.conditional{stroke:#5858a0;stroke-dasharray:6 4}.edge-path.failure{stroke:#f87171;stroke-dasharray:6 4}.edge-path.loop{stroke:#fb923c;stroke-dasharray:4 4}.edge-path.memory{stroke:#14b8a6;stroke-dasharray:4 4;opacity:.6}';
   clone.insertBefore(styleEl, clone.firstChild);
   clone.setAttribute('xmlns', SVG_NS);
   const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });
@@ -2340,6 +2459,24 @@ function applyHash() {
 
 // --- Headline strip: 7 facts from the projection and the embedded facts ---
 function gradeById(id) { return (data.grades || []).find(function(g) { return g.id === id; }); }
+// A grade glyph for the svg: shape, word and color together. It sits left of
+// its word, the word ends at rightX.
+function gradeChipSvg(id, rightX, cy) {
+  var fg = factsChecked() && data.facts.guard[id];
+  var g = fg ? gradeById(fg.strength) : null;
+  var word = g ? g.word : 'not checked';
+  var color = g ? 'var(--' + g.color + ')' : 'var(--t3)';
+  var gx = rightX - word.length * 6.8 - 16;
+  var o = '<g class="grade-chip" data-grade="' + esc(g ? g.id : 'not-checked') + '">';
+  if (!g) o += '<rect x="' + (gx - 6) + '" y="' + (cy - 6) + '" width="12" height="12" fill="none" stroke="' + color + '" stroke-dasharray="1 2"/>';
+  else if (g.shape === 'circle-hollow') o += '<circle cx="' + gx + '" cy="' + cy + '" r="6" fill="none" stroke="' + color + '" stroke-width="1.5"/>';
+  else if (g.shape === 'outline-dashed') o += '<rect x="' + (gx - 6) + '" y="' + (cy - 6) + '" width="12" height="12" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-dasharray="3 2"/>';
+  else if (g.shape === 'diamond-solid') o += '<polygon points="' + gx + ',' + (cy - 7) + ' ' + (gx + 7) + ',' + cy + ' ' + gx + ',' + (cy + 7) + ' ' + (gx - 7) + ',' + cy + '" fill="' + color + '"/>';
+  else o += '<rect x="' + (gx - 6) + '" y="' + (cy - 6) + '" width="12" height="12" fill="' + color + '"/>';
+  if (g && g.mark) o += '<text class="grade-mark" x="' + gx + '" y="' + (cy + 1) + '" fill="var(--bg)">' + esc(g.mark) + '</text>';
+  o += '<text class="grade-word" x="' + rightX + '" y="' + cy + '">' + esc(word) + '</text></g>';
+  return o;
+}
 function factsChecked() { return !!(data.facts && data.facts.checked && data.facts.guard && data.facts.guard !== 'not checked'); }
 
 function guardCounts() {

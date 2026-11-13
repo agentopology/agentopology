@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -126,7 +126,7 @@ describe("[VZ-7] the guards lens", () => {
     return counts;
   };
 
-  it("[VZ-7] counts in the page equal the counts guard --check prints", () => {
+  it("[VZ-7] counts in the page equal the counts guard --check prints", async () => {
     const page = drawPage(checked());
     const counts = page.read<Record<string, number>>("guardCounts()");
     const printed = printedCounts();
@@ -135,7 +135,20 @@ describe("[VZ-7] the guards lens", () => {
       expect(counts[g] ?? 0).toBe(printed[g] ?? 0);
     }
     expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(Object.values(printed).reduce((a, b) => a + b, 0));
-    expect(counts.unverified ?? 0).toBeGreaterThan(0);
+    // With the verified version installed nothing reads unverified, so the "?"
+    // count is checked against a version that is not the verified one. The
+    // installed version is read once per process, so load a fresh copy.
+    const prev = process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+    process.env.AGENTOPOLOGY_CLAUDE_VERSION = "2.1.999";
+    try {
+      vi.resetModules();
+      const fresh = await import("../facts.js");
+      const other = drawPage(generateVisualization(ast, { facts: fresh.collectFacts(ast, { source: SRC, dir }) })).read<Record<string, number>>("guardCounts()");
+      expect(other.unverified ?? 0).toBeGreaterThan(0);
+    } finally {
+      if (prev === undefined) delete process.env.AGENTOPOLOGY_CLAUDE_VERSION;
+      else process.env.AGENTOPOLOGY_CLAUDE_VERSION = prev;
+    }
   });
 
   it("[VZ-7] each chip pairs a shape, a word and a color; unverified is the same shape with a ?", () => {
