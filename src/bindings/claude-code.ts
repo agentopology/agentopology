@@ -1429,7 +1429,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
-        sections.push(`Enforcement: refuse, ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
+        sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
       }
       sections.push("");
     }
@@ -2431,7 +2431,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   if (buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
-      matcher: "Bash",
+      // Every tool that runs a shell command (0.11.1): a Bash-only matcher never
+      // fires for PowerShell, and fires for Monitor only from Claude Code 2.1.314.
+      matcher: "Bash|Monitor|PowerShell",
       hooks: [{ type: "command", command: beforeActionCommand(ast), onFailure: "block" }],
     });
   }

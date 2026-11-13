@@ -223,11 +223,11 @@ describe.skipIf(!hasJq)("[SP-7][B5] before-action.sh refuses a shell write to a 
     expect(hook("claude-code", "before-action.sh", bash("echo x >> records/cited.jsonl")).status).toBe(0);
   });
 
-  it("[SP-7][B5] settings.json wires before-action.sh on Bash with onFailure block, though no gate exists", () => {
+  it("[SP-7][B5] settings.json wires before-action.sh on every shell tool (Bash, Monitor, PowerShell) with onFailure block, though no gate exists", () => {
     scaffold("claude-code");
     const pre = JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8")).hooks.PreToolUse as Array<{ matcher: string; hooks: Array<{ command: string; onFailure?: string }> }>;
     const e = pre.find((x) => x.hooks[0].command.includes("before-action.sh"));
-    expect(e?.matcher).toBe("Bash");
+    expect(e?.matcher).toBe("Bash|Monitor|PowerShell");
     expect(e?.hooks[0].onFailure).toBe("block");
   });
 

@@ -15,10 +15,12 @@ All notable changes to agentopology are documented here.
 - The shell path is graded detect: a path built at run time passes (planted test B6), and every record carries the line "a program running as the same OS user can still write this file; only a signature or another OS user closes that" (`recordWaysIn`, for `guard --check` in SP-9).
 - Codex gets the same guards: its `before-edit.sh` (on `apply_patch`) and `before-action.sh` are built by the same library and carry the same record lines.
 - A record whose writers are not named, or that cites a hand-built guard, gets no generated guard. No existing fixture declares one, so no generated output changed (the CX-10 golden is untouched).
+
 ### [feature] Records: validate checks who may write a record (SP-6)
 
 - Four new rules read the record fields SP-1 parses. **V130** (error): a `written-by` program that is missing on disk, looked for beside the .at file (e.g. `Record "approvals" has written-by: "nope.py", which is missing`), or an entry that is not a project-relative path; an entry that names a node of the topology (`"maker"`) is a writer, not a file. Without a file path (a topology validated from a string) the disk is not read. **V131** (warning): a record with no `written-by`, "anyone may write this record". **V132** (warning): a record id equal to a store id, "declared as a store agents write and as a record only programs write". **V133**: a `guard:` id that is no declared hook (error), and cited hooks whose PreToolUse matchers together miss a file-writing tool (warning naming the tool, e.g. `NotebookEdit`).
 - The file-writing tool list (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) is one export of the conformance facts, `FILE_WRITE_TOOLS` in `src/conformance/claude-code.ts`, for the record rules and the record guards; no binding types its own. Validate has 133 rules (V1-V133).
+
 ### [feature] `agentopology record check`: an append-only record that was rewritten or cut short is found, and fails the gate that reads it (SP-8)
 
 - `agentopology record check FILE.at [id] [--unit U] [--dir D]` keeps a head file per record (per unit for a `{unit}` path) under `.agentopology/records/`: the count of complete lines and the sha256 of those lines. First run sets the head (exit 0); a file that only grew moves it forward (exit 0); earlier lines changed, fewer lines, or the file gone exits 1 and leaves the head where it was. With no id it checks every record with `append-only: true`; a `{unit}` record with no `--unit` is checked for every unit on disk or in its heads. A record that is not append-only is skipped. A line still being written (no newline yet) is not counted.
@@ -28,9 +30,6 @@ All notable changes to agentopology are documented here.
 
 - A `record` takes `written-by: [paths]`, `append-only: true|false`, `guard: [hook ids]` and `description`; a `human` takes `answered-by: relay|session|instrument`, `instrument: "path"`, `record: <record id>`, `covers: [globs]`, `signed: ed25519` and `key: "path"`; the top level takes `pin-imports: true|false`. Before, each was refused as V102 (measured on the planted fixtures: 2 on a record with `written-by` and `append-only`, 6 on a human with the six fields, 1 for `pin-imports`). Now each parses, is in `export --format json`, round-trips through the serializer, and reaches the visualizer data (`records`, `imports` and the human fields have rows in its rules table).
 - Grammar only: no rule reads these fields yet, and nothing is generated from them. `src/compose`, `src/records` and `src/human` are rule modules that `validate` calls and that find nothing yet. `alias.node` (a lane's node, named from the importing file) is kept whole in a flow edge and a gate anchor and is documented, but still reported undeclared (V3, V13) until the resolver lands.
-### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
-
-- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
 
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
@@ -56,6 +55,20 @@ All notable changes to agentopology are documented here.
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)
 
 - `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.
+
+## [0.11.1] - 2026-11-13
+
+
+### [fix] Fixed: the workflow binding's README, seam and lossy report describe only the topology (O-006)
+
+- The `claude-workflow` binding printed one pipeline's wording into every generated `-README.md`, `-SEAM.md` and `-LOSSY-REPORT.md` (named phases and report files that belong to no other topology). They now say only what the topology itself declares. The example hybrid harness is replaced by a new neutral one, `examples/hybrid-release.at`.
+
+### [fix] Fixed: the step and ledger guards fire for PowerShell and Monitor
+
+- Fixed: the step and ledger guards fire for PowerShell and Monitor. On PowerShell setups (Windows without Git Bash, or pwsh enabled), 0.11.0's step and ledger guards did not fire; on Claude Code before 2.1.314 a Bash hook does not fire for Monitor, and guard --check now says so.
+- `before-action.sh` is registered on `Bash|Monitor|PowerShell` (was `Bash`), still with `"onFailure": "block"`. A Monitor call with no command (a `ws` input) passes. A PowerShell command is read the same way as a Bash one, with a backslash read as a path separator (`.\tool publish ep1`), and any mention of the tool not read as a declared step (`& ./tool @(...)`, `Start-Process ./tool -ArgumentList "publish","ep1"`, `.\tool.exe`) is refused as doubt. `Get-Content`, `gc`, `Select-String` and `sls` count as reading only, so `Get-Content` of a ledger passes the ledger guard.
+- `guard --check` grades a before-action gate `refuse (Bash), unverified (PowerShell: not measured)`: the PowerShell payload is from the Claude Code docs, not measured. Below Claude Code 2.1.314, or with the version unknown, the line adds `Monitor commands not checked on …`. A project scaffolded by 0.11.0 reads `none (PowerShell: not in the matcher; rerun guard --target claude-code)`. The generated SKILL.md Enforcement line of a ledger gate says the same.
+- Scaffold output changes for every topology with a before-action guard: `.claude/settings.json` (the matcher), `before-action.sh` (the header and the PowerShell reading) and the skill's `SKILL.md` (the Enforcement line). Rerun `scaffold` or `guard --target claude-code`.
 
 ## [0.11.0] - 2026-11-13
 

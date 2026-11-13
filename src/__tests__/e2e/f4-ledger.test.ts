@@ -182,11 +182,12 @@ describe.skipIf(!hasJq)("[F-4] before-edit.sh refuses a file edit of a gate ledg
 });
 
 describe("[F-4] guard --check says the ledger is agent-writable on the grade line", () => {
-  it("[F-4] claude-code: the ledger gate reads `refuse, ledger agent-writable until the signed gate`", () => {
+  it("[F-4] claude-code: the ledger gate reads `refuse (Bash), unverified (PowerShell: not measured), ledger agent-writable until the signed gate`", () => {
     const { ast } = scaffold("claude-code");
     const lines = renderGuardReport(checkGuards(ast, root));
     const line = lines.find((l) => /^\s+gate publish-ready\s/.test(l))!;
-    expect(line).toContain(`refuse, ${NOTE}`);
+    expect(line).toContain(`refuse (Bash), unverified (PowerShell: not measured)`);
+    expect(line).toContain(`, ${NOTE}`);
     // A gate with no ledger keeps its plain grade.
     expect(lines.find((l) => /^\s+gate render-check\s/.test(l))!).not.toContain(NOTE);
   });
@@ -206,7 +207,7 @@ describe("[F-4] guard --check says the ledger is agent-writable on the grade lin
     expect(cx.split(`**Enforcement:** unverified, ${NOTE}`).length - 1).toBe(2);
     expect(cx).not.toMatch(/Enforcement:\*\* unverified, ledger[^\n]*render-check\.sh/);
     const cc = scaffold("claude-code").files.map((f) => f.content).join("\n");
-    expect(cc).toContain(`refuse, ${NOTE}`);
+    expect(cc).toContain(`refuse (Bash), unverified (PowerShell: not measured), ${NOTE}`);
   });
 });
 

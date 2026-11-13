@@ -461,7 +461,7 @@ gates {
 
 ## Gates before a script step
 
-A gate whose \`before\` is an action with \`commands\` refuses that step in Claude Code sessions. The claude-code binding writes \`before-action.sh\`, a PreToolUse hook on Bash (\`onFailure: "block"\`). When the command starts with one of the action's commands (leading \`VAR=value\` words ignored) it checks the gate: with a ledger, the LAST line for the \`after\` step (same unit, when \`unit-from\` reads one) must have \`ok: true\`; with \`run\`, that wrapper must exit 0. Otherwise it exits 2 and names the gate, step, unit and ledger path.
+A gate whose \`before\` is an action with \`commands\` refuses that step in Claude Code sessions. The claude-code binding writes \`before-action.sh\`, a PreToolUse hook on \`Bash|Monitor|PowerShell\` (\`onFailure: "block"\`): every Claude Code tool that runs a shell command. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; \`guard --check\` grades PowerShell unverified (not measured), and says when the installed Claude Code (below 2.1.314) does not run the hook for Monitor commands. When the command starts with one of the action's commands (leading \`VAR=value\` words ignored) it checks the gate: with a ledger, the LAST line for the \`after\` step (same unit, when \`unit-from\` reads one) must have \`ok: true\`; with \`run\`, that wrapper must exit 0. Otherwise it exits 2 and names the gate, step, unit and ledger path.
 
 \`\`\`at
 action publish {

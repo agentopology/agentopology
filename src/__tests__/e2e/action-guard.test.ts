@@ -85,10 +85,10 @@ afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 describe.skipIf(!hasJq)("[N38] before-action.sh refuses a script step until the ledger shows its gate held", () => {
   beforeEach(() => { scaffold(topology()); });
 
-  it("[N38] AG1 is wired as a PreToolUse Bash entry with onFailure block, naming the script by $CLAUDE_PROJECT_DIR", () => {
+  it("[N38] AG1 is wired as a PreToolUse entry on Bash|Monitor|PowerShell (0.11.1) with onFailure block, naming the script by $CLAUDE_PROJECT_DIR", () => {
     const settings = JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8"));
     expect(settings.hooks.PreToolUse).toContainEqual({
-      matcher: "Bash",
+      matcher: "Bash|Monitor|PowerShell",
       hooks: [{ type: "command", command: `bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"`, onFailure: "block" }],
     });
   });
