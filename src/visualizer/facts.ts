@@ -64,6 +64,8 @@ export interface Facts {
   version: VersionStamp;
   validate: ValidateResult | NotChecked;
   guard: Record<string, GuardFact> | NotChecked;
+  /** Hooks in settings.json that no step ties to (guard --check's "not tied" list). */
+  untied: string[] | NotChecked;
   inventory: InventoryFacts | NotChecked;
   /** Per node id. */
   items: Record<string, ItemFacts>;
@@ -85,18 +87,19 @@ export function collectFacts(ast: TopologyAST, opts: CollectOptions): Facts {
   if (!opts.dir) {
     const items: Record<string, ItemFacts> = {};
     for (const n of ast.nodes) items[n.id] = { validate: NOT_CHECKED, guard: NOT_CHECKED };
-    return { checked: false, sha256, at, version, validate: NOT_CHECKED, guard: NOT_CHECKED, inventory: NOT_CHECKED, items };
+    return { checked: false, sha256, at, version, validate: NOT_CHECKED, guard: NOT_CHECKED, untied: NOT_CHECKED, inventory: NOT_CHECKED, items };
   }
   const root = path.resolve(opts.dir);
   const v = validateResult(ast, opts.filePath);
-  const guard = guardFacts(checkGuards(ast, root));
+  const report = checkGuards(ast, root);
+  const guard = guardFacts(report);
   const cov = coverageResult(ast, collectInventory(root), root);
   const items: Record<string, ItemFacts> = {};
   for (const n of ast.nodes) {
     items[n.id] = { validate: v.results.filter((r) => r.node === n.id), guard: guard[n.id] };
   }
   return {
-    checked: true, sha256, at, version, validate: v, guard, items,
+    checked: true, sha256, at, version, validate: v, guard, untied: [...report.unattributed], items,
     inventory: {
       total: cov.total,
       mapped: cov.mapped,

@@ -4,6 +4,21 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] The visualizer is one offline page with themes, lenses and deep links (VZ-4)
+
+- The generated page holds no web address at all: dagre and every script are inline, fonts are the system stack, and there is no `<link>` or `@import`. A test reads the page text and fails on any `http://` or `https://` outside comments.
+- Light and dark themes come from CSS variables, follow `prefers-color-scheme`, and a Theme button sets `data-theme` (remembered in the browser when storage allows).
+- A lens bar (Flow, Sessions, Guards, Seats, Coverage, Index): Flow and Guards work, the others show a "coming" panel. A headline strip shows seven facts: agents, session agents, gates, guards graded refuse / hope / none, coverage, validate results and the Claude Code version stamp. Facts that were not read say "not checked".
+- The legend is built from the projection rules table (one row per node kind, plus the guard grades), not written by hand.
+- `#node=<id>` opens that node's inspector and `#lens=guards` opens a lens (they combine with `&`). Search matches ids and labels.
+
+### [feature] A Guards lens that grades every guard without relying on color (VZ-7)
+
+- Each gate, approval step, permission rule, talk guard and spawn guard gets a chip from the embedded `guard --check` facts. Shape, word and color go together: refuse is a solid square, hope a hollow circle, none a dashed outline, and unverified is the refuse shape with a "?".
+- A ledger lists every graded item worst first (none, hope, detect, unverified, refuse) and lists hooks that no step ties to under "untied".
+- Clicking a headline number such as "hope 3" shows only those items.
+- With no project folder every chip reads "not checked". The counts in the page equal the counts `guard --check` prints for the same folder.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).
