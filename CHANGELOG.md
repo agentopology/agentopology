@@ -4,6 +4,16 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Verified on Claude Code 2.1.323 (VO-323)
+
+- The version the output is checked against is now 2.1.323. A live check on that version, recorded on 2026-11-13, found that PreToolUse fires on the SendMessage tool and exit code 2 blocks the call, that `claude --agent X` resolves `.claude/agents/X/AGENT.md`, and that the SendMessage tool input carries the target as both `to` and `recipient`.
+- `guard --check` now grades the talk guard and the spawn guard `refuse` when the installed Claude Code is 2.1.323, and still `unverified` on any other version or when none is installed.
+- The hook contract snapshot was regenerated from the live docs page: no contract change, only the version and fetch date moved. The text-output snapshots changed only in the version line (36 lines).
+
+### [fix] The package no longer depends on itself (N47)
+
+- `package.json` listed `agentopology ^0.2.0` under `dependencies`, so every install pulled an old copy as a nested package. The entry and its lockfile record are removed, and a test fails if the package ever lists its own name again.
+
 ### [fix] README rule count matches the registered rules (I011)
 
 - README.md and spec/validation.md now say 127 rules, the number the validator registers (V1-V127).

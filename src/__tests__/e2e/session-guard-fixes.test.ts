@@ -15,6 +15,8 @@ import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { generateSessionFiles, shellQuote } from "../../bindings/lib/session.js";
 import { checkGuards, renderGuardReport } from "../../guard/check.js";
 
+// Pin the installed version so these tests do not depend on the claude on PATH (a version with no live check grades unverified).
+process.env.AGENTOPOLOGY_CLAUDE_VERSION = "2.1.999";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(resolve(here, "fixtures/session-ops.at"), "utf8");
 const SCRIPTS = ".claude/skills/session-ops/scripts";

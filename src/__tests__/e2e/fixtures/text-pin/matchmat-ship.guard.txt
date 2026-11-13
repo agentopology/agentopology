@@ -5,7 +5,7 @@ guard --check examples/matchmat-ship.at (project: empty)
                     ✗ .claude/skills/matchmat-ship/scripts/gate-verify-gate.sh is missing
   human promote     hope        by: prose     no agent follows it, so no launch to ask before; the playbook asks
 
-enforcement: 0 of 2 steps refuse · checked against Claude Code 2.1.319
+enforcement: 0 of 2 steps refuse · checked against Claude Code 2.1.323
 1 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check examples/matchmat-ship.at (project: proj)
@@ -14,5 +14,5 @@ guard --check examples/matchmat-ship.at (project: proj)
                     ⚠ its check script .claude/skills/matchmat-ship/scripts/verify-gate.sh is still a stub, so it blocks every run until it is written
   human promote     hope        by: prose     no agent follows it, so no launch to ask before; the playbook asks
 
-enforcement: 1 of 2 steps refuse · checked against Claude Code 2.1.319
+enforcement: 1 of 2 steps refuse · checked against Claude Code 2.1.323
 --- exit 0

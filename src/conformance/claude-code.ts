@@ -3,7 +3,7 @@
  * generated settings.json against it.
  *
  * Each fact below was checked against https://code.claude.com/docs/en/hooks.md
- * on 2026-11-10 (Claude Code 2.1.319 installed). When the contract moves,
+ * on 2026-11-13 (Claude Code 2.1.323). When the contract moves,
  * this file moves with it, and the conformance tests say which generated
  * output stopped matching. spec/claude-code/hooks-contract.json is the same
  * page as a snapshot: e2e/contract-drift.test.ts holds these constants to it,
@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 
 /** The Claude Code version this contract was last checked against. */
-export const VERIFIED_ON = "2.1.319";
+export const VERIFIED_ON = "2.1.323";
 
 /** The oldest Claude Code the generated output supports (`onFailure` needs it). */
 export const MINIMUM_VERSION = "2.1.295";
@@ -297,8 +297,29 @@ export function matcherGaps(ast: GapSource, extra: string[] = []): MatcherGap[] 
 }
 
 /**
- * Whether a PreToolUse hook on these tools is proven to refuse a call in the
- * installed Claude Code (N44b). Until a conformance run proves it, `guard
- * --check` grades the talk and spawn guards `unverified`, never `refuse`.
+ * Live checks: what was measured on a real Claude Code, per version (N44b,
+ * VO-323). A guard is graded `refuse` only on a version listed here.
  */
-export const SESSION_HOOKS_PROVEN = { sendMessage: false, agent: false } as const;
+export const LIVE_CHECKS: ReadonlyArray<{ version: string; date: string; facts: readonly string[] }> = [
+  {
+    version: "2.1.323",
+    date: "2026-11-13",
+    facts: [
+      "PreToolUse fires on the SendMessage tool, and exit code 2 blocks the call.",
+      "`claude --agent X` resolves `.claude/agents/X/AGENT.md`.",
+      "The SendMessage tool input carries the target as both `to` and `recipient`.",
+    ],
+  },
+];
+
+/**
+ * Whether a PreToolUse hook on these tools is proven to refuse a call in the
+ * installed Claude Code (N44b). Proven only on a version with a live check
+ * (LIVE_CHECKS); on any other version, or none installed, `guard --check`
+ * grades the talk and spawn guards `unverified`, never `refuse`.
+ */
+export function sessionHooksProven(): { sendMessage: boolean; agent: boolean } {
+  const s = installedStatus();
+  const ok = (s.state === "verified" || s.state === "different") && LIVE_CHECKS.some((c) => c.version === s.version);
+  return { sendMessage: ok, agent: ok };
+}

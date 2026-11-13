@@ -10,7 +10,7 @@ guard --check examples/code-review.at (project: empty)
   deny Bash            none        by: settings  permissions.deny in .claude/settings.json
                        ✗ .claude/settings.json has no deny rule Bash
 
-enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.319
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
 4 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check examples/code-review.at (project: proj)
@@ -21,5 +21,5 @@ guard --check examples/code-review.at (project: proj)
   deny Edit            refuse      by: settings  permissions.deny in .claude/settings.json
   deny Bash            refuse      by: settings  permissions.deny in .claude/settings.json
 
-enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.319
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.323
 --- exit 0

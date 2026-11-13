@@ -13,7 +13,7 @@ guard --check src/__tests__/e2e/fixtures/compile.at (project: empty)
   ask Bash(git push:*)     none        by: settings  permissions.ask in .claude/settings.json
                            ✗ .claude/settings.json has no ask rule Bash(git push:*)
 
-enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.319
+enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.323
 5 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check src/__tests__/e2e/fixtures/compile.at (project: proj)
@@ -27,5 +27,5 @@ guard --check src/__tests__/e2e/fixtures/compile.at (project: proj)
   deny mcp__notes__delete  refuse      by: settings  permissions.deny in .claude/settings.json
   ask Bash(git push:*)     refuse      by: settings  permissions.ask in .claude/settings.json
 
-enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.319
+enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.323
 --- exit 0

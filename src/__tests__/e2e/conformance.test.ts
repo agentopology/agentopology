@@ -1,7 +1,7 @@
 /**
  * Conformance v0: the claude-code binding's generated hooks, run against
  * Claude Code's hook contract (src/conformance/claude-code.ts, checked against
- * the docs for Claude Code 2.1.319).
+ * the docs for Claude Code 2.1.323).
  *
  * For every example and fixture: the settings.json hooks and each agent's
  * frontmatter hooks are checked statically, then every command hook is run

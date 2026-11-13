@@ -2,5 +2,5 @@ Validating scheduled-monitor.at (scheduled-monitor v1.0)
 
   All validation rules passed.
 
-checked against Claude Code 2.1.319 (supports 2.1.295 and later)
+checked against Claude Code 2.1.323 (supports 2.1.295 and later)
 --- exit 0

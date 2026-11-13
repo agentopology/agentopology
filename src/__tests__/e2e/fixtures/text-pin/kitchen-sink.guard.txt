@@ -13,7 +13,7 @@ guard --check kitchen-sink.at (project: empty)
   ask Bash(git push --force *)  none        by: settings  permissions.ask in .claude/settings.json
                                 ✗ .claude/settings.json has no ask rule Bash(git push --force *)
 
-enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.319
+enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.323
 5 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check kitchen-sink.at (project: proj)
@@ -27,5 +27,5 @@ guard --check kitchen-sink.at (project: proj)
   deny Bash(rm -rf *)           refuse      by: settings  permissions.deny in .claude/settings.json
   ask Bash(git push --force *)  refuse      by: settings  permissions.ask in .claude/settings.json
 
-enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.319
+enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.323
 --- exit 0

@@ -8,7 +8,7 @@ guard --check examples/data-processing.at (project: empty)
   ask Bash(aws s3 *)      none        by: settings  permissions.ask in .claude/settings.json
                           ✗ .claude/settings.json has no ask rule Bash(aws s3 *)
 
-enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.319
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
 3 item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand
 --- exit 1
 guard --check examples/data-processing.at (project: proj)
@@ -18,5 +18,5 @@ guard --check examples/data-processing.at (project: proj)
   deny Bash(rm -rf *)     refuse      by: settings  permissions.deny in .claude/settings.json
   ask Bash(aws s3 *)      refuse      by: settings  permissions.ask in .claude/settings.json
 
-enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.319
+enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.323
 --- exit 0
