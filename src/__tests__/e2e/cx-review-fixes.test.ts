@@ -10,6 +10,7 @@ import * as os from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
+import { validate } from "../../parser/validator.js";
 import { codexBinding } from "../../bindings/codex.js";
 import { isVerifiedVersion, verifiedListProblems } from "../../conformance/claude-code.js";
 import { deepMergeSettingsJson } from "../../scaffold/merge.js";
@@ -255,5 +256,42 @@ describe.skipIf(!hasJq)("[R-12] before-agent.sh reads agent_type trimmed and low
     fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
     const cmd = hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0].command;
     expect(runHook(cmd, root, spawnPayload(" Reviewer ")).status).toBe(2);
+  });
+});
+
+describe.skipIf(!hasJq)("[R-3] a slow gate check cannot outlast the Codex hook timeout", () => {
+  const slow = (extra: string) => AGENT_GATE("writer").replace('      run: "scripts/check.sh"\n', `      run: "scripts/check.sh"\n${extra}`);
+  const spawnEntry = () => hooksOf().PreToolUse.find((e) => e.matcher === "collaborationspawn_agent")!.hooks[0];
+
+  it("[R-3] timeout: 10m retry: 2 raises the hook timeout above the gate's worst case (1802 s)", () => {
+    scaffoldInto(slow("      timeout: 10m\n      retry: 2\n"));
+    expect(spawnEntry().timeout!).toBeGreaterThan(3 * 600 + 2);
+    const stop = hooksOf().SubagentStop.find((e) => e.matcher === "writer")!.hooks[0];
+    expect(stop.timeout!).toBeGreaterThan(3 * 600 + 2);
+  });
+
+  it("[R-3] the hook command has its own deadline below the hook timeout", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    const e = spawnEntry();
+    const m = /-k \d+ (\d+) /.exec(e.command);
+    expect(m, e.command).not.toBeNull();
+    expect(Number(m![1])).toBeLessThan(e.timeout!);
+  });
+
+  it("[R-3] a check that sleeps 200 s is cut at the deadline and the guard exits 2 (deadline set to 3 s here)", () => {
+    scaffoldInto(AGENT_GATE("writer"));
+    fs.writeFileSync(at(".codex/scripts/check.sh"), "#!/usr/bin/env bash\nsleep 200\nexit 0\n", { mode: 0o755 });
+    const cmd = spawnEntry().command.replace(/-k (\d+) \d+ /, "-k $1 3 ");
+    const t0 = Date.now();
+    const r = runHook(cmd, root, spawnPayload("reviewer"), 30_000);
+    expect(r.status, r.stderr).toBe(2);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+    expect(r.stderr).toMatch(/deadline/);
+  });
+
+  it("[R-3] validate warns when a gate's worst case is longer than the default hook timeout", () => {
+    const w = validate(parse(slow("      timeout: 10m\n      retry: 2\n")), { target: "codex" }).filter((r) => r.rule === "CX9-timeout");
+    expect(w).toHaveLength(1);
+    expect(w[0].message).toContain("checked");
   });
 });

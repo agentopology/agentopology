@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] A slow gate check cannot outlast the Codex hook timeout (R-3)
+
+- Every guard was registered with a 120 second hook timeout and the gate wrapper had no deadline of its own. A check longer than that, or a gate with `timeout: 10m retry: 2`, was cut off by Codex, and Codex lets a timed-out call run. Now a guard's hook timeout is never below its gates' worst case (timeout x attempts, plus the pauses, plus a margin), and the hook command cuts the run 10 seconds before that timeout and exits 2 ("ran past its deadline"). `validate --target codex` warns (`CX9-timeout`) when a gate's worst case raises the hook timeout. The deadline needs GNU `timeout` (or Homebrew's `gtimeout`); without either, the raised hook timeout is the only bound.
+
 ### [fix] Codex before-agent.sh reads agent_type trimmed and lowercased (R-12)
 
 - `before-agent.sh` on Codex compared `agent_type` exactly, so `" Reviewer "` missed the `reviewer` case and the spawn went through. It is now trimmed and lowercased the way the spawn guard reads it.

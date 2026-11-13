@@ -27,6 +27,7 @@ import {
   generateBeforeAgentScript,
   generateGateWrapperScripts,
   getDelegationMode,
+  spawnHeldAgents,
 } from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
@@ -55,8 +56,19 @@ export const REPO_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"'
  * the script is there. With `guard`, a script that is not found, or any
  * non-zero exit of the run itself, comes out as exit 2: the call is blocked.
  */
-export function launchCommand(interp: string, rel: string, args: string[], guard: boolean): string {
+export function launchCommand(interp: string, rel: string, args: string[], guard: boolean, deadline?: number): string {
   const tail = args.length ? " " + args.join(" ") : "";
+  if (deadline !== undefined) {
+    // R-3: the run is cut a few seconds before Codex's own hook timeout, which would let the call through.
+    // GNU `timeout` (or Homebrew's `gtimeout`) kills the whole group and exits 124; with neither, no deadline.
+    return [
+      `AT_ROOT=${REPO_ROOT}`,
+      `while [ ! -f "$AT_ROOT/${rel}" ] && [ "$AT_ROOT" != / ]; do AT_ROOT="$(dirname "$AT_ROOT")"; done`,
+      `[ -f "$AT_ROOT/${rel}" ] || { echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`,
+      `AT_T="$(command -v timeout || command -v gtimeout || true)"`,
+      `\${AT_T:+"$AT_T" -k ${DEADLINE_KILL} ${deadline} }${interp} "$AT_ROOT/${rel}"${tail} || { AT_RC=$?; [ "$AT_RC" != 124 ] || echo "agentopology: ${rel} ran past its ${deadline}s deadline, so this call is blocked" >&2; exit 2; }`,
+    ].join("; ");
+  }
   const missing = guard
     ? `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it, so this call is blocked" >&2; exit 2; }`
     : `{ echo "agentopology: ${rel} is not found from $PWD or any folder above it" >&2; exit 1; }`;
@@ -202,9 +214,51 @@ export function ifFilterScript(): GeneratedFile {
  */
 export const GUARD_TIMEOUT = 120;
 
+/** Seconds between the guard's own deadline and the hook timeout Codex enforces (R-3). */
+export const DEADLINE_MARGIN = 10;
+/** Seconds `timeout` waits after TERM before it sends KILL. */
+export const DEADLINE_KILL = 2;
+/** Seconds added to a gate's worst case for jq, the ledger read and process start-up. */
+export const HOOK_MARGIN = 30;
+
+/** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
+export function durationSeconds(d: string | undefined): number | null {
+  const m = /^(\d+)([smhd])$/.exec(d ?? "");
+  return m ? Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"] : null;
+}
+
+/**
+ * The longest a gate's check can run: its timeout once per attempt, plus a
+ * one-second pause between attempts. Null when the gate has no timeout (the
+ * guard's deadline is then the only bound).
+ */
+export function gateWorstCase(gate: GateNode): number | null {
+  const t = durationSeconds(gate.timeout);
+  if (t === null) return null;
+  const retry = gate.retry != null && gate.retry > 0 ? gate.retry : 0;
+  return t * (retry + 1) + retry;
+}
+
+/** The hook timeout for a guard that may run these gates: never below GUARD_TIMEOUT, always above their worst case. */
+export function guardHookTimeout(gates: GateNode[]): number {
+  const worst = gates.reduce((sum, g) => sum + (gateWorstCase(g) ?? 0), 0);
+  return Math.max(GUARD_TIMEOUT, worst + HOOK_MARGIN + DEADLINE_MARGIN);
+}
+
 /** The command a guard script is registered with: anchored at the repository root. */
-function guardCommand(ast: TopologyAST, file: string): string {
-  return launchCommand("bash", `${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}`, [], true);
+function guardCommand(ast: TopologyAST, file: string, timeout: number): string {
+  return launchCommand("bash", `${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}`, [], true, timeout - DEADLINE_MARGIN);
+}
+
+/** A guard handler: the command, with a deadline under the hook timeout, and that timeout. */
+function guardHandler(ast: TopologyAST, file: string, gates: GateNode[]): Record<string, unknown> {
+  const timeout = guardHookTimeout(gates);
+  return { type: "command", command: guardCommand(ast, file, timeout), timeout };
+}
+
+/** The gates with a `run:` script that a guard may run. */
+function runGates(ast: TopologyAST, keep: (g: GateNode) => boolean): GateNode[] {
+  return ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => g.behavior !== "advisory" && !!scriptNameFromRun(g.run) && keep(g));
 }
 
 /** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
@@ -225,12 +279,14 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
   if (beforeAgent) {
     scripts.push(beforeAgent);
     // Probe P3: a subagent spawn is the tool collaborationspawn_agent.
-    entries.push({ event: "PreToolUse", entry: { matcher: "collaborationspawn_agent", hooks: [{ type: "command", command: guardCommand(ast, "before-agent.sh"), timeout: GUARD_TIMEOUT }] } });
+    const gates = runGates(ast, (g) => spawnHeldAgents(ast, g, CODEX_GUARDS).length > 0);
+    entries.push({ event: "PreToolUse", entry: { matcher: "collaborationspawn_agent", hooks: [guardHandler(ast, "before-agent.sh", gates)] } });
   }
   const beforeAction = generateBeforeActionScript(ast, CODEX_GUARDS);
   if (beforeAction) {
     scripts.push(beforeAction);
-    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [{ type: "command", command: guardCommand(ast, "before-action.sh"), timeout: GUARD_TIMEOUT }] } });
+    const gates = runGates(ast, (g) => checkableActionGate(ast, g));
+    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates)] } });
   }
   // A gate after an agent also runs when that agent stops (SubagentStop; the matcher is the agent type,
   // probe P4). That hook cannot block on Codex; what holds is before-agent.sh at the next agent's spawn (R-1).
@@ -241,7 +297,7 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
       if (!scriptNameFromRun(gate.run) || gate.behavior === "advisory") continue;
       if (checkableActionGate(ast, gate) || gateWiring(ast, gate).kind !== "subagent-stop") continue;
       for (const anchor of gateAnchors(gate, "after")) {
-        entries.push({ event: "SubagentStop", entry: { matcher: anchor, hooks: [{ type: "command", command: guardCommand(ast, `gate-${gate.id}.sh`), timeout: GUARD_TIMEOUT }] } });
+        entries.push({ event: "SubagentStop", entry: { matcher: anchor, hooks: [guardHandler(ast, `gate-${gate.id}.sh`, [gate])] } });
       }
     }
   }

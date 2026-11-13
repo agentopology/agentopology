@@ -30,7 +30,7 @@ import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
 import { planCodexRules } from "../bindings/lib/codex-rules.js";
-import { codexHookProblems } from "../bindings/lib/codex-hooks.js";
+import { GUARD_TIMEOUT, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4359,6 +4359,17 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   }
   for (const hook of ast.hooks) {
     for (const p of codexHookProblems(hook)) warn(p.rule, hook.name, p.message);
+  }
+  // R-3: a long gate check holds every guarded call that long; Codex lets the call run if the hook times out.
+  for (const n of ast.nodes) {
+    if (n.type !== "gate") continue;
+    const gate = n as GateNode;
+    const worst = gateWorstCase(gate);
+    if (gate.behavior === "advisory" || !gate.run || worst === null) continue;
+    const hook = guardHookTimeout([gate]);
+    if (hook > GUARD_TIMEOUT) {
+      warn("CX9-timeout", gate.id, `gate "${gate.id}" can run up to ${worst}s (timeout ${gate.timeout} x ${(gate.retry ?? 0) + 1} attempt(s)); its hook timeout is raised to ${hook}s, so a guarded call waits that long while it is checked. Shorten the timeout or the retries.`);
+    }
   }
   for (const p of planCodexRules(ast).problems) {
     warn("CX13", p.list, `settings ${p.list}: ${p.message}`);

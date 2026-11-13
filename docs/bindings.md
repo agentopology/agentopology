@@ -279,7 +279,7 @@ What to know:
 
 ### Gates and approvals on Codex
 
-Gates are held by hook scripts, written by the same library as for Claude Code and registered in `.codex/hooks.json` with a 120 second timeout:
+Gates are held by hook scripts, written by the same library as for Claude Code and registered in `.codex/hooks.json`. A guard's hook timeout is 120 seconds, or more when its gates can run longer (timeout x attempts, plus a margin; `validate` warns with `CX9-timeout`), and the hook command cuts the run 10 seconds before that timeout and exits 2, because Codex lets a timed-out hook's call run. The deadline uses GNU `timeout` or `gtimeout`; without either, only the hook timeout bounds the run:
 
 - `before-action.sh` (a `PreToolUse` hook on `Bash`) refuses a script step's command, also inside an `&&` or `;` chain, until the gate's ledger shows its `after:` step finished ok for the same unit.
 - `before-agent.sh` (a `PreToolUse` hook on the subagent spawn tool, `collaborationspawn_agent`) runs the gate scripts that stand before an agent. It matches on `agent_type`, which Codex sets to the agent file's `name`, trimmed and lowercased.
