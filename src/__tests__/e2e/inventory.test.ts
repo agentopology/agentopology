@@ -85,6 +85,38 @@ describe("inventory lists what is live", () => {
     write("package.json", JSON.stringify({ scripts: { post: "node media.js post", test: "vitest" } }));
     expect(ids(collectInventory(root))).toEqual(expect.arrayContaining(["script:post", "script:test"]));
   });
+
+  // Claude Code docs (slash-commands): "a Markdown file in `.claude/commands/` is the older format and still works."
+  it("[S-36] only .md files under .claude/commands are commands, in subfolders too; other files there are claude files", () => {
+    write(".claude/commands/deploy.md", "Deploy.\n");
+    write(".claude/commands/harness/oss-docs/run.md", "Run.\n");
+    write(".claude/commands/harness/oss-docs/manifest.json", "{}\n");
+    write(".claude/commands/notes.txt", "x\n");
+    const items = collectInventory(root);
+    const commands = items.filter((i) => i.kind === "command").map((i) => i.id);
+    expect(commands).toEqual(expect.arrayContaining(["command:deploy", "command:harness/oss-docs/run"]));
+    expect(commands).not.toContain("command:harness/oss-docs/manifest.json");
+    expect(commands).not.toContain("command:notes.txt");
+    expect(items.every((i) => i.kind !== "command" || i.path!.endsWith(".md"))).toBe(true);
+    expect(ids(items)).toEqual(expect.arrayContaining([
+      "claude-file:commands/harness/oss-docs/manifest.json", "claude-file:commands/notes.txt",
+    ]));
+  });
+
+  it("[S-36] the same holds for ~/.claude/commands with --user", () => {
+    const home = fs.mkdtempSync(join(os.tmpdir(), "at-inventory-home-"));
+    try {
+      for (const [p, t] of [["deploy.md", "Deploy.\n"], ["kit/manifest.json", "{}\n"]]) {
+        fs.mkdirSync(dirname(join(home, ".claude/commands", p)), { recursive: true });
+        fs.writeFileSync(join(home, ".claude/commands", p), t);
+      }
+      const user = collectInventory(root, { user: true, home }).filter((i) => i.scope === "user");
+      expect(ids(user)).toEqual(expect.arrayContaining(["user:command:deploy", "user:claude-file:commands/kit/manifest.json"]));
+      expect(ids(user)).not.toContain("user:command:kit/manifest.json");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("coverage: the .at against what is live", () => {
