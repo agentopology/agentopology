@@ -1481,6 +1481,8 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     console.error(c.red(`  Refusing to write: ${unsafe.length} generated path(s) are not safe file names. Nothing was written.`));
     process.exit(1);
   }
+  // Same plan as scaffold, same warning: read before anything is written.
+  const unrecorded = unrecordedRules(root, plan.files, readManifest(root, targetName, name));
 
   console.log(c.bold(`guard --target ${targetName} ${filePath} (project: ${dirPath})${dryRun ? c.cyan(" — dry run, nothing is written") : ""}`));
   // R-9: the line names the host the output was written for, not always Claude Code.
@@ -1508,6 +1510,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   if (dryRun) {
     const writes = plan.actions.filter((a) => a.type === "create" || a.type === "update").length;
     console.log(`  ${writes} file(s) would be written, ${plan.skipped.length} kept.`);
+    printUnrecordedRules(unrecorded);
     return;
   }
   let result;
@@ -1518,6 +1521,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     process.exit(1);
   }
   console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${plan.skipped.length} kept`);
+  printUnrecordedRules(unrecorded);
   if (result.failures.length > 0) {
     for (const f of result.failures) console.error(`  ${c.red("✗")} ${f.path} — ${f.error}`);
     process.exit(1);
