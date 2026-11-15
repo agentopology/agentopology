@@ -272,6 +272,47 @@ export function computeIncrementalPlan(
   return actions;
 }
 
+/** An allow or ask rule on disk that the .at does not declare. */
+export interface UnrecordedRule {
+  path: string;
+  list: "allow" | "ask";
+  rule: string;
+}
+
+/**
+ * The allow and ask rules a settings.json holds that the .at does not
+ * declare, for each one whose manifest entry has no ownership record (a
+ * manifest from 0.11.1 or earlier). Such a rule may be one an earlier
+ * scaffold wrote and kept by mistake (the union merge), or the user's: it
+ * cannot be told, so it is named and never removed. A current manifest, or
+ * none at all, names nothing.
+ */
+export function unrecordedRules(
+  basePath: string,
+  generatedFiles: GeneratedFile[],
+  manifest: ScaffoldManifest | null,
+): UnrecordedRule[] {
+  if (!manifest) return [];
+  const generated = new Map(generatedFiles.filter((f) => holdsRules(f.path)).map((f) => [f.path, f.content] as const));
+  const paths = new Set([...generated.keys(), ...Object.keys(manifest.files).filter(holdsRules)]);
+  const out: UnrecordedRule[] = [];
+  for (const path of paths) {
+    const entry = manifest.files[path];
+    if (!entry || entry.permissions) continue;
+    if (unsafePathReason(path) || symlinkOnPath(basePath, path)) continue;
+    const absPath = join(basePath, path);
+    if (!existsSync(absPath) || isDirectory(absPath)) continue;
+    const onDisk = permissionRulesOf(readFileSync(absPath, "utf-8"));
+    const declared = permissionRulesOf(generated.get(path) ?? "{}");
+    for (const list of ["allow", "ask"] as const) {
+      for (const rule of onDisk[list] ?? []) {
+        if (!(declared[list] ?? []).includes(rule)) out.push({ path, list, rule });
+      }
+    }
+  }
+  return out;
+}
+
 /** Remove now-empty directories from `absDir` up to (not including) `basePath`. */
 function removeEmptyDirs(basePath: string, absDir: string): void {
   let cur = absDir;

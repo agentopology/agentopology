@@ -47,7 +47,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, unrecordedRules, type UnrecordedRule } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { renderAscii } from "../render/ascii.js";
@@ -571,6 +571,26 @@ function printLessons(rules: string[]): void {
   }
 }
 
+/**
+ * A manifest from 0.11.1 or earlier records no permission rules, and its
+ * merge kept a rule removed from the .at. Name each allow and ask rule the
+ * .at does not declare; removing it is the user's call.
+ */
+function printUnrecordedRules(rules: UnrecordedRule[]): void {
+  if (rules.length === 0) return;
+  console.log("");
+  for (const path of [...new Set(rules.map((r) => r.path))]) {
+    const mine = rules.filter((r) => r.path === path);
+    console.log(
+      c.yellow(
+        `  ⚠ ${path}: ${mine.length} allow/ask rule(s) the .at does not declare. Each may have been written by an earlier scaffold ` +
+          `(before 0.11.2 a rule removed from the .at stayed); remove it if you did not add it by hand. Nothing was removed:`,
+      ),
+    );
+    for (const r of mine) console.log(c.yellow(`      ${r.list.padEnd(5)} ${r.rule}`));
+  }
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
@@ -654,6 +674,8 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // symlink, files in another repository) before crashing half way.
   const manifest = readManifest(basePath, targetName, path.basename(filePath));
   const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+  // Read before anything is written: the rules on disk as the old manifest left them.
+  const unrecorded = unrecordedRules(basePath, files, manifest);
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
@@ -708,6 +730,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     }
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
+    printUnrecordedRules(unrecorded);
   } else {
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
@@ -734,6 +757,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       files: nextManifestFiles(basePath, actions, files, manifest, result),
     };
     writeManifest(basePath, targetName, newManifest);
+    printUnrecordedRules(unrecorded);
 
     if (result.failures.length > 0) {
       console.error("");
