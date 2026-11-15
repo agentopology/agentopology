@@ -38,3 +38,17 @@ Same helper, `writeCovers`, so V93 and plan agree. No new V-number.
 **Risk.** This proves a handoff exists, not that the whole folder is handed over.
 **Done.** The example both ways; `out/` + `outside/a.md` still fires both;
 `x/{LANG}/` + `x/en/f.md` is covered; S-22 cases pass; examples' output unchanged.
+
+## S-33: an empty side is not declared; V93 and plan both skip the edge
+
+**Premise (measured).** `examples/company-brain-team.at`, edge `librarian -> auditor`:
+neither agent declares `reads` or `writes`. `validate` gives no V93; `plan` flags
+`handoff-overlap-empty`. Same for `memory-system.at` and `simple-pipeline.at`.
+**Rule.** spec/validation.md (V93) scopes the rule: "An edge between two agents that
+both declare paths should declare a handoff", and "`plan` reports the same rule as
+`handoff-overlap-empty`". The grammar defaults `reads`/`writes` to `[]`. So an empty
+`writer.writes` or `reader.reads` means not declared: nothing to check, both skip.
+**Change.** One predicate, `handoffMissing(writes, reads)` in `src/parser/paths.ts`,
+called by V93 and by plan's pre-flag. Plan still lists the edge under handoffs.
+**Done.** Reader with no reads, writer with no writes, both empty: neither fires.
+The company-brain-team edge: neither fires. A non-empty, non-covering pair fires both.
