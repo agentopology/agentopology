@@ -159,5 +159,9 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     unattributed,
     verifiedOn: VERIFIED_ON,
     platform: { label: "Codex CLI", line: codexVerifiedOnLine(), mark: codexInstalledMark(), config: ".codex/hooks.json" },
+    // SP-9: the records block is graded for Claude Code only so far; say so rather than print nothing.
+    ...((ast.records ?? []).length
+      ? { recordsNote: `records: ${(ast.records ?? []).length} declared; their lines (one per way in) are graded for Claude Code only: run guard --check --target claude-code` }
+      : {}),
   };
 }

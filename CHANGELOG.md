@@ -4,6 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feature] Records in `guard --check`; the hook refuses a rewritten append-only ledger (SP-9, records half)
+
+- `guard --check` prints one block per record, one line per way in: `tools` (`refuse, by hook (generated)` or `(cited)`, "unverified"), `shell` (`detect`), `later` (append-only: `detect, by code`) and `other` (`none`, with the fixed bypass line). A cited set whose PreToolUse matchers miss a file-writing tool gets a warning naming it (B9). A missing generated piece or a cited hook absent from `.claude/settings.json` grades `none` and fails the check (exit 1). Codex prints that records are graded for Claude Code only.
+- **Fix:** the generated `before-action.sh` now runs the append-only check `step check` runs before it reads a gate ledger declared `append-only: true` (same head file, same bytes). Before, a ledger whose earlier line was rewritten, its last line still ok, passed the hook (exit 0) while `step check` refused it. Now: rewritten, truncated, deleted after lines were seen, or a head changed by hand → exit 2.
+- **Fix:** the shell path protects the head files. Before, `echo x > .agentopology/records/approvals.head` or `rm -rf .agentopology` passed (only the edit guard refused a tool write); a removed head makes the next check trust the file as it is. Now a shell command that names `.agentopology` and does more than read it exits 2, and both guards protect the heads whenever a record is append-only, also when it cites a hand-built guard.
+- Not yet: the compose lines of SP-9 (each line names its lane file, the stale line), after SP-4; the B8 end-to-end fixture.
+
 ### [fix] A gate ledger that cites a hand-built guard keeps the generated protection (SP-7)
 
 - Spec B leaves a record that cites `guard:` to that guard. For a gate ledger that would have removed the protection 0.11.0 ships (a command or an edit that writes the ledger is refused). A gate ledger now keeps it whatever it cites; the cited guard is a second layer.

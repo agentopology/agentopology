@@ -29,6 +29,7 @@ import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
+import { checkRecordGuards, recordsMissing, renderRecordReports, type RecordReport } from "../records/report.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
 
@@ -65,6 +66,10 @@ export interface GuardReport {
    */
   unattributed: string[];
   verifiedOn: string;
+  /** SP-9: one block per declared record, one line per way in (Spec B). */
+  records?: RecordReport[];
+  /** SP-9: said instead of the records block where it is not graded (Codex). */
+  recordsNote?: string;
   /** The host graded, when it is not Claude Code: its name, the version line, the installed mark, its hook file (E-5). */
   platform?: { label: string; line: string; mark: string | null; config: string };
 }
@@ -460,12 +465,14 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   }
 
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
+  const records = checkRecordGuards(ast, root, settings, scriptsDir);
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
+    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length + recordsMissing(records),
     unattributed,
     verifiedOn: VERIFIED_ON,
+    ...(records.length ? { records } : {}),
   };
 }
 
@@ -482,6 +489,8 @@ export function renderGuardReport(report: GuardReport): string[] {
     lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
   }
+  if (report.records?.length) lines.push("", ...renderRecordReports(report.records));
+  if (report.recordsNote) lines.push("", report.recordsNote);
   lines.push("");
   // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
   const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && !!i.gradeNote?.includes(LEDGER_WRITABLE_NOTE)).length;
