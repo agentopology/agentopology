@@ -13,6 +13,7 @@ import {
   CLAUDE_CODE_STRUCTURAL_HEADINGS,
 } from "../sync/index.js";
 import { hashContent } from "./manifest.js";
+import type { PermissionRules } from "./types.js";
 import { AGENTS_MD_BEGIN, AGENTS_MD_END } from "../bindings/codex.js";
 import { fenceSpan } from "../bindings/lib/prompt-fence.js";
 
@@ -178,9 +179,12 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
  * The user's file is the base; scaffold only adds or replaces what it owns.
  *
  * Rules:
- *   - permissions: every existing key is kept (ask, defaultMode,
+ *   - permissions: every existing key is kept (defaultMode,
  *     additionalDirectories, ...); allow, deny and ask arrays are
- *     union-merged; a generated scalar is added only where none exists
+ *     union-merged, after removing each rule in `ownedRules` (the rules this
+ *     topology wrote before) that the generated file no longer has; a rule
+ *     never written by the topology is the user's and is never removed; a
+ *     generated scalar is added only where none exists
  *   - env: shallow-merge (generated wins on key conflict)
  *   - hooks: a hook group is the topology's when one of its commands names a
  *     path in `ownedPaths`; those are replaced by the generated hooks, and
@@ -195,6 +199,7 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
  * @param existingRaw - Current settings.json content on disk (JSON string, or empty string)
  * @param generatedRaw - Freshly generated settings.json content (JSON string)
  * @param ownedPaths - Paths this topology writes or wrote (generated + manifest)
+ * @param ownedRules - Permission rules this topology wrote on an earlier run (from the manifest)
  * @returns Merged JSON string
  * @throws {Error} if existingRaw is non-empty and is invalid JSON
  */
@@ -202,6 +207,7 @@ export function deepMergeSettingsJson(
   existingRaw: string,
   generatedRaw: string,
   ownedPaths: string[] = [],
+  ownedRules: PermissionRules = {},
 ): string {
   // Empty existing means first scaffold — return generated unchanged
   if (existingRaw.trim() === "") {
@@ -231,6 +237,15 @@ export function deepMergeSettingsJson(
     const ex = isPlainObject(existing.permissions) ? existing.permissions : {};
     const gen = isPlainObject(generated.permissions) ? generated.permissions : {};
     const mergedPerms: Record<string, unknown> = { ...ex };
+    // A rule this topology wrote and no longer declares goes; a removed
+    // allow used to stay granted.
+    for (const key of RULE_LISTS) {
+      const owned = ownedRules[key] ?? [];
+      const current = mergedPerms[key];
+      if (owned.length === 0 || !Array.isArray(current)) continue;
+      const still = new Set(Array.isArray(gen[key]) ? (gen[key] as unknown[]) : []);
+      mergedPerms[key] = current.filter((r) => !(typeof r === "string" && owned.includes(r) && !still.has(r)));
+    }
     for (const [key, value] of Object.entries(gen)) {
       const current = mergedPerms[key];
       if (Array.isArray(value) || Array.isArray(current)) {
@@ -281,6 +296,52 @@ export function deepMergeSettingsJson(
   // Nothing to add: keep the user's bytes, formatting included.
   if (JSON.stringify(merged) === JSON.stringify(existing)) return existingRaw;
   return JSON.stringify(merged, null, 2) + "\n";
+}
+
+const RULE_LISTS = ["allow", "ask", "deny"] as const;
+
+/** The allow / ask / deny rule strings of a settings.json text; {} when it has none or does not parse. */
+export function permissionRulesOf(raw: string): PermissionRules {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const perms = isPlainObject(doc) && isPlainObject(doc.permissions) ? doc.permissions : {};
+  const out: PermissionRules = {};
+  for (const key of RULE_LISTS) {
+    const list = perms[key];
+    if (!Array.isArray(list)) continue;
+    const rules = [...new Set(list.filter((r): r is string => typeof r === "string"))];
+    if (rules.length > 0) out[key] = rules;
+  }
+  return out;
+}
+
+/**
+ * The rules a topology owns after this run: each generated rule that it
+ * owned before, or that the file on disk did not already hold. A rule the
+ * user wrote first stays the user's, even when the .at declares it too.
+ *
+ * `previous` is the manifest record; undefined (a manifest from 0.11.1 or
+ * earlier, or no entry) is read as owning nothing, except that an entry
+ * without a record owns what is generated now (`hadEntry`), so the first
+ * run after the upgrade removes nothing.
+ */
+export function ownedPermissionRules(
+  generated: PermissionRules,
+  onDisk: PermissionRules,
+  previous: PermissionRules | undefined,
+  hadEntry: boolean,
+): PermissionRules {
+  const before = previous ?? (hadEntry ? generated : {});
+  const out: PermissionRules = {};
+  for (const key of RULE_LISTS) {
+    const owned = (generated[key] ?? []).filter((r) => (before[key] ?? []).includes(r) || !(onDisk[key] ?? []).includes(r));
+    if (owned.length > 0) out[key] = owned;
+  }
+  return out;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

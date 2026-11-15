@@ -36,6 +36,8 @@ import {
   shouldOverwriteScript,
   deepMergeJson,
   deepMergeSettingsJson,
+  ownedPermissionRules,
+  permissionRulesOf,
 } from "./merge.js";
 
 export { unsafePathReason } from "../parser/paths.js";
@@ -57,6 +59,9 @@ function symlinkOnPath(basePath: string, relPath: string): string | null {
   }
   return null;
 }
+
+/** A file whose permission rules the manifest records: settings.json (never settings.local.json). */
+const holdsRules = (path: string): boolean => /(^|\/)settings\.json$/.test(path);
 
 function isDirectory(absPath: string): boolean {
   try {
@@ -120,6 +125,12 @@ export function computeIncrementalPlan(
 
     const category = file.category ?? "machine";
     const onDisk = existsSync(absPath);
+    const prevEntry = manifest?.files[file.path];
+    const rulesFile = category === "shared-config" && holdsRules(file.path);
+    const generatedRules = rulesFile ? permissionRulesOf(file.content) : {};
+    // What this topology owned before: the record, or, for an entry from
+    // 0.11.1 or earlier without one, what it generates now (removes nothing).
+    const ownedBefore = prevEntry?.permissions ?? (prevEntry ? generatedRules : {});
 
     if (!onDisk) {
       actions.push({
@@ -127,6 +138,7 @@ export function computeIncrementalPlan(
         path: file.path,
         content: file.content,
         ...(file.executable ? { executable: true } : {}),
+        ...(rulesFile ? { permissions: generatedRules } : {}),
       });
       continue;
     }
@@ -139,8 +151,12 @@ export function computeIncrementalPlan(
     const existingContent = readFileSync(absPath, "utf-8");
     const manifestEntry = manifest?.files[file.path] ?? null;
 
+    const ownedNow = rulesFile
+      ? { permissions: ownedPermissionRules(generatedRules, permissionRulesOf(existingContent), prevEntry?.permissions, !!prevEntry) }
+      : {};
+
     if (existingContent === file.content) {
-      actions.push({ type: "unchanged", path: file.path });
+      actions.push({ type: "unchanged", path: file.path, ...ownedNow });
       continue;
     }
 
@@ -149,16 +165,17 @@ export function computeIncrementalPlan(
     if (category === "shared-config") {
       const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
       const merged = isSettings
-        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
+        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths, ownedBefore)
         : deepMergeJson(existingContent, file.content);
       if (merged === existingContent) {
-        actions.push({ type: "unchanged", path: file.path });
+        actions.push({ type: "unchanged", path: file.path, ...ownedNow });
       } else {
         actions.push({
           type: "update",
           path: file.path,
           content: merged,
           detail: "config merged",
+          ...ownedNow,
         });
       }
       continue;
@@ -228,6 +245,21 @@ export function computeIncrementalPlan(
       if (symlinkOnPath(basePath, manifestPath)) {
         actions.push({ type: "blocked", path: manifestPath, detail: "symlink — never deleted through" });
         continue;
+      }
+      // settings.json no longer generated (the .at dropped its last rule and
+      // hook): the rules it wrote still go; every other key and rule stays.
+      if (holdsRules(manifestPath) && Object.keys(entry.permissions ?? {}).length > 0) {
+        const existing = readFileSync(absPath, "utf-8");
+        let stripped = existing;
+        try {
+          stripped = deepMergeSettingsJson(existing, "{}", [], entry.permissions);
+        } catch {
+          // Not valid JSON: leave it to the rules below.
+        }
+        if (stripped !== existing) {
+          actions.push({ type: "update", path: manifestPath, content: stripped, detail: "owned permission rules removed", permissions: {} });
+          continue;
+        }
       }
       if (hashContent(readFileSync(absPath, "utf-8")) !== entry.hash) {
         actions.push({ type: "blocked", path: manifestPath, detail: "no longer generated, but edited — kept" });
@@ -399,11 +431,14 @@ export function nextManifestFiles(
     const category = categoryOf.get(action.path) ?? prev?.category ?? "machine";
     const written = result.written.get(action.path);
 
+    // The permission rules this run owns (settings.json only).
+    const rules = "permissions" in action && action.permissions ? { permissions: action.permissions } : {};
+
     if (written !== undefined) {
-      files[action.path] = { hash: hashContent(written), category };
+      files[action.path] = { hash: hashContent(written), category, ...rules };
     } else if (action.type === "unchanged") {
       const onDisk = readFileSync(join(basePath, action.path), "utf-8");
-      files[action.path] = { hash: hashContent(onDisk), category };
+      files[action.path] = { hash: hashContent(onDisk), category, ...rules };
     } else if (prev && !removed.has(action.path)) {
       files[action.path] = prev;
     }
