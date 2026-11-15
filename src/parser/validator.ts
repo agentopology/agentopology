@@ -23,7 +23,7 @@ import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
 import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
-import { unsafePathReason, writeCovers } from "./paths.js";
+import { handoffMissing, unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
@@ -1124,9 +1124,9 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * rather than through a file, and real topologies do. It is a smell worth
  * surfacing, not a rejection.
  *
- * Skipped when either side declares nothing — that is undecidable, not a
- * violation. This is the same computation `plan` reports as the
- * `handoff-overlap-empty` pre-flagged ambiguity; having it here makes it work
+ * Skipped when either side declares nothing: not declared, so nothing to
+ * check (S-33). One predicate, `handoffMissing`, decides it here and for the
+ * `handoff-overlap-empty` pre-flagged ambiguity in `plan`; having it here makes it work
  * under `scaffold` too, and for anyone who never runs `plan`.
  */
 /**
@@ -1777,11 +1777,9 @@ function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
 
     const writes = (from as AgentNode).writes ?? [];
     const reads = (to as AgentNode).reads ?? [];
-    // Undecidable, not a violation.
-    if (writes.length === 0 || reads.length === 0) continue;
-
     seen.add(key);
-    if (writes.some((w) => reads.some((r) => writeCovers(w, r)))) continue;
+    // An empty side is not declared: nothing to check (S-33). Same verdict as plan.
+    if (!handoffMissing(writes, reads)) continue;
 
     results.push({
       rule: "V93",

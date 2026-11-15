@@ -147,10 +147,7 @@ describe("an empty side is not declared: V93 and plan both skip (S-33)", () => {
   });
 
   it("handoffMissing is the one predicate", () => {
-    const { handoffMissing } = paths as unknown as {
-      handoffMissing: (writes: string[], reads: string[]) => boolean;
-    };
-    expect(typeof handoffMissing).toBe("function");
+    const { handoffMissing } = paths;
     expect(handoffMissing([], ["a"])).toBe(false);
     expect(handoffMissing(["a"], [])).toBe(false);
     expect(handoffMissing(["a"], ["b"])).toBe(true);

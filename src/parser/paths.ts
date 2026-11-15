@@ -84,3 +84,16 @@ export function writeCovers(write: string, read: string): boolean {
   if (w.folder || r.folder || w.segs.length !== r.segs.length) return false;
   return w.segs.every((seg, i) => segmentsMatch(seg, r.segs[i]));
 }
+
+/**
+ * Does an edge from a writer to a reader lack a declared handoff (S-33)?
+ *
+ * The one verdict behind V93 (validate) and `handoff-overlap-empty` (plan).
+ * An empty `writes` or `reads` is not declared (spec/validation.md V93: "both
+ * declare paths"), so there is nothing to check: false. Otherwise true when no
+ * write covers any read (`writeCovers`).
+ */
+export function handoffMissing(writes: readonly string[], reads: readonly string[]): boolean {
+  if (writes.length === 0 || reads.length === 0) return false;
+  return !writes.some((w) => reads.some((r) => writeCovers(w, r)));
+}

@@ -4,6 +4,8 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: plan no longer flags `handoff-overlap-empty` on an edge whose reader declares no `reads` or whose writer declares no `writes`; it now agrees with V93, which skips such an edge (S-33)
+
 ### [fix] Fixed: a folder read (`reads: [out/]`) counts a write under it (`writes: [out/report.md]`) as a handoff; V93 and plan's `handoff-overlap-empty` no longer fire on it (S-34)
 
 ### [fix] Fixed: a folder write (`writes: ["out/{LANG}/"]`) counts as a handoff to a read under it; V93 and plan's `handoff-overlap-empty` no longer fire on it, and plan no longer tells the reader not to read that folder (S-22)

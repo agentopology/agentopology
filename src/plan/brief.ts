@@ -35,7 +35,7 @@ import type {
   EdgeDef,
 } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
-import { writeCovers } from "../parser/paths.js";
+import { handoffMissing, writeCovers } from "../parser/paths.js";
 import { resolveDefaults, type ResolvedDefault } from "../resolve/defaults.js";
 import { resolveOrder, type OrderStep, type LoopInfo } from "../resolve/order.js";
 
@@ -441,8 +441,11 @@ function computePreflagged(
   }
 
   // A live edge across which nothing crosses: the host must invent the handoff.
+  // The same verdict as V93: an empty reads or writes is not declared (S-33).
+  const byId = new Map<string, NodeDef>(ast.nodes.map((n) => [n.id, n]));
+  const paths = (id: string, k: "reads" | "writes") => (byId.get(id) as AgentNode)[k] ?? [];
   for (const h of handoffs) {
-    if (h.passes.length === 0) {
+    if (handoffMissing(paths(h.from, "writes"), paths(h.to, "reads"))) {
       out.push({
         kind: "handoff-overlap-empty",
         at: { section: "4", edge: `${h.from}->${h.to}` },
