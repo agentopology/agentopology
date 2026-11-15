@@ -4,7 +4,7 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
-- Fixed: a permission rule removed from the .at stayed granted on re-scaffold. The scaffold manifest now records the `.claude/settings.json` rules the .at wrote; an owned rule the .at no longer declares is removed, and a rule you added by hand is never touched (a manifest from 0.11.1 or earlier: the first re-scaffold removes nothing).
+- Fixed: a permission rule removed from the .at stayed granted on re-scaffold. The scaffold manifest now records the `.claude/settings.json` rules the .at wrote; an owned rule the .at no longer declares is removed, and a rule you added by hand is never touched (a manifest from 0.11.1 or earlier: the first re-scaffold removes nothing and names each allow and ask rule the .at does not declare, which may have been left by an earlier scaffold).
 - Security: a settings `allow` entry that compiles to a Codex rule now warns (CX13-allow) that Codex runs the command outside the sandbox without prompting, citing the Codex rules docs (learn.chatgpt.com/docs/agent-configuration/rules.md, codex-rules.md:65). The rules written do not change.
 
 ## [0.11.1] - 2026-11-13
