@@ -40,3 +40,12 @@ One JSON document on stdout, nothing else on stdout:
 
 ## Out of scope
 No new command, no loading of outside code, no version bump, no release.
+
+## API-ADD: scaffolding and the Codex config check
+- Adds `claudeCodeBinding`, `codexBinding` (already exported from the package root) and types `BindingTarget`, `GeneratedFile`.
+  No `scaffold(ast, target)` helper exists in the source, so none is added: call `binding.scaffold(ast)`.
+- Adds `checkConfigAgainstSchema` (src/conformance/surface.ts) and types `SchemaMismatch`, `KnownDrift`.
+  No function loads `spec/codex/config.schema.json` today; the file ships in the package (`files: spec`), and the caller reads it.
+- surface.ts imports `smol-toml` at load, so `smol-toml` moves from devDependencies to dependencies (own commit),
+  proven by installing the packed tarball with `--omit=dev` and importing `agentopology/api`.
+- The pinned name list in api-surface.test.ts grows by these 7 names. No behaviour change.
