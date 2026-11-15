@@ -137,6 +137,8 @@ export function matcherProblem(event: string, matcher: string | undefined): stri
 
 /** What an anchored repository-root expression looks like in a hook command. */
 const ROOT_EXPR = /["']?\$\(git rev-parse --show-toplevel[^)]*\)["']?/g;
+/** `NAME=` the root expression (already replaced by /ROOT), as a shell word: `x=...`, `export x=...`. */
+const ROOT_VAR = /(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=\/ROOT(?=$|[\s;&|)])/g;
 
 /**
  * The script a command hook runs by a path that does not start at the
@@ -146,7 +148,15 @@ const ROOT_EXPR = /["']?\$\(git rev-parse --show-toplevel[^)]*\)["']?/g;
  */
 export function unanchoredScript(command: string): string | null {
   // The launcher (launchCommand) climbs from the root expression in $AT_ROOT.
-  const text = command.replace(ROOT_EXPR, "/ROOT").replace(/\$AT_ROOT\b/g, "/ROOT");
+  let text = command.replace(ROOT_EXPR, "/ROOT").replace(/\$AT_ROOT\b/g, "/ROOT");
+  // S-24: `repo_root="$(git rev-parse --show-toplevel)" && "$repo_root/x.sh"`. A variable
+  // assigned the root expression is the root in the rest of the same command, not before it.
+  // Last assignment first, so an earlier one's position does not move.
+  for (const m of [...text.matchAll(ROOT_VAR)].reverse()) {
+    const from = m.index! + m[0].length;
+    const use = new RegExp(`\\$(?:${m[1]}|\\{${m[1]}\\})(?![A-Za-z0-9_])`, "g");
+    text = text.slice(0, from) + text.slice(from).replace(use, "/ROOT");
+  }
   const script = text.trim().split(/\s+/).map((p) => p.replace(/^["']|["']$/g, "")).find((p) => /\.(sh|py|js|mjs|ts)$/.test(p));
   if (!script) return null;
   if (script.startsWith("/") || script.startsWith("$HOME") || script.startsWith("~/")) return null;

@@ -4,6 +4,8 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a Codex hook script under a variable set from `git rev-parse --show-toplevel` earlier in the same command is no longer reported as relative (S-24)
+
 ### [fix] Fixed: a hook script at `${CLAUDE_PROJECT_DIR:-.}/x.sh` is no longer reported as a relative path (S-23)
 
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)

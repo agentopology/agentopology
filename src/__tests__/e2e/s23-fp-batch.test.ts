@@ -51,3 +51,21 @@ describe("[S-23] cc.hooks.cwd: the project-dir variable with a default is anchor
   });
 });
 
+describe("[S-24] cx unanchored-script: a variable set from the repo root earlier in the command", () => {
+  const ROOTED = 'repo_root="$(git rev-parse --show-toplevel)" && CLAUDE_PROJECT_DIR="$repo_root" "$repo_root/.claude/hooks/guard.sh"';
+
+  it("[S-24] $repo_root assigned from git rev-parse --show-toplevel anchors the script", () => {
+    expect(cxUnanchored(ROOTED)).toBeNull();
+    expect(cxUnanchored("root=$(git rev-parse --show-toplevel); bash ${root}/hooks/x.sh")).toBeNull();
+    expect(cxUnanchored("export R=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; python3 \"$R/x.py\"")).toBeNull();
+  });
+
+  it("[S-24] any other variable, or a use before the assignment, is still flagged", () => {
+    expect(cxUnanchored('d="$(pwd)" && "$d/.claude/hooks/x.sh"')).toBe("$d/.claude/hooks/x.sh");
+    expect(cxUnanchored('"$repo_root/x.sh" ; repo_root="$(git rev-parse --show-toplevel)"')).toBe("$repo_root/x.sh");
+    expect(cxUnanchored('repo_root="$(git rev-parse --show-toplevel)" && "$other/x.sh"')).toBe("$other/x.sh");
+    // a name that only starts with the root variable's name is another variable
+    expect(cxUnanchored('r="$(git rev-parse --show-toplevel)" && "$rx/x.sh"')).toBe("$rx/x.sh");
+  });
+});
+
