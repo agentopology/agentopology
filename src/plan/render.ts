@@ -286,8 +286,9 @@ export function renderBriefMarkdown(brief: ExecutionBrief): string {
   // §4 -----------------------------------------------------------------
   L.push("# §4 — Handoffs and isolation");
   L.push("");
-  L.push("`passes` = writer's `writes` ∩ reader's `reads`. `withholds` = the rest of the");
-  L.push("writer's `writes`. Both computed from one intersection, so they cannot drift.");
+  L.push("`passes` = the writer's `writes` that cover one of the reader's `reads` (a folder");
+  L.push("ending in `/` covers what is under it). `withholds` = the rest of the writer's `writes`.");
+  L.push("Both computed from one rule, the one V93 uses, so they cannot drift.");
   L.push("");
   if (brief.handoffs.length) {
     L.push("| edge | passes | withholds |");

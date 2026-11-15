@@ -35,6 +35,7 @@ import type {
   EdgeDef,
 } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
+import { writeCovers } from "../parser/paths.js";
 import { resolveDefaults, type ResolvedDefault } from "../resolve/defaults.js";
 import { resolveOrder, type OrderStep, type LoopInfo } from "../resolve/order.js";
 
@@ -282,9 +283,11 @@ function computeHandoffs(ast: TopologyAST): Handoff[] {
     seen.add(key);
 
     const writes = (from as AgentNode).writes ?? [];
-    const reads = new Set((to as AgentNode).reads ?? []);
-    const passes = writes.filter((w) => reads.has(w));
-    const withholds = writes.filter((w) => !reads.has(w));
+    const reads = (to as AgentNode).reads ?? [];
+    // The same rule as V93: a folder write covers a read under it (S-22).
+    const crosses = (w: string) => reads.some((r) => writeCovers(w, r));
+    const passes = writes.filter(crosses);
+    const withholds = writes.filter((w) => !crosses(w));
     out.push({ from: edge.from, to: edge.to, passes, withholds });
   }
   return out;

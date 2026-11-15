@@ -23,7 +23,7 @@ import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
 import { proseInRun, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
-import { unsafePathReason } from "./paths.js";
+import { unsafePathReason, writeCovers } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
@@ -1115,8 +1115,9 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * V93: an edge between two agents that both declare paths should declare a
  * handoff.
  *
- * `writer.writes ∩ reader.reads` is what actually crosses an edge. When it is
- * empty, the topology draws a dependency it does not describe — the receiving
+ * What crosses an edge is each `writer.writes` entry that covers a
+ * `reader.reads` entry (`writeCovers`: equal, or a `/` folder holding the read;
+ * S-22). When none does, the topology draws a dependency it does not describe — the receiving
  * agent is told to run after the sender and given nothing the sender produced.
  *
  * A WARNING, not an error: an edge may legitimately pass its result inline
@@ -1780,8 +1781,7 @@ function v93EdgeHandoffDeclared(ast: TopologyAST): ValidationResult[] {
     if (writes.length === 0 || reads.length === 0) continue;
 
     seen.add(key);
-    const readSet = new Set(reads);
-    if (writes.some((w) => readSet.has(w))) continue;
+    if (writes.some((w) => reads.some((r) => writeCovers(w, r)))) continue;
 
     results.push({
       rule: "V93",
