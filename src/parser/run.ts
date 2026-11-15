@@ -37,6 +37,11 @@ const SCRIPT_EXT = /\.(?:py|sh|ts|mjs|js)$/;
  */
 const PROJECT_DIR = /^"?\$(?:CLAUDE_PROJECT_DIR\b|\{CLAUDE_PROJECT_DIR(?::-[^}"]*)?\})"?(?=\/)/;
 
+/** Whether a word starts at the project directory through that variable, in any of those forms (S-23). */
+export function startsAtProjectDir(word: string): boolean {
+  return PROJECT_DIR.test(word);
+}
+
 /**
  * A word that names a file through the project-dir variable, as the
  * project-relative path it is (`./x`); any other word unchanged (S-01). V96

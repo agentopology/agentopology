@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AgentNode, GateNode, TopologyAST } from "../parser/ast.js";
+import { startsAtProjectDir } from "../parser/run.js";
 
 /** The Claude Code version this contract was last checked against. */
 export const VERIFIED_ON = "2.1.323";
@@ -186,12 +187,16 @@ export interface Violation {
  * Claude changes directory ("Handlers run in the current directory"). A
  * script named by a relative path is then not found, the shell exits 127, and
  * 127 does not block: the hook is skipped. A path is anchored when it starts
- * with the project-dir placeholder or is absolute.
+ * with the project-dir placeholder (`$CLAUDE_PROJECT_DIR`, `${CLAUDE_PROJECT_DIR}`,
+ * `${CLAUDE_PROJECT_DIR:-<default>}`, quoted or not) or is absolute.
  */
 export function unanchoredScript(command: string): string | null {
-  const script = command.trim().split(/\s+/).map((p) => p.replace(/^["']|["']$/g, "")).find((p) => /\.(sh|py|js|mjs|ts)$/.test(p));
-  if (!script) return null;
-  if (script.startsWith("$CLAUDE_PROJECT_DIR") || script.startsWith("${CLAUDE_PROJECT_DIR}") || script.startsWith("/")) return null;
+  const word = command.trim().split(/\s+/).find((p) => /\.(sh|py|js|mjs|ts)$/.test(p.replace(/^["']|["']$/g, "")));
+  if (!word) return null;
+  // S-23: `${CLAUDE_PROJECT_DIR:-.}/x.sh` too; the parser's own reading of the variable (run.ts).
+  if (startsAtProjectDir(word)) return null;
+  const script = word.replace(/^["']|["']$/g, "");
+  if (script.startsWith("/")) return null;
   return script;
 }
 
