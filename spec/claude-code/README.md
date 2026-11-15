@@ -4,7 +4,7 @@ What the claude-code binding relies on, as Claude Code's own docs state it.
 
 | File | What it is |
 |---|---|
-| `hooks-contract.json` | Extracted from https://code.claude.com/docs/en/hooks.md: the hook events, the events with no matcher support, the matcher rules, each handler type's fields, and every "Requires Claude Code vX". Its `claudeCode` field is the version installed when it was checked. |
+| `hooks-contract.json` | Extracted from https://code.claude.com/docs/en/hooks.md: the hook events, the events with no matcher support, the matcher rules, each handler type's fields, every "Requires Claude Code vX", and what `onFailure: "block"` covers (`onFailure`: the failure cases, what "block" does, where it has no effect, the stdout x exit-code table, the exit-1 warning). Each `onFailure` fact is a `quote` as written on the page (markdown kept, a leading `* ` or `> ` dropped) and the `line` it was on; the drift check compares quotes, not lines. Its `claudeCode` field is the version installed when it was checked. |
 | `hooks-contract.2.1.295.json` | The same contract at the minimum version the binding supports, **derived**: events and fields that need a newer version are dropped. The docs are current-only, so a contract can't be fetched as it stood at an older version. |
 
 The docs are the source of truth. SchemaStore's settings schema

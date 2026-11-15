@@ -120,8 +120,9 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
     case "mcp_tool":
       return { type: "mcp_tool", server: hook.server, tool: hook.tool, ...timeout, ...filter };
     default: {
-      // F-14: a refuse hook on PreToolUse that cannot start, times out or exits other than 0/2 blocks the
-      // call (onFailure, Claude Code 2.1.295+) instead of letting it run. No effect on async hooks.
+      // F-14: a refuse hook on PreToolUse that fails (cannot start, exits other than 0/2 even with JSON that
+      // allows the call, times out, prints invalid JSON: S-32) blocks the call (onFailure, Claude Code
+      // 2.1.295+) instead of letting it run. No effect on async hooks.
       const block = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !hook.async ? { onFailure: "block" } : {};
       return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
     }
@@ -2421,8 +2422,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       // Agent is the subagent tool; Task is its earlier name.
       matcher: "Agent|Task",
       // onFailure "block" (Claude Code 2.1.295+): a script that cannot start,
-      // times out or exits other than 0/2 blocks the launch instead of
-      // letting it through. The script's own EXIT trap covers the rest.
+      // exits other than 0/2 (even with JSON that allows it), times out or
+      // prints invalid JSON blocks the launch instead of letting it through
+      // (S-32). The script's own EXIT trap covers the rest.
       hooks: [{ type: "command", command: beforeAgentCommand(ast), onFailure: "block" }],
     });
   }

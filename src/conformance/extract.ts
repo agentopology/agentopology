@@ -10,8 +10,11 @@
  * What is extracted: the event names (one `###` heading each under "Hook
  * events"), the events with no matcher support, the matcher rules table, each
  * handler type's fields with whether they are required, and every "Requires
- * Claude Code vX or later" attached to an event or a field. A snapshot at an
- * older version is derived by dropping what requires a newer one.
+ * Claude Code vX or later" attached to an event or a field, and what
+ * `onFailure: "block"` covers (S-32): the failure cases, what "block" does,
+ * where it has no effect, the stdout x exit-code table and the exit-1 warning,
+ * each as written with its line. A snapshot at an older version is derived by
+ * dropping what requires a newer one.
  *
  * @module
  */
@@ -67,6 +70,58 @@ function section(lines: string[], heading: string): string[] {
     out.push(lines[i]);
   }
   return out;
+}
+
+/** The line index (0-based) of the exact heading, or -1. */
+const headingAt = (lines: string[], heading: string) => lines.findIndex((l) => l.trim() === heading);
+
+/** A key for a bullet or row label: its words, lower case, joined by "-" (links and apostrophes dropped). */
+export function factKey(label: string): string {
+  return label.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/['’`*"]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/** The bullets right after the line `lead` in the section at `heading`: key from the bold label, quote without "* ". */
+function bulletsAfter(lines: string[], heading: string, lead: string): Record<string, Quote> {
+  const start = headingAt(lines, heading);
+  const body = section(lines, heading);
+  const i = body.findIndex((l) => l.trim() === lead);
+  const out: Record<string, Quote> = {};
+  if (i === -1) return out;
+  for (let j = i + 1; j < body.length; j++) {
+    if (body[j].trim() === "" && Object.keys(out).length === 0) continue;
+    const m = body[j].match(/^\* (\*\*(.+?)\*\*.*)$/);
+    if (!m) break;
+    out[factKey(m[2])] = { quote: m[1], line: start + 2 + j };
+  }
+  return out;
+}
+
+/** The first line in the section at `heading` that matches `re`, without a leading "> " or "* ". */
+function lineIn(lines: string[], heading: string, re: RegExp): Quote | null {
+  const start = headingAt(lines, heading);
+  const body = section(lines, heading);
+  const j = body.findIndex((l) => re.test(l));
+  return j === -1 ? null : { quote: body[j].replace(/^(> |\* )/, ""), line: start + 2 + j };
+}
+
+const EXIT_SECTION = "### Exit code output";
+const BLOCK_SECTION = "#### Block the action when a hook fails";
+
+/** What onFailure: "block" covers, or undefined when the page has no such section. */
+function extractOnFailure(lines: string[], requires: string | undefined): OnFailureFacts | undefined {
+  const failures = bulletsAfter(lines, BLOCK_SECTION, "Each of these counts as a failure:");
+  const block = lineIn(lines, BLOCK_SECTION, /^With `"block"` set, /);
+  const exit1 = lineIn(lines, EXIT_SECTION, /^>\s*Exit code 1 without valid JSON/);
+  if (!requires || Object.keys(failures).length === 0 || !block || !exit1) return undefined;
+  const start = headingAt(lines, EXIT_SECTION);
+  const body = section(lines, EXIT_SECTION);
+  const exitTable: Record<string, Quote> = {};
+  // The section's first table: what stdout x exit code does. Its rows, as written.
+  const first = body.findIndex((l) => l.startsWith("|"));
+  for (let j = first + 2; first !== -1 && j < body.length && body[j].startsWith("|"); j++) {
+    exitTable[factKey(body[j].split("|")[1])] = { quote: body[j], line: start + 2 + j };
+  }
+  return { requires, failures, block, noEffect: bulletsAfter(lines, BLOCK_SECTION, "The field has no effect on these hooks:"), exitTable, exit1 };
 }
 
 /** Every markdown table in `lines`, as rows of cells; header and separator rows dropped. */
@@ -133,7 +188,8 @@ export function extractHookContract(markdown: string, meta: { source: string; fe
   const typeCell = tableRows(section(lines, HANDLER_SECTIONS.common)).find((r) => ticked(r[0])[0] === "type")?.[2] ?? "";
   const handlerTypes = ticked(typeCell).map((t) => t.replace(/^"|"$/g, ""));
 
-  return { ...meta, events, eventRequires, noMatcherEvents: [...new Set(noMatcherEvents)].sort(), handlerTypes, fields, matcherRules };
+  const onFailure = extractOnFailure(lines, fields.command?.onFailure?.requires);
+  return { ...meta, events, eventRequires, noMatcherEvents: [...new Set(noMatcherEvents)].sort(), handlerTypes, fields, matcherRules, ...(onFailure ? { onFailure } : {}) };
 }
 
 /** -1, 0 or 1, comparing two x.y.z versions. */
@@ -151,8 +207,10 @@ export function contractAt(c: HookContract, version: string): HookContract {
     fields[type] = Object.fromEntries(Object.entries(facts).filter(([, f]) => !newer(f.requires)));
   }
   const events = c.events.filter((e) => !newer(c.eventRequires[e]));
+  const { onFailure, ...rest } = c;
   return {
-    ...c,
+    ...rest,
+    ...(onFailure && !newer(onFailure.requires) ? { onFailure } : {}),
     claudeCode: version,
     derived: true,
     events,
@@ -204,8 +262,20 @@ export function diffContracts(before: HookContract, after: HookContract): Contra
     fieldsRemoved: minus(flat(before), flat(after)),
     changed,
     matcherRulesChanged: JSON.stringify(before.matcherRules) !== JSON.stringify(after.matcherRules),
-    onFailureChanged: [],
+    onFailureChanged: onFailureChanged(before.onFailure, after.onFailure),
   };
+}
+
+/** The onFailure facts whose quote was added, removed or reworded ("failures.timeout"); a line that only moved is not drift. */
+function onFailureChanged(before?: OnFailureFacts, after?: OnFailureFacts): string[] {
+  const flat = (f?: OnFailureFacts): Record<string, string> => {
+    if (!f) return {};
+    const out: Record<string, string> = { requires: f.requires, block: f.block.quote, exit1: f.exit1.quote };
+    for (const group of ["failures", "noEffect", "exitTable"] as const) for (const [k, q] of Object.entries(f[group])) out[`${group}.${k}`] = q.quote;
+    return out;
+  };
+  const a = flat(before), b = flat(after);
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]);
 }
 
 /** Whether a diff has anything in it. */
@@ -226,6 +296,7 @@ export function renderDiff(d: ContractDiff): string[] {
   list("fields added", d.fieldsAdded);
   list("fields removed", d.fieldsRemoved);
   list("changed", d.changed);
+  list("onFailure facts changed", d.onFailureChanged);
   if (d.matcherRulesChanged) out.push("the matcher rules table changed: re-check matcherMatches in src/conformance/claude-code.ts");
   return out.length ? out : ["no drift"];
 }

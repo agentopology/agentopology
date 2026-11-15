@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: onFailure: "block" covers more than we said (S-32)
+
+- The `CC-onfailure` warning and the `guard --check` note on an entry without `onFailure: "block"` said a hook lets the call run when it "cannot start or times out" (the note: "cannot start"). Claude Code's hooks docs count more as a failure: an exit code other than 0 or 2 (even with JSON that allows the call), a timeout, output that is not valid JSON. Both now name them. No grade changes. The cases are in `spec/claude-code/hooks-contract.json` under `onFailure`, each quoted with its line, and `npm run drift` watches them.
+
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
 - The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.

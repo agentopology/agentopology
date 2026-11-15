@@ -3,7 +3,7 @@
  * generated settings.json against it.
  *
  * Each fact below was checked against https://code.claude.com/docs/en/hooks.md
- * on 2026-11-13 (Claude Code 2.1.323). When the contract moves,
+ * on 2026-11-13 (Claude Code 2.1.323); the onFailure facts (S-32) on 2026-11-15. When the contract moves,
  * this file moves with it, and the conformance tests say which generated
  * output stopped matching. spec/claude-code/hooks-contract.json is the same
  * page as a snapshot: e2e/contract-drift.test.ts holds these constants to it,
@@ -172,8 +172,54 @@ export const HANDLER_REQUIRED: Readonly<Record<string, readonly string[]>> = {
 export const ON_FAILURE_TYPES: ReadonlySet<string> = new Set(["command", "http"]);
 export const ON_FAILURE_VALUES: ReadonlySet<string> = new Set(["continue", "block"]);
 
-export const ON_FAILURE_CASES: readonly string[] = [];
-export function preToolUseOutcome(_run: { exit: number | "cant-start" | "timeout"; stdout?: "valid-json" | "invalid-json" | "plain"; decision?: string }, _onFailure?: string): string { return "stub"; }
+/**
+ * S-32: what counts as a failure for `onFailure` ("Each of these counts as a
+ * failure:"), as keys of the snapshot's `onFailure.failures`. Each quote is in
+ * spec/claude-code/hooks-contract.json with its line.
+ */
+export const ON_FAILURE_CASES = ["cant-start", "exit-code-other-than-0-or-2", "http-error", "timeout", "invalid-output"] as const;
+
+/**
+ * The command-hook cases where a refusing PreToolUse hook lets the call run
+ * unless it has `onFailure: "block"`: the failure cases, minus the HTTP one,
+ * read with the stdout x exit table (exit 1 with JSON that denies still denies).
+ */
+export const FAILS_THROUGH_WHEN = "cannot start, exits other than 0 or 2 without JSON that denies it, prints output that is not valid JSON, or times out";
+
+/** What a command hook printed to stdout, as the "Exit code output" table's rows tell it apart. */
+export type HookStdout = "valid-json" | "invalid-json" | "plain";
+/** What a PreToolUse hook's run did: an exit code, or one of the failures that has none. */
+export interface HookRun { exit: number | "cant-start" | "timeout"; stdout?: HookStdout; decision?: "allow" | "deny" | "ask" | "defer" }
+/** The call goes ahead ("proceed"), is blocked, or the JSON fields decide (the decision itself). */
+export type HookOutcome = "proceed" | "block" | "allow" | "deny" | "ask" | "defer";
+
+/**
+ * The "Exit code output" table (snapshot `onFailure.exitTable`) as data, for a
+ * PreToolUse command hook. "fields": the JSON fields decide. "failure": a
+ * non-blocking error, which `onFailure: "block"` turns into a block.
+ * "fields-or-failure": valid JSON on another exit code; the fields decide,
+ * "for hooks whose failure blocks the action, the run counts as a failure instead".
+ */
+export const PRE_TOOL_USE_OUTCOME: Readonly<Record<HookStdout, Readonly<Record<"0" | "2" | "other", "fields" | "block" | "failure" | "fields-or-failure" | "proceed">>>> = {
+  "valid-json": { "0": "fields", "2": "block", other: "fields-or-failure" },
+  "invalid-json": { "0": "failure", "2": "block", other: "failure" },
+  plain: { "0": "proceed", "2": "block", other: "failure" },
+};
+
+/** What Claude Code does with a PreToolUse command hook's run, per the table above and the failure list. */
+export function preToolUseOutcome(run: HookRun, onFailure?: "block" | "continue"): HookOutcome {
+  const failed: HookOutcome = onFailure === "block" ? "block" : "proceed";
+  if (run.exit === "cant-start" || run.exit === "timeout") return failed;
+  const cell = PRE_TOOL_USE_OUTCOME[run.stdout ?? "plain"][run.exit === 0 ? "0" : run.exit === 2 ? "2" : "other"];
+  const fields: HookOutcome = run.decision ?? "proceed";
+  switch (cell) {
+    case "block": return "block";
+    case "proceed": return "proceed";
+    case "failure": return failed;
+    case "fields": return fields;
+    case "fields-or-failure": return onFailure === "block" ? "block" : fields;
+  }
+}
 
 /** The values PreToolUse's `hookSpecificOutput.permissionDecision` takes. */
 export const PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "deny", "ask", "defer"]);
@@ -411,8 +457,8 @@ export const ON_FAILURE_SINCE = "2.1.295";
 /**
  * F-14: the scaffold marks every refusing PreToolUse hook (a `strength: refuse`
  * hook, the gate and approval guards, the session guards) `onFailure: "block"`.
- * A Claude Code older than 2.1.295 ignores the field, so such a hook that cannot
- * start or times out lets the call run. One warning when the Claude Code this
+ * A Claude Code older than 2.1.295 ignores the field, so such a hook that
+ * fails (FAILS_THROUGH_WHEN, from the docs' failure list, S-32) lets the call run. One warning when the Claude Code this
  * runs against (the installed one, or AGENTOPOLOGY_CLAUDE_VERSION) is older.
  */
 export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level: "warning"; message: string }> {
@@ -426,6 +472,6 @@ export function onFailureWarnings(ast: TopologyAST): Array<{ rule: string; level
   return [{
     rule: "CC-onfailure",
     level: "warning",
-    message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook cannot start or times out. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
+    message: `Claude Code ${s.version} is older than ${ON_FAILURE_SINCE}, which ignores onFailure: "block", so ${what} let the call run when the hook ${FAILS_THROUGH_WHEN}. Update Claude Code to ${ON_FAILURE_SINCE} or later.`,
   }];
 }

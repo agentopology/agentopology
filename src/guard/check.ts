@@ -27,7 +27,7 @@ import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, 
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { FAILS_THROUGH_WHEN, installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
@@ -135,7 +135,7 @@ function hookOnDisk(settings: Record<string, any> | null, hook: HookDef): NonNul
 }
 
 /** The note on an entry with no onFailure: "block" (D-8 puts FAILS_OPEN on the grade line for it). */
-const NO_BLOCK_NOTE = 'the entry has no onFailure: "block", so the step goes through if the hook cannot start';
+const NO_BLOCK_NOTE = `the entry has no onFailure: "block", so the step goes through if the hook ${FAILS_THROUGH_WHEN}`;
 /** D-8: on the grade line of a refuse whose PreToolUse entry lets the call through when the hook crashes. */
 export const FAILS_OPEN_NOTE = "fails open on a crash (no onFailure: block)";
 /** D-8: on the grade line of a gate held at SubagentStop. */

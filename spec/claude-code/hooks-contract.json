@@ -1,6 +1,6 @@
 {
   "source": "https://code.claude.com/docs/en/hooks.md",
-  "fetched": "2026-11-13",
+  "fetched": "2026-11-15",
   "claudeCode": "2.1.323",
   "events": [
     "SessionStart",
@@ -138,5 +138,62 @@
     "`\"*\"`, `\"\"`, or omitted → Match all",
     "Only letters, digits, `_`, `-`, spaces, `,`, and `|` → Exact string, or list of exact strings separated by `|` or `,` with optional surrounding whitespace",
     "Contains any other character → JavaScript regular expression, unanchored"
-  ]
+  ],
+  "onFailure": {
+    "requires": "2.1.295",
+    "failures": {
+      "cant-start": {
+        "quote": "**Can't start**: a command hook fails to start, for example because the script or executable doesn't exist",
+        "line": 975
+      },
+      "exit-code-other-than-0-or-2": {
+        "quote": "**Exit code other than 0 or 2**: counts for a command hook even if it printed JSON that allows the action, such as `permissionDecision: \"allow\"`. To return a JSON decision, exit 0",
+        "line": 976
+      },
+      "http-error": {
+        "quote": "**HTTP error**: an HTTP hook's connection fails, or the response status isn't 2xx",
+        "line": 977
+      },
+      "timeout": {
+        "quote": "**Timeout**: the hook reaches its [`timeout`](#common-fields)",
+        "line": 978
+      },
+      "invalid-output": {
+        "quote": "**Invalid output**: the JSON output [can't be parsed](#exit-code-0) or fails [schema validation](#json-output). For an HTTP hook, a 2xx body that is neither empty nor a JSON object also counts. Plain-text stdout from a command hook isn't a failure",
+        "line": 979
+      }
+    },
+    "block": {
+      "quote": "With `\"block\"` set, a failure does what [exit code 2 does on that event](#exit-code-2-behavior-per-event), except on `PermissionRequest`, where it denies the request. For example, a `PreToolUse` failure blocks the tool call and a `UserPromptSubmit` failure blocks the prompt.",
+      "line": 981
+    },
+    "noEffect": {
+      "stop-subagentstop-taskcompleted-and-teammateidle-hooks": {
+        "quote": "**`Stop`, `SubagentStop`, `TaskCompleted`, and `TeammateIdle` hooks**: exit code 2 on these events sends Claude back to keep working, and Claude can't repair a hook that won't run",
+        "line": 985
+      },
+      "background-command-hooks": {
+        "quote": "**Background command hooks**: command hooks that set [`async` or `asyncRewake`](#run-hooks-in-the-background)",
+        "line": 986
+      }
+    },
+    "exitTable": {
+      "json-object-that-passes-schema-validation": {
+        "quote": "| JSON object that passes [schema validation](#json-output) | Success. The fields apply | Blocking error. Claude Code still reads the fields, but they can't override the block | Success. Claude Code ignores the exit code, and the fields alone decide. For hooks [whose failure blocks the action](#block-the-action-when-a-hook-fails), the run counts as a failure instead |",
+        "line": 810
+      },
+      "json-that-cant-be-parsed-or-fails-schema-validation": {
+        "quote": "| JSON that [can't be parsed](#exit-code-0) or fails schema validation | Non-blocking error. The notice carries the parse or validation message | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the parse or validation message |",
+        "line": 811
+      },
+      "plain-text-or-nothing": {
+        "quote": "| [Plain text](#exit-code-0), or nothing | Success | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the first line of your stderr |",
+        "line": 812
+      }
+    },
+    "exit1": {
+      "quote": "Exit code 1 without valid JSON output is a non-blocking error unless the hook is one [whose failure blocks the action](#block-the-action-when-a-hook-fails), even though 1 is the conventional Unix failure code. If your hook is meant to enforce a policy, use `exit 2`.",
+      "line": 896
+    }
+  }
 }
