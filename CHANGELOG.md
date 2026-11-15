@@ -4,6 +4,8 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a folder read (`reads: [out/]`) counts a write under it (`writes: [out/report.md]`) as a handoff; V93 and plan's `handoff-overlap-empty` no longer fire on it (S-34)
+
 ### [fix] Fixed: a folder write (`writes: ["out/{LANG}/"]`) counts as a handoff to a read under it; V93 and plan's `handoff-overlap-empty` no longer fire on it, and plan no longer tells the reader not to read that folder (S-22)
 
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)

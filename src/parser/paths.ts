@@ -46,13 +46,29 @@ function segmentsMatch(a: string, b: string): boolean {
   return (hasA && segmentPattern(a).test(b)) || (hasB && segmentPattern(b).test(a));
 }
 
+/** Segments of a path, and whether it names a folder (a trailing `/`). */
+function split(path: string): { segs: string[]; folder: boolean } {
+  const folder = path.endsWith("/");
+  return { segs: (folder ? path.slice(0, -1) : path).split("/"), folder };
+}
+
+/** Is `inner` the folder `outer` itself, or under it at any depth? `outer` ends in `/`. */
+function underFolder(outer: string, inner: string): boolean {
+  const o = split(outer).segs;
+  const i = split(inner);
+  if (i.segs.length < o.length || (i.segs.length === o.length && !i.folder)) return false;
+  return o.every((seg, k) => segmentsMatch(seg, i.segs[k]));
+}
+
 /**
- * Does a `writes:` path hand the downstream agent a `reads:` path (S-22)?
+ * Does a `writes:` path hand the downstream agent a `reads:` path (S-22, S-34)?
  *
  * The one rule behind V93 (validate) and `handoff-overlap-empty` (plan):
  * - equal paths cover;
  * - a write ending in `/` is a folder and covers every read under it, and itself;
- * - a write without a trailing `/` is a file: same segments only (`out` is not a folder);
+ * - a read ending in `/` is a folder and is satisfied by any write under it (S-34):
+ *   this proves a handoff exists, not that the whole folder is handed over;
+ * - a path without a trailing `/` is a file: same segments only (`out` is not a folder);
  * - `{NAME}` matches one segment on either side, never across a `/`;
  * - `*` and `**` are literal: the grammar gives paths no glob syntax.
  *
@@ -61,15 +77,10 @@ function segmentsMatch(a: string, b: string): boolean {
  */
 export function writeCovers(write: string, read: string): boolean {
   if (write === read) return true;
-  const folder = write.endsWith("/");
-  const w = (folder ? write.slice(0, -1) : write).split("/");
-  const readFolder = read.endsWith("/");
-  const r = (readFolder ? read.slice(0, -1) : read).split("/");
-  if (folder) {
-    // Under the folder: more segments, or the folder itself.
-    if (r.length < w.length || (r.length === w.length && !readFolder)) return false;
-  } else if (r.length !== w.length || readFolder) {
-    return false;
-  }
-  return w.every((seg, i) => segmentsMatch(seg, r[i]));
+  const w = split(write);
+  const r = split(read);
+  if (w.folder && underFolder(write, read)) return true;
+  if (r.folder && underFolder(read, write)) return true;
+  if (w.folder || r.folder || w.segs.length !== r.segs.length) return false;
+  return w.segs.every((seg, i) => segmentsMatch(seg, r.segs[i]));
 }

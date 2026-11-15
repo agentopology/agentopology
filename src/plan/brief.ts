@@ -284,7 +284,7 @@ function computeHandoffs(ast: TopologyAST): Handoff[] {
 
     const writes = (from as AgentNode).writes ?? [];
     const reads = (to as AgentNode).reads ?? [];
-    // The same rule as V93: a folder write covers a read under it (S-22).
+    // The same rule as V93: a folder on either side covers a path under it (S-22, S-34).
     const crosses = (w: string) => reads.some((r) => writeCovers(w, r));
     const passes = writes.filter(crosses);
     const withholds = writes.filter((w) => !crosses(w));

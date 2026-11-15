@@ -1116,8 +1116,8 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * handoff.
  *
  * What crosses an edge is each `writer.writes` entry that covers a
- * `reader.reads` entry (`writeCovers`: equal, or a `/` folder holding the read;
- * S-22). When none does, the topology draws a dependency it does not describe — the receiving
+ * `reader.reads` entry (`writeCovers`: equal, or a `/` folder holding the other;
+ * S-22, S-34). When none does, the topology draws a dependency it does not describe — the receiving
  * agent is told to run after the sender and given nothing the sender produced.
  *
  * A WARNING, not an error: an edge may legitimately pass its result inline
