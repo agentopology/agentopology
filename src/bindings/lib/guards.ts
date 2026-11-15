@@ -25,6 +25,7 @@ import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { fileWriteMatcher } from "../../conformance/claude-code.js";
 import {
   guardedRecords, recordEditGuardFunctions, recordEditGuardLines, isGuardedRecord, recordShellGuardLines, protectsHeads,
+  RECORD_GIT_READS,
 } from "../../records/guard.js";
 
 /** What differs between hosts when a guard script is written. */
@@ -568,9 +569,19 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "    [[ ${ws[x]} =~ ^[a-z_][a-z0-9_]*= ]] && return 1",
     "    at_special \"${ws[x]}\" && return 1",
     "    base=${ws[x]##*/}",
+    "    if [ \"$base\" = git ]; then at_ledger_git \"${ws[@]:x+1}\" || return 1; fi",
     "    at_reads_only \"$base\" \"${ws[@]:x+1}\" || return 1",
     "  done <<< \"$SEGS\"",
     "  return 0",
+    "}",
+    "# SP-9-LG: a git subcommand that changes a file (mv, restore, rm, checkout, stash, ...) is a write of the",
+    "# ledger it names. The ledger guard keeps the records guard's list, not the step guard's AT_GIT_READS.",
+    `AT_LEDGER_GIT_READS=" ${RECORD_GIT_READS} "`,
+    "at_ledger_git() {",
+    "  local x sub=\"\"",
+    "  for x in \"$@\"; do case $x in --output*|-o) return 1 ;; esac; done",
+    "  for x in \"$@\"; do case $x in -*) ;; *) sub=$x; break ;; esac; done",
+    "  [[ \"$AT_LEDGER_GIT_READS\" == *\" $sub \"* ]]",
     "}",
     "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
     "ledger_guard() {",

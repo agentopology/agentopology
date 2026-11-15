@@ -90,6 +90,12 @@ export function recordEditGuardFunctions(records: GuardedRecord[], heads = recor
   ];
 }
 
+/**
+ * SP-9: the git subcommands that only read a record or record it in history. The records guard and the
+ * gate-ledger guard (SP-9-LG) share it; the step guard keeps its own, wider AT_GIT_READS.
+ */
+export const RECORD_GIT_READS = "status diff log show blame ls-files grep add commit";
+
 /** The shell functions of the record check in before-action.sh. Needs MATCH_FUNCTIONS, $CMD, $CMD_L, and `set -f`. */
 const RECORD_SHELL_FUNCTIONS: string[] = [
   "# SP-7 (Spec B): a record is a file only its written-by programs write. A command that names one is refused",
@@ -110,7 +116,7 @@ const RECORD_SHELL_FUNCTIONS: string[] = [
   "}",
   "# SP-9: a git subcommand that changes a file (rm, restore, checkout, mv, reset, stash, clean, ...) is a write",
   "# of the record it names. The records guard keeps its own list: only these read it or record it in history.",
-  "AT_REC_GIT_READS=\" status diff log show blame ls-files grep add commit \"",
+  `AT_REC_GIT_READS=" ${RECORD_GIT_READS} "`,
   "at_rec_git() {",
   "  local x sub=\"\"",
   "  for x in \"$@\"; do case $x in --output*|-o) return 1 ;; esac; done",

@@ -241,3 +241,56 @@ describe.skipIf(!hasJq)("[SP-7][F-4] a gate ledger that cites a hand-built guard
     expect(hook(target, "before-edit.sh", edit).status).toBe(2);
   });
 });
+
+/**
+ * [SP-9-LG] For the gate-ledger guard a git subcommand that changes a file is a write. In 0.11 the
+ * ledger guard read git through the step guard's list (AT_GIT_READS), which counts mv, restore and rm
+ * as reads, so `git mv forged.jsonl <ledger>` passed. Same list as the records guard (SP-9).
+ */
+const L = "logs/ep1/trace.jsonl";
+const LG_REFUSED = [
+  `git mv forged.jsonl ${L}`,
+  `git restore ${L}`,
+  `git restore --source=HEAD~1 ${L}`,
+  `git restore --staged ${L}`,
+  `git checkout -- ${L}`,
+  `git checkout HEAD~1 -- ${L}`,
+  `git rm ${L}`,
+  `git rm --cached ${L}`,
+  `git stash push ${L}`,
+  `git show HEAD:${L} --output=${L}`,
+  `git -C . restore ${L}`,
+];
+const LG_ALLOWED = [
+  "git status",
+  `git diff -- ${L}`,
+  `git log -- ${L}`,
+  `git add ${L}`,
+  "git commit -m x",
+  `git show HEAD:${L}`,
+  "git restore README.md",
+];
+describe.skipIf(!hasJq)("[SP-9-LG] the ledger guard refuses git subcommands that change the ledger", () => {
+  for (const target of TARGETS) {
+    for (const cmd of LG_REFUSED) {
+      it(`[SP-9-LG] ${target}: refuses ${cmd}`, () => {
+        scaffold(target);
+        const r = hook(target, "before-action.sh", bash(cmd));
+        expect(r.status, r.stderr).toBe(2);
+        expect(r.stderr).toContain("the command touches the gate ledger logs/{unit}/trace.jsonl");
+      });
+    }
+    for (const cmd of LG_ALLOWED) {
+      it(`[SP-9-LG] ${target}: lets ${cmd} run`, () => {
+        scaffold(target);
+        const r = hook(target, "before-action.sh", bash(cmd));
+        expect(r.status, r.stderr).toBe(0);
+      });
+    }
+  }
+  it("[SP-9-LG] codex: git mv onto the approvals file is refused, git log of it runs", () => {
+    scaffold("codex");
+    expect(hook("codex", "before-action.sh", bash("git mv x.jsonl .codex/state/approvals.jsonl")).status).toBe(2);
+    expect(hook("codex", "before-action.sh", bash("git log -- .codex/state/approvals.jsonl")).status).toBe(0);
+  });
+});

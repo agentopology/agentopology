@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [security] The gate-ledger shell guard refuses git subcommands that write the ledger (SP-9-LG)
+
+- **Security:** 0.11.x: the gate-ledger shell guard let `git mv`, `git restore`, `git rm` and `git show --output=` write the ledger (its git read list was the step guard's); 0.12 refuses them. On a gate ledger (or Codex's `.codex/state/approvals.jsonl`) a command names, `git mv <x> <ledger>`, `git restore` (plain, `--source`, `--staged`), `git checkout [<rev>] -- <ledger>`, `git rm [--cached]`, `git stash push`, `-C` forms and `--output=` exit 2; `git status`, `diff`, `log`, `show <rev>:<ledger>`, `blame`, `ls-files`, `grep`, `add` and `commit` still pass. The step guard's read list is unchanged. Not seen: a git command that names no path (`git reset --hard`, `git stash`, `git restore .`).
+
 ### [feature] Records in `guard --check`; the hook refuses a rewritten append-only ledger (SP-9, records half)
 
 - `guard --check` prints one block per record, one line per way in: `tools` (`refuse, by hook (generated)` or `(cited)`, "unverified"), `shell` (`detect`), `later` (append-only: `detect, by code`) and `other` (`none`, with the fixed bypass line). A cited set whose PreToolUse matchers miss a file-writing tool gets a warning naming it (B9). A missing generated piece or a cited hook absent from `.claude/settings.json` grades `none` and fails the check (exit 1). Codex prints that records are graded for Claude Code only.
