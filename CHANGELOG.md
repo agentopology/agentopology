@@ -4,6 +4,8 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: guard --check no longer lists as untied a hook the .at declares as `command <tool>` (how import writes a bare PATH tool) while settings.json runs `<tool>` (S-27)
+
 ### [fix] Fixed: `validate --inventory` no longer prints "[codex] .codex/hooks.json written" when nothing is written; `scaffold --target codex` still prints it (S-26)
 
 ### [fix] Fixed: `[agents] max_threads = N` in a Codex config.toml no longer reads as an agent role ("expected object"); Codex documents it as a legacy alias of `max_concurrent_threads_per_session` and it is checked as that (S-25)

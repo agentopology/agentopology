@@ -352,15 +352,18 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   // A hook is the topology's own when it runs a script from the skill's
   // scripts folder, or when it is one the topology's hooks {} block compiles to.
   const ours = `.claude/skills/${name}/scripts/`;
+  // S-27: import writes a bare PATH tool as `command chunk validate` (S-11); the `command`
+  // builtin runs its argument as is, so it is the same hook as `chunk validate` on disk.
+  const sameRun = (text: unknown) => String(text ?? "").trim().replace(/^command\s+/, "");
   const declared = new Set<string>();
   for (const [event, entries] of Object.entries(settingsHooksOf(ast))) {
-    for (const e of entries as HookEntry[]) for (const h of (e.hooks ?? []) as Array<Record<string, unknown>>) declared.add(`${event}|${h.command ?? h.prompt ?? h.url ?? ""}`);
+    for (const e of entries as HookEntry[]) for (const h of (e.hooks ?? []) as Array<Record<string, unknown>>) declared.add(`${event}|${sameRun(h.command ?? h.prompt ?? h.url)}`);
   }
   const unattributed: string[] = [];
   for (const [event, entries] of Object.entries((settings?.hooks ?? {}) as Record<string, HookEntry[]>)) {
     for (const e of entries ?? []) for (const h of e.hooks ?? []) {
       const handler = h as Record<string, unknown>;
-      if (h.command?.includes(ours) || declared.has(`${event}|${handler.command ?? handler.prompt ?? handler.url ?? ""}`)) continue;
+      if (h.command?.includes(ours) || declared.has(`${event}|${sameRun(handler.command ?? handler.prompt ?? handler.url)}`)) continue;
       unattributed.push(`${event}${e.matcher ? ` ${e.matcher}` : ""}: ${h.type === "command" ? h.command : h.type}`);
     }
   }

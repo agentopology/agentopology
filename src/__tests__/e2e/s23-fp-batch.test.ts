@@ -108,3 +108,31 @@ describe("[S-26] read-only coverage does not say hooks.json was written", () => 
   });
 });
 
+describe("[S-27] guard.untied: a declared hook run through the `command` builtin is tied", () => {
+  function project(command: string): string {
+    const root = tmp();
+    fs.mkdirSync(join(root, ".claude"), { recursive: true });
+    fs.writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command, timeout: 30 }] }] } }));
+    return root;
+  }
+  const declared = (run: string) => parse(`topology t : [pipeline] {
+  agent a { model: sonnet prompt { Work. } }
+  flow { a }
+  hooks {
+    hook stop {
+      on: Stop
+      run: "${run}"
+      type: command
+      timeout: 30
+    }
+  }
+}`);
+
+  it("[S-27] settings.json runs `chunk validate`, the .at declares `command chunk validate`: tied", () => {
+    expect(checkGuards(declared("command chunk validate"), project("chunk validate")).unattributed).toEqual([]);
+  });
+
+  it("[S-27] a different command on the same event is still untied", () => {
+    expect(checkGuards(declared("command chunk validate"), project("chunk deploy")).unattributed).toEqual(["Stop: chunk deploy"]);
+  });
+});
