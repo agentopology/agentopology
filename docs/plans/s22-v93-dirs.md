@@ -27,3 +27,14 @@ A write crosses the edge when it covers at least one read. No new V-number.
 
 **Done.** Fixture above: no V93, no `handoff-overlap-empty`. A read outside the
 folder still fires both. Every rule above has a test in each of validate and plan.
+
+## S-34: a folder read is satisfied by a write under it (reading A)
+
+**Change.** Rule 6 is reversed. A read ending in `/` is a folder, and any write
+under it covers it (`reads: [out/]`, `writes: [out/report.md]` is a handoff).
+Same helper, `writeCovers`, so V93 and plan agree. No new V-number.
+**Rules.** Rules 2 to 5 mirrored for the read: the folder needs a trailing `/`;
+`{NAME}` matches one segment; no globs; `out/` does not cover `outside/a.md`.
+**Risk.** This proves a handoff exists, not that the whole folder is handed over.
+**Done.** The example both ways; `out/` + `outside/a.md` still fires both;
+`x/{LANG}/` + `x/en/f.md` is covered; S-22 cases pass; examples' output unchanged.
