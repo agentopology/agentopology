@@ -37,19 +37,19 @@ import { runParts, isShellCommand } from "../parser/run.js";
 // YAML frontmatter parser (minimal, no deps)
 // ---------------------------------------------------------------------------
 
-interface FrontmatterResult {
+export interface FrontmatterResult {
   fields: Record<string, string | boolean | string[]>;
   body: string;
 }
 
 /** A frontmatter list written either as a YAML list or a comma string. */
-function asList(value: unknown): string[] | undefined {
+export function asList(value: unknown): string[] | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (Array.isArray(value)) return value.map(String);
   return String(value).split(",").map((v) => v.trim()).filter(Boolean);
 }
 
-function parseFrontmatter(content: string): FrontmatterResult {
+export function parseFrontmatter(content: string): FrontmatterResult {
   const fields: Record<string, string | boolean | string[]> = {};
   let body = content;
 
@@ -1001,8 +1001,20 @@ export function importClaudeCode(
   const settingsFile = files.find((f) =>
     f.path.endsWith("settings.json") && f.path.includes(".claude"),
   );
+  // A settings.json that does not parse used to stop the whole import. Now the
+  // rest of the project is still imported, without its settings and hooks,
+  // and one warning says so (with the line, when the JSON parser gives one).
+  let parsed: ReturnType<typeof parseSettingsJson> | null = null;
   if (settingsFile) {
-    const parsed = parseSettingsJson(settingsFile.content);
+    try {
+      parsed = parseSettingsJson(settingsFile.content);
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      const line = /\bline (\d+)/.exec(err.message)?.[1];
+      warnings.push(`settings.invalid-json: ${settingsFile.path}${line ? ` line ${line}` : ""}: ${err.message}; settings and hooks not imported`);
+    }
+  }
+  if (settingsFile && parsed) {
     settings = parsed.settings;
     // S-11 (c): a bare PATH tool (`chunk validate`) would scaffold as the
     // topology's own scripts/chunk stub. Unless the project holds that file,

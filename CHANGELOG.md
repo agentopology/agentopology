@@ -4,6 +4,12 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feat] Added: `agentopology/api`, a stable programmatic API; `--json` on `validate` and `guard --check`; `import` survives a settings.json that is not JSON (P-API)
+
+- `import { parse, validate, checkGuards, ... } from "agentopology/api"` re-exports existing functions and types under one entry: `parse`, `validate`, `validateResult`, `checkClaudeHooks`, `checkCodexHooks`, `onFailureWarnings`, `NO_MATCHER_EVENTS`, `checkGuards`, `checkCodexGuards`, `collectInventory`, `coverage`, `importClaudeCodeWithReport`, `readClaudeProject`, `parseFrontmatter`, `asList`, `runParts`, `isStubContent`, and the types `TopologyAST`, `ValidationResult`, `GuardReport`, `GuardItem`, `InventoryItem`, `CoverageReport`, `FlowReport`, `ClaudeProject`, `PlatformFile`. No behaviour changes. `src/__tests__/api-surface.test.ts` pins the names.
+- `validate --json` and `guard --check --json` print one document, `{ version: 1, command, target?, findings: [{ id, severity, message, file, line, source }], exitCode }`, described by `spec/findings-output.schema.json`. The exit codes stay the same: `validate` exits 1 on an error, a parse error, a missing file, an unknown target or a missing `--inventory` pointer, otherwise 0. `guard --check` exits 1 when an item is missing or the target is unsupported, otherwise 0. Without `--json` the output does not change. Before this, `validate x.at --json` read `--json` as a second file.
+- `import` used to stop on a `.claude/settings.json` that is not valid JSON. It now imports the agents, skills, commands and `.mcp.json` anyway, leaves out the settings and hooks, and gives one warning: `settings.invalid-json: <file> line <n>: <parser message>`.
+
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
 - The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.

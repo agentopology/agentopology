@@ -59,6 +59,7 @@ import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
+import { coverageFindings, emitFindings, guardFindings, stopFinding, validationFindings, type Finding } from "./findings.js";
 import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -87,13 +88,15 @@ ${c.bold("agentopology")} — AgenTopology CLI
 
 ${c.bold("Usage:")}
   agentopology plan <file.at> [--mode plan|execute|auto] [--brief] [--task <text>] [--root <dir>] [--log <path>]
-  agentopology validate <file.at> [more.at ...] [--target <binding>] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user]
+  agentopology validate <file.at> [more.at ...] [--target <binding>] [--inventory <project-dir|inventory.json>] [--dir <project-dir>] [--user] [--json]
                        With --inventory: how many live things in the project the .at
                        accounts for (unmapped warns), and what it points at that is not
                        on disk (missing, exits 1). Folders the .at lists in
                        inventory { roots: [...] } are listed too. With several .at files
                        the per-file numbers print first, then one union number. --user
                        adds ~/.claude (counted apart) and checks the needs block.
+                       --json prints one findings document (spec/findings-output.schema.json)
+                       instead of the text; the exit code is the same.
   agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
@@ -110,10 +113,11 @@ ${c.bold("Usage:")}
                        hand-built: hook scripts, gates, checks, and the hooks and
                        permissions of settings.json (merged; for codex, .codex/hooks.json). Keeps edited scripts and
                        implemented checks, reports each. Then runs --check.
-  agentopology guard <file.at> --check [--dir <project-dir>]
+  agentopology guard <file.at> --check [--dir <project-dir>] [--json]
                        Report which gates, approval steps and permission rules the
                        project enforces today (refuse / none / hope). Writes nothing;
                        exits 1 when something the binding generates is missing.
+                       --json prints the report as one findings document.
   agentopology step check <file.at> <step-id> [--unit U] [--dir D]
                        Exit 0 when every gate before <step-id> holds (its ledger shows the
                        after: step ok for the unit; its run: exits 0 from D), else 1,
@@ -236,6 +240,8 @@ interface ParsedArgs {
   at: string[];
   /** More .at files after the first: `validate --inventory DIR a.at b.at`. */
   more: string[];
+  /** `--json` on validate and guard --check: one findings document on stdout instead of the text. */
+  json: boolean;
   help: boolean;
 }
 
@@ -269,6 +275,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     user: false,
     at: [],
     more: [],
+    json: false,
     help: false,
   };
 
@@ -315,6 +322,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
     if (arg === "--user") { result.user = true; i++; continue; }
+    if (arg === "--json") { result.json = true; i++; continue; }
     if (arg === "--at" && i + 1 < args.length) { result.at.push(args[i + 1]); i += 2; continue; }
     if (arg === "--all") {
       result.all = true;
@@ -508,6 +516,42 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
   }
   printVersionLines(target);
   if (failed) process.exit(1);
+}
+
+/**
+ * `validate --json`: the same checks and exit code as cmdValidate and
+ * cmdValidateMany, as one findings document. A file that cannot be read or
+ * parsed, or an unknown target, is one error finding.
+ */
+function cmdValidateJson(files: string[], inventory?: string, dir?: string, user = false, target?: string): void {
+  const doc = (findings: Finding[]) => emitFindings({
+    version: 1,
+    command: "validate",
+    ...(target ? { target } : {}),
+    findings,
+    exitCode: findings.some((f) => f.severity === "error") ? 1 : 0,
+  });
+  if (target && !(target in bindings)) return doc([stopFinding("cli.unknown-target", `unknown target "${target}"`, files[0], "cli")]);
+  const findings: Finding[] = [];
+  const asts: TopologyAST[] = [];
+  for (const f of files) {
+    if (!fs.existsSync(path.resolve(f))) return doc([...findings, stopFinding("file.not-found", `file not found: ${path.resolve(f)}`, f, "cli")]);
+    let ast: TopologyAST;
+    try { ast = parseAt(fs.readFileSync(path.resolve(f), "utf-8"), f); } catch (err) {
+      return doc([...findings, stopFinding("parse", (err as Error).message, f, "parser")]);
+    }
+    asts.push(ast);
+    const checked = validateResult(ast, path.resolve(f), target);
+    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+    findings.push(...validationFindings([...checked.results, ...ccExtra], f));
+  }
+  if (inventory) {
+    if (!fs.existsSync(path.resolve(inventory))) return doc([...findings, stopFinding("inventory.not-found", `--inventory ${inventory} not found`, inventory, "cli")]);
+    const { items, root } = loadInventory(inventory, dir, [...new Set(asts.flatMap((a) => a.inventoryRoots ?? []))], user);
+    const reports = asts.map((a) => coverageResult(a, items, root, user));
+    findings.push(...coverageFindings(reports.length === 1 ? reports[0].missing : unionCoverage(reports).missing));
+  }
+  doc(findings);
 }
 
 /**
@@ -1416,6 +1460,29 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   process.exit(report.missing > 0 ? 1 : 0);
 }
 
+/** `guard --check --json`: the same report and exit code as cmdGuardCheck, as one findings document. */
+function cmdGuardCheckJson(filePath: string, dirPath: string, targetName?: string): void {
+  const root = path.resolve(dirPath);
+  const target = targetName ?? (!fs.existsSync(path.join(root, ".claude")) && fs.existsSync(path.join(root, ".codex")) ? "codex" : "claude-code");
+  const doc = (findings: Finding[]) => emitFindings({
+    version: 1,
+    command: "guard --check",
+    target,
+    findings,
+    exitCode: findings.some((f) => f.severity === "error") ? 1 : 0,
+  });
+  if (target !== "claude-code" && target !== "codex") {
+    return doc([stopFinding("cli.unknown-target", `guard --check supports claude-code and codex only (got "${target}")`, filePath, "cli")]);
+  }
+  if (!fs.existsSync(path.resolve(filePath))) return doc([stopFinding("file.not-found", `file not found: ${path.resolve(filePath)}`, filePath, "cli")]);
+  let ast: TopologyAST;
+  try { ast = parseAt(fs.readFileSync(path.resolve(filePath), "utf-8"), filePath); } catch (err) {
+    return doc([stopFinding("parse", (err as Error).message, filePath, "parser")]);
+  }
+  const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root);
+  doc(guardFindings(report, filePath));
+}
+
 /**
  * `guard <file> --target claude-code|codex`: write only the guard part of scaffold's
  * output (see src/guard/target.ts), print what was written or kept, then run
@@ -1578,7 +1645,8 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target);
+      if (args.json) cmdValidateJson([args.file, ...args.more], args.inventory, args.dir, args.user, args.target);
+      else cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target);
       break;
 
     case "inventory":
@@ -1696,7 +1764,8 @@ function main(): void {
       }
       // E-2: --check reads and never writes, on any target.
       if (args.check) {
-        cmdGuardCheck(args.file, args.dir ?? ".", args.target);
+        if (args.json) cmdGuardCheckJson(args.file, args.dir ?? ".", args.target);
+        else cmdGuardCheck(args.file, args.dir ?? ".", args.target);
         break;
       }
       if (args.target) {
