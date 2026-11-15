@@ -82,3 +82,29 @@ describe("[S-25] cx.config: agents.max_threads is a documented legacy alias", ()
   });
 });
 
+const HOOKED = `topology demo : [pipeline] {
+  agent worker { model: gpt-5.2 prompt { Work. } }
+  flow { worker }
+  hooks {
+    hook lint {
+      on: PreToolUse
+      matcher: Bash
+      run: "scripts/lint.sh"
+      type: command
+    }
+  }
+}`;
+
+describe("[S-26] read-only coverage does not say hooks.json was written", () => {
+  it("[S-26] coverage() prints no 'written' line; scaffold still does", () => {
+    const root = tmp();
+    const ast = parse(HOOKED);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    coverage(ast, collectInventory(root), root);
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => /hooks\.json written/.test(l))).toEqual([]);
+    warn.mockClear();
+    codexBinding.scaffold(ast);
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => /hooks\.json written/.test(l))).toHaveLength(1);
+  });
+});
+

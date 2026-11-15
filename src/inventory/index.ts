@@ -24,7 +24,7 @@ import * as os from "node:os";
 import { spawnSync } from "node:child_process";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
-import { codexBinding } from "../bindings/codex.js";
+import { scaffoldCodexInMemory } from "../bindings/codex.js";
 import { runParts, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
 import { sessionAgentsOf } from "../bindings/lib/session.js";
@@ -407,7 +407,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
   // What scaffold writes for either target. A target that refuses this topology (an error)
   // contributes nothing: its files, if present, then show as unmapped.
   let codexGenerated: Array<{ path: string; content: string }> = [];
-  try { codexGenerated = codexBinding.scaffold(ast); } catch { /* not scaffoldable for Codex */ }
+  try { codexGenerated = scaffoldCodexInMemory(ast); } catch { /* not scaffoldable for Codex */ }
   const claudeGenerated = claudeCodeBinding.scaffold(ast);
   const generated = [...claudeGenerated, ...codexGenerated];
   const genPaths = new Set(generated.map((f) => norm(f.path)));

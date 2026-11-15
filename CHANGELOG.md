@@ -4,6 +4,8 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: `validate --inventory` no longer prints "[codex] .codex/hooks.json written" when nothing is written; `scaffold --target codex` still prints it (S-26)
+
 ### [fix] Fixed: `[agents] max_threads = N` in a Codex config.toml no longer reads as an agent role ("expected object"); Codex documents it as a legacy alias of `max_concurrent_threads_per_session` and it is checked as that (S-25)
 
 ### [fix] Fixed: a Codex hook script under a variable set from `git rev-parse --show-toplevel` earlier in the same command is no longer reported as relative (S-24)

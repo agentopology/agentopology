@@ -1572,6 +1572,15 @@ function refuseClaudeModels(ast: TopologyAST): void {
   }
 }
 
+/** False while a read-only caller builds the files in memory: nothing is written, so nothing says "written" (S-26). */
+let announceWrite = true;
+
+/** The files scaffold would write, built in memory for a read-only command; it prints no "written" notice (S-26). */
+export function scaffoldCodexInMemory(ast: TopologyAST): GeneratedFile[] {
+  announceWrite = false;
+  try { return codexBinding.scaffold(ast); } finally { announceWrite = true; }
+}
+
 /** OpenAI Codex CLI binding — full implementation. */
 export const codexBinding: BindingTarget = {
   name: "codex",
@@ -1609,7 +1618,7 @@ export const codexBinding: BindingTarget = {
     files.push(...hooks.scripts);
     if (hooks.hooksJson) {
       files.push(hooks.hooksJson);
-      codexWarn("[codex] .codex/hooks.json written: Codex skips a new or changed hook until you review and trust it with /hooks");
+      if (announceWrite) codexWarn("[codex] .codex/hooks.json written: Codex skips a new or changed hook until you review and trust it with /hooks");
     }
 
     // 8. Tool scripts
