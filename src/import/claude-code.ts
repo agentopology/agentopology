@@ -49,6 +49,97 @@ function asList(value: unknown): string[] | undefined {
   return String(value).split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+/** Leading spaces of a line (YAML indentation is spaces only). */
+function indentOf(line: string): number {
+  return line.length - line.replace(/^ +/, "").length;
+}
+
+/** A line the reader takes as a `key: value` or `key:` entry. */
+const KEY_LINE = /^[^\s#'"-][^:]*:(\s|$)/;
+
+/**
+ * Join lines the way YAML folds them: a single line break becomes a space and
+ * each blank line becomes a newline ("Line Folding", 6.5). In folded block
+ * scalars a more-indented line keeps its breaks ("Folded Style", 8.1.3).
+ */
+function foldLines(lines: string[], keepMoreIndented: boolean): string {
+  let out = "";
+  let started = false;
+  let blanks = 0;
+  let prevMore = false;
+  for (const line of lines) {
+    if (line === "") { blanks++; continue; }
+    const more = keepMoreIndented && /^[ \t]/.test(line);
+    if (!started) out += "\n".repeat(blanks) + line;
+    else if (blanks === 0) out += (more || prevMore ? "\n" : " ") + line;
+    else out += (more || prevMore ? "\n" : "") + "\n".repeat(blanks) + line;
+    started = true;
+    blanks = 0;
+    prevMore = more;
+  }
+  return out;
+}
+
+/**
+ * A block scalar after `key: |` or `key: >` ("Block Scalar Styles", 8.1).
+ * Returns the value and the index of the first line after it.
+ */
+function readBlockScalar(
+  lines: string[],
+  start: number,
+  keyIndent: number,
+  header: string,
+): { value: string; next: number } {
+  const style = header[0];
+  const digit = header.match(/[1-9]/);
+  const chomp = header.includes("-") ? "strip" : header.includes("+") ? "keep" : "clip";
+  // "Block Indentation Indicator" (8.1.1.1): explicit, or the first non-empty line's.
+  let indent = digit ? keyIndent + Number(digit[0]) : -1;
+  let i = start;
+  const content: string[] = [];
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "") { content.push(""); continue; }
+    if (indent === -1) indent = indentOf(line);
+    if (indent <= keyIndent || indentOf(line) < indent) break;
+    content.push(line.slice(indent));
+  }
+  // Trailing blank lines belong to the chomping, not the text; lines past the block are not ours.
+  let trailing = 0;
+  while (content.length > 0 && content[content.length - 1] === "") { content.pop(); trailing++; }
+  const next = i;
+  const text = style === "|" ? content.join("\n") : foldLines(content, true);
+  // "Block Chomping Indicator" (8.1.1.2): strip none, clip one, keep all final line breaks.
+  let value = text;
+  if (content.length > 0 && chomp !== "strip") value += "\n";
+  if (chomp === "keep") value += "\n".repeat(trailing);
+  return { value, next };
+}
+
+/** Where a quoted scalar opened at `text[0]` closes, or -1 if not on this line. */
+function closingQuote(text: string, from: number, quote: string): number {
+  for (let i = from; i < text.length; i++) {
+    if (quote === "'" && text[i] === "'") {
+      if (text[i + 1] === "'") { i++; continue; }
+      return i;
+    }
+    if (quote === '"') {
+      if (text[i] === "\\") { i++; continue; }
+      if (text[i] === '"') return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Minimal YAML 1.2 frontmatter reader for agent, skill and command files.
+ * Single-line `key: value`, booleans, `- item` lists, and these values over
+ * several lines: block scalars `|` / `>` with chomping `-` / `+` and an
+ * indentation digit ("Block Scalar Styles", 8.1), plain scalars continued on
+ * more-indented lines ("Plain Style", 7.3.3), and quoted scalars that span lines
+ * ("Double-Quoted Style", 7.3.1; "Single-Quoted Style", 7.3.2). Not read: nested
+ * maps, flow collections, anchors, escapes inside quotes.
+ */
 export function parseFrontmatter(content: string): FrontmatterResult {
   const fields: Record<string, string | boolean | string[]> = {};
   let body = content;
@@ -57,16 +148,19 @@ export function parseFrontmatter(content: string): FrontmatterResult {
     return { fields, body };
   }
 
-  const endIdx = content.indexOf("---", 3);
-  if (endIdx === -1) return { fields, body };
+  // The closing fence is a line that is exactly `---`, not any `---` in a value.
+  const fence = /\n---[ \t]*\r?(?=\n|$)/.exec(content.slice(3));
+  if (!fence) return { fields, body };
+  const endIdx = 3 + fence.index;
 
-  const yaml = content.slice(3, endIdx).trim();
-  body = content.slice(endIdx + 3).trim();
+  body = content.slice(endIdx + fence[0].length).trim();
+  const lines = content.slice(3, endIdx).split("\n").map((l) => l.replace(/\r$/, ""));
 
   let currentKey: string | null = null;
   let currentList: string[] | null = null;
 
-  for (const line of yaml.split("\n")) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -88,12 +182,74 @@ export function parseFrontmatter(content: string): FrontmatterResult {
 
     const key = trimmed.slice(0, colonIdx).trim();
     const rawValue = trimmed.slice(colonIdx + 1).trim();
+    const keyIndent = indentOf(line);
+
+    // The more-indented, non-key lines after a key: its value's continuation.
+    const continuation = (): string[] => {
+      const out: string[] = [];
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const t = lines[j].trim();
+        if (t === "") { out.push(""); continue; }
+        if (indentOf(lines[j]) <= keyIndent || t.startsWith("#") || KEY_LINE.test(t)) break;
+        out.push(t);
+      }
+      while (out.length > 0 && out[out.length - 1] === "") out.pop();
+      return out;
+    };
 
     if (rawValue === "" || rawValue === undefined) {
+      // A plain value that starts on the next, more-indented line.
+      const more = continuation();
+      if (more.length > 0 && !more[0].startsWith("- ")) {
+        fields[key] = foldLines(more, false);
+        i += more.length;
+        continue;
+      }
       // Start of a list
       currentKey = key;
       currentList = [];
       continue;
+    }
+
+    // Block scalar: `|` or `>`, then chomping and indentation in either order.
+    const header = rawValue.match(/^([|>])([1-9][+-]?|[+-][1-9]?)?\s*(#.*)?$/);
+    if (header) {
+      const { value, next } = readBlockScalar(lines, i + 1, keyIndent, header[1] + (header[2] ?? ""));
+      fields[key] = value;
+      i = next - 1;
+      continue;
+    }
+
+    // A quoted value that does not close on its own line.
+    const quote = rawValue[0];
+    if ((quote === '"' || quote === "'") && closingQuote(rawValue, 1, quote) === -1) {
+      const parts = [rawValue.slice(1).trimEnd()];
+      let j = i + 1;
+      let closed = -1;
+      for (; j < lines.length; j++) {
+        const t = lines[j].trim();
+        closed = closingQuote(t, 0, quote);
+        if (closed !== -1) { parts.push(t.slice(0, closed).trimEnd()); break; }
+        parts.push(t);
+      }
+      if (closed !== -1) {
+        fields[key] = foldLines(parts, false);
+        i = j;
+        continue;
+      }
+      // Never closed: read the line as before.
+    }
+
+    // Plain value continued on more-indented lines.
+    if (quote !== '"' && quote !== "'") {
+      const more = continuation();
+      if (more.length > 0) {
+        const joined = foldLines([rawValue, ...more], false);
+        fields[key] = joined === "true" ? true : joined === "false" ? false : joined;
+        i += more.length;
+        continue;
+      }
     }
 
     // Boolean

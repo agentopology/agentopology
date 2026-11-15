@@ -46,6 +46,14 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Quote a string if it contains spaces, special chars, or is empty. */
+/**
+ * A .at field is one line. A description imported from a YAML block or
+ * multi-line value (S-35) carries line breaks; each becomes one space.
+ */
+function oneLine(s: string): string {
+  return s.includes("\n") ? s.replace(/[ \t]*\r?\n[ \t\r\n]*/g, " ").trim() : s;
+}
+
 function q(s: string): string {
   if (!s) return '""';
   // A backslash is escaped too, so unquote gives back exactly `s` (S-01).
@@ -85,7 +93,7 @@ function serializeMeta(ast: TopologyAST): string {
   const lines: string[] = [];
   lines.push("  meta {");
   if (meta.version) lines.push(`    version: "${meta.version}"`);
-  if (meta.description) lines.push(`    description: "${meta.description}"`);
+  if (meta.description) lines.push(`    description: "${oneLine(meta.description)}"`);
   if (meta.domain) lines.push(`    domain: ${q(meta.domain)}`);
   if (meta.foundations?.length) lines.push(`    foundations: ${inlineList(meta.foundations)}`);
   if (meta.advanced?.length) lines.push(`    advanced: ${inlineList(meta.advanced)}`);
@@ -158,7 +166,7 @@ function serializeAgent(node: AgentNode): string {
   if (node.model) lines.push(`    model: ${node.model}`);
   if (node.permissions) lines.push(`    permissions: ${node.permissions}`);
   if (node.phase !== undefined) lines.push(`    phase: ${node.phase}`);
-  if (node.description) lines.push(`    description: "${node.description}"`);
+  if (node.description) lines.push(`    description: "${oneLine(node.description)}"`);
   if (node.tools?.length) lines.push(`    tools: ${inlineList(node.tools)}`);
   if (node.disallowedTools?.length) lines.push(`    disallowed-tools: ${inlineList(node.disallowedTools)}`);
   if (node.skills?.length) lines.push(`    skills: ${inlineList(node.skills)}`);
@@ -288,7 +296,7 @@ function serializeAction(node: ActionNode): string {
   const lines: string[] = [];
   lines.push(`  action ${node.id} {`);
   if (node.kind) lines.push(`    kind: ${node.kind}`);
-  if (node.description) lines.push(`    description: "${node.description}"`);
+  if (node.description) lines.push(`    description: "${oneLine(node.description)}"`);
   if (node.source) lines.push(`    source: "${node.source}"`);
   if (node.commands?.length) {
     lines.push("    commands: [");
@@ -316,7 +324,7 @@ function serializeGate(node: GateNode): string {
   if (node.retry) lines.push(`      retry: ${node.retry}`);
   if (node.behavior) lines.push(`      behavior: ${node.behavior}`);
   if (node.timeout) lines.push(`      timeout: ${q(node.timeout)}`);
-  if (node.description) lines.push(`      description: "${node.description}"`);
+  if (node.description) lines.push(`      description: "${oneLine(node.description)}"`);
   if (node.strength) lines.push(`      strength: ${node.strength}`);
   if (node.by) lines.push(`      by: ${node.by}`);
   if (node.at) lines.push(`      at: ${q(node.at)}`);
@@ -331,7 +339,7 @@ function serializeHuman(node: HumanNode): string {
   const lines: string[] = [];
   lines.push(`  human ${node.id} {`);
   if (node.file) lines.push(`    file: ${q(node.file)}`);
-  if (node.description) lines.push(`    description: "${node.description}"`);
+  if (node.description) lines.push(`    description: "${oneLine(node.description)}"`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
   if (node.who) lines.push(`    who: ${node.who}`);
@@ -348,7 +356,7 @@ function serializeGroup(node: GroupNode): string {
   if (node.speakerSelection) lines.push(`    speaker-selection: ${q(node.speakerSelection)}`);
   if (node.maxRounds) lines.push(`    max-rounds: ${node.maxRounds}`);
   if (node.termination) lines.push(`    termination: "${node.termination}"`);
-  if (node.description) lines.push(`    description: "${node.description}"`);
+  if (node.description) lines.push(`    description: "${oneLine(node.description)}"`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   lines.push("  }");
   return lines.join("\n");
@@ -649,7 +657,7 @@ function serializeSkills(skills: SkillDef[]): string | null {
   for (const skill of skills) {
     lines.push(`    skill ${skill.id} {`);
     if (skill.file) lines.push(`      file: ${q(skill.file)}`);
-    if (skill.description) lines.push(`      description: "${skill.description}"`);
+    if (skill.description) lines.push(`      description: "${oneLine(skill.description)}"`);
     if (skill.scripts?.length) lines.push(`      scripts: ${inlineList(skill.scripts)}`);
     if (skill.domains?.length) lines.push(`      domains: ${inlineList(skill.domains)}`);
     if (skill.references?.length) lines.push(`      references: ${inlineList(skill.references)}`);
@@ -683,7 +691,7 @@ function serializeTools(tools: ToolBlockDef[]): string | null {
   for (const tool of tools) {
     lines.push(`    tool ${tool.id} {`);
     lines.push(`      script: "${tool.script}"`);
-    lines.push(`      description: "${tool.description}"`);
+    lines.push(`      description: "${oneLine(tool.description)}"`);
     if (tool.lang) lines.push(`      lang: ${tool.lang}`);
     if (tool.args?.length) lines.push(`      args: ${inlineList(tool.args)}`);
     lines.push("    }");
