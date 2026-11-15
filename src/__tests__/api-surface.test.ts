@@ -19,7 +19,10 @@ const VALUES = [
   "checkClaudeHooks",
   "checkCodexGuards",
   "checkCodexHooks",
+  "checkConfigAgainstSchema",
   "checkGuards",
+  "claudeCodeBinding",
+  "codexBinding",
   "collectInventory",
   "coverage",
   "importClaudeCodeWithReport",
@@ -34,13 +37,17 @@ const VALUES = [
 ];
 
 const TYPES = [
+  "BindingTarget",
   "ClaudeProject",
   "CoverageReport",
   "FlowReport",
+  "GeneratedFile",
   "GuardItem",
   "GuardReport",
   "InventoryItem",
+  "KnownDrift",
   "PlatformFile",
+  "SchemaMismatch",
   "TopologyAST",
   "ValidationResult",
 ];

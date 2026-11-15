@@ -18,6 +18,13 @@ export type { TopologyAST } from "./parser/ast.js";
 // Host conformance: hook files checked against each host's hook contract
 export { checkHooks as checkClaudeHooks, onFailureWarnings, NO_MATCHER_EVENTS } from "./conformance/claude-code.js";
 export { checkHooks as checkCodexHooks } from "./conformance/codex.js";
+// A parsed Codex config.toml checked against the config schema (spec/codex/config.schema.json, read by the caller)
+export { checkConfigAgainstSchema, type SchemaMismatch, type KnownDrift } from "./conformance/surface.js";
+
+// Scaffolding: each binding's scaffold(ast) returns the files it generates
+export { claudeCodeBinding } from "./bindings/claude-code.js";
+export { codexBinding } from "./bindings/codex.js";
+export type { BindingTarget, GeneratedFile } from "./bindings/types.js";
 
 // Guards: how strongly a project enforces what its .at declares
 export { checkGuards, type GuardReport, type GuardItem } from "./guard/check.js";
