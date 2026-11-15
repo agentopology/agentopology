@@ -49,7 +49,7 @@ function asList(value: unknown): string[] | undefined {
   return String(value).split(",").map((v) => v.trim()).filter(Boolean);
 }
 
-function parseFrontmatter(content: string): FrontmatterResult {
+export function parseFrontmatter(content: string): FrontmatterResult {
   const fields: Record<string, string | boolean | string[]> = {};
   let body = content;
 
