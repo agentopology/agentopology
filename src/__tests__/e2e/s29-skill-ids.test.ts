@@ -51,7 +51,8 @@ describe("[S-29] ids that collide across platforms", () => {
     const items = collectInventory(root, NO);
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
     const paths = new Set(items.map((i) => i.path));
-    const lost = both.map((f) => f.path).filter((p) => p !== ".codex/hooks.json" && !paths.has(p));
+    // The trees inventory walks; .codex/hooks.json is listed entry by entry.
+    const lost = both.map((f) => f.path).filter((p) => /^\.(?:claude|codex|agents)\//.test(p) && p !== ".codex/hooks.json" && !paths.has(p));
     expect(lost).toEqual([]);
   });
 

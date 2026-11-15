@@ -35,7 +35,7 @@ export { matcherGaps, type MatcherGap };
 export type InventoryTag = "h" | "instrument" | "e";
 
 export interface InventoryItem {
-  /** Stable id, `<kind>:<name>`. */
+  /** Stable id, `<kind>:<name>`. On a collision (S-29) the Codex copy is `codex:<kind>:<name>`, a same-platform one `<id> @<path>`. */
   id: string;
   kind: "launchd" | "cron" | "agent" | "skill" | "skill-file" | "skill-dir" | "command" | "rule" | "config" | "claude-file" | "hook" | "mcp-server" | "mcp-tool" | "script" | "file";
   /** Project-relative file, for things that are files. */
@@ -300,11 +300,35 @@ export function collectInventory(root: string, opts: CollectOptions = {}): Inven
   const pkg = readJson(path.join(root, "package.json"));
   for (const script of Object.keys(pkg?.scripts ?? {})) items.push({ id: `script:${script}`, kind: "script", path: "package.json" });
 
-  const seen = new Set<string>();
-  return items
-    .filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)))
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return settleIds(items).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
+
+const isCodexPath = (p: string | undefined) => !!p && /^\.(?:codex|agents)\//.test(p);
+
+/**
+ * S-29: one item per distinct thing, each with a unique id. The same id at the
+ * same path is one item. The same id at different paths is kept twice: the
+ * Codex one (under .codex or .agents) becomes `codex:<id>`, and any id still
+ * shared after that becomes `<id> @<path>` for all but the first. A project
+ * with one platform's files sees no id change.
+ */
+function settleIds(items: InventoryItem[]): InventoryItem[] {
+  const seen = new Set<string>();
+  const unique = items.filter((i) => { const k = `${i.id}\0${i.path ?? ""}`; return seen.has(k) ? false : (seen.add(k), true); });
+  const count = (xs: InventoryItem[]) => xs.reduce((m, i) => m.set(i.id, (m.get(i.id) ?? 0) + 1), new Map<string, number>());
+  const first = count(unique);
+  const prefixed = unique.map((i) => ((first.get(i.id) ?? 0) > 1 && isCodexPath(i.path) ? { ...i, id: `codex:${i.id}` } : i));
+  const taken = new Set<string>();
+  return prefixed.map((i) => (taken.has(i.id) ? { ...i, id: `${i.id} @${i.path ?? ""}` } : (taken.add(i.id), i)));
+}
+
+/** The id as collected, before `settleIds` qualified it: what the id-parsing matchers read. */
+const bareId = (i: InventoryItem): string => {
+  let id = i.id.startsWith("codex:") ? i.id.slice(6) : i.id;
+  const suffix = ` @${i.path ?? ""}`;
+  if (id.endsWith(suffix)) id = id.slice(0, -suffix.length);
+  return id;
+};
 
 export interface MissingPointer {
   /** The project-relative path the .at points at. */
@@ -445,16 +469,17 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
   ].join("\n");
 
   const isMapped = (i: InventoryItem): boolean => {
+    const id = bareId(i);
     switch (i.kind) {
       case "hook": {
-        if (genHooks.has(i.id)) return true;
-        const command = i.id.slice(i.id.indexOf(" ") + 1);
+        if (genHooks.has(id)) return true;
+        const command = id.slice(id.indexOf(" ") + 1);
         return scripts.some((s) => command.includes(s));
       }
-      case "mcp-server": return servers.has(i.id.slice(4));
+      case "mcp-server": return servers.has(id.slice(4));
       // A tool is the server's, listed so matchers can be checked against it.
-      case "mcp-tool": return servers.has(i.id.slice(9).split("__")[1] ?? "");
-      case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${i.id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
+      case "mcp-tool": return servers.has(id.slice(9).split("__")[1] ?? "");
+      case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
       default: {
         const p = norm(i.path ?? "");
         // The generated talk guard appends to this log whenever session agents exist.
@@ -501,7 +526,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
     .filter((p) => hasCodexTree || !isCodexPath(p))
     .filter((p) => hasClaudeTree || !hasCodexTree || !isClaudePath(p))
     .filter((p) => !handPaths.has(p) && !fs.existsSync(path.join(root, p))).sort();
-  const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => i.id.slice(9)));
+  const gaps = matcherGaps(ast as never, items.filter((i) => i.kind === "mcp-tool").map((i) => bareId(i).slice(9)));
   const unmappedIds = new Set(unmapped.map((i) => i.id));
   const rootStats = roots.map((r) => {
     const mine = counted.filter((i) => i.kind === "file" && i.path?.startsWith(`${r}/`));
