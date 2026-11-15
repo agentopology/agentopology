@@ -58,3 +58,14 @@ Spec B piece 3 says "head files are protected by guard 1"; it now reads guards 1
 - Execution: scaffold, plant ledgers (intact, appended ok, rewritten, truncated, deleted, bad head,
   no head), run before-action.sh with bash on the gated command: exit 2 or 0 as above; head bytes
   equal step check's. Shell writes to a head: exit 2; `cat` of a head: exit 0.
+
+## SP-9-LG: the gate-ledger shell guard reads git with its own list
+
+Measured on b4d166e: `ledger_guard` (before-action.sh, F-4) reads git through the step guard's
+AT_GIT_READS, which counts mv, restore and rm as reads. `git mv forged.jsonl <ledger>`,
+`git restore [--source|--staged] <ledger>`, `git rm [--cached] <ledger>` and
+`git show --output=<ledger>` exit 0. Fix: `at_only_reads` checks git with the records guard's list
+(status diff log show blame ls-files grep add commit; `--output`/`-o` refused); any other subcommand
+in a command naming the ledger exits 2. AT_GIT_READS (the step guard) is unchanged. Out of scope
+(detect): git commands that name no path (`git reset --hard`, bare `git stash`, `git restore .`).
+Tests: execution on both targets, the refused and allowed lists in f4-ledger.test.ts.
