@@ -347,3 +347,62 @@ for (const target of ["claude-code", "codex"] as const) {
     });
   });
 }
+
+/**
+ * [SP-9] For the records guard a git subcommand that changes a file is a write:
+ * `git rm` of a head then a rewrite would make the next check a first run, and
+ * `git restore --source` rewinds a record. The step guard's read list is not
+ * changed; the records guard keeps its own.
+ */
+for (const target of ["claude-code", "codex"] as const) {
+  describe.skipIf(!hasJq)(`[SP-9] ${target}: git subcommands that change a record or a head are refused`, () => {
+    const REFUSED = [
+      `git rm ${HEAD} && printf '%s\\n' x > records/approvals.jsonl`,
+      `git rm ${HEAD}`,
+      `git rm --cached ${HEAD}`,
+      "git restore --source=HEAD~1 records/approvals.jsonl",
+      "git restore --staged records/approvals.jsonl",
+      `git restore ${HEAD}`,
+      "git checkout -- records/approvals.jsonl",
+      "git checkout HEAD~1 -- records/approvals.jsonl",
+      `git checkout HEAD~1 ${HEAD}`,
+      "git mv records/approvals.jsonl records/old.jsonl",
+      "git stash push records/approvals.jsonl",
+      "git clean -fdx .agentopology",
+      "git -C . restore records/approvals.jsonl",
+      `git show HEAD:${HEAD} --output=${HEAD}`,
+    ];
+    const ALLOWED = [
+      "git status",
+      "git diff records/approvals.jsonl",
+      "git log -- records/approvals.jsonl",
+      `git add records/approvals.jsonl ${HEAD}`,
+      `git commit -m 'heads moved' ${HEAD}`,
+      `git show HEAD:${HEAD}`,
+    ];
+    for (const cmd of REFUSED) {
+      it(`[SP-9] refuses ${cmd}`, () => {
+        scaffold(target);
+        const r = run(target, cmd);
+        expect(r.status, r.stderr).toBe(2);
+      });
+    }
+    for (const cmd of ALLOWED) {
+      it(`[SP-9] allows ${cmd}`, () => {
+        scaffold(target);
+        const r = run(target, cmd);
+        expect(r.status, r.stderr).toBe(0);
+      });
+    }
+    it("[SP-9] the git rm of a head alone is refused by the head guard (the attack stops at the git rm)", () => {
+      scaffold(target);
+      const r = run(target, `git rm ${HEAD}`);
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("the record head files (.agentopology/records/)");
+    });
+    it("[SP-9] the step guard's read list is unchanged: git restore of a non-record file is not this guard's business", () => {
+      scaffold(target);
+      expect(run(target, "git restore README.md").status).toBe(0);
+    });
+  });
+}
