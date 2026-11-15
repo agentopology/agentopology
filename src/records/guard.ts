@@ -43,6 +43,15 @@ export function recordGuardedElsewhere(r: RecordDef): boolean {
   return isGuardedRecord(r) || (r.guard?.length ?? 0) > 0;
 }
 
+/**
+ * True when the guards must protect the head files under {@link RECORD_HEADS_DIR}
+ * (SP-9): a record is held by the generated guards, or any record is
+ * `append-only: true`, so `step check` and the generated hook trust a head.
+ */
+export function protectsHeads(ast: TopologyAST): boolean {
+  return (ast.records ?? []).some((r) => isGuardedRecord(r) || r.appendOnly === true);
+}
+
 /** Every record the generated guards hold, in declaration order. */
 export function guardedRecords(ast: TopologyAST): GuardedRecord[] {
   const nodeIds = new Set(ast.nodes.map((n) => n.id));
@@ -60,8 +69,8 @@ export function guardedRecords(ast: TopologyAST): GuardedRecord[] {
  * head-file folder, is refused. A tool never runs a `written-by` program, so
  * no tool write of a record is allowed. Empty when no record is guarded.
  */
-export function recordEditGuardLines(records: GuardedRecord[]): string[] {
-  if (records.length === 0) return [];
+export function recordEditGuardLines(records: GuardedRecord[], heads = records.length > 0): string[] {
+  if (records.length === 0 && !heads) return [];
   const sq = shellQuote;
   const out: string[] = [];
   for (const r of records) {
@@ -69,16 +78,15 @@ export function recordEditGuardLines(records: GuardedRecord[]): string[] {
     out.push(`  PAT=${sq(r.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_record ${args}; fi`);
     if (r.name) out.push(`  PAT=${sq(r.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_record ${args}; fi`);
   }
-  out.push(`  PAT=${sq(RECORD_HEADS_DIR.toLowerCase() + "/")}; if [[ $RL == $PAT* ]]; then refuse_head "$R"; fi`);
+  if (heads) out.push(`  PAT=${sq(RECORD_HEADS_DIR.toLowerCase() + "/")}; if [[ $RL == $PAT* ]]; then refuse_head "$R"; fi`);
   return out;
 }
 
 /** The before-edit.sh functions the loop lines above call. Empty when no record is guarded. */
-export function recordEditGuardFunctions(records: GuardedRecord[]): string[] {
-  if (records.length === 0) return [];
+export function recordEditGuardFunctions(records: GuardedRecord[], heads = records.length > 0): string[] {
   return [
-    "refuse_record() { echo \"agentopology: the edit touches the record $1 ($2); only its written-by programs write it ($3), so this edit of $4 is refused\" >&2; exit 2; }",
-    `refuse_head() { echo "agentopology: the edit touches $1, a record head file under ${RECORD_HEADS_DIR}; only agentopology record check writes it" >&2; exit 2; }`,
+    ...(records.length > 0 ? ["refuse_record() { echo \"agentopology: the edit touches the record $1 ($2); only its written-by programs write it ($3), so this edit of $4 is refused\" >&2; exit 2; }"] : []),
+    ...(heads ? [`refuse_head() { echo "agentopology: the edit touches $1, a record head file under ${RECORD_HEADS_DIR}; only agentopology record check writes it" >&2; exit 2; }`] : []),
   ];
 }
 
@@ -173,17 +181,31 @@ const RECORD_SHELL_FUNCTIONS: string[] = [
  * the functions, then one `record_guard` call per record. Empty when no record
  * is guarded.
  */
-export function recordShellGuardLines(records: GuardedRecord[]): string[] {
-  if (records.length === 0) return [];
+export function recordShellGuardLines(records: GuardedRecord[], heads = records.length > 0): string[] {
+  if (records.length === 0 && !heads) return [];
   const sq = shellQuote;
   return [
     ...RECORD_SHELL_FUNCTIONS,
     ...records.map((r) => [
       "record_guard", sq(r.id), sq(r.glob.toLowerCase()), sq(r.letters), sq(r.path), sq(r.writers.join(", ")), ...r.programs.map(sq),
     ].join(" ")),
+    ...(heads ? HEAD_SHELL_LINES : []),
     "",
   ];
 }
+
+/**
+ * SP-9: the head files on the shell path. A command that names the folder they
+ * live in (or `.agentopology` itself, so `rm -rf .agentopology` is seen) and
+ * does more than read is refused: no program but agentopology writes a head,
+ * and `agentopology record check` never names one on its command line. A head
+ * removed would make the next check a first run, which trusts a rewritten
+ * ledger. Graded detect, like every shell line.
+ */
+const HEAD_SHELL_LINES: string[] = [
+  "# SP-9: the record head files: only agentopology record check and step check write them.",
+  ["record_guard", shellQuote("head files"), shellQuote(".agentopology*"), shellQuote("agentopologyrecords"), shellQuote(`${RECORD_HEADS_DIR}/`), shellQuote("agentopology record check, step check")].join(" "),
+];
 
 /** One way into a record and its honest grade (Spec B, "The honest grade"). */
 export interface RecordWayIn {

@@ -24,7 +24,7 @@ import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { fileWriteMatcher } from "../../conformance/claude-code.js";
 import {
-  guardedRecords, recordEditGuardFunctions, recordEditGuardLines, isGuardedRecord, recordShellGuardLines,
+  guardedRecords, recordEditGuardFunctions, recordEditGuardLines, isGuardedRecord, recordShellGuardLines, protectsHeads,
 } from "../../records/guard.js";
 
 /** What differs between hosts when a guard script is written. */
@@ -597,7 +597,9 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
   const records = guardedRecords(ast);
-  if (ledgers.length === 0 && records.length === 0) return null;
+  // SP-9: an append-only record's head file is trusted by step check and the hook, so it is protected too.
+  const heads = protectsHeads(ast);
+  if (ledgers.length === 0 && records.length === 0 && !heads) return null;
   const name = ast.topology.name;
   const v = p.projectDirVar;
   const lines = [
@@ -628,7 +630,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     '[ -n "$PATHS" ] || { echo "agentopology: no file path could be read from the edit, so it is blocked" >&2; exit 2; }',
     ...CANON_FUNCTION,
     "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
-    ...recordEditGuardFunctions(records),
+    ...recordEditGuardFunctions(records, heads),
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
@@ -640,7 +642,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
     if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
   }
-  lines.push(...recordEditGuardLines(records));
+  lines.push(...recordEditGuardLines(records, heads));
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
@@ -676,6 +678,74 @@ function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: Gate
   return out;
 }
 
+/** `${` inside the String.raw below, which would otherwise interpolate. */
+const D = "${";
+
+/**
+ * SP-9 (Spec B piece 4): the hook runs the append-only check `step check` runs
+ * (`checkRecordHead`, src/records/head.ts) before it reads a ledger declared
+ * `append-only: true`, so a rewritten or truncated ledger never opens a gate in
+ * a session either. Same head file, same bytes: `{"record","unit"?,"path",
+ * "lines","sha256"}` and a newline. Needs `deny`, jq, and sha256sum or shasum.
+ */
+const CHECK_HEAD_LINES: string[] = String.raw`# SP-9: an append-only ledger only grows. check_head GATE RECORD PATH UNIT runs the check agentopology
+# step check runs, before the ledger is read: a head file per record (and unit) under .agentopology/records/
+# holds the complete lines seen and their sha256. No head: one is written. Fewer lines, or the first lines
+# hashing differently, or a head changed by hand: refused. Grown: the head moves forward.
+at_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1
+  else return 1; fi
+}
+at_lines_sha() { # FILE N: the sha256 of the first N lines of FILE
+  if [ "$2" = 0 ]; then printf '' | at_sha256; else head -n "$2" "$1" | at_sha256; fi
+}
+at_write_head() { # FILE JSON: replace the head file by a rename, never writing through a symlink
+  local tmp="$1.$$.tmp"
+  mkdir -p "${D}1%/*}" || return 1
+  [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || return 1
+  ( set -C; printf '%s\n' "$2" > "$tmp" ) || return 1
+  mv -f "$tmp" "$1"
+}
+check_head() {
+  local gate=$1 id=$2 tmpl=$3 unit=$4 rel path hf who n hv hl='' hs='' sum json
+  if [[ "$tmpl" == *"{unit}"* ]] && [ -z "$unit" ]; then return 0; fi
+  rel="${D}tmpl//\{unit\}/$unit}"
+  path="${D}rel#./}"
+  who="record $id"
+  if [ -n "$unit" ]; then
+    who="record $id (unit $unit)"
+    if ! [[ "$unit" =~ ^[A-Za-z0-9_.@+-]+$ ]] || [ "$unit" = . ] || [[ "$unit" == *..* ]]; then deny "$gate" "$who: the unit \"$unit\" is not a safe file name"; fi
+    hf=".agentopology/records/$id/$unit.head"
+  else
+    hf=".agentopology/records/$id.head"
+  fi
+  [ ! -L "$hf" ] || deny "$gate" "$who: its head file $hf is a symlink; it was changed by hand"
+  if [ -e "$hf" ]; then
+    hv=$(jq -er 'if (.lines | type) == "number" and .lines >= 0 and (.lines | floor) == .lines and (.sha256 | type) == "string" and (.sha256 | test("^[0-9a-f]{64}$")) then "\(.lines) \(.sha256)" else error("bad") end' "$hf" 2>/dev/null) \
+      || deny "$gate" "$who: its head file $hf is not readable; it was changed by hand"
+    hl=${D}hv%% *}; hs=${D}hv#* }
+    [[ "$hl" =~ ^[0-9]+$ && "$hs" =~ ^[0-9a-f]{64}$ ]] || deny "$gate" "$who: its head file $hf is not readable; it was changed by hand"
+  fi
+  if [ ! -f "$path" ]; then
+    if [ -n "$hl" ] && [ "$hl" -gt 0 ]; then deny "$gate" "$who: truncated: $path is gone, and $hl line(s) were seen before"; fi
+    return 0
+  fi
+  n=$(wc -l < "$path" | tr -d ' ') && [[ "$n" =~ ^[0-9]+$ ]] || deny "$gate" "$who: $path could not be read"
+  if [ -n "$hl" ]; then
+    [ "$n" -ge "$hl" ] || deny "$gate" "$who: truncated: $path has $n line(s), $hl were seen before"
+    sum=$(at_lines_sha "$path" "$hl") && [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || deny "$gate" "$who: no sha256sum or shasum to check $path"
+    [ "$sum" = "$hs" ] || deny "$gate" "$who: rewritten: the first $hl line(s) of $path no longer hash the same"
+    [ "$n" -gt "$hl" ] || return 0
+  fi
+  sum=$(at_lines_sha "$path" "$n") && [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || deny "$gate" "$who: no sha256sum or shasum to check $path"
+  json=$(jq -nc --arg record "$id" --arg unit "$unit" --arg path "$rel" --argjson lines "$n" --arg sha256 "$sum" \
+    '{record: $record} + (if $unit == "" then {} else {unit: $unit} end) + {path: $path, lines: $lines, sha256: $sha256}') \
+    || deny "$gate" "$who: its head could not be written"
+  at_write_head "$hf" "$json" || deny "$gate" "$who: its head file $hf could not be written"
+}
+`.split("\n");
+
 /**
  * One PreToolUse hook on the shell tools (Bash, Monitor, PowerShell on Claude Code) for the whole topology: before Claude Code runs
  * a script step's command, the gates that stand before that step are checked.
@@ -694,7 +764,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const ledgers = protectedLedgers(ast, p);
   // SP-7: a topology with a guarded record gets the record check too.
   const records = guardedRecords(ast);
-  if (guards.length === 0 && ledgers.length === 0 && records.length === 0) return null;
+  const heads = protectsHeads(ast);
+  if (guards.length === 0 && ledgers.length === 0 && records.length === 0 && !heads) return null;
+  // SP-9: a gate ledger declared append-only is head-checked before it is read, as step check does.
+  const headChecked = guards.some(({ gates }) => gates.some((g) => gateLedger(ast, g)?.appendOnly === true));
   const name = ast.topology.name;
 
   const lines = [
@@ -736,6 +809,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
     "}",
     "",
+    ...(headChecked ? CHECK_HEAD_LINES : []),
     "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",
     "# - a backslash at a line end joins the next line;",
     "# - redirections (`>out`, `2>&1`, `<<<x`, `< f`) are dropped before the command is cut, so they neither",
@@ -770,7 +844,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "UNIT=''",
     "",
     ...ledgerGuardLines(ledgers),
-    ...recordShellGuardLines(records),
+    ...recordShellGuardLines(records, heads),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
@@ -804,6 +878,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       for (const gate of gates) {
         out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
         const ledger = gateLedger(ast, gate);
+        if (ledger?.appendOnly === true) {
+          out.push(`${indent}check_head ${sq(gate.id)} ${sq(ledger.id)} ${sq(ledger.path)} "$UNIT"`);
+        }
         if (ledger) {
           for (const step of gateAnchors(gate, "after")) {
             out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);

@@ -47,6 +47,7 @@ head makes the next check a first run, which accepts a rewritten ledger. Fix: be
 treats the head folder as a record no shell command writes (`record_guard` on
 `.agentopology/records/*`, no programs). Both guards protect the heads whenever the topology has
 an append-only record, not only when a record is generated-guarded. Grade: detect, as the shell path.
+Spec B piece 3 says "head files are protected by guard 1"; it now reads guards 1 and 2.
 
 ## Tests (red first)
 
