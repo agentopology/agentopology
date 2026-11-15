@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentopology.com/schema/findings-output.schema.json",
+  "title": "agentopology --json findings document",
+  "description": "What `agentopology validate --json` and `agentopology guard --check --json` print on stdout: one document holding the findings of the language's own checks.",
+  "type": "object",
+  "required": ["version", "command", "findings", "exitCode"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "command": { "enum": ["validate", "guard --check"] },
+    "target": { "type": "string", "description": "The --target given, or for guard --check the target graded." },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "exitCode": { "enum": [0, 1], "description": "The process exit code, the same as without --json." }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "message", "file", "line", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "The rule or check id, such as V12, CX3, guard.gate, parse." },
+        "severity": { "enum": ["error", "warning", "info"] },
+        "message": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1, "description": "The file the finding is about, as given on the command line or relative to the project." },
+        "line": { "type": ["integer", "null"], "minimum": 1, "description": "1-based line in file, or null when the check has none." },
+        "source": { "enum": ["cli", "parser", "validator", "conformance", "coverage", "guard"], "description": "The check that produced the finding." }
+      }
+    }
+  }
+}
