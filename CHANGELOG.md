@@ -2,6 +2,21 @@
 
 All notable changes to agentopology are documented here.
 
+## [Unreleased]
+
+### [fix] Fixed: a rule removed from the .at stays in settings.json, and now scaffold says so
+
+- 0.11.x merges permission rules into `.claude/settings.json` and removes none automatically, so a rule removed from the .at stays in effect. `scaffold` and `guard --target claude-code` now name each allow, ask and deny rule in `.claude/settings.json` that the .at does not declare in that list: `.claude/settings.json allow <rule>: still in effect; the .at does not declare it — remove it if you didn't add it by hand`. The file is written exactly as in 0.11.1.
+- A set of rules is named once: the manifest entry of `.claude/settings.json` keeps the set last named (`undeclaredRulesNamed`, optional), and the lines print again only when a rule joins the set. `--dry-run` prints the same lines and writes nothing. Removing the rules the .at wrote is planned for 0.12.
+
+### [fix] Fixed: an invalid settings.json gives a clear error
+
+- `scaffold` and `guard --target claude-code` stopped with a stack trace when the .at writes `.claude/settings.json` and the file on disk was not valid JSON. They now print one line, `Error: .claude/settings.json is not valid JSON (<parse message>). Nothing was written.`, exit 1, and write nothing.
+
+### [fix] Security: validate warns that a compiled Codex allow rule runs outside the sandbox (CX13-allow)
+
+- Each settings allow entry that compiles to a Codex rule with `decision = "allow"` now gives a `CX13-allow` warning at `validate --target codex`, quoting the Codex docs (https://learn.chatgpt.com/docs/agent-configuration/rules.md, line 65): "`allow`: Run the command outside the sandbox without prompting." The rules written do not change.
+
 ## [0.11.1] - 2026-11-13
 
 

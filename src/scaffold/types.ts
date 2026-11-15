@@ -13,6 +13,12 @@ export interface ManifestEntry {
   hash: string;
   /** Merge category that determines how the file is handled on re-scaffold. */
   category: "machine" | "agent" | "script" | "shared-config";
+  /**
+   * `.claude/settings.json` only: the permission rules (`"<list> <rule>"`)
+   * last named as not declared by the .at, so each change is named once.
+   * Optional; a missing or malformed value counts as none.
+   */
+  undeclaredRulesNamed?: string[];
 }
 
 /** Manifest written to disk after each scaffold run. */

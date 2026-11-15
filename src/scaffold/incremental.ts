@@ -37,6 +37,7 @@ import {
   deepMergeJson,
   deepMergeSettingsJson,
 } from "./merge.js";
+import { InvalidSettingsJsonError } from "./undeclared.js";
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -148,6 +149,15 @@ export function computeIncrementalPlan(
     // every key, hook and rule the user wrote.
     if (category === "shared-config") {
       const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
+      // An invalid file stops the run before anything is written, with the
+      // file's name and the parse message (it used to be a stack trace).
+      if (isSettings && existingContent.trim() !== "") {
+        try {
+          JSON.parse(existingContent);
+        } catch (err) {
+          throw new InvalidSettingsJsonError(file.path, (err as Error).message);
+        }
+      }
       const merged = isSettings
         ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
         : deepMergeJson(existingContent, file.content);

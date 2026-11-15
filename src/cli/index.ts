@@ -50,6 +50,7 @@ import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.j
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
+import { InvalidSettingsJsonError, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
@@ -571,6 +572,19 @@ function printLessons(rules: string[]): void {
   }
 }
 
+/** An invalid settings file: one line naming it and the parse message, exit 1, nothing written. */
+function exitOnInvalidSettings(err: unknown): void {
+  if (err instanceof InvalidSettingsJsonError) {
+    console.error(c.red(`Error: ${err.message}. Nothing was written.`));
+    process.exit(1);
+  }
+}
+
+/** The same lines on scaffold and guard --target: each settings.json rule the .at does not declare. */
+function printRuleNotice(notice: RuleNotice): void {
+  for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
@@ -653,7 +667,14 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // skip it and write everything, overwriting real files (and, through a
   // symlink, files in another repository) before crashing half way.
   const manifest = readManifest(basePath, targetName, path.basename(filePath));
-  const actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+  let actions: FileAction[];
+  try {
+    actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+  } catch (err) {
+    exitOnInvalidSettings(err);
+    throw err;
+  }
+  const notice = undeclaredRuleNotice(basePath, files, actions, manifest, !!prune);
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
@@ -706,12 +727,14 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         for (const line of jsonChanges(onDisk, action.content)) console.log(`      ${c.dim(line)}`);
       }
     }
+    printRuleNotice(notice);
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
   } else {
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
+    printRuleNotice(notice);
     console.log("");
     console.log(
       `  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ` +
@@ -733,6 +756,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       generatedAt: new Date().toISOString(),
       files: nextManifestFiles(basePath, actions, files, manifest, result),
     };
+    recordNamedRules(newManifest.files, notice.named);
     writeManifest(basePath, targetName, newManifest);
 
     if (result.failures.length > 0) {
@@ -1446,6 +1470,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   try {
     plan = planGuardTarget(ast, root, name, targetName);
   } catch (e) {
+    exitOnInvalidSettings(e);
     if (e instanceof BindingRefusal) {
       console.error(c.red(`  ${e.message}`));
       process.exit(1);
@@ -1479,6 +1504,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     } else if (a.type === "unchanged") console.log(`  ${c.dim("=")} ${a.path}`);
   }
   for (const s of plan.skipped) console.log(`  ${c.bold("!")} ${s.path} (${s.why})`);
+  printRuleNotice(plan.notice);
   console.log("");
 
   if (dryRun) {
