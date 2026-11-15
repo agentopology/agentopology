@@ -158,4 +158,35 @@ describe("[P-OWN] permission rules the .at wrote are owned through the manifest"
     const after = JSON.parse(fs.readFileSync(mPath, "utf8"));
     expect(after.files[".claude/settings.json"].permissions).toEqual({ allow: ["Read"] });
   });
+
+  it("[P-OWN] an old manifest with a stale allow left by the earlier bug: a warning names it, the file is unchanged", () => {
+    // 0.11.1 behaviour: the .at dropped Bash(npm test:*), the union kept it, the manifest has no record.
+    scaffold(topo(`    allow: ["Bash(npm test:*)", "Read"]\n    ask: ["Bash(git push:*)"]`));
+    const mPath = join(root, ".claude/.scaffold-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(mPath, "utf8"));
+    delete manifest.files[".claude/settings.json"].permissions;
+    fs.writeFileSync(mPath, JSON.stringify(manifest, null, 2) + "\n");
+    const before = fs.readFileSync(settingsPath(), "utf8");
+
+    const r = scaffold(topo(`    allow: ["Read"]`));
+    const out = r.stdout + r.stderr;
+    expect(fs.readFileSync(settingsPath(), "utf8")).toBe(before);
+    expect(out).toContain("may have been written by an earlier scaffold");
+    expect(out).toContain("remove it if you did not add it by hand");
+    expect(out).toMatch(/allow\s+Bash\(npm test:\*\)/);
+    expect(out).toMatch(/ask\s+Bash\(git push:\*\)/);
+    // A rule the .at still declares is not named.
+    expect(out).not.toMatch(/allow\s+Read\b/);
+
+    // The record now exists: the next run names nothing.
+    const again = scaffold(topo(`    allow: ["Read"]`));
+    expect(again.stdout + again.stderr).not.toContain("may have been written by an earlier scaffold");
+  });
+
+  it("[P-OWN] a current manifest gives no stale-rule warning, even with a user rule present", () => {
+    scaffold(topo(`    allow: ["Read"]`));
+    userAdds("allow", "Bash(git status:*)");
+    const r = scaffold(topo(`    allow: ["Read"]`));
+    expect(r.stdout + r.stderr).not.toContain("may have been written by an earlier scaffold");
+  });
 });
