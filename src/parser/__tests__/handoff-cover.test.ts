@@ -1,6 +1,7 @@
 /**
  * S-22: a folder write is a handoff. One rule, `writeCovers`, decides it for
  * both V93 (validate) and `handoff-overlap-empty` (plan), so they cannot disagree.
+ * S-34: a folder read is satisfied by a write under it (rule 6).
  * Rules: docs/plans/s22-v93-dirs.md and spec/validation.md (V93).
  */
 import { describe, it, expect } from "vitest";
@@ -65,7 +66,17 @@ const CASES: Array<[rule: string, write: string, read: string, covers: boolean]>
   ["5 '*' is literal, not a glob", "out/*.md", "out/a.md", false],
   ["5 '*' equal to '*'", "out/*.md", "out/*.md", true],
   ["5 '**' is literal, not a glob", "out/**", "out/a/b.md", false],
-  ["6 a read folder does not pull a write under it", "out/a.md", "out/", false],
+  // S-34 (reading A): a read folder is satisfied by any write under it.
+  ["6 a read folder takes a file write under it", "out/report.md", "out/", true],
+  ["6 a read folder takes a write at any depth", "out/en/a.md", "out/", true],
+  ["6 a read folder takes a folder write under it", "out/en/", "out/", true],
+  ["6 a read folder, a write outside it", "other/a.md", "out/", false],
+  ["6 a read folder, a sibling with its name as prefix", "outside/a.md", "out/", false],
+  ["6 a read without a trailing slash is a file", "out/a.md", "out", false],
+  ["6 a placeholder read folder takes a literal write", "x/en/f.md", "x/{LANG}/", true],
+  ["6 a placeholder read folder, other prefix", "y/en/f.md", "x/{LANG}/", false],
+  ["6 a placeholder read folder is one segment, not zero", "x/f.md", "x/{LANG}/", false],
+  ["6 a read folder, '*' is literal", "out/a.md", "*/", false],
 ];
 
 describe("writeCovers (S-22)", () => {
@@ -82,6 +93,18 @@ describe("validate V93 and plan handoff-overlap-empty agree (S-22)", () => {
       expect(verdicts([w], [r])).toEqual({ v93: !covers, plan: !covers });
     });
   }
+
+  it("S-34 spec example: writer writes out/report.md, reader reads out/", () => {
+    expect(verdicts(["out/report.md"], ["out/"])).toEqual({ v93: false, plan: false });
+    const ast = parse(topo(["out/report.md", "log.txt"], ["out/"]));
+    const h = buildExecutionBrief(ast).handoffs.find((x) => x.from === "w" && x.to === "r")!;
+    expect(h.passes).toEqual(["out/report.md"]);
+    expect(h.withholds).toEqual(["log.txt"]);
+  });
+
+  it("S-34: a write outside the read folder still fires both", () => {
+    expect(verdicts(["outside/a.md"], ["out/"])).toEqual({ v93: true, plan: true });
+  });
 
   it("the brief lists a covering folder under passes, the rest under withholds", () => {
     const ast = parse(topo(["x/{LANG}/", "log.txt"], ["x/{LANG}/file.md"]));
