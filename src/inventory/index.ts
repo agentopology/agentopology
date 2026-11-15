@@ -98,7 +98,9 @@ function classify(rel: string): Pick<InventoryItem, "id" | "kind" | "tag"> {
     if (p.length === 4 && p[3] === "SKILL.md") return { id: `skill:${p[2]}`, kind: "skill" };
     return { id: `skill-file:${p.slice(2).join("/")}`, kind: "skill-file" };
   }
-  if (p[1] === "commands") return { id: `command:${p.slice(2).join("/").replace(/\.md$/, "")}`, kind: "command" };
+  // Claude Code makes a command only of a Markdown file here, at any depth; anything else is a plain file.
+  if (p[1] === "commands" && p.length >= 3 && /\.md$/.test(p[p.length - 1]))
+    return { id: `command:${p.slice(2).join("/").replace(/\.md$/, "")}`, kind: "command" };
   if (p[1] === "rules") return { id: `rule:${p.slice(2).join("/").replace(/\.md$/, "")}`, kind: "rule" };
   if (p.length === 2 && p[1] === "settings.local.json") return { id: `config:${p[1]}`, kind: "config", tag: "e" };
   if (p.length === 2 && /\.json$/.test(p[1])) return { id: `config:${p[1]}`, kind: "config" };

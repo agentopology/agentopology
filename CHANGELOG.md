@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: `inventory` counts only Markdown files under `.claude/commands` as commands (S-36)
+
+- A non-`.md` file there (such as `.claude/commands/kit/manifest.json`) was listed as a command; Claude Code makes commands only of Markdown files. It is now listed as `claude-file:commands/<path>`, in subfolders and under `~/.claude/commands` with `--user` too, matching what import reads.
+
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
 - The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.
