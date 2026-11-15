@@ -220,6 +220,16 @@ function typeOk(v: unknown, t: string): boolean {
   }
 }
 
+/**
+ * Keys Codex documents as legacy aliases, which the schema snapshot does not list (S-25).
+ * Each is checked as the key it aliases. Source, config reference, row agents.max_threads:
+ * "Legacy alias for `agents.max_concurrent_threads_per_session`."
+ * https://developers.openai.com/codex/config-reference (read 2026-11-15)
+ */
+export const CONFIG_ALIASES: Readonly<Record<string, string>> = {
+  "agents.max_threads": "max_concurrent_threads_per_session",
+};
+
 /** Mismatches of a value against a JSON schema (the subset config.schema.json uses). Empty list = it fits. */
 function validateNode(v: unknown, node: Json, root: Json, path: string[]): SchemaMismatch[] {
   if (node === true || node === undefined) return [];
@@ -241,7 +251,8 @@ function validateNode(v: unknown, node: Json, root: Json, path: string[]): Schem
   }
   if (typeOk(v, "object") && (node.properties || node.additionalProperties !== undefined)) {
     for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
-      const sub = node.properties?.[k];
+      const alias = CONFIG_ALIASES[[...path, k].join(".")];
+      const sub = node.properties?.[k] ?? (alias ? node.properties?.[alias] : undefined);
       if (sub !== undefined) out.push(...validateNode(child, sub, root, [...path, k]));
       else if (node.additionalProperties === false) bad(`${[...path, k].join(".")}: the schema has no such key`, child, [...path, k]);
       else if (typeof node.additionalProperties === "object") out.push(...validateNode(child, node.additionalProperties, root, [...path, k]));

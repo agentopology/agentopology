@@ -2,7 +2,9 @@
  * [RW-2] The surface map for Codex, held to the schema snapshot.
  * The base already holds the CX-4 fixes (no `untrusted`, `max_threads`,
  * `max_depth`), so the drift is planted in a temp config.toml instead of
- * expected from the binding. The mechanism is the same: a `knownDrift` entry
+ * expected from the binding. max_threads is a legacy alias Codex documents (S-25),
+ * so the planted drift is a wrong-typed value for it, not the key itself.
+ * The mechanism is the same: a `knownDrift` entry
  * with a ticket id excuses a mismatch; any other mismatch fails.
  */
 import { describe, it, expect } from "vitest";
@@ -42,7 +44,7 @@ const PLANT = `
 approval_policy = "untrusted"
 sandbox_mode = "workspace-write"
 [agents]
-max_threads = 4
+max_threads = "four"
 max_concurrent_threads_per_session = 5
 `;
 

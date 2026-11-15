@@ -69,3 +69,16 @@ describe("[S-24] cx unanchored-script: a variable set from the repo root earlier
   });
 });
 
+describe("[S-25] cx.config: agents.max_threads is a documented legacy alias", () => {
+  it("[S-25] [agents] max_threads = N fits; roles beside it are still roles", () => {
+    expect(checkConfigAgainstSchema({ agents: { max_threads: 4, max_depth: 1 } }, schema, [])).toEqual([]);
+    expect(checkConfigAgainstSchema({ agents: { max_threads: 6, reviewer: { description: "r" } } }, schema, [])).toEqual([]);
+  });
+
+  it("[S-25] the alias is checked as the key it aliases: a non-integer fails", () => {
+    const r = checkConfigAgainstSchema({ agents: { max_threads: "four" } }, schema, []);
+    expect(r.map((m) => m.id)).toEqual(["cx.config.agents.max_threads"]);
+    expect(r[0].message).toMatch(/expected integer/);
+  });
+});
+
