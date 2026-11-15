@@ -15,7 +15,8 @@ export interface ManifestEntry {
   category: "machine" | "agent" | "script" | "shared-config";
   /**
    * `.claude/settings.json` only: the permission rules (`"<list> <rule>"`)
-   * last named as not declared by the .at, so each change is named once.
+   * last named as not declared by the .at: a set that gains a rule is listed
+   * in full, any other run with undeclared rules prints one summary line.
    * Optional; a missing or malformed value counts as none.
    */
   undeclaredRulesNamed?: string[];

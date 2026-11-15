@@ -7,9 +7,10 @@
  * `guard --target claude-code` both call {@link undeclaredRuleNotice} and
  * print its lines; it changes no file.
  *
- * Printed once per change: the manifest entry of settings.json keeps the set
- * last named (`undeclaredRulesNamed`), and the lines print only when the set
- * gains a rule.
+ * The manifest entry of settings.json keeps the set last named
+ * (`undeclaredRulesNamed`). When the set gains a rule, every rule is named on
+ * its own line; on every other run while the set is not empty, one summary
+ * line. Only an empty set is silent.
  *
  * @module
  */
@@ -33,7 +34,7 @@ export class InvalidSettingsJsonError extends Error {
 
 /** The result of {@link undeclaredRuleNotice}. */
 export interface RuleNotice {
-  /** Lines to print, one per rule; empty when nothing new is undeclared. */
+  /** Lines to print: one per rule when the set gains one, else one summary line; empty only when no rule is undeclared. */
   lines: string[];
   /** The set to store in the manifest (`"<list> <rule>"`), or null to leave the stored set as it is. */
   named: string[] | null;
@@ -121,9 +122,17 @@ export function undeclaredRuleNotice(
       if (!declared[list].includes(rule) && !current.includes(item)) current.push(item);
     }
   }
+  if (current.length === 0) return { lines: [], named: current };
   const stored = storedSet(entry);
   const gained = current.some((r) => !stored.includes(r));
-  return { lines: gained ? current.map(undeclaredRuleLine) : [], named: current };
+  return { lines: gained ? current.map(undeclaredRuleLine) : [undeclaredRuleSummary(current)], named: current };
+}
+
+/** The one line printed on every run that adds no rule to a set that is not empty. */
+export function undeclaredRuleSummary(rules: string[]): string {
+  const n = rules.length;
+  const shown = rules.slice(0, 5).join(", ") + (n > 5 ? ` and ${n - 5} more` : "");
+  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS_PATH} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${shown}; declare them in the .at to keep them, or remove them`;
 }
 
 /** Store the named set on the settings.json entry of a manifest's files (in place). */
