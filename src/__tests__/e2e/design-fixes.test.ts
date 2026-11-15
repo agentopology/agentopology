@@ -521,6 +521,8 @@ describe("[D-8] guard --check says on the grade line when a refuse fails open or
       const head = id === "publish-ready" ? "refuse (Bash), unverified (PowerShell: not measured), " : "refuse, ";
       expect(lines.find((l) => l.includes(` ${id} `)), id).toContain(`${head}${FAILS_OPEN}`.slice(0, head.length + 10));
     }
+    // S-32: the note names the docs' failure cases, not only "cannot start".
+    expect(items.find((i) => i.id === "render-check")!.notes).toContain('the entry has no onFailure: "block", so the step goes through if the hook cannot start, exits other than 0 or 2 without JSON that denies it, prints output that is not valid JSON, or times out');
     // the ledger note stays beside it
     expect(items.find((i) => i.id === "publish-ready")!.gradeNote).toContain("ledger agent-writable until the signed gate");
   });

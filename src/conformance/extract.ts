@@ -38,6 +38,19 @@ export interface HookContract {
   fields: Record<string, Record<string, FieldFact>>;
   /** The matcher table's rows ("value → evaluated as"), as written. */
   matcherRules: string[];
+  onFailure?: OnFailureFacts;
+}
+
+/** One sentence of the page, as written (markdown kept; a leading "* " or "> " dropped), and the line it sits on. */
+export interface Quote { quote: string; line: number }
+
+export interface OnFailureFacts {
+  requires: string;
+  failures: Record<string, Quote>;
+  block: Quote;
+  noEffect: Record<string, Quote>;
+  exitTable: Record<string, Quote>;
+  exit1: Quote;
 }
 
 /** The lines of the section that starts at `heading` (exact line), up to the next heading of the same or higher level. */
@@ -162,6 +175,7 @@ export interface ContractDiff {
   /** A field or event whose required flag or version changed: "command.onFailure: requires 2.1.295 → 2.1.300". */
   changed: string[];
   matcherRulesChanged: boolean;
+  onFailureChanged: string[];
 }
 
 const minus = (a: string[], b: string[]) => a.filter((x) => !b.includes(x));
@@ -190,6 +204,7 @@ export function diffContracts(before: HookContract, after: HookContract): Contra
     fieldsRemoved: minus(flat(before), flat(after)),
     changed,
     matcherRulesChanged: JSON.stringify(before.matcherRules) !== JSON.stringify(after.matcherRules),
+    onFailureChanged: [],
   };
 }
 

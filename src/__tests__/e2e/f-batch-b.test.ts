@@ -372,6 +372,8 @@ describe("[F-14] Claude Code: a refuse PreToolUse hook blocks when it cannot run
     const env = { ...process.env, NO_COLOR: "1", AGENTOPOLOGY_CLAUDE_VERSION: "2.1.280" };
     const old = spawnSync("node", [CLI, "validate", f], { encoding: "utf8", env });
     expect(plain(old.stdout)).toMatch(/CC-onfailure.*2\.1\.295/);
+    // S-32: the docs' failure cases, not only "cannot start or times out".
+    expect(plain(old.stdout)).toMatch(/cannot start, exits other than 0 or 2 without JSON that denies it, prints output that is not valid JSON, or times out/);
     const fresh = spawnSync("node", [CLI, "validate", f], { encoding: "utf8", env: { ...env, AGENTOPOLOGY_CLAUDE_VERSION: "2.1.300" } });
     expect(plain(fresh.stdout)).not.toMatch(/CC-onfailure/);
   });

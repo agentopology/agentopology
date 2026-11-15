@@ -172,6 +172,9 @@ export const HANDLER_REQUIRED: Readonly<Record<string, readonly string[]>> = {
 export const ON_FAILURE_TYPES: ReadonlySet<string> = new Set(["command", "http"]);
 export const ON_FAILURE_VALUES: ReadonlySet<string> = new Set(["continue", "block"]);
 
+export const ON_FAILURE_CASES: readonly string[] = [];
+export function preToolUseOutcome(_run: { exit: number | "cant-start" | "timeout"; stdout?: "valid-json" | "invalid-json" | "plain"; decision?: string }, _onFailure?: string): string { return "stub"; }
+
 /** The values PreToolUse's `hookSpecificOutput.permissionDecision` takes. */
 export const PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "deny", "ask", "defer"]);
 
