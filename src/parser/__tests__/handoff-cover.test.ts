@@ -2,6 +2,7 @@
  * S-22: a folder write is a handoff. One rule, `writeCovers`, decides it for
  * both V93 (validate) and `handoff-overlap-empty` (plan), so they cannot disagree.
  * S-34: a folder read is satisfied by a write under it (rule 6).
+ * S-33: an empty side is not declared, so neither V93 nor plan fires.
  * Rules: docs/plans/s22-v93-dirs.md and spec/validation.md (V93).
  */
 import { describe, it, expect } from "vitest";
@@ -9,9 +10,14 @@ import * as paths from "../paths.js";
 import { parse } from "../index.js";
 import { validate } from "../validator.js";
 import { buildExecutionBrief } from "../../plan/brief.js";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-function topo(writes: string[], reads: string[]): string {
+/** `undefined` omits the field; `[]` writes it out empty. */
+function topo(writes: string[] | undefined, reads: string[] | undefined): string {
   const list = (xs: string[]) => `[${xs.map((x) => JSON.stringify(x)).join(", ")}]`;
+  const field = (k: string, xs: string[] | undefined) => (xs === undefined ? [] : [`    ${k}: ${list(xs)}`]);
   return [
     "topology t : [pipeline] {",
     "  meta {",
@@ -21,12 +27,12 @@ function topo(writes: string[], reads: string[]): string {
     "  agent w {",
     "    model: sonnet",
     '    description: "w"',
-    `    writes: ${list(writes)}`,
+    ...field("writes", writes),
     "  }",
     "  agent r {",
     "    model: sonnet",
     '    description: "r"',
-    `    reads: ${list(reads)}`,
+    ...field("reads", reads),
     "  }",
     "  action i {",
     "    kind: inline",
@@ -39,7 +45,7 @@ function topo(writes: string[], reads: string[]): string {
 }
 
 /** Both verdicts for one edge: does validate warn V93, does plan flag it. */
-function verdicts(writes: string[], reads: string[]) {
+function verdicts(writes: string[] | undefined, reads: string[] | undefined) {
   const ast = parse(topo(writes, reads));
   const v93 = validate(ast).filter((x) => x.rule === "V93").length > 0;
   const plan = buildExecutionBrief(ast).preflagged.some((p) => p.kind === "handoff-overlap-empty");
@@ -111,5 +117,53 @@ describe("validate V93 and plan handoff-overlap-empty agree (S-22)", () => {
     const h = buildExecutionBrief(ast).handoffs.find((x) => x.from === "w" && x.to === "r")!;
     expect(h.passes).toEqual(["x/{LANG}/"]);
     expect(h.withholds).toEqual(["log.txt"]);
+  });
+});
+
+describe("an empty side is not declared: V93 and plan both skip (S-33)", () => {
+  const EMPTY: Array<[name: string, writes: string[] | undefined, reads: string[] | undefined]> = [
+    ["reader declares no reads", ["out/a.md"], undefined],
+    ["reader declares reads: []", ["out/a.md"], []],
+    ["writer declares no writes", undefined, ["out/a.md"]],
+    ["writer declares writes: []", [], ["out/a.md"]],
+    ["both declare nothing", undefined, undefined],
+    ["both declare []", [], []],
+  ];
+  for (const [name, w, r] of EMPTY) {
+    it(`${name}: neither fires`, () => {
+      expect(verdicts(w, r)).toEqual({ v93: false, plan: false });
+    });
+  }
+
+  it("a declared pair that does not overlap still fires both", () => {
+    expect(verdicts(["out/a.md"], ["out/b.md"])).toEqual({ v93: true, plan: true });
+  });
+
+  it("plan still lists the edge under handoffs, passing nothing", () => {
+    const h = buildExecutionBrief(parse(topo(["out/a.md"], undefined))).handoffs.find(
+      (x) => x.from === "w" && x.to === "r"
+    )!;
+    expect(h).toEqual({ from: "w", to: "r", passes: [], withholds: ["out/a.md"] });
+  });
+
+  it("handoffMissing is the one predicate", () => {
+    const { handoffMissing } = paths as unknown as {
+      handoffMissing: (writes: string[], reads: string[]) => boolean;
+    };
+    expect(typeof handoffMissing).toBe("function");
+    expect(handoffMissing([], ["a"])).toBe(false);
+    expect(handoffMissing(["a"], [])).toBe(false);
+    expect(handoffMissing(["a"], ["b"])).toBe(true);
+    expect(handoffMissing(["out/"], ["out/a.md"])).toBe(false);
+  });
+
+  it("company-brain-team.at, librarian -> auditor: neither fires", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const ast = parse(readFileSync(resolve(here, "../../../examples/company-brain-team.at"), "utf8"));
+    const v93 = validate(ast).filter((x) => x.rule === "V93" && x.message.includes('"librarian -> auditor"'));
+    const plan = buildExecutionBrief(ast).preflagged.filter(
+      (p) => p.kind === "handoff-overlap-empty" && p.at.edge === "librarian->auditor"
+    );
+    expect({ v93: v93.length, plan: plan.length }).toEqual({ v93: 0, plan: 0 });
   });
 });
