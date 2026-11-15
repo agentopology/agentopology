@@ -64,6 +64,17 @@ const scaffold = (src: string) => {
   return r;
 };
 
+/** `guard <file> --target claude-code`: writes settings.json through the same plan. Its exit follows guard --check. */
+const guard = (src: string) => {
+  const f = join(root, "perms.at");
+  fs.writeFileSync(f, src);
+  return spawnSync("node", [CLI, "guard", f, "--target", "claude-code", "--dir", root], {
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+    timeout: 60_000,
+  });
+};
+
 const settingsPath = () => join(root, ".claude/settings.json");
 const perms = (): Record<string, string[]> => JSON.parse(fs.readFileSync(settingsPath(), "utf8")).permissions ?? {};
 const count = (list: string[] | undefined, rule: string) => (list ?? []).filter((r) => r === rule).length;
@@ -180,6 +191,27 @@ describe("[P-OWN] permission rules the .at wrote are owned through the manifest"
 
     // The record now exists: the next run names nothing.
     const again = scaffold(topo(`    allow: ["Read"]`));
+    expect(again.stdout + again.stderr).not.toContain("may have been written by an earlier scaffold");
+  });
+
+  it("[P-OWN] guard --target claude-code names the same stale rules once, and the file is unchanged", () => {
+    scaffold(topo(`    allow: ["Bash(npm test:*)", "Read"]\n    ask: ["Bash(git push:*)"]`));
+    const mPath = join(root, ".claude/.scaffold-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(mPath, "utf8"));
+    delete manifest.files[".claude/settings.json"].permissions;
+    fs.writeFileSync(mPath, JSON.stringify(manifest, null, 2) + "\n");
+    const before = fs.readFileSync(settingsPath(), "utf8");
+
+    const r = guard(topo(`    allow: ["Read"]`));
+    const out = r.stdout + r.stderr;
+    expect(fs.readFileSync(settingsPath(), "utf8")).toBe(before);
+    expect(out).toContain("may have been written by an earlier scaffold");
+    expect(out).toContain("remove it if you did not add it by hand");
+    expect(out).toMatch(/allow\s+Bash\(npm test:\*\)/);
+    expect(out).toMatch(/ask\s+Bash\(git push:\*\)/);
+    expect(out).not.toMatch(/allow\s+Read\b/);
+
+    const again = guard(topo(`    allow: ["Read"]`));
     expect(again.stdout + again.stderr).not.toContain("may have been written by an earlier scaffold");
   });
 
