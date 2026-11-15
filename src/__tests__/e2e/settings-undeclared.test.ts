@@ -67,15 +67,21 @@ function cli(args: string[], cwd = root) {
 const scaffold = (file: string, ...more: string[]) => cli(["scaffold", file, "--target", "claude-code", ...more]);
 const guard = (file: string, ...more: string[]) => cli(["guard", file, "--target", "claude-code", ...more]);
 
-/** The lines naming undeclared rules, trimmed, in print order. */
+/** The lines about undeclared rules (the full list or the summary), trimmed, in print order. */
 function named(out: { stdout: string; stderr: string }): string[] {
   return (out.stdout + out.stderr)
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l.includes("the .at does not declare it"));
+    .filter((l) => l.includes("the .at does not declare it") || l.includes("declared in the .at:"));
 }
 const line = (list: string, rule: string) =>
   `${SETTINGS} ${list} ${rule}: still in effect; the .at does not declare it — remove it if you didn't add it by hand`;
+/** The one line printed on every other run while the set is not empty. */
+const summary = (...rules: string[]) => {
+  const shown = rules.slice(0, 5).join(", ") + (rules.length > 5 ? ` and ${rules.length - 5} more` : "");
+  const n = rules.length;
+  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${shown}; declare them in the .at to keep them, or remove them`;
+};
 
 /** User edits: add U to allow and D to deny, keeping every other byte's meaning. */
 function addByHand(allow: string[], deny: string[] = []): void {
@@ -134,8 +140,8 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     expect(r.after).toBe(deepMergeSettingsJson(r.before, settingsOf("t", [R]), []));
     expect(JSON.parse(r.after).permissions.allow).toContain(A);
     expect(named(r.second)).toEqual([line("allow", A), line("allow", U), line("deny", D)]);
-    // Nothing new: nothing printed, nothing changed.
-    expect(named(r.third)).toEqual([]);
+    // Nothing new: one summary line, nothing changed.
+    expect(named(r.third)).toEqual([summary(`allow ${A}`, `allow ${U}`, `deny ${D}`)]);
     expect(r.afterThird).toBe(r.after);
     // One more rule by hand: the whole current set is named again.
     expect(named(r.fourth)).toEqual([line("allow", A), line("allow", U), line("allow", X), line("deny", D)]);
@@ -165,7 +171,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     try {
       const g = dropFlow(guard);
       expect(named(g.second)).toEqual(named(s.second));
-      expect(named(g.third)).toEqual([]);
+      expect(named(g.third)).toEqual(named(s.third));
       expect(named(g.fourth)).toEqual(named(s.fourth));
       expect(g.after).toBe(s.after);
       expect(g.final).toBe(s.final);
@@ -192,7 +198,9 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     // Still not stored: the real run names them.
     expect(named(scaffold("t.at"))).toEqual(expected);
     const hash2 = tree();
-    expect(named(scaffold("t.at", "--dry-run"))).toEqual([]);
+    const sum = [summary(`allow ${A}`, `allow ${U}`, `deny ${D}`)];
+    expect(named(scaffold("t.at", "--dry-run"))).toEqual(sum);
+    expect(named(guard("t.at", "--dry-run"))).toEqual(sum);
     expect(tree()).toBe(hash2);
   });
 
@@ -216,7 +224,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
       expect(named(out)).toEqual([line("allow", A), line("allow", U), line("deny", D)]);
       expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
       for (const f of files) expect(fs.existsSync(at(f)), f).toBe(true);
-      expect(named(scaffold("t.at"))).toEqual([]);
+      expect(named(scaffold("t.at"))).toEqual([summary(`allow ${A}`, `allow ${U}`, `deny ${D}`)]);
     });
   }
 
@@ -230,10 +238,11 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     for (const r of runs) expect(r.status).toBe(0);
     expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
     expect(named(runs[0])).toEqual([line("allow", A), line("allow", R), line("allow", U), line("deny", D)]);
-    expect(named(runs[1])).toEqual([]);
-    expect(named(runs[2])).toEqual([]);
-    // guard --target reads the same stored set: nothing new to name.
-    expect(named(guard("t.at"))).toEqual([]);
+    const sum = [summary(`allow ${A}`, `allow ${R}`, `allow ${U}`, `deny ${D}`)];
+    expect(named(runs[1])).toEqual(sum);
+    expect(named(runs[2])).toEqual(sum);
+    // guard --target reads the same stored set: nothing new, the summary again.
+    expect(named(guard("t.at"))).toEqual(sum);
     expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
   });
 
@@ -247,9 +256,33 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     expect(JSON.parse(merged).permissions.allow).toEqual([A, R, X]);
     const one = scaffold("one.at");
     expect(named(one)).toEqual([line("allow", X)]);
-    expect(named(scaffold("two.at"))).toEqual([]);
-    expect(named(scaffold("one.at"))).toEqual([]);
+    expect(named(scaffold("two.at"))).toEqual([summary(`allow ${A}`, `allow ${R}`)]);
+    expect(named(scaffold("one.at"))).toEqual([summary(`allow ${X}`)]);
     expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(merged);
+  });
+
+  it("[0.11.2-i] a set that only shrinks prints the summary, not the list", () => {
+    dropFlow(scaffold);
+    const s = JSON.parse(fs.readFileSync(at(SETTINGS), "utf8"));
+    s.permissions.allow = s.permissions.allow.filter((r: string) => r !== U);
+    fs.writeFileSync(at(SETTINGS), JSON.stringify(s, null, 2) + "\n");
+    const out = scaffold("t.at");
+    expect(named(out)).toEqual([summary(`allow ${A}`, `allow ${X}`, `deny ${D}`)]);
+    const m = JSON.parse(fs.readFileSync(at(MANIFEST), "utf8"));
+    expect(m.files[SETTINGS].undeclaredRulesNamed).toEqual([`allow ${A}`, `allow ${X}`, `deny ${D}`]);
+  });
+
+  it("[0.11.2-j] more than 5 rules: the list names all, the summary the first 5 and the count of the rest", () => {
+    writeAt("t.at", withAllow("t", [R]));
+    scaffold("t.at");
+    const extra = ["Bash(a)", "Bash(b)", "Bash(c)", "Bash(d)", "Bash(e)", "Bash(f)", "Bash(g)"];
+    addByHand(extra);
+    const first = scaffold("t.at");
+    expect(named(first)).toEqual(extra.map((r) => line("allow", r)));
+    const again = scaffold("t.at");
+    expect(named(again)).toEqual([summary(...extra.map((r) => `allow ${r}`))]);
+    expect(named(again)[0]).toContain("allow Bash(e) and 2 more;");
+    expect(named(again)[0]).not.toContain("Bash(f)");
   });
 
   for (const [label, run] of [["scaffold", scaffold], ["guard --target claude-code", guard]] as const) {
@@ -266,6 +299,15 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
       expect(tree()).toBe(hash);
     });
   }
+});
+
+describe("[0.11.2] the CHANGELOG cites the Codex docs by their public URL only", () => {
+  it("[0.11.2-k] the Unreleased section names the URL, and no file name or line number", () => {
+    const log = fs.readFileSync(resolve(here, "../../../CHANGELOG.md"), "utf8");
+    const unreleased = log.slice(log.indexOf("## [Unreleased]"), log.indexOf("## [0.11.1]"));
+    expect(unreleased).toContain("https://learn.chatgpt.com/docs/agent-configuration/rules.md");
+    expect(unreleased).not.toMatch(/codex-rules\.md|line 65|rules\.md:\d/);
+  });
 });
 
 function setField(value: unknown): void {
