@@ -268,7 +268,11 @@ const ROWS: Row[] = [
   // --- e2e N2 (the hook probe's Bash cases)
   [RM, B, bash("/bin/rm x"), "block", "e2e-N2"],
   [RM, B, bash("bash -c 'rm x'"), "block", "e2e-N2"],
-  [RM, B, bash("$(echo rm) x"), "block", "e2e-N2"],
+  ["Bash(git push *)", B, bash("git -C . push"), "block", "e2e-N2"],
+  ["Bash(git push *)", B, bash("git -c push.default=current push origin main"), "block", "e2e-N2"],
+  ["Bash(git push *)", B, bash("git --git-dir=.git push"), "block", "e2e-N2"],
+  ["Bash(npm run deploy)", B, bash("npm --prefix app run deploy"), "block", "e2e-N2"],
+  [RM, B, bash("$(echo rm) x"), "block", "e2e-G"],
   // --- fable r3: malformed input (doubt)
   [RM, B, "", "block", "fable-r3"],
   [RM, B, "   ", "block", "fable-r3"],
