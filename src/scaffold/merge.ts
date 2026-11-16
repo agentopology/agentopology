@@ -335,7 +335,8 @@ export function hookTwins(existingRaw: string, generatedRaw: string): string[] {
   for (const [event, groups] of Object.entries(gen)) {
     const mine = Array.isArray(ex[event]) ? (ex[event] as unknown[]) : [];
     for (const g of Array.isArray(groups) ? groups : []) {
-      const twin = mine.find((m) => hookGroupKey(m) === hookGroupKey(g) && JSON.stringify(m) !== JSON.stringify(g));
+      // The same key, written differently: identical commands (in another key order) are not a twin.
+      const twin = mine.find((m) => hookGroupKey(m) === hookGroupKey(g) && commandText(m) !== commandText(g));
       if (!twin) continue;
       lines.push(`${event}${matcherText(g)} keeps your ${commandText(twin)}; the .at's ${commandText(g)} is the same hook, not added`);
     }
