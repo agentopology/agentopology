@@ -85,7 +85,7 @@ export async function loadLib(dist) {
     imp("parser/paths.js"),
     imp("step/check.js"),
   ]);
-  return { parse, validate, bindings, unsafePathReason, checkStep, renderStepReport };
+  return { parse, validate, bindings, unsafePathReason, checkStep, renderStepReport, undo0114: from0114(dist) };
 }
 
 function silently(fn) {
@@ -100,6 +100,77 @@ function silently(fn) {
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
+/**
+ * The 0.11.4 guard-hook edits, as literal text (as0112-blocks.json, written once from the 0.11.4
+ * generator), and what 0.11.2 had in their place.
+ */
+export const BLOCKS_0114 = JSON.parse(fs.readFileSync(new URL("./as0112-blocks.json", import.meta.url), "utf8"));
+const OLD_AT_SPECIAL = "at_special() { [[ $1 == *[\\$\\`\\*\\?\\[\\{\\~]* ]]; }";
+const OLD_LOOP = BLOCKS_0114.loop.replace('at_git_read "$i" || ', "");
+const OLD_JQ_LINE = {
+  "before-action.sh": 'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this step, so it is blocked" >&2; exit 2; }',
+  "before-edit.sh": 'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this edit, so it is blocked" >&2; exit 2; }',
+};
+const TRAP = /^trap 'rc=\$\?;.*' EXIT$/gm;
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const HAS = "at_raw_has '[a-z0-9]+'(?: '[a-z0-9]+')*";
+/** The no-jq block of one hook: its literal head and tail, and between them only the lines that name the gated words. */
+const noJqBlock = (hook) => new RegExp(
+  reEsc(BLOCKS_0114.noJqHead[hook]) + "\\n" +
+  `(?:  if ${HAS}(?: \\|\\| ${HAS})*; then at_nojq_refuse; fi\\n)?` +
+  `(?:${reEsc(BLOCKS_0114.noJqExpansionHead)}${HAS}(?: \\|\\| ${HAS})*; \\}; then at_nojq_refuse; fi\\n)?` +
+  reEsc(BLOCKS_0114.noJqTail[hook]) + "\\n",
+  "g",
+);
+
+/** Replace `find` (a string or a /g regex) by `repl`; it must occur EXACTLY ONCE, or the digest fails. */
+function once(text, find, repl, what, path) {
+  const n = typeof find === "string" ? text.split(find).length - 1 : (text.match(find) ?? []).length;
+  if (n !== 1) throw new Error(`as0112: ${what} occurs ${n} times in ${path}; it must occur exactly once`);
+  return text.replace(find, typeof repl === "function" ? repl : () => repl);
+}
+const indent = (block, ind) => block.split("\n").map((l) => ind + l).join("\n");
+
+/**
+ * A 0.11.4 generated file's text with 0.11.4's guard-hook edits undone, so the digest compares everything
+ * else byte for byte with 0.11.2 (the hooks' behavior is held by hook-differential-0112). Each edit is an
+ * exact text that must occur exactly once in the file it belongs to; any other count throws, so drift
+ * still shows. The edits: in before-action.sh, before-edit.sh and before-agent.sh the no-jq block (and,
+ * in the first two, the jq line it replaced); in before-action.sh and the Codex if filter (at-if.sh, the
+ * reader indented two spaces) at_special, at_git_read and its call; in before-action.sh AT_GIT_STEPS.
+ * Applied only to a build of 0.11.4 or later (`on`); a 0.11.2 or 0.11.3 build's text is used as is.
+ */
+export function as0112(path, content, on) {
+  const text = String(content);
+  if (!on) return text;
+  const base = path.replace(/^.*\//, "");
+  const hook = /^(before-action|before-edit|before-agent)\.sh$/.test(base) ? base : null;
+  const reader = base === "before-action.sh" ? "" : base === "at-if.sh" ? "  " : null;
+  if (!hook && reader === null) {
+    if (text.includes("at_git_read") || text.includes("# No jq (0.11.4)")) throw new Error(`as0112: ${path} holds a 0.11.4 guard block`);
+    return text;
+  }
+  let t = text;
+  if (hook) {
+    t = once(t, noJqBlock(hook), "", "the no-jq block", path);
+    if (OLD_JQ_LINE[hook]) t = once(t, TRAP, (m) => `${m}\n${OLD_JQ_LINE[hook]}`, "the trap line", path);
+  }
+  if (reader !== null) {
+    t = once(t, indent(BLOCKS_0114.atSpecial, reader), reader + OLD_AT_SPECIAL, "at_special", path);
+    t = once(t, indent(BLOCKS_0114.atGitRead, reader) + "\n", "", "at_git_read", path);
+    t = once(t, reader + BLOCKS_0114.loop, reader + OLD_LOOP, "the at_git_read call", path);
+  }
+  if (base === "before-action.sh") t = once(t, /^AT_GIT_STEPS='[^'\n]*'\n/gm, "", "AT_GIT_STEPS", path);
+  return t;
+}
+
+/** True for a dist of 0.11.4 or later, whose guard scripts carry the 0.11.4 edits. */
+function from0114(dist) {
+  const v = JSON.parse(fs.readFileSync(join(dist, "..", "package.json"), "utf8")).version;
+  const [a, b, c] = v.split(/[.-]/).map(Number);
+  return a > 0 || b > 11 || (b === 11 && c >= 4);
+}
+
 function scaffoldOf(lib, target, ast) {
   try {
     return { files: silently(() => lib.bindings[target].scaffold(ast)) };
@@ -109,8 +180,8 @@ function scaffoldOf(lib, target, ast) {
 }
 
 /** One digest of the files that differ from the baseline (added, changed or gone). */
-function filesDigest(files, baseline) {
-  const now = new Map(files.map((f) => [f.path, sha(String(f.content))]));
+function filesDigest(files, baseline, undo0114) {
+  const now = new Map(files.map((f) => [f.path, sha(as0112(f.path, f.content, undo0114))]));
   const parts = [];
   for (const [p, h] of [...now].sort()) if (baseline.get(p) !== h) parts.push(`${p}\u0000${h}`);
   for (const p of [...baseline.keys()].sort()) if (!now.has(p)) parts.push(`${p}\u0000gone`);
@@ -175,7 +246,7 @@ export function compileRun(lib, kind, run, baselines, opts = {}) {
       if (target === "claude-code" || target === "codex") out[target] = { refused: true, command: null, stubs: [], error: s.error };
       continue;
     }
-    files[target] = filesDigest(s.files, baselines[target]);
+    files[target] = filesDigest(s.files, baselines[target], lib.undo0114);
     if (target === "claude-code" || target === "codex") {
       const unsafe = s.files.some((f) => lib.unsafePathReason(String(f.path).replace(/^\.\//, "")) !== null);
       const stubs = s.files.filter((f) => !baselines[target].has(f.path) && String(f.content).includes(STUB)).map((f) => f.path).sort();
@@ -195,7 +266,7 @@ export function baselinesFor(lib) {
   const out = {};
   for (const target of TARGETS) {
     const ast = lib.parse(atFor("hook", "true", target === "codex" ? CODEX_MODEL : "sonnet"));
-    out[target] = new Map(silently(() => lib.bindings[target].scaffold(ast)).map((f) => [f.path, sha(String(f.content))]));
+    out[target] = new Map(silently(() => lib.bindings[target].scaffold(ast)).map((f) => [f.path, sha(as0112(f.path, f.content, lib.undo0114))]));
   }
   return out;
 }
