@@ -111,3 +111,72 @@ describe("[0.11.4] with no jq on PATH, a hook refuses only input that could hold
     }
   });
 });
+
+describe.skipIf(!hasJq)("[0.11.4] MUST BLOCK with jq: a commit or a push, plain or in a form the guard cannot read", () => {
+  for (const binding of ["claude-code", "codex"] as const) {
+    it(`${binding}: every must-block command exits 2 (${MUST_BLOCK.length} commands)`, async () => {
+      const rs = await exits("factory", binding, "before-action.sh", MUST_BLOCK.map((c: string) => [c, bashIn(c)]), true);
+      const passed = rs.filter((r) => r.code !== 2).map((r) => `exit ${r.code}: ${r.input}`);
+      expect(passed, passed.join("\n")).toEqual([]);
+    }, 120_000);
+  }
+});
+
+describe("[0.11.4] MUST BLOCK with no jq: input that could hold the gated thing keeps today's refusal", () => {
+  const REQUIRED = /jq is required/;
+  const refused = (r: { input: string; code: number | null; stderr: string }) => {
+    expect(r.code, `${r.input}: ${r.stderr}`).toBe(2);
+    expect(r.stderr, r.input).toMatch(REQUIRED);
+  };
+  /** A launch: exit 2 (0.11.3's message for a missing jq read "not valid JSON"). */
+  const refusedLaunch = (r: { input: string; code: number | null; stderr: string }) => {
+    expect(r.code, `${r.input}: ${r.stderr}`).toBe(2);
+  };
+
+  for (const binding of ["claude-code", "codex"] as const) {
+    it(`${binding}: before-action.sh refuses a step, plain, chained, hidden in an expansion or behind a \\u escape`, async () => {
+      const raw = (c: string) => `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"${c}"}}`;
+      const cases: Array<[string, string]> = [
+        ["git commit -m x", bashIn("git commit -m x")],
+        ["git push origin main", bashIn("git push origin main")],
+        ["ls && git commit", bashIn("ls && git commit")],
+        ["g=git; $g commit", bashIn("g=git; $g commit")],
+        ["git c${x}ommit", bashIn("git c${x}ommit")],
+        ["git co?mit", bashIn("git co?mit")],
+        ["git co\\\\nmmit (a line continuation)", raw("git co\\\\\\nmmit")],
+        ["git commi\\\\t (a backslash before a letter)", raw("git commi\\\\t")],
+        ["git \\u0063ommit", raw("git \\u0063ommit")],
+        ["ls \\u002dla", raw("ls \\u002dla")],
+      ];
+      for (const r of await exits("factory", binding, "before-action.sh", cases, false)) refused(r);
+      for (const r of await exits("ship", binding, "before-action.sh", [["./tool publish ep1", bashIn("./tool publish ep1")], ["echo x > logs/ep1/trace.jsonl", bashIn("echo x > logs/ep1/trace.jsonl")]], false)) refused(r);
+    });
+
+    it(`${binding}: before-edit.sh refuses an edit of a ledger, in any spelling, and an edit behind a \\u escape`, async () => {
+      const cases: Array<[string, string]> = ["logs/ep1/trace.jsonl", "logs/ep1/TRACE.JSONL", "other/trace.jsonl", "./logs/../logs/ep1/trace.jsonl"].map((p) => [p, editIn(binding, p)]);
+      cases.push(["src/\\u0061.ts", binding === "codex"
+        ? '{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\\n*** Update File: src/\\u0061.ts\\n*** End Patch\\n"}}'
+        : '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/\\u0061.ts"}}']);
+      for (const r of await exits("ship", binding, "before-edit.sh", cases, false)) refused(r);
+    });
+  }
+
+  it("claude-code: before-agent.sh refuses the launch of a gated agent, in any spelling, and a launch behind a \\u escape", async () => {
+    const cases: Array<[string, string]> = ["drafter", "Drafter", " drafter ", "agents/drafter", "drafter:"].map((a) => [a, launchIn("claude-code", a)]);
+    cases.push(["cr\\u0069tic", '{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":"cr\\u0069tic"}}']);
+    for (const r of await exits("compile", "claude-code", "before-agent.sh", cases, false)) refusedLaunch(r);
+  });
+
+  it("codex: before-agent.sh refuses the launch of an agent held by a gate or an approval step", async () => {
+    for (const r of await exits("cxgates", "codex", "before-agent.sh", [["editor", launchIn("codex", "editor")], ["Editor", launchIn("codex", "Editor")]], false)) refusedLaunch(r);
+  });
+
+  it("the action script's own gate check still refuses with no jq: the script IS the step", () => {
+    const { root } = scaffolded("factory", "claude-code");
+    const script = join(root, ".claude/skills/factory/scripts/action-commit.sh");
+    expect(fs.readFileSync(script, "utf8")).toContain("jq is required to check the gates of step commit");
+    const r = spawnSync("bash", [script], { cwd: root, env: { PATH: PATHS.nojq, HOME: root }, encoding: "utf8", timeout: 20_000 });
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("jq is required to check the gates of step commit, so it does not run");
+  });
+});
