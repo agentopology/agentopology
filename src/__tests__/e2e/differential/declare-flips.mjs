@@ -11,7 +11,8 @@
  *   of every word of a gated step, of a ledger's file name, or of a gated
  *   agent; or, for before-action.sh, when it holds an expansion or a glob
  *   ($ ` * ? [ or a { that is no JSON brace) and the letters of a gated tool.
- *   A git step is also held by the words git, alias (an inline alias).
+ *   A git step is also held by the words git, alias (an inline alias), and by
+ *   git, include (an included config file that can define one).
  * - the Codex if filter (at-if.sh): see ifFlip below.
  *
  * And, separately, the 0->2 list (hooks-0114-closed.json): an inline git alias
@@ -33,7 +34,7 @@ if (!frozenFile || !outFile) {
 
 /** What each topology guards, by hand from its .at text: steps as words, ledger file names, agents. */
 const GUARDED = {
-  factory: { steps: [["git", "commit"], ["git", "push"], ["git", "alias"]], ledgers: [], agents: [] },
+  factory: { steps: [["git", "commit"], ["git", "push"], ["git", "alias"], ["git", "include"]], ledgers: [], agents: [] },
   ship: { steps: [["tool", "publish"], ["tool", "republish"]], ledgers: ["trace.jsonl"], agents: [] },
   show: { steps: [["media", "episode", "render"]], ledgers: ["trace.jsonl"], agents: [] },
   post: { steps: [["post-ig.py", "upload"]], ledgers: ["trace.jsonl"], agents: [] },

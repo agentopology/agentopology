@@ -306,6 +306,8 @@ export const MUST_BLOCK = [
   // a value-taking global option before a reading subcommand must not earn the reading exemption
   "git --attr-source log commit -m x", "git --attr-source diff push origin main", "git --namespace log commit -m x",
   "git --super-prefix=x/ log commit",
+  // an include path with an expansion: refused as doubt already, on 0.11.2 too
+  "git -c include.path=$PWD/f x",
 ];
 
 /**
@@ -329,6 +331,10 @@ export const ALIAS_CLOSED = [
   "git -C . -c alias.x=commit x", "git --git-dir .git -c alias.x=commit x",
   // over-refusals by design: git 2.43 rejects -calias.x (unknown option), and log's -c is its own flag
   "git -calias.x=commit x", "git log -c alias.x=commit",
+  // an included config file that defines the alias (git-config(1), Includes): include.path, includeIf.<cond>.path
+  "git -c include.path=/abs/f x", "printf '[alias]\\nx = commit\\n' > /abs/f; git -c include.path=/abs/f x",
+  "git -cinclude.path=/abs/f x", "git -c Include.Path=/abs/f x", "git -c includeIf.gitdir:/x/.path=/abs/f x",
+  "git -c includeif.onbranch:main.path=/abs/f x", "git --config-env=include.path=V x", "git --config-env include.path=V x",
 ];
 
 /** Non-alias -c, held as 0.11.2 reads it (a commit stays a step, a reading command runs). */
