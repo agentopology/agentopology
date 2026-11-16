@@ -84,7 +84,7 @@ All notable changes to agentopology are documented here.
 
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)
 
-- `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.
+- `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. This makes the imported hooks block parse; it does not make every imported .at valid. Measured on 0.11.3: of 12 scaffolded examples, 6 import with V96 errors, and of 57 hand-built hook commands, 22 do, because V96 refuses the quoted `$CLAUDE_PROJECT_DIR` form as 0.11.2 did (compiling it is 0.12's, with S-11); `import` exits 2 for those (S-68).
 
 ## [0.11.2] - 2026-11-16
 
