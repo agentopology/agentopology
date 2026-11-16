@@ -1,0 +1,27 @@
+{
+ "version": "0.11.2",
+ "sequences": [
+  {
+   "name": "S-12: a hook running the user's script inside a file: authored skill folder",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding pilot for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/pilot/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/pilot.md\n\n  3 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": "{}\n"
+    }
+   ]
+  },
+  {
+   "name": "S-13: environments values do not leak into settings.json env",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding envs for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/envs/SKILL.md\n  + .claude/skills/envs/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/envs.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/envs/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/envs/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"env\": {\n    \"bucket\": \"s3://prod-data\",\n    \"output-bucket\": \"s3://prod-out\"\n  }\n}\n"
+    }
+   ]
+  }
+ ]
+}
