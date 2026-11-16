@@ -221,7 +221,8 @@ function topLevelItems(body: string): Item[] {
 
 export interface UnknownNameResult {
   rule: "V102";
-  level: "error";
+  /** A name that vanished is an error; `env` inside settings (dropped since S-13, F5) warns. */
+  level: "error" | "warning";
   message: string;
   node?: string;
 }

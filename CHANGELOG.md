@@ -2,7 +2,60 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.11.3] - 2026-11-16
+
+### Changed behaviour
+
+- `import` refuses, exits 1 and writes nothing when `<output>/<name>.at` exists (S-67); `--force` overwrites it. It used to overwrite silently. With `--force`, a symlink at that path is written through, to the file it points at, as 0.11.2 did.
+- `import` exits 2 when the .at it wrote has validation errors (S-68). It used to exit 0. The file is written either way; a script that ran `import` and checked only for 0 now sees 2 for a .at with errors.
+- `validate` can print a V102 warning for an `env` block inside `settings` (F5). Warnings do not change an exit code.
+- `validate` refuses (V96) some runs that PASSED 0.11.2's `validate` and that only 0.11.2's `scaffold` refused ("not safe file names") (F7): an interpreter before a project-dir word whose quote closes before the slash (`bash "$CLAUDE_PROJECT_DIR"/x.sh`, also with `sh`, `node`, `python3`, `bun`), a script path with a space (`bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"`), `~/bin/x.sh`, `node $CLAUDE_PROJECT_DIR/tools/a.mjs`, and a redirect right after a bare command (`lintme 2>/dev/null`). So `import` of a harness with such a hook now exits 2 (0.11.2's `import` exited 0), and `scaffold` still refuses it, now with the V96 error instead of "not safe file names". Nothing that 0.11.2 scaffolded is refused: 0.11.2's `scaffold` refused each of these too.
+- `import` of a harness whose hook commands use these forms writes them as 0.11.2 did (a `"` inside comes back as `\"`), and `validate` refuses them with V96 as 0.11.2 did, so `import` exits 2 for them (S-68): a quoted `$CLAUDE_PROJECT_DIR` path (`"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh`, `"${CLAUDE_PROJECT_DIR}/x.sh"`, `node "$CLAUDE_PROJECT_DIR/x.mjs"`, `bash "$CLAUDE_PROJECT_DIR/x.sh" --flag`), and a line that opens with a variable assignment (`branch=$(git ...); ...`). Compiling them is 0.12's, with S-11.
+- `import` reports an error, and exits 2, for a hook that scaffold would compile to a stub: a command whose script word is a program, not the user's file or a builtin (`python3 -u x.py`, `bash -c ...`, `node -e ...`, `bun run x.ts`, `deno run x.ts`, `powershell -File x.ps1`, a tool on PATH such as `prettier --write .`, a bare or `scripts/` path the harness ran). The .at is written; import prints `Hook "<id>": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script` with the command as the harness wrote it, and the .at carries the comment `# ⚠ this hook can't be compiled faithfully; …` directly above that hook. 0.11.2's import exited 0 and 0.11.2's scaffold replaced each of these with a stub that exits 1, so a guard stopped refusing. The same error, and exit 2, is reported for two shapes 0.11.2's scaffold rewrote into a command that does not run as the original did: a project-path executable that is not a shell script (a `node`/`python` shebang, or a binary, e.g. `./node_modules/.bin/tool`, `.venv/bin/ruff`), which scaffold would run as `bash "<path>"`; and an absolute first word that is not an interpreter (`/usr/bin/env python3 …`, `/bin/false`), which scaffold would add as a second, broken hook. The rule (tested over 939 commands): import → scaffold never replaces a command that ran with a stub unless import reported an error for that hook.
+- Every hook, gate and settings.json path behaves byte for byte as 0.11.2, with exactly two scaffold exceptions (below): the run resolution and the settings.json merge are 0.11.2's, held by differential tests frozen from a v0.11.2 build (2745 runs as a topology hook, a gate and an agent hook, across Claude Code, Codex, Cursor and claude-workflow; 163 scaffold, edit and re-scaffold sequences). 0.11.3 otherwise adds only import fixes and import safety.
+- Scaffold exception 1 (S-12): a hook that runs the user's own script inside a `file:` authored skill folder is now installed in `.claude/settings.json`. 0.11.2 dropped it silently, so a guard the user wrote was not installed.
+- Scaffold exception 2 (S-13): values in an `environments { }` block (for example production bucket names) no longer leak into `.claude/settings.json`'s `env`; only a top-level `env { }` is written there. An in-place upgrade keeps the keys 0.11.2 already leaked into an existing settings.json (the merge never removes an env key): remove them by hand.
+- Both are pinned to their exact difference from 0.11.2 (`exceptions-0112.test.ts`); nothing else in those scaffolds differs.
+
+### [fix] 0.11.3 resolves every hook and gate run exactly as 0.11.2 did; S-11 moves to 0.12
+
+- S-11 emitted a `run:` as written when it held a shell operator, opened with a keyword or a package runner, or named a tool on PATH. On main that broke working guards: `run: "scripts/guard.sh 2>/dev/null"` became the command `scripts/guard.sh 2>/dev/null`, a path relative to the session's directory that names no file there, so the shell exits 127, 127 does not block, and a guard that refused under 0.11.2 let every call through after a re-scaffold, with no message. Two rounds of narrower fixes left the same failure for a bare script name, an interpreter with a script, and a project path, each followed by an operator. 0.11.3 drops S-11 and every hook and gate `run:` resolves exactly as in 0.11.2, on Claude Code and Codex; a run 0.11.2 refused (V96) is refused the same way. S-11's emit-as-written, import's `command <tool>` for a PATH tool, and the `CC-exit127` warning that only makes sense with it, move to 0.12.
+- On main, from #50 (3390b39) until this release, scaffold carried that behaviour (F1). It was never released: 0.11.2 and earlier, and 0.11.3, resolve the script.
+- Held by a differential test: 1779 runs (every run in `examples/*.at`, the shapes found while testing 0.11.3, and a cross product of first word, operator and interpreter), each as a hook and as a gate, compiled by a v0.11.2 build and frozen (`src/__tests__/e2e/differential/runs-0112.json`): 1503 resolved, 276 refused. This release gives byte-identical commands and the same stubs for every one 0.11.2 resolved, and refuses every one it refused, with no exception.
+- Measured: a project scaffolded by 0.11.2, its `guard.sh` implemented as `exit 2`, re-scaffolded by this build: the hook command run by bash with a PreToolUse payload exits 2, and the gate wrapper exits 2 with the script's message (`f1-topology-script-run.test.ts`).
+
+### Known, not fixed in 0.11.3: a hook's settings.json identity (P-1, moves to 0.12)
+
+- Present in 0.11.2 and unchanged in 0.11.3: the settings.json merge keys a hook by its matcher and command only. Two `.at` hooks running one script with different `if:` are written as two by the first scaffold; after any edit to settings.json, the next scaffold keeps one and deletes the other. A timeout, `strength: refuse` (`onFailure: block`) or `if:` changed in the .at does not reach settings.json once the file was edited: the old entry is kept as "the same hook". A release candidate changed the identity, and a project-path hook whose timeout or `if:` changed then ran twice; 0.11.3 keeps 0.11.2's merge exactly, held by a differential test (53 scaffold, edit, re-scaffold sequences, 112 steps, frozen with a v0.11.2 build: `src/__tests__/e2e/differential/merge-0112.json`; exit code, output and settings.json byte-identical after every step). The fix moves to 0.12, with a design that knows which entries scaffold wrote.
+
+### [fix] Fixed: an --output that cannot be read or written is a one-line error (J(3))
+
+- A folder on the way to `--output` that cannot be read, or the folder import writes in that cannot be written (EACCES, EPERM), printed a stack or a raw `EACCES` line. It now prints `Error: cannot write to --output <path>: permission denied. Nothing was written.` before the `Importing from` line, and exits 1. A read-only `.at` with `--force` prints `Error: cannot write <file>: permission denied. Nothing was written.`
+
+### [fix] Fixed: the package holds only what the current source compiles to
+
+- The build never cleared `dist/`, so a published tarball could hold a compiled file whose source was removed (a release candidate held `dist/guard/exit127.js`). `npm run build` now clears `dist/` before it compiles; `prepublishOnly` runs it, and a test packs the tarball and fails on any `dist/` file the current `src/` does not produce.
+
+### [fix] Fixed: import's write is exclusive, and a bad output path is a one-line error (F3, F4)
+
+- Without `--force`, import creates the .at exclusively, so of several imports racing for one path one writes and the others refuse with the S-67 line. A directory at `<name>.at` prints `Error: <path> is a directory, not a .at file. Nothing was written.` with or without `--force` (it was an EISDIR stack with `--force`, and a `--force` hint without). An `--output` that is a file prints `Error: --output <dir> is not a directory. Nothing was written.` (it was an ENOTDIR stack). Each exits 1 and writes nothing, and every refusal prints before the `Importing from` line.
+
+### [fix] Fixed: validate warns about an `env` block inside `settings` (F5)
+
+- Since S-13 only a top-level `env { }` is the topology env, so the keys of `settings { env { ... } }` are no longer written to settings.json. `validate` now warns (V102): `` `env` is not a settings field, so its keys (FOO, ...) are not written to settings.json. Move them to a top-level env { } block. `` A project re-scaffolded in place keeps the keys that leaked into its `.claude/settings.json` before (the merge never removes an env key); remove them by hand.
+
+### [fix] Fixed: a hook script path with a space is named by validate, not refused later by scaffold (F7)
+
+- `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"` passed `validate` and `import`, then `scaffold` refused it ("not safe file names"). V96 now reports a run whose script is a project path scaffold cannot write, with the same rule scaffold uses, so `import` exits 2 and names it.
+
+### [fix] Fixed: import exits 2 when the .at it wrote has validation errors (S-68)
+
+- `import` printed `N error(s), M warning(s) in generated file.` and still exited 0, so a script could not tell a broken .at from a good one. Now, after writing, it validates the file as `validate <path>` does (the same rules, imports resolved from the file, so the counts match) and, when there are errors, prints `import: the .at it wrote has N validation error(s); fix them, or run validate <path> for details` and exits 2. The file is still written. A generated file that does not parse counts as one error, as in `validate`; it used to print a note and exit 0.
+- Exit codes of `import`: 0, the .at is written and has no errors (warnings allowed); 2, the .at is written and has errors; 1, nothing was written (the .at exists without `--force`, the output path is a directory or under a file, or the files could not be read).
+
+### [fix] Fixed: import no longer overwrites an existing .at; `--force` does (S-67)
+
+- `import --output <dir>` replaced `<dir>/<name>.at` when it already existed, so a second run lost every edit made to it. Now, when that file exists (a symlink counts, even a broken one), import prints `Error: <path> exists; pass --force to overwrite. Nothing was written.`, writes nothing and exits 1. With `--force` it overwrites the file as before. The .at is the only file import writes, so the rule covers everything it writes. `--force` already meant "overwrite" for `scaffold`; for `import` it means only this file.
 
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
@@ -22,28 +75,20 @@ All notable changes to agentopology are documented here.
 
 ### [fix] Fixed: a hook that runs the user's script inside an authored skill folder stays in settings.json (S-12)
 
-- Found while proving S-11: a hook such as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"` was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.
-
-### [fix] Fixed: a hook that is plain shell scaffolds as written, not as a stub script (S-11)
-
-- Scaffold read the first word of every command hook as a script of the topology: `jq -r ... | ...` became `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/jq" ...` with a TODO stub named `jq`, so the hook stopped working while `validate` passed. In the 12-repo scan this hit 14 of 32 imported hooks in 6 repos. A `run:` is now emitted as written, with no stub, when its first word is a shell builtin or keyword (`for`, `if`, `case`, `while`, `until`, `cd`, `export`, `source`, `.`, `eval`, `exec`, `command`, and the earlier `exit`, `true`, `echo`, ...), an assignment, or a package runner (`uv`, `npx`, `pnpm`, `yarn`, `bunx`, `pipx`, `poetry`, `bun`, `deno`), or when it holds `|`, `&&`, `||`, `;`, `>`, `<`, `$(` or a backtick outside quotes, on Claude Code and Codex. A bare name keeps its meaning (the topology's `scripts/<name>`); `import` writes a bare PATH tool that is not a file in the project as `command <tool> ...`.
-
-### [fix] Fixed: a hook that opens with a shell assignment validates and scaffolds as written (S-10)
-
-- Found in the same scan: an inline settings.json hook such as `branch=$(git rev-parse ...); if [ ... ]; then ...; fi` failed V96 ("its first word is not a command or path"), and a binding would have stubbed a script named after it. A `run:` whose first word is a variable assignment (`NAME=...`) is now a shell command run as written, like `exit 2`; the unquoted-text checks (non-ASCII, arrows, a bare parenthesis) still apply.
+- A hook such as `python3 .claude/skills/<skill>/references/guard.py` (scaffolded as `python3 "$CLAUDE_PROJECT_DIR/.claude/skills/<skill>/references/guard.py"`) was removed from the scaffolded `settings.json` when that skill was imported with `file:`. The stub for the user's script (written only if missing) sat in the authored folder, so it was dropped, and the hook naming it was dropped with it. Now only a generated file the hook needs (a gate wrapper) takes its hook with it. A stub the user owns does not, and nothing is written inside their folder.
 
 ### [fix] Fixed: an imported agent's output-format is never a markdown fence (S-09)
 
 - The importer read `Output format:` from an agent file's body with a pattern that crossed the newline, so a brief that says "Output format:" above a fenced example imported as `output-format: ```` and failed V36. The value must now be on the same line and be one of `text`, `json`, `json-schema`; any other value is dropped, and the import says so in its header (`# Import warning: agent x: "Output format: markdown" is not text, json or json-schema; dropped`). The body is still read, because scaffold writes `Output format: json` there.
 
-### [fix] Fixed: hook commands with quotes and variables survive import exactly (S-01)
+### [fix] Fixed: import names a hook from a project-dir command (S-01)
 
-- The serializer wrote a `"` inside a value as `\"`, but the parser never decoded it, so `node "$CLAUDE_PROJECT_DIR/a.mjs"` came back as `node \"$CLAUDE_PROJECT_DIR/a.mjs\"`. A quoted value now decodes `\"` and `\\`, and the serializer escapes `\` as well as `"`, so import → serialize → parse gives the same command. `\"` inside a quoted value now reads as `"`, and `\\` as one backslash: an existing .at with `\"` in a description reads more correctly; no .at in this repo holds `\\`.
-- V96 read `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh` as "not a command or path", and took the script of `node "$CLAUDE_PROJECT_DIR/x.mjs"` to be `x.mjs"`. A word that starts with the project-dir variable (quoted or not, `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PROJECT_DIR:-.}`) is now read as the project path `./…` by V96 and the bindings. Prose is still refused; other variables (`"$HOME"/x.sh`) are unchanged.
+- Import reads a word that starts with the project-dir variable (quoted or not, `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PROJECT_DIR:-.}`) as the project path it names, to give the hook its id (S-02). `validate` and the bindings read such a `run:` as 0.11.2 did, and V96 refuses the quoted forms; compiling them is 0.12's, with S-11.
+- Not in 0.11.3, moved to 0.12 with S-11: decoding `\"` and `\\` in a quoted .at value. A quoted value reads as in 0.11.2, so an imported command `node "$X/a.mjs"` parses back as `node \"$X/a.mjs\"`, and a hand-written `run: "echo \"x\""` runs `echo \"x\"`.
 
 ### [fix] Fixed: an imported hook's id is a valid identifier, from its event and matcher (S-02)
 
-- `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.
+- `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. This makes the imported hooks block parse; it does not make every imported .at valid. Measured on 0.11.3: of 12 scaffolded examples, 6 import with V96 errors, and of 57 hand-built hook commands, 22 do, because V96 refuses the quoted `$CLAUDE_PROJECT_DIR` form as 0.11.2 did (compiling it is 0.12's, with S-11); `import` exits 2 for those (S-68).
 
 ## [0.11.2] - 2026-11-16
 

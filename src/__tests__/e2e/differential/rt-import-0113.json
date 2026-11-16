@@ -1,0 +1,411 @@
+{
+ "version": "0.11.3",
+ "rows": [
+  {
+   "name": "rt 1: bash \"$CLAUDE_PROJECT_DIR/x.sh\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 2: bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh\" --flag \"a b\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 3: \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 4: \"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 5: $CLAUDE_PROJECT_DIR/.claude/hooks/x.sh arg",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 6: ${CLAUDE_PROJECT_DIR}/.claude/hooks/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 7: \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/x.sh\" --a",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 8: .claude/hooks/x.sh",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 9: ./.claude/hooks/x.sh \"$1\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 10: node \"$CLAUDE_PROJECT_DIR/tools/a.mjs\" --x",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 11: node $CLAUDE_PROJECT_DIR/tools/a.mjs",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 12: python3 \"$CLAUDE_PROJECT_DIR/tools/guard.py\" --re \"a\\\\d+\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 13: python3 -u \"$CLAUDE_PROJECT_DIR/tools/guard.py\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    python3 -u \"$CLAUDE_PROJECT_DIR/tools/guard.py\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 14: python3 -m mypkg.guard",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    python3 -m mypkg.guard\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 15: uv run --project \"$CLAUDE_PROJECT_DIR\" tool",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    uv run --project \"$CLAUDE_PROJECT_DIR\" tool\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 16: npx -y prettier@3 --write \"$CLAUDE_FILE_PATHS\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    npx -y prettier@3 --write \"$CLAUDE_FILE_PATHS\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 17: prettier --write .",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    prettier --write .\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 18: x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"x\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    x.sh\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 19: guard",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    guard\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 20: make lint",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    make lint\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 21: git diff --quiet",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    git diff --quiet\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 22: jq -r '.tool_input.command' | grep -q 'rm -rf' && exit 2 || true",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    jq -r '.tool_input.command' | grep -q 'rm -rf' && exit 2 || true\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 23: branch=$(git rev-parse --abbrev-ref HEAD); if [ \"$branch\" = \"main\" ]; then exit 2; fi",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 24: echo \"#not a comment\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 25: echo done # trailing comment",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 26: echo 'single { brace'",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Parse error in generated file: Could not extract topology body\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 27: echo \"}\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 28: echo \"ends with backslash \\\\\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 29: echo a\\ b",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 30: echo \"$HOME\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 31: \"$HOME\"/bin/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 32: ~/bin/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 33: /usr/local/bin/x.sh --flag",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 34: bash -c 'echo \"{\\\"a\\\": 1}\"'",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    bash -c 'echo \"{\\\"a\\\": 1}\"'\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 35: sh .claude/hooks/x.sh",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 36: bash .claude/hooks/x.sh 2>/dev/null || true",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 37: cd \"$CLAUDE_PROJECT_DIR/web\" && npm test",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 38: FOO=1 .claude/hooks/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 39: env FOO=1 .claude/hooks/x.sh",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    env FOO=1 .claude/hooks/x.sh\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 40: exit 2",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 41: true",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 42: osascript -e 'display notification \"done\"'",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    osascript -e 'display notification \"done\"'\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 43: afplay /System/Library/Sounds/Glass.aiff",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 44: powershell -File \"$CLAUDE_PROJECT_DIR/x.ps1\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    powershell -File \"$CLAUDE_PROJECT_DIR/x.ps1\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 45: ruby \"$CLAUDE_PROJECT_DIR/x.rb\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 46: php x.php",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    php x.php\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 47: tsx \"$CLAUDE_PROJECT_DIR/x.ts\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 48: bun run \"$CLAUDE_PROJECT_DIR/x.ts\"",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    bun run \"$CLAUDE_PROJECT_DIR/x.ts\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 49: docker run --rm img check",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    docker run --rm img check\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+   }
+  },
+  {
+   "name": "rt 50: echo \"tab\there\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 51: echo é",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 52: echo \"é ✓\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 53:   bash \"$CLAUDE_PROJECT_DIR/x.sh\"  ",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 54: bash  \"$CLAUDE_PROJECT_DIR/x.sh\"   --two  spaces",
+   "import": {
+    "code": 2,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+   }
+  },
+  {
+   "name": "rt 55: echo \"a: b, [c] | d\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 56: echo a:b",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 57: printf '%s\\n' \"x\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  },
+  {
+   "name": "rt 58: echo \\\"x\\\"",
+   "import": {
+    "code": 0,
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n\n"
+   }
+  }
+ ]
+}

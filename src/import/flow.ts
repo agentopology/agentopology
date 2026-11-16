@@ -44,6 +44,8 @@ export interface FlowReport {
   suggested: Array<{ from: string; to: string; via: string }>;
   /** Values an agent file holds that the language cannot carry: dropped, named here. */
   warnings?: string[];
+  /** Hooks import refuses to vouch for: scaffold would compile them to a stub (0.11.3, B). Import exits 2. */
+  errors?: Array<{ hook: string; command: string; message: string }>;
 }
 
 const agentIds = (nodes: NodeDef[]) => nodes.filter((n) => n.type === "agent").map((n) => n.id);
