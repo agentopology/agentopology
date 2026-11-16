@@ -8,9 +8,10 @@ All notable changes to agentopology are documented here.
 
 - `import` refuses, exits 1 and writes nothing when `<output>/<name>.at` exists (S-67); `--force` overwrites it. It used to overwrite silently. With `--force`, a symlink at that path is written through, to the file it points at, as 0.11.2 did.
 - `import` exits 2 when the .at it wrote has validation errors (S-68). It used to exit 0. The file is written either way; a script that ran `import` and checked only for 0 now sees 2 for a .at with errors.
-- `validate` can print a V102 warning for an `env` block inside `settings` (F5), and a V96 error for a hook script path with a space (F7). Warnings do not change an exit code.
+- `validate` can print a V102 warning for an `env` block inside `settings` (F5). Warnings do not change an exit code.
+- `validate` refuses (V96) some runs that PASSED 0.11.2's `validate` and that only 0.11.2's `scaffold` refused ("not safe file names") (F7): an interpreter before a project-dir word whose quote closes before the slash (`bash "$CLAUDE_PROJECT_DIR"/x.sh`, also with `sh`, `node`, `python3`, `bun`), a script path with a space (`bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"`), `~/bin/x.sh`, `node $CLAUDE_PROJECT_DIR/tools/a.mjs`, and a redirect right after a bare command (`lintme 2>/dev/null`). So `import` of a harness with such a hook now exits 2 (0.11.2's `import` exited 0), and `scaffold` still refuses it, now with the V96 error instead of "not safe file names". Nothing that 0.11.2 scaffolded is refused: 0.11.2's `scaffold` refused each of these too.
 - `import` of a harness whose hook commands use these forms writes them as 0.11.2 did (a `"` inside comes back as `\"`), and `validate` refuses them with V96 as 0.11.2 did, so `import` exits 2 for them (S-68): a quoted `$CLAUDE_PROJECT_DIR` path (`"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh`, `"${CLAUDE_PROJECT_DIR}/x.sh"`, `node "$CLAUDE_PROJECT_DIR/x.mjs"`, `bash "$CLAUDE_PROJECT_DIR/x.sh" --flag`), and a line that opens with a variable assignment (`branch=$(git ...); ...`). Compiling them is 0.12's, with S-11.
-- The manifest's `.claude/settings.json` entry records the hook groups scaffold wrote (`hookKeys`, P-1).
+- Every hook, gate and settings.json path behaves byte for byte as 0.11.2: the run resolution and the settings.json merge are 0.11.2's (two differential tests hold them there). 0.11.3 adds only import fixes and import safety.
 
 ### [fix] 0.11.3 resolves every hook and gate run exactly as 0.11.2 did; S-11 moves to 0.12
 
@@ -19,9 +20,17 @@ All notable changes to agentopology are documented here.
 - Held by a differential test: 1779 runs (every run in `examples/*.at`, the shapes found while testing 0.11.3, and a cross product of first word, operator and interpreter), each as a hook and as a gate, compiled by a v0.11.2 build and frozen (`src/__tests__/e2e/differential/runs-0112.json`): 1503 resolved, 276 refused. This release gives byte-identical commands and the same stubs for every one 0.11.2 resolved, and refuses every one it refused, with no exception.
 - Measured: a project scaffolded by 0.11.2, its `guard.sh` implemented as `exit 2`, re-scaffolded by this build: the hook command run by bash with a PreToolUse payload exits 2, and the gate wrapper exits 2 with the script's message (`f1-topology-script-run.test.ts`).
 
-### [fix] Fixed: two hooks on one script and matcher with a different `if:` stay two hooks (P-1)
+### Known, not fixed in 0.11.3: a hook's settings.json identity (P-1, moves to 0.12)
 
-- Present in 0.11.2: the settings.json merge keyed a hook by its matcher and command only. Two `.at` hooks running one script with different `if:` were written as two by the first scaffold; after any edit to settings.json, the next scaffold kept one and deleted the other. A timeout, `strength: refuse` (`onFailure: block`) or `if:` changed in the .at never reached settings.json: the old entry was kept as "the same hook". A hook's identity now includes its `if`, timeout, onFailure and async. A field the .at changed replaces the topology's old entry: the manifest records the hook groups the last scaffold wrote, and a hook that runs the user's own script (a path scaffold only stubs while it is missing) is not claimed by that path, so the user's hook and the .at's on the same script are both kept.
+- Present in 0.11.2 and unchanged in 0.11.3: the settings.json merge keys a hook by its matcher and command only. Two `.at` hooks running one script with different `if:` are written as two by the first scaffold; after any edit to settings.json, the next scaffold keeps one and deletes the other. A timeout, `strength: refuse` (`onFailure: block`) or `if:` changed in the .at does not reach settings.json once the file was edited: the old entry is kept as "the same hook". A release candidate changed the identity, and a project-path hook whose timeout or `if:` changed then ran twice; 0.11.3 keeps 0.11.2's merge exactly, held by a differential test (53 scaffold, edit, re-scaffold sequences, 112 steps, frozen with a v0.11.2 build: `src/__tests__/e2e/differential/merge-0112.json`; exit code, output and settings.json byte-identical after every step). The fix moves to 0.12, with a design that knows which entries scaffold wrote.
+
+### [fix] Fixed: an --output that cannot be read or written is a one-line error (J(3))
+
+- A folder on the way to `--output` that cannot be read, or the folder import writes in that cannot be written (EACCES, EPERM), printed a stack or a raw `EACCES` line. It now prints `Error: cannot write to --output <path>: permission denied. Nothing was written.` before the `Importing from` line, and exits 1. A read-only `.at` with `--force` prints `Error: cannot write <file>: permission denied. Nothing was written.`
+
+### [fix] Fixed: the package holds only what the current source compiles to
+
+- The build never cleared `dist/`, so a published tarball could hold a compiled file whose source was removed (a release candidate held `dist/guard/exit127.js`). `npm run build` now clears `dist/` before it compiles; `prepublishOnly` runs it, and a test packs the tarball and fails on any `dist/` file the current `src/` does not produce.
 
 ### [fix] Fixed: import's write is exclusive, and a bad output path is a one-line error (F3, F4)
 
