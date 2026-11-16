@@ -27,7 +27,8 @@ import type {
   PromptVariant,
   StoreNode,
 } from "../parser/ast.js";
-import { deduplicateFiles } from "./types.js";
+import { BindingRefusal, deduplicateFiles } from "./types.js";
+import { matchesWholeTool, parsePermissionRule } from "../parser/permission-rule.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
@@ -126,6 +127,107 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
       return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Permission rules (S-19)
+// ---------------------------------------------------------------------------
+
+/** A string as one single-quoted shell word. */
+function shellWord(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * An agent's `deny` and `ask` rules as PreToolUse hooks in its own frontmatter.
+ * A subagent file has no rule field, and frontmatter hooks "only run while that
+ * specific subagent is active" (Claude Code subagents docs), so a hook is how a
+ * rule stays the one agent's.
+ *
+ * Mapping (the hooks docs give the pieces, not this mapping, so it is the
+ * narrowest one they support): the matcher is the rule's tool name, exact; a
+ * tool-name glob becomes an anchored regex ("wrap the pattern in `^` and `$`
+ * ... when you need a whole-string match"); a specifier goes in `if`, which
+ * takes "Permission rule syntax" and "holds exactly one permission rule", so
+ * one handler per rule. A deny exits 2 ("Blocks the tool call") and blocks if
+ * the hook fails to run; an ask prints permissionDecision "ask" ("prompts the
+ * user to confirm").
+ */
+function agentRuleHooks(agent: AgentNode): Array<{ matcher: string; handler: Record<string, unknown> }> {
+  const out: Array<{ matcher: string; handler: Record<string, unknown> }> = [];
+  for (const list of ["deny", "ask"] as const) {
+    for (const raw of agent[list] ?? []) {
+      const rule = parsePermissionRule(raw);
+      if (rule.problems.length) continue; // V130 refuses it before scaffold
+      const matcher = rule.tool.includes("*")
+        ? `^${rule.tool.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`
+        : rule.tool;
+      const filter = rule.specifier !== undefined && !matchesWholeTool(rule) ? { if: `${rule.tool}(${rule.specifier})` } : {};
+      const command = list === "deny"
+        ? `echo ${shellWord(`Refused: agent ${agent.id} denies ${raw}`)} >&2; exit 2`
+        : `printf '%s\\n' ${shellWord(JSON.stringify({
+          hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: `agent ${agent.id} asks before ${raw}` },
+        }))}`;
+      out.push({ matcher, handler: { type: "command", command, ...filter, ...(list === "deny" ? { onFailure: "block" } : {}) } });
+    }
+  }
+  return out;
+}
+
+/** What makes a per-agent rule hold less than a settings rule (Claude Code docs, quoted). */
+const AGENT_RULE_TRUST_NOTE =
+  `Claude Code's permissions docs list "Frontmatter hooks in a project subagent" as "Not used" until you trust the folder, ` +
+  `and under \`claude -p\` or the SDK in a folder never trusted; the subagents docs: "Until you trust the folder, the subagent still runs, ` +
+  `but Claude Code skips its frontmatter hooks". A rule that must always hold belongs in settings { deny: [...] }.`;
+
+/**
+ * Refuse what Claude Code cannot hold as written: an agent `allow` (no rule
+ * field in a subagent file, and a settings allow is session-wide), and a
+ * `default-mode` project settings ignore.
+ */
+function refuseUnholdableRules(ast: TopologyAST): void {
+  const bad: string[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "agent" || !(n as AgentNode).allow?.length) continue;
+    const a = n as AgentNode;
+    bad.push(
+      `agent "${a.id}" declares allow: [${a.allow!.map((r) => JSON.stringify(r)).join(", ")}], which Claude Code cannot keep to one agent: ` +
+        `a subagent file has no rule field (its fields are "\`description\`, \`tools\`, \`disallowedTools\`, \`model\`, \`permissionMode\`, \`mcpServers\`, \`hooks\`, ..."), ` +
+        `and a rule in settings "applies to the main conversation and to subagents". Move it to settings { allow: [...] } if every agent may have it, or remove it`,
+    );
+  }
+  const mode = ast.settings?.defaultMode;
+  if (mode === "auto" || mode === "bypassPermissions") {
+    bad.push(
+      `settings default-mode: ${mode} would be written to the project's .claude/settings.json, where Claude Code ignores it: ` +
+        `"\`auto\` and \`bypassPermissions\` don't take effect from project or local settings, so set them in \`~/.claude/settings.json\` instead"`,
+    );
+  }
+  if (bad.length > 0) throw new BindingRefusal(`${bad.join(". ")}. Nothing was written.`);
+}
+
+/** Scaffold-time note on agent rules, which hold less than a settings rule. */
+function warnRuleLimits(ast: TopologyAST): void {
+  const ruled = ast.nodes.filter((n): n is AgentNode => n.type === "agent" && !!((n as AgentNode).deny?.length || (n as AgentNode).ask?.length));
+  if (ruled.length > 0) {
+    console.warn(`[claude-code] Agent rules (${ruled.map((a) => a.id).join(", ")}) are frontmatter PreToolUse hooks. ${AGENT_RULE_TRUST_NOTE}`);
+  }
+}
+
+/**
+ * The note `scaffold` prints when a schedule runs an agent headless and the
+ * topology has settings allow rules: those are not used in a folder never
+ * trusted. Printed by the scaffold command, not the binding, so commands that
+ * only read the binding's output (validate --inventory) stay as they were.
+ */
+export function headlessAllowNote(ast: TopologyAST): string | null {
+  const headless = ast.schedules.filter((j) => j.agent && j.enabled !== false).map((j) => j.id);
+  if (headless.length === 0 || !ast.settings?.allow?.length) return null;
+  return (
+    `[claude-code] Schedule job(s) ${headless.join(", ")} run their agent headless (claude -p). In a folder never trusted, Claude Code's permissions docs list ` +
+    `"\`permissions.allow\` rules ... in \`.claude/settings.json\`" as "Not used" for "\`claude -p\` or the SDK, folder never trusted", ` +
+    `so settings { allow } does not apply to those runs until the folder is trusted.`
+  );
 }
 
 /**
@@ -610,18 +712,30 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     // Build frontmatter string — may include hooks YAML block
     let fmStr = frontmatter(fm);
 
-    // Per-agent hooks → Claude Code AGENT.md frontmatter hooks
-    if (agent.hooks && agent.hooks.length > 0) {
+    // Per-agent hooks → Claude Code AGENT.md frontmatter hooks, then the
+    // agent's deny/ask rules as PreToolUse hooks (S-19).
+    const ruleHooks = agentRuleHooks(agent);
+    if ((agent.hooks && agent.hooks.length > 0) || ruleHooks.length > 0) {
       const topologyName = ast.topology.name;
       const hooksByEvent: Record<string, HookDef[]> = {};
-      for (const hook of agent.hooks) {
+      for (const hook of agent.hooks ?? []) {
         if (hook.type === "mod") continue; // engine-wide only (V94)
         // In an agent's frontmatter Claude Code turns Stop into SubagentStop itself.
         const event = hook.on === "AgentStop" ? "Stop" : claudeEvent(hook.on);
         if (!hooksByEvent[event]) hooksByEvent[event] = [];
         hooksByEvent[event].push(hook);
       }
+      if (ruleHooks.length > 0 && !hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
 
+      // JSON strings are valid YAML double-quoted scalars, so a regex
+      // matcher or a prompt with quotes or colons can never break the file.
+      const pushGroup = (matcher: string | undefined, handler: Record<string, unknown>) => {
+        hookLines.push(matcher ? `    - matcher: ${JSON.stringify(matcher)}` : `    -`);
+        hookLines.push(`      hooks:`);
+        const [first, ...rest] = Object.entries(handler);
+        hookLines.push(`        - ${first[0]}: ${JSON.stringify(first[1])}`);
+        for (const [k, v] of rest) hookLines.push(`          ${k}: ${JSON.stringify(v)}`);
+      };
       const hookLines: string[] = ["hooks:"];
       for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
         hookLines.push(`  ${eventName}:`);
@@ -629,14 +743,9 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
           const scriptName = scriptNameFromRun(hook.run);
           if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
           const handler = hookHandler(hook, () => isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
-          // JSON strings are valid YAML double-quoted scalars, so a regex
-          // matcher or a prompt with quotes or colons can never break the file.
-          hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
-          hookLines.push(`      hooks:`);
-          const [first, ...rest] = Object.entries(handler);
-          hookLines.push(`        - ${first[0]}: ${JSON.stringify(first[1])}`);
-          for (const [k, v] of rest) hookLines.push(`          ${k}: ${JSON.stringify(v)}`);
+          pushGroup(hook.matcher, handler);
         }
+        if (eventName === "PreToolUse") for (const r of ruleHooks) pushGroup(r.matcher, r.handler);
       }
       // Insert hooks before the closing ---
       fmStr = fmStr.replace(/\n---$/, "\n" + hookLines.join("\n") + "\n---");
@@ -1474,6 +1583,24 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
         : "";
       sections.push(`- **${agent.id}**: ${how}${indep}.`);
     }
+    sections.push("");
+  }
+
+  // Per-agent permission rules (S-19): what each agent is refused or asked,
+  // and why it holds less than a settings rule.
+  const ruled = ast.nodes.filter((n): n is AgentNode => n.type === "agent" && !!((n as AgentNode).deny?.length || (n as AgentNode).ask?.length));
+  if (ruled.length > 0) {
+    sections.push("## Permission rules");
+    sections.push("");
+    for (const a of ruled) {
+      const parts = [
+        a.deny?.length ? `deny ${a.deny.map((r) => `\`${r}\``).join(", ")}` : "",
+        a.ask?.length ? `ask ${a.ask.map((r) => `\`${r}\``).join(", ")}` : "",
+      ].filter(Boolean);
+      sections.push(`- **${a.id}**: ${parts.join("; ")}. PreToolUse hooks in its agent file; they run only while that agent runs.`);
+    }
+    sections.push("");
+    sections.push(AGENT_RULE_TRUST_NOTE);
     sections.push("");
   }
 
@@ -2472,11 +2599,14 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Permissions section from settings block — nested under "permissions" key
   const perms = ast.settings;
   if (perms) {
-    const permObj: Record<string, string[]> = {};
+    const permObj: Record<string, string[] | string> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
       const rules = perms[key] as string[] | undefined;
       if (rules && rules.length > 0) permObj[key] = rules.map(convertMcpToolName);
     }
+    // S-19: the session's starting mode. auto and bypassPermissions were
+    // refused before this point (refuseUnholdableRules).
+    if (perms.defaultMode) permObj.defaultMode = perms.defaultMode;
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
   }
 
@@ -3392,6 +3522,10 @@ export const claudeCodeBinding: BindingTarget = {
     "Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
+    // S-19: refuse rules Claude Code cannot hold as written, before any file.
+    refuseUnholdableRules(ast);
+    warnRuleLimits(ast);
+
     // Fragment check — skip main skill generation for fragments
     if (ast.isFragment) {
       const files: GeneratedFile[] = [];

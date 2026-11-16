@@ -18,7 +18,7 @@ import * as os from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
-import { claudeCodeBinding } from "../claude-code.js";
+import { claudeCodeBinding, headlessAllowNote } from "../claude-code.js";
 import { BindingRefusal } from "../types.js";
 import { checkHooks, checkStdout, matcherMatches } from "../../conformance/claude-code.js";
 import type { AgentNode } from "../../parser/ast.js";
@@ -243,8 +243,22 @@ describe("notes: what holds less than it reads", () => {
       agent: a
     }
   }`;
-    const { warnings } = scaffold(topo({ settings: "    allow: [Read]", schedule }));
-    expect(warnings.some((w) => w.includes("permissions.allow") && w.includes("Not used"))).toBe(true);
+    const src = topo({ settings: "    allow: [Read]", schedule });
+    const note = headlessAllowNote(parse(src));
+    expect(note).toContain("permissions.allow");
+    expect(note).toContain("Not used");
+    // The scaffold command prints it; the binding does not, so validate
+    // --inventory (which runs the binding) prints nothing new.
+    expect(scaffold(src).warnings.some((w) => w.includes("Not used"))).toBe(false);
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-perm-"));
+    try {
+      fs.writeFileSync(join(root, "t.at"), src);
+      const r = spawnSync("node", [CLI, "scaffold", "t.at", "--target", "claude-code"], { cwd: root, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain("Not used");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("no note when there are no agent rules and no scheduled agent", () => {

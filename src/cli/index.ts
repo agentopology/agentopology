@@ -26,6 +26,7 @@ import type { TopologyAST } from "../parser/ast.js";
 import { validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { BindingRefusal } from "../bindings/types.js";
+import { headlessAllowNote } from "../bindings/claude-code.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
@@ -655,6 +656,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     }
     throw e;
   }
+  // S-19: a scheduled agent runs headless, where project allow rules may not apply.
+  const headless = targetName === "claude-code" ? headlessAllowNote(ast) : null;
+  if (headless) console.warn(headless);
 
   if (files.length === 0) {
     console.log(c.yellow("  No files generated."));

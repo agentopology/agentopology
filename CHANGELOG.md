@@ -4,6 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feat] claude-code scaffold writes agent `deny`/`ask` rules and `default-mode` (S-19)
+
+- An agent's `deny` and `ask` rules become `PreToolUse` hooks in its own frontmatter: the matcher is the rule's tool, the specifier goes in `if` (one rule per handler, as the hooks docs require), a deny exits 2 and blocks if the hook fails to run, an ask returns `permissionDecision: "ask"`. Claude Code skips frontmatter hooks of a project subagent until the folder is trusted; scaffold prints that, and the topology skill carries it under "Permission rules".
+- An agent `allow` is refused (exit 1, nothing written): a subagent file has no rule field, and a settings allow applies to the whole session.
+- `settings { default-mode: X }` is written as `permissions.defaultMode`; `auto` and `bypassPermissions` are refused, since Claude Code ignores them in project settings. A re-scaffold keeps a `defaultMode` already in the file.
+- `scaffold` notes when a scheduled job runs an agent headless (`claude -p`) and the topology has `settings { allow }`: Claude Code does not use project allow rules there in a folder never trusted.
+
 ### [fix] Fixed: `examples/scheduled-monitor.at` no longer blocks its reporter's Write (S-50)
 
 - The example denied bare `Edit` while agent `reporter` lists `Write`, and "`Edit` rules apply to all built-in tools that edit files", so the reporter could not write its report (V132 warned). The deny is now `Edit(/src/**)`.

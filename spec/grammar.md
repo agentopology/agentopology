@@ -413,7 +413,9 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `deny` | rule-list | no | `[]` | Permission rules that refuse this agent's matching calls |
 | `extensions` | agent-extensions | no | -- | Platform-specific extension fields (see below) |
 
-**Agent `allow` / `ask` / `deny`:** the same rule strings as `settings { }` (§4.17), for one agent. `tools` and `disallowed-tools` decide which tools the agent has; the rules decide whether a call runs, prompts or is refused. `permissions:` and `permission-mode:` pick the mode; rules layer on top ("Modes set the baseline. Layer permission rules on top to pre-approve or block specific tools.", Claude Code permission modes docs). A Claude Code subagent file has no rule field (its frontmatter fields are "`description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `mcpServers`, `hooks`, ..."), so how a binding carries agent rules is the binding's concern; in this release no binding writes them, and validate checks them (V130-V135). V132 warns on an agent rule that names a tool the agent does not have.
+**Agent `allow` / `ask` / `deny`:** the same rule strings as `settings { }` (§4.17), for one agent. `tools` and `disallowed-tools` decide which tools the agent has; the rules decide whether a call runs, prompts or is refused. `permissions:` and `permission-mode:` pick the mode; rules layer on top ("Modes set the baseline. Layer permission rules on top to pre-approve or block specific tools.", Claude Code permission modes docs). A Claude Code subagent file has no rule field (its frontmatter fields are "`description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `mcpServers`, `hooks`, ..."), so how a binding carries agent rules is the binding's concern. validate checks them (V130-V135); V132 warns on an agent rule that names a tool the agent does not have.
+
+On claude-code, scaffold writes each `deny` and `ask` rule as a `PreToolUse` hook in the agent's frontmatter, which "only run while that specific subagent is active" (Claude Code subagents docs): the matcher is the rule's tool (a tool-name glob becomes an anchored regex), the specifier goes in the handler's `if`, which takes "Permission rule syntax" and "holds exactly one permission rule" (hooks docs), a deny exits 2 ("Blocks the tool call") and an ask returns `permissionDecision: "ask"` ("prompts the user to confirm"). These hold less than a settings rule: "Until you trust the folder, the subagent still runs, but Claude Code skips its frontmatter hooks", and `claude -p` in a folder never trusted does not use them either. An agent `allow` is refused (exit 1, nothing written): no frontmatter field holds it, and a settings rule "applies to the main conversation and to subagents", so moving it there would widen every agent.
 
 ```agenttopology
 agent deployer {
@@ -1312,7 +1314,7 @@ settings {
 
 How the lists combine, in the docs' words: "Rules are evaluated in order: deny, then ask, then allow. The first match in that order determines the outcome, and rule specificity doesn't change the order." V130-V135 check what a rule says against the rest of the .at (see spec/validation.md).
 
-**`default-mode`** is the session's starting mode (`permissions.defaultMode`). The Claude Code settings reference says "`auto` and `bypassPermissions` don't take effect from project or local settings", so V134 warns on those two values. In this release validate checks `default-mode`; no binding writes it yet.
+**`default-mode`** is the session's starting mode (`permissions.defaultMode`). The Claude Code settings reference says "`auto` and `bypassPermissions` don't take effect from project or local settings", so V134 warns on those two values and the claude-code scaffold refuses them (exit 1, nothing written). Any other value is written to `.claude/settings.json` as `permissions.defaultMode`. On a re-scaffold the settings merge keeps a `defaultMode` already in the file.
 
 ---
 
