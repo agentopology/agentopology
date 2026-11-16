@@ -40,6 +40,8 @@ const AGENT: BlockSchema = {
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
     "custodian-of", "place", "machine", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
+    // S-19: per-agent permission rules.
+    "allow", "ask", "deny",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],

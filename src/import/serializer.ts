@@ -12,6 +12,7 @@ import type {
   TopologyAST,
   NodeDef,
   AgentNode,
+  SettingsDef,
   ActionNode,
   GateNode,
   HumanNode,
@@ -161,6 +162,9 @@ function serializeAgent(node: AgentNode): string {
   if (node.description) lines.push(`    description: "${node.description}"`);
   if (node.tools?.length) lines.push(`    tools: ${inlineList(node.tools)}`);
   if (node.disallowedTools?.length) lines.push(`    disallowed-tools: ${inlineList(node.disallowedTools)}`);
+  if (node.allow?.length) lines.push(`    allow: ${ruleList(node.allow)}`);
+  if (node.ask?.length) lines.push(`    ask: ${ruleList(node.ask)}`);
+  if (node.deny?.length) lines.push(`    deny: ${ruleList(node.deny)}`);
   if (node.skills?.length) lines.push(`    skills: ${inlineList(node.skills)}`);
   if (node.reads?.length) lines.push(`    reads: ${inlineList(node.reads)}`);
   if (node.writes?.length) lines.push(`    writes: ${inlineList(node.writes)}`);
@@ -433,16 +437,22 @@ function serializeHooks(hooks: HookDef[]): string | null {
   return lines.join("\n");
 }
 
-function serializeSettings(settings: Record<string, unknown>): string | null {
-  const allow = settings.allow as string[] | undefined;
-  const deny = settings.deny as string[] | undefined;
-  const ask = settings.ask as string[] | undefined;
-  if (!allow?.length && !deny?.length && !ask?.length) return null;
+/**
+ * A rule list. `q` quotes an item holding spaces, commas, brackets or quotes
+ * and escapes `\` and `"`; parseRuleList decodes them, so a rule string comes
+ * back byte for byte (S-19).
+ */
+const ruleList = inlineList;
+
+function serializeSettings(settings: SettingsDef): string | null {
+  const { allow, deny, ask, defaultMode } = settings;
+  if (!allow?.length && !deny?.length && !ask?.length && !defaultMode) return null;
 
   const lines: string[] = ["  settings {"];
-  if (allow?.length) lines.push(`    allow: ${inlineList(allow)}`);
-  if (deny?.length) lines.push(`    deny: ${inlineList(deny)}`);
-  if (ask?.length) lines.push(`    ask: ${inlineList(ask)}`);
+  if (allow?.length) lines.push(`    allow: ${ruleList(allow)}`);
+  if (deny?.length) lines.push(`    deny: ${ruleList(deny)}`);
+  if (ask?.length) lines.push(`    ask: ${ruleList(ask)}`);
+  if (defaultMode) lines.push(`    default-mode: ${defaultMode}`);
   lines.push("  }");
   return lines.join("\n");
 }

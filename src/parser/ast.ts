@@ -610,6 +610,14 @@ export interface AgentNode extends BaseNode {
   writes?: string[];
   /** Disallowed tool names (mutually exclusive with `tools`). */
   disallowedTools?: string[];
+  /**
+   * Permission rules for this agent only, raw as written (Claude Code rule
+   * syntax, read by parsePermissionRule). `tools` decides which tools exist;
+   * these decide whether a call runs, prompts or is refused.
+   */
+  allow?: string[];
+  ask?: string[];
+  deny?: string[];
   /** Skip condition expression. */
   skip?: string;
   /** Behavior mode (e.g. "advisory", "blocking"). */
@@ -1083,6 +1091,22 @@ export interface IncludeDef {
 // Complete AST
 // ---------------------------------------------------------------------------
 
+/**
+ * The `settings { }` block. Rule lists are raw strings in Claude Code rule
+ * syntax (parsePermissionRule reads them). Other keys a binding sets (such as
+ * `extensions`) stay reachable through the index signature.
+ */
+export interface SettingsDef {
+  allow?: string[];
+  ask?: string[];
+  deny?: string[];
+  /** `default-mode:` the session's starting permission mode (V130, V134). */
+  defaultMode?: string;
+  sandbox?: string | boolean;
+  fallbackChain?: string[];
+  [key: string]: unknown;
+}
+
 /** The complete abstract syntax tree for an AgenTopology file. */
 export interface TopologyAST {
   /** Topology metadata (header + meta block). */
@@ -1107,8 +1131,8 @@ export interface TopologyAST {
   triggers: TriggerDef[];
   /** Global hooks. */
   hooks: HookDef[];
-  /** Permission settings (allow/deny/ask lists). */
-  settings: Record<string, unknown>;
+  /** Permission settings (allow/deny/ask lists, default-mode, sandbox). */
+  settings: SettingsDef;
   /** MCP server configurations. */
   mcpServers: Record<string, Record<string, unknown>>;
   /** Metering / cost tracking (null if not configured). */

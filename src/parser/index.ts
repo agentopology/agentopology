@@ -60,6 +60,7 @@ import type {
   MachineDef,
   PersonDef,
   NeedsDef,
+  SettingsDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -77,6 +78,7 @@ import {
   parseKV,
   parseList,
   parseMultilineList,
+  parseRuleList,
   unquote,
   parseFields,
   parseOutputsBlock,
@@ -527,6 +529,12 @@ export function parseAgent(
   if (reads.length) node.reads = reads;
   if (writes.length) node.writes = writes;
   if (disallowedTools.length) node.disallowedTools = disallowedTools;
+  // S-19: per-agent permission rules, raw as written (depth 0 only, so an
+  // `extensions { claude-code { deny: [...] } }` is not read as the agent's).
+  for (const key of ["allow", "ask", "deny"] as const) {
+    const rules = parseRuleList(body, key);
+    if (rules?.length) node[key] = rules;
+  }
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
@@ -1613,15 +1621,19 @@ export function parseHooks(
 /**
  * Parse the `settings { ... }` block.
  */
-export function parseSettings(body: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key of ["allow", "deny", "ask"]) {
-    const list = parseMultilineList(body, key);
-    result[key] = list;
+export function parseSettings(body: string): SettingsDef {
+  const result: SettingsDef = {};
+  // Rule strings are kept byte for byte: a quoted rule may hold commas,
+  // brackets and escaped quotes (S-19).
+  for (const key of ["allow", "deny", "ask"] as const) {
+    result[key] = parseRuleList(body, key) ?? [];
   }
 
-  // Sandbox setting
   const fields = parseFields(body);
+  // S-19: the session's starting permission mode (V130 checks the value).
+  if (fields["default-mode"]) result.defaultMode = unquote(fields["default-mode"]);
+
+  // Sandbox setting
   if (fields.sandbox) {
     const sv = fields.sandbox;
     if (sv === "true") result.sandbox = true;

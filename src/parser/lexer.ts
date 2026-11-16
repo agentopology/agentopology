@@ -308,6 +308,72 @@ export function parseMultilineList(body: string, key: string): string[] {
 }
 
 /**
+ * Read a `key: [ ... ]` list of permission rules written at brace depth 0 of
+ * `body`. Unlike {@link parseMultilineList}, a quoted item keeps its commas,
+ * brackets and escaped quotes (`"Bash(git commit -m \"a, b\")"`), so a rule
+ * string round-trips byte for byte. Bare items are trimmed; `#` starts a
+ * comment outside quotes. Returns null when the key is not there.
+ */
+export function parseRuleList(body: string, key: string): string[] | null {
+  let depth = 0;
+  let inStr = false;
+  let lineStart = true;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (inStr) {
+      // A string never spans lines; a stray quote in prompt prose ends here.
+      if (ch === "\n") { inStr = false; lineStart = true; }
+      else if (ch === "\\") i++;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; lineStart = false; continue; }
+    if (ch === "#") { while (i < body.length && body[i] !== "\n") i++; lineStart = true; continue; }
+    if (ch === "{") { depth++; lineStart = false; continue; }
+    if (ch === "}") { depth--; lineStart = false; continue; }
+    if (ch === "\n") { lineStart = true; continue; }
+    if (ch === " " || ch === "\t" || ch === "\r") continue;
+    if (depth === 0 && lineStart) {
+      const m = new RegExp(`^${escapeRegex(key)}\\s*:\\s*\\[`).exec(body.slice(i));
+      if (m) return readRuleItems(body, i + m[0].length);
+    }
+    lineStart = false;
+  }
+  return null;
+}
+
+function readRuleItems(body: string, start: number): string[] {
+  const items: string[] = [];
+  let cur = "";
+  let quoted = false;
+  const push = () => {
+    const t = quoted ? cur : cur.trim();
+    if (quoted || t) items.push(t);
+    cur = "";
+    quoted = false;
+  };
+  for (let i = start; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '"') {
+      // A quoted item: read to the closing quote, decoding \" and \\.
+      quoted = true;
+      cur = "";
+      for (i++; i < body.length && body[i] !== '"'; i++) {
+        if (body[i] === "\\" && (body[i + 1] === '"' || body[i + 1] === "\\")) i++;
+        cur += body[i];
+      }
+      continue;
+    }
+    if (ch === "#") { while (i < body.length && body[i] !== "\n") i++; continue; }
+    if (ch === ",") { push(); continue; }
+    if (ch === "]") { push(); return items; }
+    if (!quoted) cur += ch;
+  }
+  push();
+  return items;
+}
+
+/**
  * Remove surrounding double quotes from a string value, and decode the two
  * escapes a quoted value can hold: `\"` and `\\` (S-01). The serializer has
  * always written a `"` inside a value as `\"`, but nothing decoded it, so an
