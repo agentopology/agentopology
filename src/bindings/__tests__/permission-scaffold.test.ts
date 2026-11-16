@@ -6,6 +6,8 @@
  *   refuses a call matching R (exit 2: "Blocks the tool call");
  * - agent `ask: [R]`  -> a PreToolUse hook that returns permissionDecision
  *   "ask" ("`"ask"` prompts the user to confirm");
+ * - agent `deny`/`ask` on Bash -> refused (ruling c): an agent hook cannot
+ *   parse bash safely; settings { deny } is the place for it;
  * - agent `allow: [R]` -> refused: a subagent file has no rule field, and a
  *   settings allow is session-wide;
  * - `settings { default-mode: X }` -> permissions.defaultMode, refused for
@@ -42,7 +44,7 @@ function topo(opts: { settings?: string; a?: string; schedule?: string } = {}): 
   }
   agent a {
     model: sonnet
-    tools: [Read, Write, Bash]
+    tools: [Read, Write, Bash, WebFetch, Agent, Edit]
 ${opts.a ?? ""}
   }
   flow {
@@ -122,10 +124,10 @@ function runHook(files: Array<{ path: string; content: string }>, command: strin
   }
 }
 
-/** A PATH holding bash and tr but no jq. */
+/** A PATH holding bash and cat but no jq. */
 function pathWithoutJq(): string {
   const bin = fs.mkdtempSync(join(os.tmpdir(), "at-nojq-"));
-  for (const tool of ["bash", "tr", "cat", "sh"]) {
+  for (const tool of ["bash", "cat", "sh"]) {
     const real = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
     if (real) fs.symlinkSync(real, join(bin, tool));
   }
@@ -133,14 +135,65 @@ function pathWithoutJq(): string {
 }
 
 const AGENT_MD = ".claude/agents/a/AGENT.md";
+const DOMAIN = "WebFetch(domain:example.com)";
+const fetchCall = (url: string) => ({ tool_name: "WebFetch", tool_input: { url } });
+
+describe("ruling c: an agent deny or ask on Bash is refused, nothing written", () => {
+  const refusal = (list: string, rule: string) => `agent "a" ${list} ${JSON.stringify(rule)}: use settings { deny }: an agent hook can't parse bash safely`;
+  const rules = ["Bash", "Bash(*)", "Bash(rm *)", "Bash(git push *)"];
+  for (const list of ["deny", "ask"] as const) {
+    for (const rule of rules) {
+      it(`${list} ${rule}`, () => {
+        expect(() => scaffold(topo({ a: `    ${list}: [${JSON.stringify(rule)}]` }))).toThrow(BindingRefusal);
+        try {
+          scaffold(topo({ a: `    ${list}: [${JSON.stringify(rule)}]` }));
+        } catch (e) {
+          expect((e as Error).message).toContain(refusal(list, rule));
+          expect((e as Error).message).toContain("Nothing was written");
+        }
+      });
+    }
+  }
+
+  // Re-attack #3: inputs that desynced the hook's bash reader. The .at that
+  // would have guarded them is refused before any hook exists.
+  const reattack3 = [
+    "cat <<'EOF'\nit's fine\nEOF\nrm x # don't",
+    "$'it\\'s' && rm x",
+    "echo ${x:- #}; rm x",
+  ];
+  for (const input of reattack3) {
+    it(`re-attack #3 ${JSON.stringify(input)}: the agent rule that would see it is refused, no agent hook script exists`, () => {
+      expect(() => scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }))).toThrow(BindingRefusal);
+      const { value: files } = scaffold(topo({ a: '    deny: ["WebFetch(domain:x.com)"]' }));
+      const hooks = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
+      expect(hooks.map((g) => g.matcher)).not.toContain("Bash");
+    });
+  }
+
+  for (const [label, args] of [["scaffold", ["scaffold"]], ["guard --target", ["guard"]]] as const) {
+    it(`${label} exits 1, prints the line, writes nothing`, () => {
+      const root = fs.mkdtempSync(join(os.tmpdir(), "at-perm-"));
+      try {
+        fs.writeFileSync(join(root, "t.at"), topo({ a: '    deny: ["Bash(rm *)"]' }));
+        const r = spawnSync("node", [CLI, ...args, "t.at", "--target", "claude-code"], { cwd: root, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain(refusal("deny", "Bash(rm *)"));
+        expect(fs.readdirSync(root)).toEqual(["t.at"]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
-  it("a command rule: matcher on the tool, if: the rule, exit 2", () => {
-    const { value: files } = scaffold(topo({ a: '    deny: ["Bash(kubectl delete *)"]' }));
+  it("a domain rule: matcher on the tool, no if:, exit 2", () => {
+    const { value: files } = scaffold(topo({ a: `    deny: [${JSON.stringify(DOMAIN)}]` }));
     const hooks = frontmatterHooks(file(files, AGENT_MD));
     expect(hooks.PreToolUse).toHaveLength(1);
     const [group] = hooks.PreToolUse;
-    expect(group.matcher).toBe("Bash");
+    expect(group.matcher).toBe("WebFetch");
     expect(group.hooks).toHaveLength(1);
     const h = group.hooks[0];
     expect(h.type).toBe("command");
@@ -148,9 +201,9 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
     expect(h.if).toBeUndefined();
     // A deny hook that cannot start must not let the call through (Claude Code 2.1.295+).
     expect(h.onFailure).toBe("block");
-    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "kubectl delete pod x" } });
+    const r = runHook(files, h.command as string, fetchCall("https://example.com/a"));
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("Bash(kubectl delete *)");
+    expect(r.stderr).toContain(DOMAIN);
     // The frontmatter hooks pass the same contract settings.json hooks do.
     expect(checkHooks(hooks as Record<string, unknown>)).toEqual([]);
   });
@@ -172,19 +225,19 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
   });
 
   it("a rule holding a single quote still runs and names the rule", () => {
-    const { value: files } = scaffold(topo({ a: `    deny: ["Bash(echo 'x' *)"]` }));
+    const rule = "Agent(model:o'pus)";
+    const { value: files } = scaffold(topo({ a: `    deny: [${JSON.stringify(rule)}]` }));
     const h = frontmatterHooks(file(files, AGENT_MD)).PreToolUse[0].hooks[0];
-    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "echo 'x' y" } });
+    const r = runHook(files, h.command as string, { tool_name: "Agent", tool_input: { model: "o'pus" } });
     expect(r.status).toBe(2);
-    expect(r.stderr).toContain("Bash(echo 'x' *)");
+    expect(r.stderr).toContain(rule);
   });
 
-  it("one handler per rule (\"The `if` field holds exactly one permission rule\")", () => {
-    const { value: files } = scaffold(topo({ a: '    deny: ["Bash(rm *)", "Bash(curl *)"]' }));
+  it("one handler per rule", () => {
+    const { value: files } = scaffold(topo({ a: '    deny: ["WebFetch(domain:a.com)", "WebFetch(domain:b.com)"]' }));
     const pre = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
-    const rules = pre.flatMap((g) => g.hooks.map((h) => String(h.command).includes("'Bash(rm *)'") ? "Bash(rm *)" : String(h.command).includes("'Bash(curl *)'") ? "Bash(curl *)" : "?"));
-    expect(rules).toEqual(["Bash(rm *)", "Bash(curl *)"]);
-    expect(pre.flatMap((g) => g.hooks.map((h) => h.if))).toEqual([undefined, undefined]);
+    const named = pre.flatMap((g) => g.hooks.map((h) => (String(h.command).includes("'WebFetch(domain:a.com)'") ? "a" : String(h.command).includes("'WebFetch(domain:b.com)'") ? "b" : "?")));
+    expect(named).toEqual(["a", "b"]);
   });
 
   it("keeps the agent's own hooks first, then the rule hooks", () => {
@@ -195,15 +248,15 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
         run: "scripts/lint.sh"
       }
     }`;
-    const { value: files } = scaffold(topo({ a: `${own}\n    deny: ["Bash(rm *)"]` }));
+    const { value: files } = scaffold(topo({ a: `${own}\n    deny: [${JSON.stringify(DOMAIN)}]` }));
     const pre = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
-    expect(pre.map((g) => g.matcher)).toEqual(["Write", "Bash"]);
+    expect(pre.map((g) => g.matcher)).toEqual(["Write", "WebFetch"]);
   });
 
   it("writes no rule hook into settings.json: the rule is the agent's only", () => {
-    const { value: files } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+    const { value: files } = scaffold(topo({ a: `    deny: [${JSON.stringify(DOMAIN)}]` }));
     const settings = files.find((f) => f.path === ".claude/settings.json");
-    expect(settings?.content ?? "").not.toContain("Bash(rm *)");
+    expect(settings?.content ?? "").not.toContain(DOMAIN);
   });
 });
 
@@ -226,29 +279,29 @@ describe("S-51: an agent Edit deny says what it does not block", () => {
   });
 
   it("no such warning for a deny on another tool", () => {
-    const { warnings } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+    const { warnings } = scaffold(topo({ a: `    deny: [${JSON.stringify(DOMAIN)}]` }));
     expect(warnings.some((x) => x.includes("NotebookEdit"))).toBe(false);
   });
 });
 
 describe("T5: agent ask -> a frontmatter PreToolUse hook that asks", () => {
   it("returns permissionDecision ask in hookSpecificOutput", () => {
-    const { value: files } = scaffold(topo({ a: '    ask: ["Bash(git push *)"]' }));
+    const { value: files } = scaffold(topo({ a: `    ask: [${JSON.stringify(DOMAIN)}]` }));
     const [group] = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
-    expect(group.matcher).toBe("Bash");
+    expect(group.matcher).toBe("WebFetch");
     const h = group.hooks[0];
     expect(h.if).toBeUndefined();
-    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "git push origin main" } });
+    const r = runHook(files, h.command as string, fetchCall("https://example.com/"));
     expect(r.status).toBe(0);
     expect(checkStdout("PreToolUse", r.stdout)).toBeNull();
     const out = JSON.parse(r.stdout);
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
     expect(out.hookSpecificOutput.permissionDecision).toBe("ask");
-    expect(out.hookSpecificOutput.permissionDecisionReason).toContain("Bash(git push *)");
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain(DOMAIN);
   });
 });
 
-describe("condition C: the agent hook matches the rule itself and fails closed", () => {
+describe("non-Bash agent rules keep their hooks and behave as before", () => {
   /** The scaffold and the one rule hook of agent a. */
   function rig(list: "deny" | "ask", rule: string) {
     const { value: files, warnings } = scaffold(topo({ a: `    ${list}: [${JSON.stringify(rule)}]` }));
@@ -256,102 +309,58 @@ describe("condition C: the agent hook matches the rule itself and fails closed",
     const run = (payload: object, opts: { stdin?: string; path?: string } = {}) => runHook(files, h.command as string, payload, opts);
     return { h, run, warnings };
   }
-  const bash = (command: string) => ({ tool_name: "Bash", tool_input: { command } });
   const asked = (r: { status: number | null; stdout: string }) =>
     r.status === 0 && r.stdout.trim() !== "" && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === "ask";
 
-  describe("deny", () => {
-    const deny = () => rig("deny", "Bash(kubectl delete *)");
-
-    it("R6: carries no if:", () => {
-      expect(deny().h.if).toBeUndefined();
-    });
-    it("a non-matching Bash call passes", () => {
-      const r = deny().run(bash("kubectl get pods"));
-      expect(r.status, r.stderr).toBe(0);
-    });
-    it("a matching call blocks", () => {
-      const r = deny().run(bash("kubectl delete pod web-1"));
-      expect(r.status).toBe(2);
-      expect(r.stderr).toContain("Bash(kubectl delete *)");
-    });
-    it("a compound command containing the match blocks", () => {
-      for (const c of ["echo hi && kubectl delete pod x", "true; kubectl delete pod x", "ls | kubectl delete -f -", "(kubectl delete ns a)"]) {
-        expect(deny().run(bash(c)).status, c).toBe(2);
-      }
-    });
-    it("a wrapper or an assignment in front still blocks (as Claude Code strips them)", () => {
-      for (const c of ["timeout 30 kubectl delete pod x", "nohup kubectl delete pod x", "KUBECONFIG=/x kubectl delete pod x", "command kubectl delete pod x"]) {
-        expect(deny().run(bash(c)).status, c).toBe(2);
-      }
-    });
-    it("a trailing ' *' also matches the bare command; 'ls *' does not match lsof", () => {
-      const ls = rig("deny", "Bash(ls *)");
-      expect(ls.run(bash("ls")).status).toBe(2);
-      expect(ls.run(bash("ls -la")).status).toBe(2);
-      expect(ls.run(bash("lsof")).status).toBe(0);
-    });
-    it("broken stdin blocks, and says why", () => {
-      const r = deny().run({}, { stdin: "{ not json" });
-      expect(r.status).toBe(2);
-      expect(r.stderr).toContain("not valid JSON");
-    });
-    it("jq missing blocks, and says why", () => {
-      const r = deny().run(bash("kubectl get pods"), { path: pathWithoutJq() });
-      expect(r.status).toBe(2);
-      expect(r.stderr).toContain("jq");
-    });
-    it("a command substitution that could hide the match blocks", () => {
-      expect(deny().run(bash("echo $(kubectl delete pod x)")).status).toBe(2);
-      expect(deny().run(bash("x=`kubectl delete pod x`")).status).toBe(2);
-    });
-    it("an unsupported rule form blocks with its reason, and scaffold says so", () => {
-      const e = rig("deny", "Edit(/src/**)");
-      const r = e.run({ tool_name: "Edit", tool_input: { file_path: "/p/README.md" } });
-      expect(r.status).toBe(2);
-      expect(r.stderr).toContain("cannot match");
-      expect(e.warnings.some((w) => w.includes("Edit(/src/**)") && w.includes("every Edit call"))).toBe(true);
-    });
-    it("a parameter rule matches the input field", () => {
-      const p = rig("deny", "Agent(model:opus)");
-      expect(p.run({ tool_name: "Agent", tool_input: { model: "opus", prompt: "x" } }).status).toBe(2);
-      expect(p.run({ tool_name: "Agent", tool_input: { model: "sonnet", prompt: "x" } }).status).toBe(0);
-      expect(p.run({ tool_name: "Agent", tool_input: { prompt: "x" } }).status).toBe(0);
-    });
-    it("a domain rule matches that host only (R12: \"`WebFetch(domain:example.com)` matches requests to `example.com` only\")", () => {
-      const d = rig("deny", "WebFetch(domain:example.com)");
-      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://example.com/a" } }).status).toBe(2);
-      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://docs.example.com/a" } }).status).toBe(0);
-      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://other.org/" } }).status).toBe(0);
-      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "not a url" } }).status).toBe(2);
-    });
-    it("a bare tool rule blocks every call, even without jq", () => {
-      const w = rig("deny", "Write");
-      expect(w.run({ tool_name: "Write", tool_input: { file_path: "x" } }, { path: pathWithoutJq() }).status).toBe(2);
-    });
+  it("R6: no if:", () => {
+    expect(rig("deny", DOMAIN).h.if).toBeUndefined();
   });
-
-  describe("ask", () => {
-    const ask = () => rig("ask", "Bash(git push *)");
-
-    it("a non-matching call prints nothing and exits 0", () => {
-      const r = ask().run(bash("git status"));
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout.trim()).toBe("");
-    });
-    it("a matching call, also inside a compound command, asks", () => {
-      expect(asked(ask().run(bash("git push origin main")))).toBe(true);
-      expect(asked(ask().run(bash("git add . && git push")))).toBe(true);
-    });
-    it("asks on every doubt: broken stdin, jq missing, a command substitution, an unsupported form", () => {
-      expect(asked(ask().run({}, { stdin: "nope" }))).toBe(true);
-      expect(asked(ask().run(bash("git status"), { path: pathWithoutJq() }))).toBe(true);
-      expect(asked(ask().run(bash("echo $(git push)")))).toBe(true);
-      const e = rig("ask", "Read(./secrets/**)");
-      const r = e.run({ tool_name: "Read", tool_input: { file_path: "a" } });
-      expect(asked(r)).toBe(true);
-      expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason).toContain("cannot match");
-    });
+  it("a bare tool and Tool(*): every call, even without jq", () => {
+    for (const rule of ["Write", "Write(*)"]) {
+      expect(rig("deny", rule).run({ tool_name: "Write", tool_input: { file_path: "x" } }, { path: pathWithoutJq() }).status, rule).toBe(2);
+    }
+  });
+  it("a domain rule matches that host only (R12)", () => {
+    const d = rig("deny", DOMAIN);
+    expect(d.run(fetchCall("https://example.com/a")).status).toBe(2);
+    expect(d.run(fetchCall("https://docs.example.com/a")).status).toBe(0);
+    expect(d.run(fetchCall("https://other.org/")).status).toBe(0);
+    expect(d.run(fetchCall("not a url")).status).toBe(2);
+  });
+  it("a parameter rule matches the input field", () => {
+    const p = rig("deny", "Agent(model:opus)");
+    expect(p.run({ tool_name: "Agent", tool_input: { model: "opus", prompt: "x" } }).status).toBe(2);
+    expect(p.run({ tool_name: "Agent", tool_input: { model: "sonnet", prompt: "x" } }).status).toBe(0);
+    expect(p.run({ tool_name: "Agent", tool_input: { prompt: "x" } }).status).toBe(0);
+  });
+  it("Agent(name) matches subagent_type", () => {
+    const a = rig("deny", "Agent(Explore)");
+    expect(a.run({ tool_name: "Agent", tool_input: { subagent_type: "Explore" } }).status).toBe(2);
+    expect(a.run({ tool_name: "Agent", tool_input: { subagent_type: "Plan" } }).status).toBe(0);
+  });
+  it("a path rule cannot be matched: refused with its reason, and scaffold says so", () => {
+    const e = rig("deny", "Edit(/src/**)");
+    const r = e.run({ tool_name: "Edit", tool_input: { file_path: "/p/README.md" } });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("cannot match");
+    expect(e.warnings.some((w) => w.includes("Edit(/src/**)") && w.includes("every Edit call"))).toBe(true);
+  });
+  it("broken stdin and missing jq are doubt", () => {
+    expect(rig("deny", DOMAIN).run({}, { stdin: "{ not json" }).status).toBe(2);
+    expect(rig("deny", DOMAIN).run(fetchCall("https://other.org/"), { path: pathWithoutJq() }).status).toBe(2);
+  });
+  it("ask: a non-match prints nothing; a match and every doubt ask", () => {
+    const ask = rig("ask", DOMAIN);
+    const r = ask.run(fetchCall("https://other.org/"));
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("");
+    expect(asked(ask.run(fetchCall("https://example.com/")))).toBe(true);
+    expect(asked(ask.run({}, { stdin: "nope" }))).toBe(true);
+    expect(asked(ask.run(fetchCall("https://other.org/"), { path: pathWithoutJq() }))).toBe(true);
+    const e = rig("ask", "Read(./secrets/**)");
+    const out = e.run({ tool_name: "Read", tool_input: { file_path: "a" } });
+    expect(asked(out)).toBe(true);
+    expect(JSON.parse(out.stdout).hookSpecificOutput.permissionDecisionReason).toContain("cannot match");
   });
 });
 
@@ -391,21 +400,23 @@ describe("default-mode", () => {
 
 describe("notes: what holds less than it reads", () => {
   it("the topology skill says a per-agent rule needs a trusted folder", () => {
-    const { value: files, warnings } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+    const { value: files, warnings } = scaffold(topo({ a: `    deny: [${JSON.stringify(DOMAIN)}]` }));
     const skill = file(files, ".claude/skills/t/SKILL.md");
     expect(skill).toContain("## Permission rules");
     expect(skill).toContain("Frontmatter hooks in a project subagent");
     expect(warnings.some((w) => w.includes("Frontmatter hooks in a project subagent"))).toBe(true);
   });
 
-  it("R7: the warning and the skill say an agent hook is a guardrail, not a security boundary", () => {
-    const { value: files, warnings } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+  it("R7: the warning and the skill say an agent hook is a guardrail, and that Bash rules belong in settings", () => {
+    const { value: files, warnings } = scaffold(topo({ a: `    deny: [${JSON.stringify(DOMAIN)}]` }));
     const skill = file(files, ".claude/skills/t/SKILL.md");
     const limit = "An agent hook is a guardrail, not a security boundary: the agent can edit the files that hold it. For a hard deny, use settings { deny }.";
     const quote = "use the permission system rather than a hook to enforce a hard allow or deny";
+    const bash = "An agent deny or ask on Bash is refused: an agent hook can't parse bash safely";
     for (const text of [skill, warnings.join("\n")]) {
       expect(text).toContain(limit);
       expect(text).toContain(quote);
+      expect(text).toContain(bash);
     }
     // No settings deny on the script.
     const settings = files.find((f) => f.path === ".claude/settings.json");
