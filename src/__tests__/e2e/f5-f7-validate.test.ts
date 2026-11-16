@@ -32,7 +32,7 @@ const at = (extra: string) => [
 const hook = (run: string) => `  hooks {\n    hook h {\n      on: PreToolUse\n      matcher: "Bash"\n      run: ${JSON.stringify(run)}\n      type: command\n    }\n  }`;
 
 describe("F5: an env block inside settings warns", () => {
-  it("[F5] names the keys that are not written to settings.json", () => {
+  it("[F-5] names the keys that are not written to settings.json", () => {
     const r = validate(parse(at('  settings {\n    deny: ["Bash(rm -rf *)"]\n    env {\n      FOO: "bar"\n      BAZ: "q"\n    }\n  }')));
     const w = r.filter((x) => /settings/.test(x.message) && /env/.test(x.message));
     expect(w).toHaveLength(1);
@@ -40,18 +40,18 @@ describe("F5: an env block inside settings warns", () => {
     expect(w[0].message).toContain("FOO, BAZ");
   });
 
-  it("[F5] a top-level env, or none, does not warn", () => {
+  it("[F-5] a top-level env, or none, does not warn", () => {
     expect(validate(parse(at('  env {\n    FOO: "bar"\n  }\n  settings {\n    deny: ["Bash(rm -rf *)"]\n  }'))).filter((x) => /env/.test(x.message))).toEqual([]);
   });
 });
 
 describe("F7: a hook script path with a space is named by validate, not refused later by scaffold", () => {
-  it("[F7] validate errors on it", () => {
+  it("[F-7] validate errors on it", () => {
     const r = validate(parse(at(hook('bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh" --flag "a b"'))));
     expect(r.some((x) => x.level === "error" && x.rule === "V96" && /safe|space/.test(x.message))).toBe(true);
   });
 
-  it("[F7] a path with no space still passes", () => {
+  it("[F-7] a path with no space still passes", () => {
     const r = validate(parse(at(hook('bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh" --flag "a b"'))));
     expect(r.filter((x) => x.level === "error")).toEqual([]);
   });
@@ -70,7 +70,7 @@ describe("F7: a hook script path with a space is named by validate, not refused 
       fs.rmSync(root, { recursive: true, force: true });
     });
 
-    it("[F7] import exits 2 and names the validation error", () => {
+    it("[F-7] import exits 2 and names the validation error", () => {
       const r = spawnSync(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", ".", "--name", "t"], { cwd: root, encoding: "utf8" });
       expect(r.status).toBe(2);
       expect(`${r.stdout}${r.stderr}`).toContain("validation error(s)");

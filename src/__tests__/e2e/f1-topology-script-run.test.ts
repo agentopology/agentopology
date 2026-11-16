@@ -26,7 +26,7 @@ const FIX = join(here, "fixtures/upgrade-0112");
 const SKILL = (f: string) => `"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/${f}"`;
 
 describe("F1: a topology script followed by redirects or operators", () => {
-  it("[F1] resolves the script and keeps the rest of the line verbatim", () => {
+  it("[F-1] resolves the script and keeps the rest of the line verbatim", () => {
     expect(hookCommand("scripts/guard.sh 2>/dev/null", "t")).toBe(`bash ${SKILL("guard.sh")} 2>/dev/null`);
     expect(hookCommand("scripts/guard.sh || exit 2", "t")).toBe(`bash ${SKILL("guard.sh")} || exit 2`);
     expect(hookCommand("scripts/a.sh && scripts/b.sh", "t")).toBe(`bash ${SKILL("a.sh")} && scripts/b.sh`);
@@ -34,18 +34,18 @@ describe("F1: a topology script followed by redirects or operators", () => {
     expect(hookCommand("scripts/guard.sh --msg 'a  b' | tee log", "t")).toBe(`bash ${SKILL("guard.sh")} --msg 'a  b' | tee log`);
   });
 
-  it("[F1b] bun and deno running a topology script resolve it, as 0.11.2 did", () => {
+  it("[F-1b] bun and deno running a topology script resolve it, as 0.11.2 did", () => {
     expect(hookCommand("bun scripts/guard.ts", "t")).toBe(`bun ${SKILL("guard.ts")}`);
     expect(hookCommand("bun run scripts/guard.ts --x", "t")).toBe(`bun run ${SKILL("guard.ts")} --x`);
     expect(hookCommand("deno run scripts/x.ts 2>&1", "t")).toBe(`deno run ${SKILL("x.ts")} 2>&1`);
   });
 
-  it("[F1] is not shell: the binding writes a stub for the script", () => {
+  it("[F-1] is not shell: the binding writes a stub for the script", () => {
     expect(isShellCommand("scripts/guard.sh 2>/dev/null")).toBe(false);
     expect(isShellCommand("bun scripts/guard.ts")).toBe(false);
   });
 
-  it("[F1] what is not a topology script stays as written (S-11)", () => {
+  it("[F-1] what is not a topology script stays as written (S-11)", () => {
     for (const run of [
       "jq -r '.x' | grep -q y",
       "lint-tool update --quiet 2>/dev/null || true",
@@ -76,18 +76,18 @@ describe("F1: a topology script followed by redirects or operators", () => {
   ].join("\n"));
   const hook = (id: string, run: string) => `    hook ${id} {\n      on: PreToolUse\n      matcher: "Bash"\n      run: ${JSON.stringify(run)}\n      type: command\n    }`;
 
-  it("[F1] a bare name the topology scaffolds as a script is that script, operators kept", () => {
+  it("[F-1] a bare name the topology scaffolds as a script is that script, operators kept", () => {
     const ast = at([hook("plain", "check-review"), hook("piped", "check-review | tee /tmp/log")].join("\n"));
     const cmds = (settingsHooksOf(ast).PreToolUse as Array<{ hooks: Array<{ command: string }> }>).flatMap((g) => g.hooks.map((h) => h.command));
     expect(cmds).toContain(`bash ${SKILL("check-review")} | tee /tmp/log`);
   });
 
-  it("[F1] scaffold writes the stub of a redirected hook script", () => {
+  it("[F-1] scaffold writes the stub of a redirected hook script", () => {
     const paths = claudeCodeBinding.scaffold(at(hook("g2", "scripts/guard.sh 2>/dev/null"))).map((f) => f.path);
     expect(paths).toContain(".claude/skills/t/scripts/guard.sh");
   });
 
-  it("[F1b] a gate run with a redirect runs the gate's script, and its stub is written", () => {
+  it("[F-1b] a gate run with a redirect runs the gate's script, and its stub is written", () => {
     const files = claudeCodeBinding.scaffold(at(hook("x", "scripts/x.sh"), "scripts/check.sh > /dev/null"));
     const wrapper = files.find((f) => f.path === ".claude/skills/t/scripts/gate-g.sh")!;
     expect(wrapper.content).toContain(`bash ${SKILL("check.sh")} > /dev/null`);
@@ -117,7 +117,7 @@ describe("F1 acceptance: a project 0.11.2 scaffolded, re-scaffolded, runs its gu
   const bash = (cmd: string, input: object) =>
     spawnSync("bash", ["-c", cmd], { cwd: root, encoding: "utf8", input: JSON.stringify(input), env: { ...process.env, CLAUDE_PROJECT_DIR: root } });
 
-  it("[F1] the hook's command exits 2 when the user's guard.sh exits 2", () => {
+  it("[F-1] the hook's command exits 2 when the user's guard.sh exits 2", () => {
     upgrade("hook", "guard.sh");
     const settings = JSON.parse(fs.readFileSync(join(root, ".claude/settings.json"), "utf8"));
     const cmds: string[] = settings.hooks.PreToolUse.filter((g: { matcher?: string }) => g.matcher === "Bash")
@@ -128,7 +128,7 @@ describe("F1 acceptance: a project 0.11.2 scaffolded, re-scaffolded, runs its gu
     expect(r.status).toBe(2);
   });
 
-  it("[F1b] the gate's result is the script's: exit 2", () => {
+  it("[F-1b] the gate's result is the script's: exit 2", () => {
     upgrade("gate", "check-quality.sh");
     const r = bash('bash "$CLAUDE_PROJECT_DIR/.claude/skills/simple-pipeline/scripts/gate-quality-check.sh"', { hook_event_name: "SubagentStop", agent_type: "writer" });
     expect(r.status).toBe(2);

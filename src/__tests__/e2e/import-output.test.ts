@@ -117,14 +117,14 @@ describe("S-68: import exits non-zero when the .at it wrote has validation error
 });
 
 describe("F3/F4: the output path, under concurrency and when it is not a file", () => {
-  it("[F4] the refusal prints before anything else: no \"Importing from\" line", () => {
+  it("[F-4] the refusal prints before anything else: no \"Importing from\" line", () => {
     put("o/shop.at", "# mine\n");
     const r = run();
     expect(r.code).toBe(1);
     expect(r.stdout).not.toContain("Importing from");
   });
 
-  it("[F3] of 8 concurrent imports to one fresh path, exactly 1 writes and 7 refuse", async () => {
+  it("[F-3] of 8 concurrent imports to one fresh path, exactly 1 writes and 7 refuse", async () => {
     const codes = await Promise.all(Array.from({ length: 8 }, () => new Promise<number | null>((done) => {
       const p = spawn(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", root, "--name", "shop", "--output", join(root, "o")], { stdio: "ignore" });
       p.on("close", (code) => done(code));
@@ -134,7 +134,7 @@ describe("F3/F4: the output path, under concurrency and when it is not a file", 
     expect(fs.readFileSync(out(), "utf-8").trimEnd().endsWith("}")).toBe(true);
   });
 
-  it("[F4] a directory at <name>.at: a clear message, no --force hint, exit 1, the directory untouched", () => {
+  it("[F-4] a directory at <name>.at: a clear message, no --force hint, exit 1, the directory untouched", () => {
     put("o/shop.at/keep.txt", "x");
     const r = run();
     expect(r.code).toBe(1);
@@ -143,7 +143,7 @@ describe("F3/F4: the output path, under concurrency and when it is not a file", 
     expect(fs.readdirSync(out())).toEqual(["keep.txt"]);
   });
 
-  it("[F4] a directory at <name>.at with --force: the same clear message, no stack, exit 1", () => {
+  it("[F-4] a directory at <name>.at with --force: the same clear message, no stack, exit 1", () => {
     put("o/shop.at/keep.txt", "x");
     const r = run("--force");
     expect(r.code).toBe(1);
@@ -152,7 +152,7 @@ describe("F3/F4: the output path, under concurrency and when it is not a file", 
     expect(fs.readdirSync(out())).toEqual(["keep.txt"]);
   });
 
-  it("[F4] --output naming a file: a clear message, exit 1, the file untouched", () => {
+  it("[F-4] --output naming a file: a clear message, exit 1, the file untouched", () => {
     put("o", "a file\n");
     const r = run();
     expect(r.code).toBe(1);

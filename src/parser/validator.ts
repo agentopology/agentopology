@@ -21,7 +21,7 @@
 
 import { MISSING } from "./index.js";
 import { gateAnchors } from "./ast.js";
-import { proseInRun, scriptNameFromRun } from "./run.js";
+import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
@@ -1136,11 +1136,25 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  * and crashed with EISDIR on a " / " — after it had already written other
  * files. The explanation belongs in `description`; `run` keeps the command.
  */
+/**
+ * F7: a run whose script is a project path scaffold cannot write (a space or a
+ * quote in it: `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"` splits
+ * at the space). scaffold refused it with "not safe file names" after import
+ * and validate had passed; the same rule (unsafePathReason) is checked here.
+ */
+function unsafeScriptPath(run: string): string | null {
+  if (isShellCommand(run)) return null;
+  const { script } = runParts(run);
+  if (!script || script.startsWith("/") || !isProjectPath(script)) return null;
+  const why = unsafePathReason(script.replace(/^\.\//, ""));
+  return why ? `its script path ${JSON.stringify(script)} is not a file name scaffold can write (${why}); a path with a space or a quote in it cannot be scaffolded. Rename the file, or run it from a shell line` : null;
+}
+
 function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const check = (owner: string, run: string | undefined, nodeId?: string) => {
     if (run === undefined) return;
-    const why = proseInRun(run);
+    const why = proseInRun(run) ?? unsafeScriptPath(run);
     if (!why) return;
     results.push({
       rule: "V96",

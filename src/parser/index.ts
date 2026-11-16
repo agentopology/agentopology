@@ -2837,6 +2837,17 @@ export function parse(source: string): TopologyAST {
   // A field or block the grammar does not have was dropped with no message,
   // and validate passed (N23). V102 names each one with its block.
   const unknownNameErrors = findUnknownNames(topBody);
+  // F5: since S-13 only a top-level `env { }` is the topology env; the keys of
+  // one inside `settings { }` are not written to settings.json.
+  const settingsEnv = settingsBlock ? extractTopLevelBlocks(settingsBlock.body, "env")[0] : undefined;
+  const droppedEnv = settingsEnv ? Object.keys(parseEnv(settingsEnv.body)) : [];
+  if (droppedEnv.length > 0) {
+    unknownNameErrors.push({
+      rule: "V102",
+      level: "warning",
+      message: `\`env\` is not a settings field, so its keys (${droppedEnv.join(", ")}) are not written to settings.json. Move them to a top-level env { } block.`,
+    });
+  }
 
   // --- Assemble AST ---
   const ast: TopologyAST & {

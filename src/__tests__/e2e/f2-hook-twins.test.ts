@@ -27,17 +27,17 @@ const commandsOf = (raw: string): string[] =>
   (JSON.parse(raw).hooks.PostToolUse as Array<{ hooks: Array<{ command: string }> }>).flatMap((g) => g.hooks.map((h) => h.command));
 
 describe("F2: the merge treats an equivalent hook as the same hook", () => {
-  it("[F2] the docs' project-dir form and scaffold's bash form are one hook; the user's is kept", () => {
+  it("[F-2] the docs' project-dir form and scaffold's bash form are one hook; the user's is kept", () => {
     const merged = deepMergeSettingsJson(settings(DOC_FORM), settings('bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"'), []);
     expect(commandsOf(merged)).toEqual([DOC_FORM]);
   });
 
-  it("[F2] a PATH tool and `command <tool>` are one hook; the user's is kept", () => {
+  it("[F-2] a PATH tool and `command <tool>` are one hook; the user's is kept", () => {
     const merged = deepMergeSettingsJson(settings("prettier --write ."), settings("command prettier --write ."), []);
     expect(commandsOf(merged)).toEqual(["prettier --write ."]);
   });
 
-  it("[F2] a different matcher or a different command is still a second hook", () => {
+  it("[F-2] a different matcher or a different command is still a second hook", () => {
     const other = JSON.stringify({ hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "command prettier --write ." }] }] } });
     expect(JSON.parse(deepMergeSettingsJson(settings("prettier --write ."), other, [])).hooks.PostToolUse).toHaveLength(2);
     expect(commandsOf(deepMergeSettingsJson(settings("prettier --write ."), settings("prettier --check ."), []))).toHaveLength(2);
@@ -61,7 +61,7 @@ describe("F2: import then scaffold in place", () => {
     return { code: r.status, all: `${r.stdout}${r.stderr}` };
   };
 
-  it.each([[DOC_FORM], ["prettier --write ."]])("[F2] %s: one hook after scaffold, the user's, and one line names it", (cmd) => {
+  it.each([[DOC_FORM], ["prettier --write ."]])("[F-2] %s: one hook after scaffold, the user's, and one line names it", (cmd) => {
     fs.writeFileSync(join(root, ".claude/settings.json"), settings(cmd));
     expect(cli("import", "--target", "claude-code", "--dir", ".", "--name", "t").code).toBe(0);
     const sc = cli("scaffold", "t.at", "--target", "claude-code");
@@ -72,7 +72,7 @@ describe("F2: import then scaffold in place", () => {
     expect(lines[0]).toContain(JSON.stringify(cmd));
   });
 
-  it("[F2] guard --check names a hook that is in settings.json twice in two forms", () => {
+  it("[F-2] guard --check names a hook that is in settings.json twice in two forms", () => {
     fs.writeFileSync(join(root, ".claude/settings.json"), settingsGroups(DOC_FORM, 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"'));
     cli("import", "--target", "claude-code", "--dir", ".", "--name", "t", "--force");
     const r = cli("guard", "t.at", "--check", "--dir", ".");
