@@ -40,6 +40,11 @@ export interface ManifestEntry {
   defaultModeDeclared?: string;
   /** `.claude/settings.json` only (OWN3): the .at path, relative to the project, that owns this entry's rules. */
   sourcePath?: string;
+  /**
+   * `.claude/settings.json` only (OWN3, F2): other .at paths of the same file
+   * name that ran on this manifest. While set, no run removes a rule.
+   */
+  ownershipSharedWith?: string[];
 }
 
 /** Manifest written to disk after each scaffold run. */

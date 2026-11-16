@@ -195,14 +195,26 @@ describe("[OWN1] the manager's question: a hand-added rule with the text of one 
   it("(c) we own X and the user's edit leaves X in the file: dropped -> REMOVED, and printed (the one lost hand intent)", () => {
     writeAt("t.at", withRules("t", [X, R]));
     scaffold("t.at");
-    // The user rewrites the file by hand, keeping X (indistinguishable from ours).
+    // The user edits the file by hand, keeping X (indistinguishable from ours), in scaffold's own format.
+    const s = JSON.parse(fs.readFileSync(at(SETTINGS), "utf8"));
+    s.permissions.allow = [U, X, R];
+    fs.writeFileSync(at(SETTINGS), JSON.stringify(s, null, 2) + "\n");
+    writeAt("t.at", withRules("t", [R]));
+    const out = scaffold("t.at");
+    expect(removedLines(out)).toEqual([removed("allow", X)]);
+    expect(perms().allow).toEqual([U, R]);
+  });
+
+  it("(c) under F1: the same edit written in the user's own format (4-space indent) keeps X", () => {
+    writeAt("t.at", withRules("t", [X, R]));
+    scaffold("t.at");
     const s = JSON.parse(fs.readFileSync(at(SETTINGS), "utf8"));
     s.permissions.allow = [U, X, R];
     fs.writeFileSync(at(SETTINGS), JSON.stringify(s, null, 4) + "\n");
     writeAt("t.at", withRules("t", [R]));
     const out = scaffold("t.at");
-    expect(removedLines(out)).toEqual([removed("allow", X)]);
-    expect(perms().allow).toEqual([U, R]);
+    expect(removedLines(out)).toEqual([]);
+    expect(perms().allow).toEqual([U, X, R]);
   });
 });
 
@@ -254,7 +266,7 @@ describe("[S-48] two topologies in one directory", () => {
 
 const kept = (l: string, rule: string, by: string) => `${SETTINGS} ${l} ${JSON.stringify(rule)}: kept; ${by} declares it`;
 const keptLines = (out: { stdout: string; stderr: string }) =>
-  lines(out).filter((l) => l.includes(": kept; ") || l.includes("rule ownership skipped") || l.includes("re-scaffold"));
+  lines(out).filter((l) => l.includes(": kept; ") || l.includes("rule ownership skipped") || l.includes("owned rules kept, none removed"));
 
 describe("[OWN2] a rule another topology declares is never removed", () => {
   it("par owns X, two declares X; par drops X: kept and printed, still par's; two drops X too; par's next run removes it", () => {

@@ -48,7 +48,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles, sameManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH, undeclaredRuleNotice, recordNamedRules, removedRuleLines, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
@@ -754,6 +754,23 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
   } else {
+    // F7: the manifest goes first, owning only what it owns before and after
+    // this run; if it cannot be written, nothing is.
+    const interim = interimManifestFiles(manifest, actions);
+    if (interim && !sameManifestFiles(interim, manifest?.files ?? null)) {
+      try {
+        writeManifest(basePath, targetName, {
+          source: path.basename(filePath),
+          sourceHash: manifest?.sourceHash ?? hashContent(source),
+          target: targetName,
+          generatedAt: new Date().toISOString(),
+          files: interim,
+        });
+      } catch (err) {
+        console.error(c.red(`  Could not write the scaffold manifest: ${(err as Error).message}. Nothing was written.`));
+        process.exit(1);
+      }
+    }
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
@@ -1529,7 +1546,9 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     } else if (a.type === "unchanged") console.log(`  ${c.dim("=")} ${a.path}`);
   }
   for (const s of plan.skipped) console.log(`  ${c.bold("!")} ${s.path} (${s.why})`);
-  printRemovedRules(removedRuleLines(plan.actions));
+  const removedLinesOf = removedRuleLines([...plan.actions, ...(plan.ownership ? [plan.ownership] : [])]);
+  // F3: a dry run says what the run would do; a real run says it only once settings.json is written.
+  if (dryRun) printRemovedRules(removedLinesOf);
   printRuleNotice(plan.notice);
   console.log("");
 
@@ -1545,6 +1564,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     console.error(c.red(`  Could not write: ${(err as Error).message}`));
     process.exit(1);
   }
+  if (!result.failures.some((f) => f.path === SETTINGS_PATH)) printRemovedRules(removedLinesOf);
   console.log(`  ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged, ${plan.skipped.length} kept`);
   if (result.failures.length > 0) {
     for (const f of result.failures) console.error(`  ${c.red("✗")} ${f.path} — ${f.error}`);

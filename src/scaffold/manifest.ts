@@ -77,8 +77,19 @@ export function readManifest(
  * whose `source` is `source`. Unreadable files are skipped.
  */
 export function otherManifests(basePath: string, target: string, source: string): ScaffoldManifest[] {
-  const shared = join(basePath, getManifestPath(target));
-  const dir = dirname(shared);
+  return manifestFiles(basePath, target)
+    .map((f) => f.manifest)
+    .filter((m): m is ScaffoldManifest => !!m && typeof m.source === "string" && m.source !== source && !!m.files && typeof m.files === "object");
+}
+
+/**
+ * Every manifest file of this target in the project, by its project-relative
+ * path, with its content, or null when it cannot be read as JSON (F6: an
+ * unreadable neighbour holds removals, so it must be seen, not skipped).
+ */
+export function manifestFiles(basePath: string, target: string): Array<{ file: string; manifest: ScaffoldManifest | null }> {
+  const rel = getManifestPath(target);
+  const dir = dirname(join(basePath, rel));
   const stem = MANIFEST_FILENAME.replace(/\.json$/, "");
   let names: string[];
   try {
@@ -86,12 +97,8 @@ export function otherManifests(basePath: string, target: string, source: string)
   } catch {
     return [];
   }
-  const out: ScaffoldManifest[] = [];
-  for (const n of names.sort()) {
-    const m = readJson(join(dir, n));
-    if (m && typeof m.source === "string" && m.source !== source && m.files && typeof m.files === "object") out.push(m);
-  }
-  return out;
+  const relDir = dirname(rel);
+  return names.sort().map((n) => ({ file: relDir === "." ? n : `${relDir}/${n}`, manifest: readJson(join(dir, n)) }));
 }
 
 /**

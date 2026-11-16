@@ -59,6 +59,8 @@ export interface RuleRemoval {
   replacedBy?: string;
   /** kept: the other topology's .at that declares it. */
   by?: string;
+  /** kept: why, when not because another topology declares it (F1). */
+  why?: string;
 }
 
 /** What other topologies in the project say about the rules (OWN2). */
@@ -83,8 +85,10 @@ export interface RuleOwnership {
   retained: string[];
   /** One-line notes (a held removal, a skipped ownership). */
   notes: string[];
-  /** OWN3: leave the entry's ownership fields exactly as they were. */
+  /** OWN3: leave the entry exactly as it was, but for the shared mark. */
   preserve?: boolean;
+  /** OWN3 (F2): this run's .at path, added to the entry's `ownershipSharedWith`. */
+  sharedWith?: string;
 }
 
 const strings = (v: unknown): string[] =>
@@ -92,26 +96,56 @@ const strings = (v: unknown): string[] =>
 
 const EMPTY = (): Owned => ({ allow: [], ask: [], deny: [] });
 
+const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** A manifest entry, or undefined when it is missing or not an object (F5: owns nothing, no crash). */
+export function entryOf(v: unknown): ManifestEntry | undefined {
+  return isObject(v) ? (v as unknown as ManifestEntry) : undefined;
+}
+
+/** Each list deduplicated (F9: a rule listed twice is one rule). */
 function listsOf(r: unknown, mode: unknown): Owned {
-  const obj = r !== null && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>) : {};
+  const obj = isObject(r) ? r : {};
+  const uniq = (v: unknown) => [...new Set(strings(v))];
   return {
-    allow: strings(obj.allow),
-    ask: strings(obj.ask),
-    deny: strings(obj.deny),
+    allow: uniq(obj.allow),
+    ask: uniq(obj.ask),
+    deny: uniq(obj.deny),
     ...(typeof mode === "string" ? { defaultMode: mode } : {}),
   };
 }
 
 /** The ownership a manifest entry records; malformed or missing parts own nothing. */
-export function ownedOf(entry: ManifestEntry | undefined | null): Owned {
-  return listsOf(entry?.rulesOwned, entry?.defaultModeOwned);
+export function ownedOf(entry: unknown): Owned {
+  const e = entryOf(entry);
+  return listsOf(e?.rulesOwned, e?.defaultModeOwned);
 }
 
-/** What a manifest entry declares, or null when it records nothing (an entry from before `rulesDeclared`). */
-export function declaredOf(entry: ManifestEntry | undefined | null): Owned | null {
-  const r = entry?.rulesDeclared as unknown;
-  if (r === null || typeof r !== "object" || Array.isArray(r)) return null;
-  return listsOf(r, entry?.defaultModeDeclared);
+/**
+ * What a manifest entry declares, or null when it records nothing (an entry
+ * from before `rulesDeclared`) or records it malformed (F6): both hold every
+ * other topology's removals.
+ */
+export function declaredOf(entry: unknown): Owned | null {
+  const e = entryOf(entry);
+  const r = e?.rulesDeclared as unknown;
+  if (!isObject(r)) return null;
+  for (const l of RULE_LISTS) {
+    if (r[l] !== undefined && !(Array.isArray(r[l]) && (r[l] as unknown[]).every((x) => typeof x === "string"))) return null;
+  }
+  const mode = e?.defaultModeDeclared as unknown;
+  if (mode !== undefined && typeof mode !== "string") return null;
+  return listsOf(r, mode);
+}
+
+/** Whether a settings.json text is exactly what scaffold would write from its parsed content (F1). */
+export function roundTrips(raw: string | null): boolean {
+  if (raw === null || raw.trim() === "") return true;
+  try {
+    return raw === JSON.stringify(JSON.parse(raw), null, 2) + "\n";
+  } catch {
+    return false;
+  }
 }
 
 /** Any rule or mode in the set. */
@@ -119,16 +153,57 @@ export const ownsAnything = (o: Owned) => o.allow.length + o.ask.length + o.deny
 
 const FIELDS = ["rulesOwned", "defaultModeOwned", "rulesDeclared", "defaultModeDeclared", "sourcePath"] as const;
 
+/**
+ * OWN3 (F2, P2-3): the entry after a run that skipped ownership: exactly the
+ * previous entry, plus this run's path in `ownershipSharedWith`. Nothing else
+ * is written to it, not its hash, not undeclaredRulesNamed.
+ */
+export function sharedEntry(previous: ManifestEntry, rules: RuleOwnership): ManifestEntry {
+  const marks = Array.isArray(previous.ownershipSharedWith) ? previous.ownershipSharedWith.filter((x) => typeof x === "string") : [];
+  const add = rules.sharedWith ?? "an .at with no recorded path";
+  return { ...previous, ownershipSharedWith: marks.includes(add) ? marks : [...marks, add] };
+}
+
+/**
+ * F7: the entry written BEFORE settings.json. It owns only what was owned
+ * before and is still owned after, so a write that fails leaves the rule this
+ * run would remove unowned (kept), and claims none it would add. It declares
+ * the union of before and after (so a neighbour keeps more, never less).
+ */
+export function interimEntry(previous: ManifestEntry | undefined, rules: RuleOwnership): ManifestEntry | undefined {
+  if (!previous) return undefined;
+  if (rules.preserve) return sharedEntry(previous, rules);
+  const before = ownedOf(previous);
+  const owned: Owned = { allow: [], ask: [], deny: [] };
+  for (const l of RULE_LISTS) owned[l] = before[l].filter((r) => rules.owned[l].includes(r));
+  if (before.defaultMode !== undefined && before.defaultMode === rules.owned.defaultMode) owned.defaultMode = before.defaultMode;
+  const entry: ManifestEntry = { ...previous };
+  const prevDeclared = declaredOf(previous);
+  const declared: Owned = prevDeclared
+    ? {
+      allow: [...new Set([...prevDeclared.allow, ...rules.declared.allow])],
+      ask: [...new Set([...prevDeclared.ask, ...rules.declared.ask])],
+      deny: [...new Set([...prevDeclared.deny, ...rules.declared.deny])],
+      ...(prevDeclared.defaultMode !== undefined ? { defaultMode: prevDeclared.defaultMode } : rules.declared.defaultMode !== undefined ? { defaultMode: rules.declared.defaultMode } : {}),
+    }
+    : rules.declared;
+  recordOwnership(entry, { ...rules, owned, declared }, previous);
+  // An entry that recorded no declared rules keeps holding the neighbours' removals until the real write.
+  if (!prevDeclared) {
+    delete entry.rulesDeclared;
+    delete entry.defaultModeDeclared;
+  }
+  return entry;
+}
+
 /** Set the ownership fields of a manifest entry from a run's result, in place. */
 export function recordOwnership(entry: ManifestEntry, rules: RuleOwnership, previous: ManifestEntry | undefined): void {
   if (rules.preserve) {
-    for (const f of FIELDS) {
-      delete entry[f];
-      if (previous?.[f] !== undefined) (entry as unknown as Record<string, unknown>)[f] = previous[f];
-    }
+    if (previous) Object.assign(entry, sharedEntry(previous, rules));
     return;
   }
   for (const f of FIELDS) delete entry[f];
+  if (Array.isArray(previous?.ownershipSharedWith)) entry.ownershipSharedWith = previous!.ownershipSharedWith;
   const lists = (o: Owned) => {
     const out: Partial<Record<RuleList, string[]>> = {};
     for (const l of RULE_LISTS) if (o[l].length > 0) out[l] = o[l];
@@ -200,6 +275,10 @@ export function applyOwnership(
   const owned = EMPTY();
   let changed = false;
   let held = false;
+  // F1 (ruling a): remove only from a file that round-trips byte for byte;
+  // otherwise writing it would also rewrite values the user wrote.
+  const REWRITE = "removing it would rewrite other values in the file";
+  const clean = roundTrips(existingRaw);
 
   for (const list of RULE_LISTS) {
     const before = strings(exP[list]);
@@ -213,6 +292,7 @@ export function applyOwnership(
       const by = others.keptBy.get(item);
       if (others.heldBy !== null) held = true;
       else if (by !== undefined) removed.push({ kind: "kept", list, rule: r, by });
+      else if (!clean) removed.push({ kind: "kept", list, rule: r, why: REWRITE });
       else {
         drop.push(r);
         continue;
@@ -244,9 +324,10 @@ export function applyOwnership(
       owned.defaultMode = prevMode;
     } else {
       const by = others.keptBy.get(`defaultMode ${prevMode}`);
-      if (others.heldBy !== null || by !== undefined) {
+      if (others.heldBy !== null || by !== undefined || !clean) {
         if (others.heldBy !== null) held = true;
-        else removed.push({ kind: "kept", list: "defaultMode", rule: prevMode, by });
+        else if (by !== undefined) removed.push({ kind: "kept", list: "defaultMode", rule: prevMode, by });
+        else removed.push({ kind: "kept", list: "defaultMode", rule: prevMode, why: REWRITE });
         owned.defaultMode = prevMode;
       } else if (decMode === undefined) {
         delete outP.defaultMode;
@@ -264,6 +345,10 @@ export function applyOwnership(
   }
 
   const notes = held && others.heldBy !== null ? [others.heldBy] : [];
+  // P2-2: the user's own defaultMode differs from the .at's: kept, and said once per run.
+  if (exMode !== undefined && decMode !== undefined && exMode !== decMode && owned.defaultMode !== exMode) {
+    notes.push(`.claude/settings.json defaultMode ${JSON.stringify(exMode)}: kept, yours; the .at says ${JSON.stringify(decMode)}`);
+  }
   if (!changed) return { content: mergedRaw, owned, declared, removed, retained, notes };
   if (Object.keys(outP).length > 0) out.permissions = outP;
   else delete out.permissions;
@@ -273,7 +358,7 @@ export function applyOwnership(
 /** The printed line for one removal, replacement or kept rule (the rule as a JSON string, as in 0.11.2). */
 export function removalLine(r: RuleRemoval): string {
   const head = `.claude/settings.json ${r.list} ${JSON.stringify(r.rule)}`;
-  if (r.kind === "kept") return `${head}: kept; ${r.by} declares it`;
+  if (r.kind === "kept") return `${head}: kept; ${r.why ?? `${r.by} declares it`}`;
   if (r.kind === "replaced") return `${head}: replaced by ${JSON.stringify(r.replacedBy)}; the .at changed it`;
   return `${head}: removed; the .at no longer declares it`;
 }

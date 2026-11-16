@@ -24,7 +24,7 @@ import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent, otherManifests } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles, sameManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { undeclaredRuleNotice, recordNamedRules, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
 
@@ -134,6 +134,12 @@ export interface GuardTargetPlan {
   checks: Set<string>;
   /** The settings.json rules the .at does not declare (the same notice scaffold prints). */
   notice: RuleNotice;
+  /**
+   * P1-1/F11: the settings.json action when the .at no longer generates it and
+   * nothing is written (kept or blocked): not printed, but its ownership (the
+   * .at declares nothing now) is recorded like scaffold's.
+   */
+  ownership?: FileAction;
 }
 
 /** Plan the guard write for a project. Reads the disk; writes nothing. */
@@ -144,15 +150,22 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string, 
   const owned = new Set(files.map((f) => f.path));
   // The planner deletes manifest files the run no longer generates; this run
   // generates a subset on purpose, so only its own paths are planned.
-  const actions = computeIncrementalPlan(root, target, files, manifest, sourcePath).filter((a) => owned.has(a.path));
+  // P1-1/F11: settings.json is the exception: when the .at no longer
+  // generates it, scaffold still removes its owned rules, and so does guard.
+  const all = computeIncrementalPlan(root, target, files, manifest, sourcePath);
+  const settingsOnly = target === "claude-code" && !owned.has(SETTINGS) ? all.find((a) => a.path === SETTINGS && "rules" in a && a.rules) : undefined;
+  const actions = all.filter((a) => owned.has(a.path));
+  let ownership: FileAction | undefined;
+  if (settingsOnly && settingsOnly.type === "update") actions.push(settingsOnly);
+  else if (settingsOnly) ownership = settingsOnly;
   const skipped: GuardTargetPlan["skipped"] = [];
   const planned: FileAction[] = [];
   for (const a of actions) {
     const abs = join(root, a.path);
-    const generated = files.find((f) => f.path === a.path)!;
+    const generated = files.find((f) => f.path === a.path);
     // A check someone has implemented is theirs, even when scaffold recorded
     // its stub: the hash then differs from the manifest only by their work.
-    if (checks.has(a.path) && existsSync(abs) && a.type !== "unchanged") {
+    if (generated && checks.has(a.path) && existsSync(abs) && a.type !== "unchanged") {
       const onDisk = readFileSync(abs, "utf-8");
       if (onDisk !== generated.content && !isStubContent(onDisk)) {
         skipped.push({ path: a.path, why: "skipped: no longer a stub" });
@@ -164,8 +177,8 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string, 
     if (a.type === "blocked" && !a.unsafe) { skipped.push({ path: a.path, why: `blocked: ${a.detail}` }); continue; }
     planned.push(a);
   }
-  const notice = undeclaredRuleNotice(root, files, planned, manifest, rulesOwnedElsewhere(otherManifests(root, target, source)));
-  return { actions: planned, skipped, files, checks, notice };
+  const notice = undeclaredRuleNotice(root, files, [...planned, ...(ownership ? [ownership] : [])], manifest, rulesOwnedElsewhere(otherManifests(root, target, source)));
+  return { actions: planned, skipped, files, checks, notice, ...(ownership ? { ownership } : {}) };
 }
 
 /**
@@ -175,13 +188,27 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string, 
  */
 export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: string, sourceText: string, target: GuardTargetName = "claude-code"): ExecuteResult {
   const previous = readManifest(root, target, source);
+  const withOwnership = [...plan.actions, ...(plan.ownership ? [plan.ownership] : [])];
+  // F7: the manifest first, owning only what it owns before and after; if it
+  // cannot be written this throws and nothing else is written.
+  const interim = interimManifestFiles(previous, withOwnership);
+  // Only when it changes the manifest: a rerun that does nothing writes nothing (N41).
+  if (interim && !sameManifestFiles({ ...(previous?.files ?? {}), ...interim }, previous?.files ?? {})) {
+    writeManifest(root, target, {
+      source,
+      sourceHash: previous?.sourceHash ?? hashContent(sourceText),
+      target,
+      generatedAt: new Date().toISOString(),
+      files: { ...(previous?.files ?? {}), ...interim },
+    });
+  }
   const result = executeActions(root, plan.actions, { prune: false, force: false });
   const manifest: ScaffoldManifest = {
     source,
     sourceHash: hashContent(sourceText),
     target,
     generatedAt: new Date().toISOString(),
-    files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, plan.actions, plan.files, previous, result) },
+    files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, withOwnership, plan.files, previous, result) },
   };
   recordNamedRules(manifest.files, plan.notice?.named ?? null);
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.

@@ -42,6 +42,8 @@ import {
   applyOwnership,
   declaredIn,
   declaredOf,
+  entryOf,
+  interimEntry,
   ownedOf,
   ownsAnything,
   recordOwnership,
@@ -50,7 +52,12 @@ import {
   type Others,
   type RuleOwnership,
 } from "./ownership.js";
-import { getManifestPath, otherManifests } from "./manifest.js";
+import { manifestFiles } from "./manifest.js";
+
+/** "a", "a and b", "a, b and c". */
+function andList(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
 
 /**
  * What the other topologies in this project declare (OWN2): each rule they
@@ -59,15 +66,22 @@ import { getManifestPath, otherManifests } from "./manifest.js";
 function othersOf(basePath: string, target: string, source: string): Others {
   const keptBy = new Map<string, string>();
   let heldBy: string | null = null;
-  for (const m of otherManifests(basePath, target, source)) {
-    const entry = m.files?.[SETTINGS_PATH];
-    if (!entry) continue; // never wrote settings.json: declares no rule
-    const declared = declaredOf(entry);
+  const hold = (why: string) => { heldBy ??= `${SETTINGS_PATH}: owned rules kept, none removed; ${why}`; };
+  for (const { file, manifest: m } of manifestFiles(basePath, target)) {
+    // F6: a manifest that cannot be read could declare anything.
+    if (!m || typeof m.source !== "string" || !m.files || typeof m.files !== "object") {
+      hold(`${file} cannot be read; fix or delete it to release them`);
+      continue;
+    }
+    if (m.source === source) continue;
+    const raw = (m.files as Record<string, unknown>)[SETTINGS_PATH];
+    if (raw === undefined) continue; // never wrote settings.json: declares no rule
+    const declared = declaredOf(raw);
     if (!declared) {
-      const file = getManifestPath(target).replace(/\.json$/, `.${m.source.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
-      const shared = getManifestPath(target);
-      const where = existsSync(join(basePath, file)) ? file : shared;
-      heldBy ??= `${SETTINGS_PATH}: owned rules kept, none removed; ${where} records no declared rules (written before this version); re-scaffold ${m.source} to release them`;
+      const missing = entryOf(raw)?.rulesDeclared === undefined;
+      hold(missing
+        ? `${file} records no declared rules (written before this version); re-scaffold ${m.source} to release them`
+        : `${file} has a malformed rulesDeclared; re-scaffold ${m.source} to release them`);
       continue;
     }
     for (const l of ["allow", "ask", "deny"] as const) for (const r of declared[l]) if (!keptBy.has(`${l} ${r}`)) keptBy.set(`${l} ${r}`, m.source);
@@ -140,7 +154,7 @@ export function computeIncrementalPlan(
   const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
 
   // T6: the permission rules this topology added to settings.json before.
-  const previousEntry = manifest?.files?.[SETTINGS_PATH];
+  const previousEntry = entryOf(manifest?.files?.[SETTINGS_PATH]);
   const previousRules = ownedOf(previousEntry);
   // OWN3: the manifest is keyed by the .at basename; an entry another path
   // owns (or one that owns rules and records no path) is not this run's.
@@ -148,15 +162,27 @@ export function computeIncrementalPlan(
     (typeof previousEntry.sourcePath === "string"
       ? previousEntry.sourcePath !== sourcePath
       : ownsAnything(previousRules));
+  // F2: an entry another .at of the same name has run on holds every removal, for good.
+  const shared = Array.isArray(previousEntry?.ownershipSharedWith) ? previousEntry!.ownershipSharedWith.filter((x) => typeof x === "string") : [];
+  const sharedLine = shared.length > 0
+    ? `${SETTINGS_PATH}: owned rules kept, none removed; this manifest is shared by ${andList([previousEntry?.sourcePath ?? "an .at with no recorded path", ...shared])} (the same file name)`
+    : null;
   // OWN2: only a run that may remove something reads the other manifests.
-  const others = manifest && !skip && ownsAnything(previousRules) ? othersOf(basePath, target, manifest.source) : NO_OTHERS;
+  const others: Others = !manifest || skip || !ownsAnything(previousRules)
+    ? NO_OTHERS
+    : sharedLine
+      ? { keptBy: new Map(), heldBy: sharedLine }
+      : othersOf(basePath, target, manifest.source);
 
   /** The ownership pass on settings.json: the content to write and what to record. */
   const own = (existingRaw: string | null, mergedRaw: string, generatedRaw: string | null): { content: string; rules: RuleOwnership } => {
     if (skip) {
       return {
         content: mergedRaw,
-        rules: { owned: { allow: [], ask: [], deny: [] }, declared: declaredIn(generatedRaw), removed: [], retained: [], notes: [skippedLine(previousEntry?.sourcePath)], preserve: true },
+        rules: {
+          owned: { allow: [], ask: [], deny: [] }, declared: declaredIn(generatedRaw), removed: [], retained: [],
+          notes: [skippedLine(previousEntry?.sourcePath)], preserve: true, sharedWith: sourcePath,
+        },
       };
     }
     const { content, ...rules } = applyOwnership(existingRaw, mergedRaw, generatedRaw, previousRules, others);
@@ -318,7 +344,10 @@ export function computeIncrementalPlan(
 
   // Files in the manifest that are no longer generated
   if (manifest) {
-    for (const [manifestPath, entry] of Object.entries(manifest.files)) {
+    for (const [manifestPath, rawEntry] of Object.entries(manifest.files)) {
+      // F5: an entry that is not an object records nothing: nothing to delete or own.
+      const entry = entryOf(rawEntry);
+      if (!entry) continue;
       if (generatedMap.has(manifestPath)) continue;
       if (unsafePathReason(manifestPath)) continue;
       const absPath = join(basePath, manifestPath);
@@ -515,9 +544,17 @@ export function nextManifestFiles(
   const removed = new Set(result.removed);
 
   for (const action of actions) {
-    const prev = previous?.files[action.path];
+    const prev = entryOf(previous?.files?.[action.path]);
     const category = categoryOf.get(action.path) ?? prev?.category ?? "machine";
     const written = result.written.get(action.path);
+    const rules = "rules" in action ? action.rules : undefined;
+
+    // OWN3 (P2-3): a run that skipped ownership writes nothing to the entry
+    // but the shared mark: not its hash, not undeclaredRulesNamed.
+    if (rules?.preserve && prev) {
+      files[action.path] = interimEntry(prev, rules)!;
+      continue;
+    }
 
     if (written !== undefined) {
       files[action.path] = { hash: hashContent(written), category };
@@ -528,15 +565,45 @@ export function nextManifestFiles(
       files[action.path] = { ...prev };
     }
 
-    // T6: the rules this topology owns once the run is done. A settings.json
-    // write that failed leaves the file, and so the ownership, as it was.
-    const rules = "rules" in action ? action.rules : undefined;
+    // T6: the rules this topology owns once the run is done. F7: a
+    // settings.json write that failed keeps the entry written before it
+    // (what was owned before and after: the dropped rule unowned, the added
+    // one not claimed).
     const entry = files[action.path];
     if (rules && entry) {
       const failed = (action.type === "create" || action.type === "update") && written === undefined;
       if (!failed) recordOwnership(entry, rules, prev);
+      else files[action.path] = interimEntry(prev, rules) ?? entry;
     }
   }
 
+  return files;
+}
+
+/** Whether two manifest file maps say the same, whatever their key order. */
+export function sameManifestFiles(a: unknown, b: unknown): boolean {
+  const canon = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(canon)
+      : v !== null && typeof v === "object"
+        ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]))
+        : v;
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+
+/**
+ * F7: the manifest files to write BEFORE settings.json: the previous ones,
+ * with the settings.json entry owning only what it owns both before and after
+ * this run. Null when this run carries no ownership change to protect.
+ */
+export function interimManifestFiles(previous: ScaffoldManifest | null, actions: FileAction[]): Record<string, ManifestEntry> | null {
+  const action = actions.find((a) => a.path === SETTINGS_PATH && "rules" in a && a.rules);
+  if (!action || !("rules" in action) || !action.rules) return null;
+  const files: Record<string, ManifestEntry> = {};
+  for (const [p, e] of Object.entries(previous?.files ?? {})) {
+    const entry = entryOf(e);
+    if (entry) files[p] = entry;
+  }
+  const entry = interimEntry(entryOf(previous?.files?.[SETTINGS_PATH]), action.rules);
+  if (entry) files[SETTINGS_PATH] = entry;
   return files;
 }

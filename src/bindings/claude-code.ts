@@ -29,6 +29,7 @@ import type {
 } from "../parser/ast.js";
 import { BindingRefusal, deduplicateFiles } from "./types.js";
 import { matchesWholeTool, parsePermissionRule } from "../parser/permission-rule.js";
+import { agentRuleScript, ruleCheck } from "./lib/agent-rule.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
@@ -153,7 +154,7 @@ function shellWord(s: string): string {
  * the hook fails to run; an ask prints permissionDecision "ask" ("prompts the
  * user to confirm").
  */
-function agentRuleHooks(agent: AgentNode): Array<{ matcher: string; handler: Record<string, unknown> }> {
+function agentRuleHooks(agent: AgentNode, topology: string): Array<{ matcher: string; handler: Record<string, unknown> }> {
   const out: Array<{ matcher: string; handler: Record<string, unknown> }> = [];
   for (const list of ["deny", "ask"] as const) {
     for (const raw of agent[list] ?? []) {
@@ -162,16 +163,26 @@ function agentRuleHooks(agent: AgentNode): Array<{ matcher: string; handler: Rec
       const matcher = rule.tool.includes("*")
         ? `^${rule.tool.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`
         : rule.tool;
+      // `if` stays, but the script matches the rule itself (condition C).
       const filter = rule.specifier !== undefined && !matchesWholeTool(rule) ? { if: `${rule.tool}(${rule.specifier})` } : {};
-      const command = list === "deny"
-        ? `echo ${shellWord(`Refused: agent ${agent.id} denies ${raw}`)} >&2; exit 2`
-        : `printf '%s\\n' ${shellWord(JSON.stringify({
-          hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: `agent ${agent.id} asks before ${raw}` },
-        }))}`;
-      out.push({ matcher, handler: { type: "command", command, ...filter, ...(list === "deny" ? { onFailure: "block" } : {}) } });
+      const check = ruleCheck(rule);
+      const args = check.kind === "none" ? [check.reason!] : check.args;
+      const command = [`bash ${skillScriptPath(topology, AGENT_RULE_SCRIPT)}`, list, agent.id, raw, check.kind, ...args]
+        .map((w, i) => (i === 0 ? w : shellWord(w)))
+        .join(" ");
+      // A hook that cannot start blocks the call (both: a deny must not pass, an ask must not go unasked).
+      out.push({ matcher, handler: { type: "command", command, ...filter, onFailure: "block" } });
     }
   }
   return out;
+}
+
+/** The script agent rule hooks run, beside the topology's other scripts. */
+const AGENT_RULE_SCRIPT = "agent-rule.sh";
+
+/** Whether any agent declares a deny or ask rule. */
+function hasAgentRules(ast: TopologyAST): boolean {
+  return ast.nodes.some((n) => n.type === "agent" && !!((n as AgentNode).deny?.length || (n as AgentNode).ask?.length));
 }
 
 /** What makes a per-agent rule hold less than a settings rule (Claude Code docs, quoted). */
@@ -222,6 +233,21 @@ function warnRuleLimits(ast: TopologyAST): void {
         `Write, MultiEdit and NotebookEdit are not blocked by it. A settings { deny: [...] } Edit rule covers them ` +
         `("\`Edit\` rules apply to all built-in tools that edit files"), for every agent.`,
     );
+  }
+  // Condition C: a rule form the hook script cannot match is refused (or asked) on every call.
+  for (const a of ruled) {
+    for (const list of ["deny", "ask"] as const) {
+      for (const raw of a[list] ?? []) {
+        const rule = parsePermissionRule(raw);
+        if (rule.problems.length) continue;
+        const check = ruleCheck(rule);
+        if (check.kind !== "none") continue;
+        console.warn(
+          `[claude-code] agent "${a.id}" ${list} ${JSON.stringify(raw)}: ${check.reason}, so its hook ` +
+            `${list === "deny" ? "refuses" : "asks before"} every ${rule.tool} call of this agent.`,
+        );
+      }
+    }
   }
 }
 
@@ -725,7 +751,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     // Per-agent hooks → Claude Code AGENT.md frontmatter hooks, then the
     // agent's deny/ask rules as PreToolUse hooks (S-19).
-    const ruleHooks = agentRuleHooks(agent);
+    const ruleHooks = agentRuleHooks(agent, ast.topology.name);
     if ((agent.hooks && agent.hooks.length > 0) || ruleHooks.length > 0) {
       const topologyName = ast.topology.name;
       const hooksByEvent: Record<string, HookDef[]> = {};
@@ -759,7 +785,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         if (eventName === "PreToolUse") for (const r of ruleHooks) pushGroup(r.matcher, r.handler);
       }
       // Insert hooks before the closing ---
-      fmStr = fmStr.replace(/\n---$/, "\n" + hookLines.join("\n") + "\n---");
+      // A function, not a string: a hook holding `$'` or `$&` must not be read as a replacement pattern.
+      fmStr = fmStr.replace(/\n---$/, () => "\n" + hookLines.join("\n") + "\n---");
     }
 
     // Build body
@@ -3616,6 +3643,9 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Schedule scripts
     files.push(...generateScheduleScripts(ast));
+
+    // S-19: the script agent deny/ask hooks run (condition C).
+    if (hasAgentRules(ast)) files.push(agentRuleScript(`.claude/skills/${ast.topology.name}/scripts/${AGENT_RULE_SCRIPT}`));
 
     // Command files
     files.push(...generateCommandFiles(ast));

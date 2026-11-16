@@ -154,10 +154,12 @@ export function undeclaredRuleNotice(
       if (!declared[list].includes(rule) && !current.includes(item) && !ownedElsewhere.has(item) && !retained.has(item)) current.push(item);
     }
   }
-  if (current.length === 0) return { lines: [], named: current };
+  // OWN3 (P2-3): the entry belongs to another .at of the same name: its stored set is not this run's to change.
+  const keepStored = rulesOf_(actions)?.preserve === true;
+  if (current.length === 0) return { lines: [], named: keepStored ? null : current };
   const stored = storedSet(entry);
   const gained = current.some((r) => !stored.includes(r));
-  return { lines: gained ? current.map(undeclaredRuleLine) : [undeclaredRuleSummary(current)], named: current };
+  return { lines: gained ? current.map(undeclaredRuleLine) : [undeclaredRuleSummary(current)], named: keepStored ? null : current };
 }
 
 /** The one line printed on every run that adds no rule to a set that is not empty. */
