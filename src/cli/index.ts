@@ -1328,21 +1328,34 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   const resolved = requireDir(dirPath);
   const name = topologyName ?? path.basename(resolved).replace(/^\./, "");
 
+  // The .at is the only file import writes. One already there may hold the
+  // user's edits, so it is replaced only with --force (S-67). lstat, so a
+  // link at that path counts as there even when it points nowhere. Checked
+  // first, so a refusal is the only line printed (F4); the write itself is an
+  // exclusive create, so of two imports racing for one path one writes (F3).
+  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
+  const outFile = path.join(outDir, `${name}.at`);
+  const refuse = (message: string): never => {
+    console.error(c.red(`Error: ${message} Nothing was written.`));
+    process.exit(1);
+  };
+  const exists = `${outFile} exists; pass --force to overwrite.`;
+  const isDir = `${outFile} is a directory, not a .at file.`;
+  const notDir = `--output ${outDir} is not a directory.`;
+  for (let dir = outDir; ; dir = path.dirname(dir)) {
+    const st = fs.statSync(dir, { throwIfNoEntry: false });
+    if (st) { if (!st.isDirectory()) refuse(notDir); break; }
+    if (path.dirname(dir) === dir) break;
+  }
+  const atStat = fs.lstatSync(outFile, { throwIfNoEntry: false });
+  if (atStat?.isDirectory() || (atStat?.isSymbolicLink() && fs.statSync(outFile, { throwIfNoEntry: false })?.isDirectory())) refuse(isDir);
+  if (atStat && !force) refuse(exists);
+
   // First, before any read: a run that fails must still have said something.
   console.log(
     c.bold(`Importing from ${targetName} files in ${dirPath}`)
   );
   console.log("");
-
-  // The .at is the only file import writes. One already there may hold the
-  // user's edits, so it is replaced only with --force (S-67). lstat, so a
-  // link at that path counts as there even when it points nowhere.
-  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
-  const outFile = path.join(outDir, `${name}.at`);
-  if (!force && fs.lstatSync(outFile, { throwIfNoEntry: false })) {
-    console.error(c.red(`Error: ${outFile} exists; pass --force to overwrite. Nothing was written.`));
-    process.exit(1);
-  }
 
   let project: ReturnType<typeof readClaudeProject> = null;
   let read: Pick<ClaudeProject, "files" | "unread">;
@@ -1368,8 +1381,17 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     process.exit(1);
   }
 
-  fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(outFile, atSource, "utf-8");
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    // --force writes through a link at outFile, as 0.11.2 did.
+    fs.writeFileSync(outFile, atSource, { encoding: "utf-8", flag: force ? "w" : "wx" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" && !force) refuse(exists);
+    if (code === "EISDIR") refuse(isDir);
+    if (code === "ENOTDIR" || code === "EEXIST") refuse(notDir);
+    refuse(`cannot write ${outFile}: ${(err as Error).message}.`);
+  }
   console.log(c.green(`  Written: ${outFile}`));
   if (flow) {
     console.log("");
