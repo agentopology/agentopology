@@ -303,6 +303,9 @@ export const MUST_BLOCK = [
   "sh -c 'git commit'", "xargs git commit", "git commit -m \"$MSG\"", "git push origin \"$BR\"", "git push origin HEAD~1:main",
   "git --git-dir status commit", "git status && git commit -m x", "git c${x}ommit", "git co?mit", "git push ~/remote",
   "cd ~ && git commit", "git --no-pager commit", "git -c x=y log; git push", "git log $(git commit)", "GIT_DIR=x git commit",
+  // a value-taking global option before a reading subcommand must not earn the reading exemption
+  "git --attr-source log commit -m x", "git --attr-source diff push origin main", "git --namespace log commit -m x",
+  "git --super-prefix=x/ log commit",
 ];
 
 /**
@@ -317,6 +320,15 @@ export const ALIAS_CLOSED = [
   "git -c alias.k='!./media kit s1' k",
   "V=commit git --config-env=alias.x=V x", "V=commit git --config-env alias.x=V x",
   "V='!git commit' git --config-env=alias.x=V x",
+  // behind a value-taking global option (git(1): --attr-source <tree-ish>, -C <path>, --git-dir <path>), or
+  // anywhere in the segment: git 2.43 made a commit with each --attr-source commit form
+  "git --attr-source HEAD -c alias.x=commit x", "git --attr-source HEAD -c alias.x=commit x -m y",
+  "git --attr-source=HEAD -c alias.x=commit x", "git --attr-source HEAD -c alias.p=push p origin main",
+  "sudo git --attr-source HEAD -c alias.x=commit x", "V=commit git --attr-source HEAD --config-env=alias.x=V x",
+  "V=commit git --attr-source HEAD --config-env alias.x=V x", "git --no-pager --attr-source HEAD -c alias.x=commit x",
+  "git -C . -c alias.x=commit x", "git --git-dir .git -c alias.x=commit x",
+  // over-refusals by design: git 2.43 rejects -calias.x (unknown option), and log's -c is its own flag
+  "git -calias.x=commit x", "git log -c alias.x=commit",
 ];
 
 /** Non-alias -c, held as 0.11.2 reads it (a commit stays a step, a reading command runs). */
