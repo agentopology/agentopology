@@ -20,7 +20,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { deepMergeSettingsJson } from "../../scaffold/merge.js";
 import { readManifest, writeManifest, hashContent } from "../../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, recordHookKeys } from "../../scaffold/incremental.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -495,12 +495,15 @@ describe("[0.11.2-h] every example scaffolds as before", () => {
       const manifest = readManifest(dir, "claude-code", file);
       const actions = computeIncrementalPlan(dir, "claude-code", files, manifest);
       const result = executeActions(dir, actions, { prune: false, force: false });
+      const next = nextManifestFiles(dir, actions, files, manifest, result);
+      // 0.11.3 (P-1): the settings entry also records the hook groups scaffold wrote.
+      recordHookKeys(next, files);
       writeManifest(dir, "claude-code", {
         source: file,
         sourceHash: hashContent(src),
         target: "claude-code",
         generatedAt: "",
-        files: nextManifestFiles(dir, actions, files, manifest, result),
+        files: next,
       });
     }
   }

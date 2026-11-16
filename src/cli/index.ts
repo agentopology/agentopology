@@ -47,7 +47,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, recordHookKeys } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
@@ -766,6 +766,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       files: nextManifestFiles(basePath, actions, files, manifest, result),
     };
     recordNamedRules(newManifest.files, notice.named);
+    recordHookKeys(newManifest.files, files);
     writeManifest(basePath, targetName, newManifest);
 
     if (result.failures.length > 0) {

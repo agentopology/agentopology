@@ -75,6 +75,15 @@ describe("P-1: two hooks on one script and matcher stay two", () => {
     expect(handlers().filter((h) => String(h.command).includes("guard.sh")).map((h) => h.timeout)).toEqual([9]);
   });
 
+  it("[P-1] the same, on the user's own project script: the entry the last scaffold wrote is replaced", () => {
+    fs.writeFileSync(join(root, "t.at"), at(hook("g", ".claude/hooks/x.sh", "      timeout: 5\n")));
+    expect(scaffold().status).toBe(0);
+    editSettings();
+    fs.writeFileSync(join(root, "t.at"), at(hook("g", ".claude/hooks/x.sh", "      timeout: 9\n")));
+    expect(scaffold().status).toBe(0);
+    expect(handlers().filter((h) => String(h.command).includes("x.sh")).map((h) => h.timeout)).toEqual([9]);
+  });
+
   it("[P-1] strength: refuse added in the .at reaches settings.json (onFailure: block), one entry", () => {
     fs.writeFileSync(join(root, "t.at"), at(hook("g", "scripts/guard.sh")));
     expect(scaffold().status).toBe(0);

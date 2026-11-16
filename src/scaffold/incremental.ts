@@ -36,6 +36,7 @@ import {
   shouldOverwriteScript,
   deepMergeJson,
   deepMergeSettingsJson,
+  hookGroupKeys,
 } from "./merge.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
@@ -97,7 +98,11 @@ export function computeIncrementalPlan(
 
   // Everything this topology writes or wrote: hooks whose command names one of
   // these paths belong to it; every other hook in settings.json is the user's.
-  const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
+  // A createOnly file is the user's own script (scaffold only fills the gap
+  // while it is missing), so a hook running it is not claimed by its path
+  // (P-1): the hooks the last scaffold wrote are known by their recorded keys.
+  const userScripts = new Set(generatedFiles.filter((f) => f.createOnly).map((f) => f.path.replace(/^\.\//, "")));
+  const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})].filter((p) => !userScripts.has(p.replace(/^\.\//, "")));
 
   // Process each generated file
   for (const file of generatedFiles) {
@@ -165,7 +170,7 @@ export function computeIncrementalPlan(
         }
       }
       const merged = isSettings
-        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
+        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths, manifest?.files[file.path]?.hookKeys ?? [])
         : deepMergeJson(existingContent, file.content);
       if (merged === existingContent) {
         actions.push({ type: "unchanged", path: file.path });
@@ -406,6 +411,21 @@ export function executeActions(
  * an unpruned leftover stays tracked, so a later --prune can still remove it).
  * A pre-existing file scaffold did not write is never claimed.
  */
+/**
+ * Records, on each generated settings file's manifest entry, the hook groups
+ * this scaffold generated (P-1), so the next run claims exactly those.
+ */
+export function recordHookKeys(files: Record<string, ManifestEntry>, generated: GeneratedFile[]): void {
+  for (const file of generated) {
+    if (!/(^|\/)settings\.json$/.test(file.path) && file.path !== ".codex/hooks.json") continue;
+    const entry = files[file.path];
+    if (!entry) continue;
+    const keys = hookGroupKeys(file.content);
+    const { hookKeys: _old, ...rest } = entry;
+    files[file.path] = keys.length > 0 ? { ...rest, hookKeys: keys } : rest;
+  }
+}
+
 export function nextManifestFiles(
   basePath: string,
   actions: FileAction[],
