@@ -10,7 +10,26 @@
  * @module
  */
 
-import { isProjectPath } from "../parser/run.js";
+import { isProjectPath, isShellCommand, proseInRun, runParts } from "../parser/run.js";
+
+/** What import says for a hook whose command 0.11.3 would compile to a stub (ruled text). */
+export const UNFAITHFUL =
+  "this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script";
+
+/**
+ * Whether scaffold (0.11.2's resolution, which 0.11.3 keeps) would compile
+ * this imported `run:` to a stub of the topology's own: its script word is
+ * neither a builtin run as written, nor a path to the user's file, so it
+ * becomes .claude/skills/<t>/scripts/<word>, a stub that exits 1. The source
+ * harness ran a real program there: `python3 -u x.py` (a stub named python3),
+ * `bash -c ...`, `bun run x.ts` (a stub named run), `prettier --write .`,
+ * `scripts/x.sh` (the project's file, not the skill's). Prose is V96's.
+ */
+export function compilesToStub(run: string): boolean {
+  if (!run.trim() || isShellCommand(run) || proseInRun(run)) return false;
+  const { script } = runParts(run);
+  return !!script && !script.startsWith("/") && !isProjectPath(script);
+}
 
 /** Words that run the script named after them. */
 const INTERPRETER = /^(?:python[0-9.]*|bash|sh|zsh|node|bun|deno|ruby|perl|tsx)$/;

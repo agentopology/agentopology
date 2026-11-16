@@ -1428,11 +1428,17 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.log(`  ${c.yellow(`Parse error in generated file: ${(err as Error).message}`)}`);
     errorCount = 1;
   }
+  // B: a hook scaffold would compile to a stub is an import error (the .at is written).
+  const unfaithful = flow?.errors ?? [];
+  for (const e of unfaithful) console.log(`  ${c.red("ERROR")} ${e.message}`);
   console.log("");
   if (errorCount > 0) {
     console.error(c.red(`import: the .at it wrote has ${errorCount} validation error(s); fix them, or run validate ${outFile} for details`));
-    process.exit(2);
   }
+  if (unfaithful.length > 0) {
+    console.error(c.red(`import: ${unfaithful.length} hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts`));
+  }
+  if (errorCount > 0 || unfaithful.length > 0) process.exit(2);
 }
 
 /** Targets removed in 0.10.0, named so the error says so instead of "unknown". */
