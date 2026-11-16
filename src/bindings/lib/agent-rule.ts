@@ -216,6 +216,7 @@ const PROG = [
   "        elif (SHELLS | index([$t])) != null then doubt(\"a shell runs its arguments or input as commands\")",
   "        elif ($t | test(\"^(python[0-9.]*|pypy[0-9.]*|perl[0-9.]*|ruby|node|nodejs|php|deno|bun|osascript|lua|Rscript)$\")) and ($ws[1:] | any(.t | test(\"^(-c|-e|-E|--eval|-r|-p|--run|-x)$|^-[a-zA-Z]*[ce]$\"))) then doubt(\"an interpreter is given code to run\")",
   "        elif $t == \"find\" and ($ws[1:] | any(.t == \"-exec\" or .t == \"-execdir\" or .t == \"-ok\" or .t == \"-okdir\")) then doubt(\"find runs another command\")",
+  "        elif ($ws | any(.t | test(\"\\\\[[^\\\\]]*(\\\\$\\\\(|`)\"))) then doubt(\"a word holds an array subscript with a substitution, which bash can evaluate\")",
   "        elif ($ws | map(.t) | join(\" \") | gsub(\"[\\u0000-\\u001f]\"; \" \") | test($re)) then hit(\"the command matches\")",
   "        elif $star and ($ws | any(plain(.) | not)) then doubt(\"an argument holds an expansion that could make it match\")",
   "        elif [range(1; $ws | length) | select((plain($ws[.]) | not) and ([range(0; [., ($lit | length)] | min)] | all(. as $j | $ws[$j].t == $lit[$j])))] | length > 0 then doubt(\"an argument holds an expansion that could make it match\")",
