@@ -28,6 +28,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
+/**
+ * guard --check prints the Claude Code version installed on the machine that runs it
+ * ("installed 2.1.325: unverified"). That is the host's version, not agentopology's behavior,
+ * so this one token is compared as "installed <X>: unverified" on both sides. Nothing else changes.
+ */
+const INSTALLED = /installed \d+\.\d+\.\d+: unverified/g;
+const hostless = (s: string): string => s.replace(INSTALLED, "installed <X>: unverified");
 const frozen = JSON.parse(fs.readFileSync(join(here, "differential/merge-0112.json"), "utf-8")) as { sequences: Array<{ name: string; steps: Step[] }> };
 const rtImport = new Map(
   (JSON.parse(fs.readFileSync(join(here, "differential/rt-import-0113.json"), "utf-8")) as { rows: Array<{ name: string; import: { code: number | null; output: string } }> })
@@ -77,7 +84,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         }
         if (w.code !== step.code) diffs.push(`${at}: exit ${w.code} -> ${step.code}`);
         if (w.settings !== step.settings) diffs.push(`${at}: settings.json differs\n--- 0.11.2\n${w.settings}\n--- now\n${step.settings}`);
-        if (w.output !== step.output) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
+        if (hostless(w.output) !== hostless(step.output)) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
       });
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
