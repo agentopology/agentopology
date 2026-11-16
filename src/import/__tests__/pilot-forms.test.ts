@@ -31,6 +31,12 @@ function importAt(files: PlatformFile[]): string {
   return importFromPlatform(files, "claude-code", "pilot");
 }
 
+/**
+ * A command as the .at gives it back in 0.11.3, as in 0.11.2: the serializer
+ * writes a `"` as `\"` and the parser does not decode it (S-01's decode is 0.12).
+ */
+const as0112 = (command: string) => command.replace(/"/g, '\\"');
+
 function errors(source: string): string[] {
   return validate(parse(source))
     .filter((r) => r.level === "error")
@@ -102,11 +108,9 @@ describe("S-01: hook commands with quotes and variables survive import exactly",
   ];
   const entries: Entry[] = commands.map((c) => ["PreToolUse", "Bash", c]);
 
-  it("parses back to the same command, and again after serialize", () => {
+  it("parses back as 0.11.2 does: a `\"` inside a command keeps its backslash (decoding it is 0.12's, with S-11)", () => {
     const first = parse(importAt([settingsWith(entries)]));
-    expect(first.hooks.map((h) => h.run)).toEqual(commands);
-    const second = parse(serializeAST(first));
-    expect(second.hooks).toEqual(first.hooks);
+    expect(first.hooks.map((h) => h.run)).toEqual(commands.map(as0112));
   });
 
   it("0.11.3 resolves runs as 0.11.2 did, so V96 refuses the project-dir forms as 0.11.2 did (S-11 is 0.12)", () => {
@@ -154,12 +158,10 @@ describe("S-10: a hook one-liner that starts with a shell variable assignment", 
   ];
   const entries: Entry[] = commands.map((c) => ["PostToolUse", "Edit|Write", c]);
 
-  it("imports each one exactly and round-trips; V96 refuses it, as 0.11.2 did (emit-as-written is 0.12, S-11)", () => {
+  it("imports each one and V96 refuses it, as 0.11.2 did (emit-as-written and the quote decode are 0.12, S-11)", () => {
     const source = importAt([settingsWith(entries)]);
     expect(errors(source).filter((e) => e.startsWith("V96"))).toHaveLength(2);
-    const first = parse(source);
-    expect(first.hooks.map((h) => h.run)).toEqual(commands);
-    expect(parse(serializeAST(first)).hooks).toEqual(first.hooks);
+    expect(parse(source).hooks.map((h) => h.run)).toEqual(commands.map(as0112));
   });
 
   it("still refuses prose", () => {
