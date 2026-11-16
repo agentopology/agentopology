@@ -24,7 +24,7 @@ import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent, otherManifests } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles, sameManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { undeclaredRuleNotice, recordNamedRules, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
 
@@ -192,8 +192,8 @@ export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: st
   // F7: the manifest first, owning only what it owns before and after; if it
   // cannot be written this throws and nothing else is written.
   const interim = interimManifestFiles(previous, withOwnership);
-  // Only when it changes the manifest: a rerun that does nothing writes nothing (N41).
-  if (interim && !sameManifestFiles({ ...(previous?.files ?? {}), ...interim }, previous?.files ?? {})) {
+  // Only when this run changes what is owned: a rerun that does nothing writes nothing (N41).
+  if (interim) {
     writeManifest(root, target, {
       source,
       sourceHash: previous?.sourceHash ?? hashContent(sourceText),

@@ -48,7 +48,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles, sameManifestFiles } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, interimManifestFiles, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH, undeclaredRuleNotice, recordNamedRules, removedRuleLines, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
@@ -757,7 +757,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     // F7: the manifest goes first, owning only what it owns before and after
     // this run; if it cannot be written, nothing is.
     const interim = interimManifestFiles(manifest, actions);
-    if (interim && !sameManifestFiles(interim, manifest?.files ?? null)) {
+    if (interim) {
       try {
         writeManifest(basePath, targetName, {
           source: path.basename(filePath),

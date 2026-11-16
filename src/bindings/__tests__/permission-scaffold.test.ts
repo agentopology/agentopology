@@ -318,10 +318,10 @@ describe("condition C: the agent hook matches the rule itself and fails closed",
       expect(p.run({ tool_name: "Agent", tool_input: { model: "sonnet", prompt: "x" } }).status).toBe(0);
       expect(p.run({ tool_name: "Agent", tool_input: { prompt: "x" } }).status).toBe(0);
     });
-    it("a domain rule matches the host and its subdomains", () => {
+    it("a domain rule matches that host only (R12: \"`WebFetch(domain:example.com)` matches requests to `example.com` only\")", () => {
       const d = rig("deny", "WebFetch(domain:example.com)");
       expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://example.com/a" } }).status).toBe(2);
-      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://docs.example.com/a" } }).status).toBe(2);
+      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://docs.example.com/a" } }).status).toBe(0);
       expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://other.org/" } }).status).toBe(0);
       expect(d.run({ tool_name: "WebFetch", tool_input: { url: "not a url" } }).status).toBe(2);
     });

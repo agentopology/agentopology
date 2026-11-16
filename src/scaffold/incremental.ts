@@ -580,16 +580,6 @@ export function nextManifestFiles(
   return files;
 }
 
-/** Whether two manifest file maps say the same, whatever their key order. */
-export function sameManifestFiles(a: unknown, b: unknown): boolean {
-  const canon = (v: unknown): unknown =>
-    Array.isArray(v) ? v.map(canon)
-      : v !== null && typeof v === "object"
-        ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]))
-        : v;
-  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
-}
-
 /**
  * F7: the manifest files to write BEFORE settings.json: the previous ones,
  * with the settings.json entry owning only what it owns both before and after
@@ -598,6 +588,17 @@ export function sameManifestFiles(a: unknown, b: unknown): boolean {
 export function interimManifestFiles(previous: ScaffoldManifest | null, actions: FileAction[]): Record<string, ManifestEntry> | null {
   const action = actions.find((a) => a.path === SETTINGS_PATH && "rules" in a && a.rules);
   if (!action || !("rules" in action) || !action.rules) return null;
+  // Needed when this run writes settings.json and changes what is owned (a
+  // removal, a replacement, a new claim): then the manifest goes first, and if
+  // it cannot be written nothing is. Otherwise no early write (N41: a rerun
+  // that changes nothing writes nothing).
+  if (action.type !== "create" && action.type !== "update") return null;
+  const before = ownedOf(entryOf(previous?.files?.[SETTINGS_PATH]));
+  const after = action.rules.owned;
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((r) => b.includes(r));
+  const changes = action.rules.removed.some((r) => r.kind !== "kept") ||
+    !(same(before.allow, after.allow) && same(before.ask, after.ask) && same(before.deny, after.deny) && before.defaultMode === after.defaultMode);
+  if (!changes) return null;
   const files: Record<string, ManifestEntry> = {};
   for (const [p, e] of Object.entries(previous?.files ?? {})) {
     const entry = entryOf(e);

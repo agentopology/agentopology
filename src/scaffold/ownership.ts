@@ -165,18 +165,18 @@ export function sharedEntry(previous: ManifestEntry, rules: RuleOwnership): Mani
 }
 
 /**
- * F7: the entry written BEFORE settings.json. It owns only what was owned
- * before and is still owned after, so a write that fails leaves the rule this
- * run would remove unowned (kept), and claims none it would add. It declares
- * the union of before and after (so a neighbour keeps more, never less).
+ * F7 / N1: the entry written BEFORE settings.json. It owns what was owned
+ * before (the rule this run removes included) and claims none it would add;
+ * only the entry written after a successful write clears or claims. It
+ * declares the union of before and after (so a neighbour keeps more, never less).
  */
 export function interimEntry(previous: ManifestEntry | undefined, rules: RuleOwnership): ManifestEntry | undefined {
   if (!previous) return undefined;
   if (rules.preserve) return sharedEntry(previous, rules);
-  const before = ownedOf(previous);
-  const owned: Owned = { allow: [], ask: [], deny: [] };
-  for (const l of RULE_LISTS) owned[l] = before[l].filter((r) => rules.owned[l].includes(r));
-  if (before.defaultMode !== undefined && before.defaultMode === rules.owned.defaultMode) owned.defaultMode = before.defaultMode;
+  // N1: keep owning what was owned (the rules this run removes included), so a
+  // write that fails leaves them owned and the next run removes them; claim
+  // nothing this run adds until the write succeeds.
+  const owned: Owned = ownedOf(previous);
   const entry: ManifestEntry = { ...previous };
   const prevDeclared = declaredOf(previous);
   const declared: Owned = prevDeclared
@@ -274,10 +274,11 @@ export function applyOwnership(
   const retained: string[] = [];
   const owned = EMPTY();
   let changed = false;
-  let held = false;
+  // N4: what a hold keeps, named in its line.
+  const heldItems: string[] = [];
   // F1 (ruling a): remove only from a file that round-trips byte for byte;
   // otherwise writing it would also rewrite values the user wrote.
-  const REWRITE = "removing it would rewrite other values in the file";
+  const REWRITE = "removing it would rewrite the file's formatting or other values";
   const clean = roundTrips(existingRaw);
 
   for (const list of RULE_LISTS) {
@@ -290,7 +291,7 @@ export function applyOwnership(
     for (const r of prev.filter((x) => !declared[list].includes(x) && now.includes(x))) {
       const item = `${list} ${r}`;
       const by = others.keptBy.get(item);
-      if (others.heldBy !== null) held = true;
+      if (others.heldBy !== null) heldItems.push(`${list} ${JSON.stringify(r)}`);
       else if (by !== undefined) removed.push({ kind: "kept", list, rule: r, by });
       else if (!clean) removed.push({ kind: "kept", list, rule: r, why: REWRITE });
       else {
@@ -325,7 +326,7 @@ export function applyOwnership(
     } else {
       const by = others.keptBy.get(`defaultMode ${prevMode}`);
       if (others.heldBy !== null || by !== undefined || !clean) {
-        if (others.heldBy !== null) held = true;
+        if (others.heldBy !== null) heldItems.push(`defaultMode ${JSON.stringify(prevMode)}`);
         else if (by !== undefined) removed.push({ kind: "kept", list: "defaultMode", rule: prevMode, by });
         else removed.push({ kind: "kept", list: "defaultMode", rule: prevMode, why: REWRITE });
         owned.defaultMode = prevMode;
@@ -344,9 +345,10 @@ export function applyOwnership(
     owned.defaultMode = decMode; // added by this run
   }
 
-  const notes = held && others.heldBy !== null ? [others.heldBy] : [];
+  const notes = heldItems.length > 0 && others.heldBy !== null ? [`${others.heldBy}. Held: ${heldItems.join(", ")}`] : [];
   // P2-2: the user's own defaultMode differs from the .at's: kept, and said once per run.
-  if (exMode !== undefined && decMode !== undefined && exMode !== decMode && owned.defaultMode !== exMode) {
+  // N1: not when the value was scaffold's own (it is replaced, and that is said).
+  if (exMode !== undefined && decMode !== undefined && exMode !== decMode && prevMode !== exMode && owned.defaultMode !== exMode) {
     notes.push(`.claude/settings.json defaultMode ${JSON.stringify(exMode)}: kept, yours; the .at says ${JSON.stringify(decMode)}`);
   }
   if (!changed) return { content: mergedRaw, owned, declared, removed, retained, notes };

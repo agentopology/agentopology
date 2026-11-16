@@ -93,6 +93,8 @@ export function parsePermissionRule(raw: string): PermissionRule {
   const bad = (why: string): PermissionRule => ({ raw, tool: raw, form: "other", problems: [...problems, why] });
 
   if (raw.trim() === "") return bad("the rule is empty");
+  // R13: a newline or a control character changes what a hook or a settings file reads.
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return bad("the rule holds a newline or a control character");
   if (raw !== raw.trim()) return bad("the rule has leading or trailing spaces");
 
   if (raw.startsWith("mcp.")) {

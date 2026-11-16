@@ -28,7 +28,7 @@ import type {
   StoreNode,
 } from "../parser/ast.js";
 import { BindingRefusal, deduplicateFiles } from "./types.js";
-import { matchesWholeTool, parsePermissionRule } from "../parser/permission-rule.js";
+import { parsePermissionRule } from "../parser/permission-rule.js";
 import { agentRuleScript, ruleCheck } from "./lib/agent-rule.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
@@ -163,15 +163,14 @@ function agentRuleHooks(agent: AgentNode, topology: string): Array<{ matcher: st
       const matcher = rule.tool.includes("*")
         ? `^${rule.tool.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`
         : rule.tool;
-      // `if` stays, but the script matches the rule itself (condition C).
-      const filter = rule.specifier !== undefined && !matchesWholeTool(rule) ? { if: `${rule.tool}(${rule.specifier})` } : {};
+      // R6: no `if:` (the docs call it best-effort); the script decides, the matcher stays.
       const check = ruleCheck(rule);
       const args = check.kind === "none" ? [check.reason!] : check.args;
       const command = [`bash ${skillScriptPath(topology, AGENT_RULE_SCRIPT)}`, list, agent.id, raw, check.kind, ...args]
         .map((w, i) => (i === 0 ? w : shellWord(w)))
         .join(" ");
       // A hook that cannot start blocks the call (both: a deny must not pass, an ask must not go unasked).
-      out.push({ matcher, handler: { type: "command", command, ...filter, onFailure: "block" } });
+      out.push({ matcher, handler: { type: "command", command, onFailure: "block" } });
     }
   }
   return out;
@@ -189,7 +188,9 @@ function hasAgentRules(ast: TopologyAST): boolean {
 const AGENT_RULE_TRUST_NOTE =
   `Claude Code's permissions docs list "Frontmatter hooks in a project subagent" as "Not used" until you trust the folder, ` +
   `and under \`claude -p\` or the SDK in a folder never trusted; the subagents docs: "Until you trust the folder, the subagent still runs, ` +
-  `but Claude Code skips its frontmatter hooks". A rule that must always hold belongs in settings { deny: [...] }.`;
+  `but Claude Code skips its frontmatter hooks". ` +
+  `An agent hook is a guardrail, not a security boundary: the agent can edit the files that hold it. For a hard deny, use settings { deny }. ` +
+  `The hooks docs: "use the permission system rather than a hook to enforce a hard allow or deny".`;
 
 /**
  * Refuse what Claude Code cannot hold as written: an agent `allow` (no rule
@@ -223,8 +224,8 @@ function warnRuleLimits(ast: TopologyAST): void {
   if (ruled.length > 0) {
     console.warn(`[claude-code] Agent rules (${ruled.map((a) => a.id).join(", ")}) are frontmatter PreToolUse hooks. ${AGENT_RULE_TRUST_NOTE}`);
   }
-  // S-51: the hook's matcher is Edit, and the docs do not say whether an
-  // `if: "Edit(...)"` matches a Write call, so the other edit tools pass.
+  // S-51: the hook's matcher is Edit, so a Write, MultiEdit or NotebookEdit
+  // call never reaches it (the matcher is not widened).
   for (const a of ruled) {
     const edits = (a.deny ?? []).filter((r) => parsePermissionRule(r).tool === "Edit");
     if (edits.length === 0) continue;
