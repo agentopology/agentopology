@@ -48,8 +48,7 @@ import type {
 /** Quote a string if it contains spaces, special chars, or is empty. */
 function q(s: string): string {
   if (!s) return '""';
-  // A backslash is escaped too, so unquote gives back exactly `s` (S-01).
-  if (/[\s#:{}[\],|]/.test(s) || s.includes('"')) return `"${s.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+  if (/[\s#:{}[\],|]/.test(s) || s.includes('"')) return `"${s.replace(/"/g, '\\"')}"`;
   return s;
 }
 

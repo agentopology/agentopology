@@ -105,7 +105,12 @@ ${c.bold("Usage:")}
   agentopology visualize-brain <vault-folder> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
-  agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
+  agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>] [--force]
+                       Write <name>.at into --output (default: cwd). Refuses, exit 1, when
+                       that .at exists; --force overwrites it (through a symlink, too).
+                       Then validates it: exit 0 when it has no errors (warnings allowed),
+                       exit 2 when it has errors (the file is written), exit 1 when
+                       nothing was written.
   agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and
@@ -153,12 +158,13 @@ ${c.bold("Options:")}
   --format <name>   Export format (markdown, mermaid, json, ascii, brief).
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
-  --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
+  --output, -o <dir> Output directory for generated files (scaffold, visualize, export, import).
   --no-open         visualize: write the page, do not open a browser.
   --no-check        visualize: do not read the project; every fact reads "not checked".
   --print-summary   visualize: print node counts and facts to stdout.
   --dry-run         Preview generated files without writing to disk.
-  --force           Overwrite files scaffold did not create or that were edited (never symlinks).
+  --force           scaffold: overwrite files scaffold did not create or that were edited (never symlinks).
+                    import: overwrite the .at that is already at the output path.
   --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
   --prune           Delete files that were previously scaffolded but are no longer generated (never .claude/settings.json).
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
@@ -1308,9 +1314,46 @@ function cmdInfo(filePath: string): void {
   }
 }
 
-function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string): void {
+function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string, force = false): void {
   const resolved = requireDir(dirPath);
   const name = topologyName ?? path.basename(resolved).replace(/^\./, "");
+
+  // The .at is the only file import writes. One already there may hold the
+  // user's edits, so it is replaced only with --force (S-67). lstat, so a
+  // link at that path counts as there even when it points nowhere. Checked
+  // first, so a refusal is the only line printed (F4); the write itself is an
+  // exclusive create, so of two imports racing for one path one writes (F3).
+  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
+  const outFile = path.join(outDir, `${name}.at`);
+  const refuse = (message: string): never => {
+    console.error(c.red(`Error: ${message} Nothing was written.`));
+    process.exit(1);
+  };
+  const exists = `${outFile} exists; pass --force to overwrite.`;
+  const isDir = `${outFile} is a directory, not a .at file.`;
+  const notDir = `--output ${outDir} is not a directory.`;
+  // J(3): a folder on the way that cannot be read, or the one import writes in
+  // that cannot be written (EACCES, EPERM), is one line, not a stack.
+  const noAccess = `cannot write to --output ${outDir}: permission denied.`;
+  const denied = (err: unknown) => ["EACCES", "EPERM"].includes((err as NodeJS.ErrnoException).code ?? "");
+  try {
+    for (let dir = outDir; ; dir = path.dirname(dir)) {
+      const st = fs.statSync(dir, { throwIfNoEntry: false });
+      if (st) {
+        if (!st.isDirectory()) refuse(notDir);
+        fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK);
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+    const atStat = fs.lstatSync(outFile, { throwIfNoEntry: false });
+    if (atStat?.isDirectory() || (atStat?.isSymbolicLink() && fs.statSync(outFile, { throwIfNoEntry: false })?.isDirectory())) refuse(isDir);
+    if (atStat && !force) refuse(exists);
+  } catch (err) {
+    if (denied(err)) refuse(noAccess);
+    if ((err as NodeJS.ErrnoException).code === "ENOTDIR") refuse(notDir);
+    throw err;
+  }
 
   // First, before any read: a run that fails must still have said something.
   console.log(
@@ -1342,12 +1385,19 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     process.exit(1);
   }
 
-  // Determine output path
-  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
-  const outFile = path.join(outDir, `${name}.at`);
-
-  fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(outFile, atSource, "utf-8");
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    // --force writes through a link at outFile, as 0.11.2 did.
+    fs.writeFileSync(outFile, atSource, { encoding: "utf-8", flag: force ? "w" : "wx" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" && !force) refuse(exists);
+    if (code === "EISDIR") refuse(isDir);
+    if (code === "ENOTDIR" || code === "EEXIST") refuse(notDir);
+    // A read-only .at with --force is the file's own permission, not the folder's.
+    if (denied(err)) refuse(fs.existsSync(outFile) ? `cannot write ${outFile}: permission denied.` : noAccess);
+    refuse(`cannot write ${outFile}: ${(err as Error).message}.`);
+  }
   console.log(c.green(`  Written: ${outFile}`));
   if (flow) {
     console.log("");
@@ -1358,24 +1408,44 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.log(`  ${c.dim(`Not read: ${nested} (a .claude folder below the root; run import there for it)`)}`);
   }
 
-  // Validate the generated file
+  // Validate the written file as `validate <outFile>` does (same parse, same
+  // rules, imports resolved from the file), so the counts match. The file is
+  // written either way; errors exit 2, not 1, because this is not a refusal
+  // (S-68). Warnings alone exit 0.
+  let errorCount: number;
+  // B: a hook scaffold would not compile faithfully is an import error (the .at is written).
+  const unfaithful = flow?.errors ?? [];
   try {
-    const ast = parse(atSource);
-    const results = validate(ast);
-    const errors = results.filter((r) => r.level === "error");
-    const warnings = results.filter((r) => r.level === "warning");
-    if (errors.length > 0 || warnings.length > 0) {
+    const checked = validateResult(parseAt(atSource, outFile), outFile);
+    errorCount = checked.errors;
+    if (checked.errors > 0 || checked.warnings > 0) {
       console.log("");
-      console.log(`  ${c.yellow(`${errors.length} error(s), ${warnings.length} warning(s) in generated file.`)}`);
+      console.log(`  ${c.yellow(`${checked.errors} error(s), ${checked.warnings} warning(s) in generated file.`)}`);
       console.log(`  ${c.dim("Run")} agentopology validate ${outFile} ${c.dim("for details.")}`);
+    } else if (unfaithful.length > 0) {
+      // P2-1: one verdict; never "passes all validation rules" with a flagged hook.
+      console.log(`  ${c.yellow(`Generated .at passes validation, but ${unfaithful.length} hook(s) can't be compiled faithfully (exit 2)`)}`);
     } else {
       console.log(`  ${c.green("Generated file passes all validation rules.")}`);
     }
-  } catch {
-    // Validation is best-effort; don't fail the import
-    console.log(`  ${c.yellow("Note: generated file may need manual review.")}`);
+  } catch (err) {
+    // validate reports a file that does not parse as one error, and so does import.
+    console.log(`  ${c.yellow(`Parse error in generated file: ${(err as Error).message}`)}`);
+    errorCount = 1;
+  }
+  // P2-2: each flagged hook, then its command exactly as the harness wrote it.
+  for (const e of unfaithful) {
+    console.log(`  ${c.red("ERROR")} ${e.message}`);
+    console.log(`    ${e.command}`);
   }
   console.log("");
+  if (errorCount > 0) {
+    console.error(c.red(`import: the .at it wrote has ${errorCount} validation error(s); fix them, or run validate ${outFile} for details`));
+  }
+  if (unfaithful.length > 0) {
+    console.error(c.red(`import: ${unfaithful.length} hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts`));
+  }
+  if (errorCount > 0 || unfaithful.length > 0) process.exit(2);
 }
 
 /** Targets removed in 0.10.0, named so the error says so instead of "unknown". */
@@ -1711,7 +1781,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdImport(args.target, args.dir, args.name, args.output);
+      cmdImport(args.target, args.dir, args.name, args.output, args.force);
       break;
 
     case "targets":

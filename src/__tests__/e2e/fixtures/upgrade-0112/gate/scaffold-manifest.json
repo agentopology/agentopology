@@ -1,0 +1,56 @@
+{
+  "source": "t.at",
+  "sourceHash": "a217816e04eb9278c3c0f2679eb8bc95b5634a4c80364c2c6197a8a46e36e48e",
+  "target": "claude-code",
+  "generatedAt": "2026-11-16T14:11:03.536Z",
+  "files": {
+    ".claude/skills/simple-pipeline/scripts/action-intake.sh": {
+      "hash": "3cc5b69534113a95f70f83f65576e5991e32888fcb4823d00c74cd80a5cbe778",
+      "category": "script"
+    },
+    ".claude/skills/simple-pipeline/scripts/action-done.sh": {
+      "hash": "65e95a813d84914f25950b218763d04bb268446b1ee9e57a1717dd958583e0dc",
+      "category": "script"
+    },
+    ".claude/agents/researcher/AGENT.md": {
+      "hash": "ec4b15b5386fa25bf1c7233e193def1e24be578720a48670f549618931cb7cee",
+      "category": "agent"
+    },
+    ".claude/agents/writer/AGENT.md": {
+      "hash": "9992b62032c13bb3223ab3e08fffb3cfb76df50c8674da00a5b18e6326521c34",
+      "category": "agent"
+    },
+    ".claude/agents/reviewer/AGENT.md": {
+      "hash": "c60ed4ab7e93a7d8e9dace515fbcda2ab1f9620fc9999ed1a6ac95e48e7881cd",
+      "category": "agent"
+    },
+    ".claude/skills/simple-pipeline/SKILL.md": {
+      "hash": "4e4dad4491fdfaa66ca82f25316dc9df3d521eedf8476c86dd76bab3c10db55c",
+      "category": "agent"
+    },
+    ".claude/skills/simple-pipeline/runs/.gitkeep": {
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "category": "machine"
+    },
+    ".claude/skills/simple-pipeline/scripts/check-quality.sh": {
+      "hash": "7ca09033b64e14737ca9bbeee718f406868ddde73349d9f5264469d177053fc8",
+      "category": "script"
+    },
+    ".claude/skills/simple-pipeline/scripts/gate-quality-check.sh": {
+      "hash": "26acbfd242d071852e41a2ffe04562db972229b0689d79784372cf74407a8d39",
+      "category": "script"
+    },
+    ".claude/commands/create.md": {
+      "hash": "031bf594882f95fbc1df6d817e70187066e843528039d228e8929d33a31f4e4a",
+      "category": "machine"
+    },
+    ".claude/settings.json": {
+      "hash": "41e0badc2eee62b938a5750d34550407f1fa62498169ed585d1dd70a3988e8e3",
+      "category": "shared-config"
+    },
+    ".claude/rules/simple-pipeline.md": {
+      "hash": "0a7369d8ecb90cf36ce0e28ba319a9542ac2ebae1e09223caa0a76c2324db070",
+      "category": "machine"
+    }
+  }
+}

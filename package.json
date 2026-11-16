@@ -1,6 +1,6 @@
 {
   "name": "agentopology",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "description": "The declarative language for multi-agent systems. Write once, scaffold for any platform.",
   "author": "Nadav Naveh",
   "license": "Apache-2.0",
@@ -49,7 +49,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "test": "vitest run",
     "drift": "npm run build && node scripts/claude-code-drift.mjs",
     "prepublishOnly": "npm run build"

@@ -12,5 +12,8 @@ export default defineConfig({
     // and their afterEach removes a temp project, which a loaded machine can
     // slow past the 10 s default.
     hookTimeout: 30_000,
+    // T1: the differential tests keep a worker busy for minutes; give a worker
+    // that long to tear down before vitest gives up on it (default 10 s).
+    teardownTimeout: 120_000,
   },
 });

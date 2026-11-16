@@ -31,6 +31,12 @@ function importAt(files: PlatformFile[]): string {
   return importFromPlatform(files, "claude-code", "pilot");
 }
 
+/**
+ * A command as the .at gives it back in 0.11.3, as in 0.11.2: the serializer
+ * writes a `"` as `\"` and the parser does not decode it (S-01's decode is 0.12).
+ */
+const as0112 = (command: string) => command.replace(/"/g, '\\"');
+
 function errors(source: string): string[] {
   return validate(parse(source))
     .filter((r) => r.level === "error")
@@ -102,15 +108,17 @@ describe("S-01: hook commands with quotes and variables survive import exactly",
   ];
   const entries: Entry[] = commands.map((c) => ["PreToolUse", "Bash", c]);
 
-  it("parses back to the same command, and again after serialize", () => {
+  it("parses back as 0.11.2 does: a `\"` inside a command keeps its backslash (decoding it is 0.12's, with S-11)", () => {
     const first = parse(importAt([settingsWith(entries)]));
-    expect(first.hooks.map((h) => h.run)).toEqual(commands);
-    const second = parse(serializeAST(first));
-    expect(second.hooks).toEqual(first.hooks);
+    expect(first.hooks.map((h) => h.run)).toEqual(commands.map(as0112));
   });
 
-  it("validates with 0 errors: a quoted project-dir path is a path (V96)", () => {
-    expect(errors(importAt([settingsWith(entries)]))).toEqual([]);
+  it("0.11.3 resolves runs as 0.11.2 did, so V96 refuses the project-dir forms as 0.11.2 did (S-11 is 0.12)", () => {
+    // The import keeps each command exactly (above); a binding that compiles a
+    // quoted project-dir path is 0.12's, with S-11. validate says so, and
+    // `import` exits 2, instead of scaffold writing a broken command.
+    const refused = errors(importAt([settingsWith(entries)])).filter((e) => e.startsWith("V96"));
+    expect(refused).toHaveLength(6);
   });
 });
 
@@ -150,19 +158,10 @@ describe("S-10: a hook one-liner that starts with a shell variable assignment", 
   ];
   const entries: Entry[] = commands.map((c) => ["PostToolUse", "Edit|Write", c]);
 
-  it("validates with 0 errors (V96) and round-trips", () => {
+  it("imports each one and V96 refuses it, as 0.11.2 did (emit-as-written and the quote decode are 0.12, S-11)", () => {
     const source = importAt([settingsWith(entries)]);
-    expect(errors(source)).toEqual([]);
-    const first = parse(source);
-    expect(first.hooks.map((h) => h.run)).toEqual(commands);
-    expect(parse(serializeAST(first)).hooks).toEqual(first.hooks);
-  });
-
-  it("scaffolds as written, not as a script stub", () => {
-    for (const c of commands) {
-      expect(isShellCommand(c)).toBe(true);
-      expect(hookCommand(c, "pilot")).toBe(c);
-    }
+    expect(errors(source).filter((e) => e.startsWith("V96"))).toHaveLength(2);
+    expect(parse(source).hooks.map((h) => h.run)).toEqual(commands.map(as0112));
   });
 
   it("still refuses prose", () => {
@@ -170,28 +169,8 @@ describe("S-10: a hook one-liner that starts with a shell variable assignment", 
   });
 });
 
-describe("S-11: a hook that is plain shell scaffolds as written", () => {
-  const scaffoldOf = (ast: ReturnType<typeof parse>) => claudeCodeBinding.scaffold(ast);
-  const settingsCommands = (ast: ReturnType<typeof parse>): string[] => {
-    const file = scaffoldOf(ast).find((f) => f.path === ".claude/settings.json")!;
-    const hooks = JSON.parse(file.content).hooks as Record<string, Array<{ hooks: Array<{ command?: string }> }>>;
-    return Object.values(hooks).flat().flatMap((h) => h.hooks.map((x) => x.command ?? "")).filter((c) => !/gate-|before-/.test(c));
-  };
-
-  // (a) a shell keyword or a package runner, (b) a shell operator outside quotes
-  const verbatim: Array<[form: string, run: string]> = [
-    ["pipeline", "jq -r '.tool_input.file_path' | { read -r f; echo \"$f\"; }"],
-    ["or-chain", "lint-tool update --quiet 2>/dev/null || true"],
-    ["runner", "uv run --no-sync session-start"],
-    ["runner", "npx block-commit@1.0.0"],
-    ["for-loop", "for f in $CLAUDE_FILE_PATHS; do echo \"$f\"; done"],
-    ["cd &&", "cd ${CLAUDE_PROJECT_DIR:-.} && npm test"],
-  ];
-
-  it.each(verbatim)("%s: hookCommand keeps the run as written", (_form, run) => {
-    expect(isShellCommand(run)).toBe(true);
-    expect(hookCommand(run, "pilot")).toBe(run);
-  });
+describe("S-11: emit-as-written is not in 0.11.3", () => {
+  it.todo("S-11 (0.12): a run holding a shell operator, a keyword or a package runner scaffolds as written; 0.11.3 resolves it as 0.11.2 did (differential-0112.test.ts)");
 
   it("a script run is still a script, and an operator inside quotes is data", () => {
     expect(isShellCommand("scripts/check.sh")).toBe(false);
@@ -200,23 +179,8 @@ describe("S-11: a hook that is plain shell scaffolds as written", () => {
     expect(isShellCommand("python3 scripts/x.py --mode 'a;b'")).toBe(false);
   });
 
-  it("import then scaffold: settings.json commands equal the originals, no stubs", () => {
-    const ast = parse(importAt([settingsWith(verbatim.map(([, run]) => ["PreToolUse", "Bash", run]))]));
-    expect(settingsCommands(ast).sort()).toEqual(verbatim.map(([, run]) => run).sort());
-    expect(scaffoldOf(ast).filter((f) => /\/scripts\/(jq|lint-tool|uv|npx|for|cd)$/.test(f.path))).toEqual([]);
-  });
-
-  it("(c) import writes `command <run>` for a bare PATH tool, and scaffold keeps it", () => {
+  it("import writes a bare PATH tool exactly as settings.json has it (no `command` prefix in 0.11.3)", () => {
     const ast = parse(importAt([settingsWith([["Stop", undefined, "chunk validate"]])]));
-    expect(ast.hooks[0].run).toBe("command chunk validate");
-    expect(settingsCommands(ast)).toEqual(["command chunk validate"]);
-    expect(scaffoldOf(ast).some((f) => f.path.endsWith("/scripts/chunk") || f.path.endsWith("/scripts/command"))).toBe(false);
-    expect(errors(importAt([settingsWith([["Stop", undefined, "chunk validate"]])]))).toEqual([]);
-  });
-
-  it("(c) a bare name that is a file in the project is left alone", () => {
-    const tool = { path: "tools/chunk", content: "#!/bin/sh\n" } as PlatformFile;
-    const ast = parse(importAt([settingsWith([["Stop", undefined, "chunk validate"]]), tool]));
     expect(ast.hooks[0].run).toBe("chunk validate");
   });
 });
@@ -227,12 +191,13 @@ describe("S-12: a hook running the user's script inside an authored skill folder
       path: ".claude/skills/auto/SKILL.md",
       content: "---\nname: auto\ndescription: Runs the release.\n---\n\nDo the release.\n",
     } as PlatformFile;
-    const run = 'python3 "$CLAUDE_PROJECT_DIR/.claude/skills/auto/references/guard.py" --strict';
+    // A run 0.11.2's resolution compiles (a project-relative path), so 0.11.3 does too.
+    const run = "python3 .claude/skills/auto/references/guard.py --strict";
     const ast = parse(importAt([settingsWith([["PreToolUse", "Edit|Write", run]]), skill]));
     const files = claudeCodeBinding.scaffold(ast);
     const settings = JSON.parse(files.find((f) => f.path === ".claude/settings.json")!.content);
     const commands = Object.values(settings.hooks ?? {}).flat().flatMap((h: any) => h.hooks.map((x: any) => x.command));
-    expect(commands).toContain(run);
+    expect(commands).toContain('python3 "$CLAUDE_PROJECT_DIR/.claude/skills/auto/references/guard.py" --strict');
     // the user's script is never written over: no stub inside their folder
     expect(files.some((f) => f.path.includes("skills/auto/references"))).toBe(false);
   });

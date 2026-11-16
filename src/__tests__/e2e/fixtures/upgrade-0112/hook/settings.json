@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/simple-pipeline/scripts/guard.sh\" 2>/dev/null"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "writer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/skills/simple-pipeline/scripts/gate-quality-check.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ]
+  }
+}
