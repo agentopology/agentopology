@@ -190,6 +190,7 @@ const AGENT_RULE_TRUST_NOTE =
   `and under \`claude -p\` or the SDK in a folder never trusted; the subagents docs: "Until you trust the folder, the subagent still runs, ` +
   `but Claude Code skips its frontmatter hooks". ` +
   `An agent hook is a guardrail, not a security boundary: the agent can edit the files that hold it. For a hard deny, use settings { deny }. ` +
+  `An agent deny or ask on Bash is refused: an agent hook can't parse bash safely. ` +
   `The hooks docs: "use the permission system rather than a hook to enforce a hard allow or deny".`;
 
 /**
@@ -207,6 +208,21 @@ function refuseUnholdableRules(ast: TopologyAST): void {
         `a subagent file has no rule field (its fields are "\`description\`, \`tools\`, \`disallowedTools\`, \`model\`, \`permissionMode\`, \`mcpServers\`, \`hooks\`, ..."), ` +
         `and a rule in settings "applies to the main conversation and to subagents". Move it to settings { allow: [...] } if every agent may have it, or remove it`,
     );
+  }
+  // Ruling (c): three attacks found that a hook re-implementing bash's
+  // tokenizer fails open (heredoc quotes, ANSI-C quotes, ${...#}). An agent
+  // deny or ask on Bash is refused; settings { deny } is the place for it.
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    const a = n as AgentNode;
+    for (const list of ["deny", "ask"] as const) {
+      for (const raw of a[list] ?? []) {
+        const rule = parsePermissionRule(raw);
+        if (rule.problems.length === 0 && rule.tool === "Bash") {
+          bad.push(`agent "${a.id}" ${list} ${JSON.stringify(raw)}: use settings { deny }: an agent hook can't parse bash safely`);
+        }
+      }
+    }
   }
   const mode = ast.settings?.defaultMode;
   if (mode === "auto" || mode === "bypassPermissions") {
