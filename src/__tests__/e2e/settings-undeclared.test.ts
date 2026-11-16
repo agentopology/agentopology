@@ -74,13 +74,21 @@ function named(out: { stdout: string; stderr: string }): string[] {
     .map((l) => l.trim())
     .filter((l) => l.includes("the .at does not declare it") || l.includes("declared in the .at:"));
 }
+/** Each rule is printed as a JSON string, so its text can never forge or erase a line. */
 const line = (list: string, rule: string) =>
-  `${SETTINGS} ${list} ${rule}: still in effect; the .at does not declare it — remove it if you didn't add it by hand`;
+  `${SETTINGS} ${list} ${JSON.stringify(rule)}: still in effect; the .at does not declare it — remove it if you didn't add it by hand`;
+/** `"<list> <rule>"` as the summary prints it. */
+const shownItem = (item: string) => {
+  const space = item.indexOf(" ");
+  return `${item.slice(0, space)} ${JSON.stringify(item.slice(space + 1))}`;
+};
 /** The one line printed on every other run while the set is not empty. */
 const summary = (...rules: string[]) => {
-  const shown = rules.slice(0, 5).join(", ") + (rules.length > 5 ? ` and ${rules.length - 5} more` : "");
+  const shown = rules.slice(0, 5).map(shownItem).join(", ") + (rules.length > 5 ? ` and ${rules.length - 5} more` : "");
   const n = rules.length;
-  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${shown}; declare them in the .at to keep them, or remove them`;
+  return n === 1
+    ? `1 rule in ${SETTINGS} isn't declared in the .at: ${shown}; declare it in the .at to keep it, or remove it`
+    : `${n} rules in ${SETTINGS} aren't declared in the .at: ${shown}; declare them in the .at to keep them, or remove them`;
 };
 
 /** User edits: add U to allow and D to deny, keeping every other byte's meaning. */
@@ -281,7 +289,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     expect(named(first)).toEqual(extra.map((r) => line("allow", r)));
     const again = scaffold("t.at");
     expect(named(again)).toEqual([summary(...extra.map((r) => `allow ${r}`))]);
-    expect(named(again)[0]).toContain("allow Bash(e) and 2 more;");
+    expect(named(again)[0]).toContain('allow "Bash(e)" and 2 more;');
     expect(named(again)[0]).not.toContain("Bash(f)");
   });
 
@@ -298,6 +306,163 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
       expect(err[0]).toMatch(/^Error: \.claude\/settings\.json is not valid JSON \(.+\)\. Nothing was written\.$/);
       expect(tree()).toBe(hash);
     });
+  }
+});
+
+/** What prune and --dry-run print for settings.json instead of deleting it. */
+const KEPT = `= ${SETTINGS} (kept: holds settings; delete it by hand if you want)`;
+const lines = (out: { stdout: string; stderr: string }) => (out.stdout + out.stderr).split("\n").map((l) => l.trim());
+/** Every file under root, by path. */
+const paths = () => tree().split("\n").map((l) => l.split(" ")[0]);
+/** Add a third agent c to a topology. */
+const withC = (text: string) =>
+  text.replace("  flow { a -> b }", '  agent c {\n    model: sonnet\n    description: "c"\n  }\n  flow { a -> b -> c }');
+
+describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () => {
+  it("[0.11.2-l] the topology this test drops to generates no settings.json (so 0.11.1 would plan a delete)", () => {
+    expect(claudeCodeBinding.scaffold(parse(topo("t", ""))).map((f) => f.path)).not.toContain(SETTINGS);
+  });
+
+  it("[0.11.2-l] (a) --prune keeps settings.json, says so, and still deletes the other leftovers", () => {
+    writeAt("t.at", withC(withAllow("t", [A, R])));
+    expect(scaffold("t.at").status).toBe(0);
+    const before = fs.readFileSync(at(SETTINGS), "utf8");
+    const files = paths();
+    writeAt("t.at", topo("t", ""));
+    const out = scaffold("t.at", "--prune");
+    expect(out.status, out.stderr).toBe(0);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
+    expect(lines(out)).toContain(KEPT);
+    expect(out.stdout).not.toContain(`- ${SETTINGS}`);
+    // Prune still removes the files of the dropped agent, and only those.
+    const gone = files.filter((f) => !fs.existsSync(at(f)));
+    expect(gone.length).toBeGreaterThan(0);
+    for (const f of gone) expect(f).toMatch(/(^|\/)c(\.md|\/)/);
+    expect(out.stdout).toContain(`, ${gone.length} deleted`);
+    // The file is still there, so its rules are named.
+    expect(named(out)).toEqual([line("allow", A), line("allow", R)]);
+    // A second prune keeps it too.
+    const again = scaffold("t.at", "--prune");
+    expect(lines(again)).toContain(KEPT);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
+  });
+
+  it("[0.11.2-l] (b) a settings.json that existed before the first scaffold is kept by --prune", () => {
+    fs.mkdirSync(at(".claude"), { recursive: true });
+    fs.writeFileSync(at(SETTINGS), JSON.stringify({ permissions: { allow: [U] }, env: { MINE: "1" } }, null, 2) + "\n");
+    writeAt("t.at", withAllow("t", [A]));
+    expect(scaffold("t.at").status).toBe(0);
+    const before = fs.readFileSync(at(SETTINGS), "utf8");
+    expect(JSON.parse(before).permissions.allow).toEqual(expect.arrayContaining([A, U]));
+    writeAt("t.at", topo("t", ""));
+    const out = scaffold("t.at", "--prune");
+    expect(out.status, out.stderr).toBe(0);
+    expect(lines(out)).toContain(KEPT);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
+    expect(JSON.parse(before).env.MINE).toBe("1");
+  });
+
+  it("[0.11.2-l] (c) two topologies in one directory: each --prune keeps the shared settings.json", () => {
+    writeAt("one.at", withAllow("one", [A, R]));
+    writeAt("two.at", withAllow("two", [X]));
+    expect(scaffold("one.at").status).toBe(0);
+    expect(scaffold("two.at").status).toBe(0);
+    const merged = fs.readFileSync(at(SETTINGS), "utf8");
+    expect(JSON.parse(merged).permissions.allow).toEqual([A, R, X]);
+    writeAt("two.at", topo("two", ""));
+    const two = scaffold("two.at", "--prune");
+    expect(two.status, two.stderr).toBe(0);
+    expect(lines(two)).toContain(KEPT);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(merged);
+    writeAt("one.at", topo("one", ""));
+    const one = scaffold("one.at", "--prune");
+    expect(one.status, one.stderr).toBe(0);
+    expect(lines(one)).toContain(KEPT);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(merged);
+  });
+
+  it("[0.11.2-l] (d) --dry-run, with and without --prune, says the same and writes nothing", () => {
+    writeAt("t.at", withAllow("t", [A, R]));
+    expect(scaffold("t.at").status).toBe(0);
+    writeAt("t.at", topo("t", ""));
+    const hash = tree();
+    for (const more of [["--dry-run"], ["--dry-run", "--prune"]]) {
+      const out = scaffold("t.at", ...more);
+      expect(out.status, out.stderr).toBe(0);
+      expect(lines(out)).toContain(KEPT);
+      expect(out.stdout).not.toContain(`- ${SETTINGS}`);
+    }
+    expect(tree()).toBe(hash);
+  });
+
+  it("[0.11.2-l] the library plan never deletes settings.json, and executeActions refuses to", () => {
+    writeAt("t.at", withAllow("t", [A, R]));
+    expect(scaffold("t.at").status).toBe(0);
+    const before = fs.readFileSync(at(SETTINGS), "utf8");
+    const manifest = readManifest(root, "claude-code", "t.at");
+    const actions = computeIncrementalPlan(root, "claude-code", claudeCodeBinding.scaffold(parse(topo("t", ""))), manifest);
+    expect(actions.find((a) => a.path === SETTINGS)?.type).toBe("kept");
+    const result = executeActions(root, [{ type: "delete", path: SETTINGS }], { prune: true, force: true });
+    expect(result.removed).toEqual([]);
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
+  });
+});
+
+describe("[0.11.2-m] rule text cannot forge or erase output lines", () => {
+  const FORGED = `${SETTINGS} allow "Read": forged`;
+  const NL = `Bash(x)\n${FORGED}`;
+  const ESC = "Bash(\u001b[2K\u001b[1Aerase)";
+
+  for (const [label, run] of [["scaffold", scaffold], ["guard --target claude-code", guard]] as const) {
+    it(`[0.11.2-m] ${label}: a rule with a newline or an escape sequence prints as one JSON string`, () => {
+      writeAt("t.at", withAllow("t", [R]));
+      expect(run("t.at").status).toBe(0);
+      addByHand([NL, ESC]);
+      const first = run("t.at");
+      const second = run("t.at");
+      for (const out of [first, second]) {
+        expect(out.status, out.stderr).toBe(0);
+        expect(out.stdout + out.stderr).not.toContain("\u001b");
+        expect(lines(out)).not.toContain(FORGED);
+      }
+      expect(named(first)).toEqual([
+        `${SETTINGS} allow "Bash(x)\\n${SETTINGS} allow \\"Read\\": forged": still in effect; the .at does not declare it — remove it if you didn't add it by hand`,
+        `${SETTINGS} allow "Bash(\\u001b[2K\\u001b[1Aerase)": still in effect; the .at does not declare it — remove it if you didn't add it by hand`,
+      ]);
+      expect(named(second)).toEqual([
+        `2 rules in ${SETTINGS} aren't declared in the .at: allow ${JSON.stringify(NL)}, allow ${JSON.stringify(ESC)}; declare them in the .at to keep them, or remove them`,
+      ]);
+    });
+  }
+});
+
+describe("[0.11.2-n] exactly one undeclared rule reads in the singular", () => {
+  it("[0.11.2-n] the summary says 1 rule … isn't … declare it … keep it, or remove it", () => {
+    writeAt("t.at", withAllow("t", [R]));
+    scaffold("t.at");
+    addByHand([U]);
+    expect(named(scaffold("t.at"))).toEqual([line("allow", U)]);
+    expect(named(scaffold("t.at"))).toEqual([
+      `1 rule in ${SETTINGS} isn't declared in the .at: allow "Bash(git status)"; declare it in the .at to keep it, or remove it`,
+    ]);
+  });
+});
+
+describe("[0.11.2-o] a settings.json whose root is not an object is a one-line error", () => {
+  for (const [raw, kind] of [["[]", "an array"], ['"x"', "a string"], ["3", "a number"], ["null", "null"]] as const) {
+    for (const [label, run] of [["scaffold", scaffold], ["guard --target claude-code", guard]] as const) {
+      it(`[0.11.2-o] ${label}: root ${raw} exits 1 and writes nothing`, () => {
+        writeAt("t.at", withAllow("t", [A, R]));
+        fs.mkdirSync(at(".claude"), { recursive: true });
+        fs.writeFileSync(at(SETTINGS), raw);
+        const hash = tree();
+        const out = run("t.at");
+        expect(out.status).toBe(1);
+        const err = out.stderr.trim().split("\n");
+        expect(err).toEqual([`Error: ${SETTINGS} is not a JSON object (its root is ${kind}). Nothing was written.`]);
+        expect(tree()).toBe(hash);
+      });
+    }
   }
 });
 
