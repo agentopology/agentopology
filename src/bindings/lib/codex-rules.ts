@@ -74,6 +74,22 @@ export function planCodexRules(ast: TopologyAST): { rules: CodexRule[]; problems
   return { rules: [...byPattern.values()], problems };
 }
 
+/** Where Codex says what an allow rule does (fetched 2026-11-15, line 65). */
+export const CODEX_ALLOW_DOC = {
+  url: "https://learn.chatgpt.com/docs/agent-configuration/rules.md",
+  line: 65,
+  text: "`allow`: Run the command outside the sandbox without prompting.",
+};
+
+/** The warning for one compiled allow rule: Codex runs a matching command outside the sandbox. */
+export function allowRuleWarning(rule: CodexRule): string {
+  return (
+    `settings allow "${rule.entry}" compiles to a Codex rule with decision = "allow", so Codex runs a matching command outside the sandbox without prompting. ` +
+    `Codex docs, ${CODEX_ALLOW_DOC.url} line ${CODEX_ALLOW_DOC.line}: "${CODEX_ALLOW_DOC.text}" ` +
+    `Move it to ask to be prompted before each run.`
+  );
+}
+
 /** A command that the pattern matches: the pattern plus example arguments. */
 export function matchExample(pattern: string[]): string[] {
   const joined = pattern.join(" ");
