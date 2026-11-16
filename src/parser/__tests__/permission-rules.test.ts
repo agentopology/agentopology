@@ -203,6 +203,9 @@ describe("T2: malformed rules (V134 -> " + MALFORMED + ") and rules Claude Code 
     ["a label, not a tool name", '"Stop Task"'],
     ["unknown dotted mcp form", '"mcp..x"'],
     ["dotted mcp with parens", '"mcp.db.x(y)"'],
+    ["R13: a newline in the rule", '"Bash(echo a\ntouch x *)"'],
+    ["R13: a control character in the rule", '"Bash(echo \u0007 *)"'],
+    ["R13: a tab in the rule", '"Bash(echo a\tb *)"'],
   ];
   for (const [name, rule] of malformed) {
     it(`${name}: ${rule}`, () => {

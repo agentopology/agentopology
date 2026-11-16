@@ -144,7 +144,8 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
     expect(group.hooks).toHaveLength(1);
     const h = group.hooks[0];
     expect(h.type).toBe("command");
-    expect(h.if).toBe("Bash(kubectl delete *)");
+    // R6: no `if:`; the script decides, the matcher stays.
+    expect(h.if).toBeUndefined();
     // A deny hook that cannot start must not let the call through (Claude Code 2.1.295+).
     expect(h.onFailure).toBe("block");
     const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "kubectl delete pod x" } });
@@ -181,8 +182,9 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
   it("one handler per rule (\"The `if` field holds exactly one permission rule\")", () => {
     const { value: files } = scaffold(topo({ a: '    deny: ["Bash(rm *)", "Bash(curl *)"]' }));
     const pre = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
-    const ifs = pre.flatMap((g) => g.hooks.map((h) => h.if));
-    expect(ifs).toEqual(["Bash(rm *)", "Bash(curl *)"]);
+    const rules = pre.flatMap((g) => g.hooks.map((h) => String(h.command).includes("'Bash(rm *)'") ? "Bash(rm *)" : String(h.command).includes("'Bash(curl *)'") ? "Bash(curl *)" : "?"));
+    expect(rules).toEqual(["Bash(rm *)", "Bash(curl *)"]);
+    expect(pre.flatMap((g) => g.hooks.map((h) => h.if))).toEqual([undefined, undefined]);
   });
 
   it("keeps the agent's own hooks first, then the rule hooks", () => {
@@ -235,7 +237,7 @@ describe("T5: agent ask -> a frontmatter PreToolUse hook that asks", () => {
     const [group] = frontmatterHooks(file(files, AGENT_MD)).PreToolUse;
     expect(group.matcher).toBe("Bash");
     const h = group.hooks[0];
-    expect(h.if).toBe("Bash(git push *)");
+    expect(h.if).toBeUndefined();
     const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "git push origin main" } });
     expect(r.status).toBe(0);
     expect(checkStdout("PreToolUse", r.stdout)).toBeNull();
@@ -261,8 +263,8 @@ describe("condition C: the agent hook matches the rule itself and fails closed",
   describe("deny", () => {
     const deny = () => rig("deny", "Bash(kubectl delete *)");
 
-    it("keeps if: as well", () => {
-      expect(deny().h.if).toBe("Bash(kubectl delete *)");
+    it("R6: carries no if:", () => {
+      expect(deny().h.if).toBeUndefined();
     });
     it("a non-matching Bash call passes", () => {
       const r = deny().run(bash("kubectl get pods"));
@@ -394,6 +396,20 @@ describe("notes: what holds less than it reads", () => {
     expect(skill).toContain("## Permission rules");
     expect(skill).toContain("Frontmatter hooks in a project subagent");
     expect(warnings.some((w) => w.includes("Frontmatter hooks in a project subagent"))).toBe(true);
+  });
+
+  it("R7: the warning and the skill say an agent hook is a guardrail, not a security boundary", () => {
+    const { value: files, warnings } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+    const skill = file(files, ".claude/skills/t/SKILL.md");
+    const limit = "An agent hook is a guardrail, not a security boundary: the agent can edit the files that hold it. For a hard deny, use settings { deny }.";
+    const quote = "use the permission system rather than a hook to enforce a hard allow or deny";
+    for (const text of [skill, warnings.join("\n")]) {
+      expect(text).toContain(limit);
+      expect(text).toContain(quote);
+    }
+    // No settings deny on the script.
+    const settings = files.find((f) => f.path === ".claude/settings.json");
+    expect(settings?.content ?? "").not.toContain("agent-rule.sh");
   });
 
   it("a scheduled agent run is headless: the scaffold says project allow rules are not used there", () => {

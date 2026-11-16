@@ -360,7 +360,8 @@ describe("[OWN3] same-basename .at files sharing one manifest skip rule ownershi
     const a = scaffold("a/t.at");
     expect(removedLines(a)).toEqual([]);
     expect(perms().allow).toContain(A);
-    expect(keptLines(a)).toEqual([`${SETTINGS}: owned rules kept, none removed; this manifest is shared by a/t.at and b/t.at (the same file name)`]);
+    // N4: the hold line names each held rule.
+    expect(keptLines(a)).toEqual([`${SETTINGS}: owned rules kept, none removed; this manifest is shared by a/t.at and b/t.at (the same file name). Held: allow ${JSON.stringify(A)}`]);
     expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
   });
 
@@ -540,7 +541,7 @@ describe("[OWN1] fix round: a failed write prints no removal (F3) and owns nothi
   const writable = (p: string) => fs.chmodSync(at(p), 0o644);
 
   for (const [label, run] of [["scaffold", scaffold], ["guard --target", guard]] as const) {
-    it(`${label}: settings.json cannot be written -> no removal line, exit 1; the dropped rule is kept and unowned`, () => {
+    it(`${label}: settings.json cannot be written -> no removal line, exit 1; the dropped rule stays owned, and the next run removes it (N1)`, () => {
       writeAt("t.at", withRules("t", [A, R]));
       run("t.at");
       writeAt("t.at", withRules("t", [R, N]));
@@ -550,13 +551,13 @@ describe("[OWN1] fix round: a failed write prints no removal (F3) and owns nothi
       expect(out.status).toBe(1);
       expect(removedLines(out)).toEqual([]);
       expect(perms().allow).toEqual([A, R]);
-      // Written before settings.json: neither the rule it would remove nor the one it would add is owned.
-      expect(ownedEntry().rulesOwned).toEqual({ allow: [R] });
+      // N1: written before settings.json, the manifest keeps owning the rule
+      // it would remove and claims none it would add.
+      expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
       const again = run("t.at");
       expect(again.status, again.stderr).toBe(0);
-      expect(removedLines(again)).toEqual([]);
-      expect(perms().allow).toEqual([A, R, N]);
-      expect(named(again)).toEqual([undeclared("allow", A)]);
+      expect(removedLines(again)).toEqual([removed("allow", A)]);
+      expect(perms().allow).toEqual([R, N]);
       expect(ownedEntry().rulesOwned).toEqual({ allow: [R, N] });
     });
   }
@@ -638,6 +639,16 @@ describe("[OWN1] fix round: what the user wrote (P2-2, F9)", () => {
     expect(perms().defaultMode).toBe("default");
   });
 
+  it("N1-e2e: no 'kept, yours' line when scaffold owned the defaultMode it replaces", () => {
+    writeAt("t.at", topo("t", "  settings {\n    allow: [Read]\n    default-mode: plan\n  }"));
+    scaffold("t.at");
+    writeAt("t.at", topo("t", "  settings {\n    allow: [Read]\n    default-mode: acceptEdits\n  }"));
+    const out = scaffold("t.at");
+    expect(allLines(out).filter((l) => l.includes("defaultMode"))).toEqual([
+      `${SETTINGS} defaultMode "plan": replaced by "acceptEdits"; the .at changed it`,
+    ]);
+  });
+
   it("F9: a rule listed twice in rulesOwned (or in the file) is removed with one line", () => {
     writeAt("t.at", withRules("t", [A, R]));
     scaffold("t.at");
@@ -655,7 +666,7 @@ describe("[OWN1] fix round: what the user wrote (P2-2, F9)", () => {
 });
 
 describe("[OWN1] fix round: remove only from a file that round-trips byte for byte (F1, ruling a)", () => {
-  const rewrite = (l: string, rule: string) => `${SETTINGS} ${l} ${JSON.stringify(rule)}: kept; removing it would rewrite other values in the file`;
+  const rewrite = (l: string, rule: string) => `${SETTINGS} ${l} ${JSON.stringify(rule)}: kept; removing it would rewrite the file's formatting or other values`;
   const settled = (text: string) => {
     writeAt("t.at", withRules("t", [A, R]));
     scaffold("t.at");
