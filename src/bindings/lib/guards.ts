@@ -284,6 +284,11 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     ...FAIL_CLOSED,
     ...projectRootLines(p, name, "cd"),
     `DIR="${p.scriptsDir(name)}"`,
+    ...noJqLines({
+      refuse: "agentopology: jq is required to check this launch, so it is blocked",
+      pass: "agentopology: jq is not installed; this launch names no gated agent, so it runs. Install jq to check launches.",
+      inOrder: [...steps.keys()].map((a) => [a]),
+    }),
     // Bad input must not read as "no agent": a failed hook lets the call through (Codex, probe P10).
     // R-12, F-15, F-14 (every platform): normalized (format characters, case, space, a leading path,
     // trailing punctuation), so " Reviewer ", "re\u200bviewer" and "agents/reviewer:" are still reviewer.
@@ -386,7 +391,14 @@ export const MATCH_FUNCTIONS: string[] = [
   "AT_READS=\" cat ls head tail wc echo printf grep egrep fgrep rg ag stat file diff cmp md5sum sha1sum sha256sum shasum du tree realpath basename dirname readlink test [ true false bat jq get-content gc select-string sls \"",
   "# git subcommands that read or record, run with none of the flags that make git run a command.",
   "AT_GIT_READS=\" status diff log show add commit blame ls-files grep restore rm mv branch tag \"",
-  "at_special() { [[ $1 == *[\\$\\`\\*\\?\\[\\{\\~]* ]]; }",
+  // 0.11.4: a word is read the way bash expands it. HEAD~1, @{u}, HEAD@{1}, HEAD^{commit} and a..b are literal.
+  "# at_special WORD: bash would expand WORD: $ or a backtick, a glob (* ? [), a ~ at its start or after = or :,",
+  "# or a brace list {a,b} or sequence {a..b}. A ~ inside a word and braces with neither are read literally.",
+  "at_special() {",
+  String.raw`  [[ $1 == *[\$\`\*\?\[]* || $1 == '~'* || $1 == *'=~'* || $1 == *':~'* ]] && return 0`,
+  String.raw`  local re='\{[^{}]*(,|\.\.)[^{}]*\}'`,
+  "  [[ $1 =~ $re ]]",
+  "}",
   "# at_names WORD KEY: WORD runs the tool KEY: its name at any path, or a glob or brace list that could be it.",
   "at_names() {",
   "  local w=$1 key=$2 b=${1##*/} part lit",
@@ -413,6 +425,23 @@ export const MATCH_FUNCTIONS: string[] = [
   "    return",
   "  fi",
   "  [[ \"$AT_READS\" == *\" $base \"* ]]",
+  "}",
+  // 0.11.4: `git log "$BR"` is no commit and no push, whatever $BR holds.
+  "# at_git_read I (in _seg_steps, step tool git): word I is git by a literal name, and its subcommand, the next",
+  "# word (after --no-pager, --no-optional-locks, --no-replace-objects or --literal-pathspecs only), is literal, a",
+  "# reading one (AT_GIT_READS, not grep), neither this step's first word nor any git step's (AT_GIT_STEPS), and no",
+  "# word makes git run a command. Its expansions raise no doubt; the step's words written out still count.",
+  "at_git_read() {",
+  "  local i=$1 j x",
+  "  [ \"$key\" = git ] && [ \"${#r[@]}\" -gt 0 ] && ! at_special \"${w[i]}\" || return 1",
+  "  for ((j=i+1; j<n; j++)); do",
+  "    case ${w[j]} in --no-pager|--no-optional-locks|--no-replace-objects|--literal-pathspecs) ;; *) break ;; esac",
+  "  done",
+  "  [ \"$j\" -lt \"$n\" ] || return 1",
+  "  x=${w[j]}",
+  "  ! at_special \"$x\" || return 1",
+  "  [[ $x != -* && $x != grep && $x != \"${r[0]}\" && \"$AT_GIT_READS\" == *\" $x \"* && \" ${AT_GIT_STEPS:-} \" != *\" $x \"* ]] || return 1",
+  "  at_reads_only git \"${w[@]:i+1}\"",
   "}",
   "# seg_steps SEG KEY REST: sets SEG_N to how often SEG runs the step (tool KEY, then the REST words in",
   "# order), and SEG_DOUBT=1 when a run of the tool cannot be read (an expansion or glob among its words).",
@@ -454,7 +483,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "    for ((j=p+1; j<n; j++)); do at_names \"${w[j]}\" \"$key\" && cand+=(\"$j\"); done",
   "  fi",
   "  for i in \"${cand[@]}\"; do",
-  "    for ((j=i; j<n; j++)); do at_special \"${w[j]}\" && SEG_DOUBT=1; done",
+  "    at_git_read \"$i\" || for ((j=i; j<n; j++)); do at_special \"${w[j]}\" && SEG_DOUBT=1; done",
   "    j=$((i+1)); k=0",
   "    while [ \"$k\" -lt \"${#r[@]}\" ] && [ \"$j\" -lt \"$n\" ]; do",
   "      [ \"${w[j]}\" = \"${r[k]}\" ] && k=$((k+1))",
@@ -468,6 +497,55 @@ export const MATCH_FUNCTIONS: string[] = [
   "  return 0",
   "}",
 ];
+
+/** The letters a guard matches on: lower case, a-z and 0-9 only (the `letters` shell function). */
+const lettersOf = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * What a guard does when jq is not installed (0.11.4). It used to refuse every call. Now it reads its
+ * stdin raw and refuses (exit 2, the message it always gave) only when the payload could hold what it
+ * guards: an empty payload; a `\u` escape (jq would decode it, the raw letters do not); the letters of
+ * one of `inOrder`'s word lists appearing in the payload's letters, in order, once JSON's `\\` and its
+ * control escapes are dropped; or, with `expansion`, an expansion or glob (`$` a backtick `*` `?` `[`,
+ * or a `{` that opens no JSON object) beside the letters of one of its tools. Anything else runs, with
+ * one line on stderr. Needs the FAIL_CLOSED trap; tr and cat only.
+ */
+function noJqLines(o: { refuse: string; pass: string; inOrder: string[][]; expansion?: string[] }): string[] {
+  const sq = shellQuote;
+  const lists = o.inOrder.map((ws) => ws.map(lettersOf).filter(Boolean)).filter((ws) => ws.length > 0);
+  const tools = [...new Set((o.expansion ?? []).map(lettersOf).filter(Boolean))];
+  const has = (ws: string[]) => `at_raw_has ${ws.map(sq).join(" ")}`;
+  return [
+    "if ! command -v jq >/dev/null 2>&1; then",
+    "  # No jq (0.11.4): the payload is read raw, and refused only when it could hold what this guard checks.",
+    `  ${MATCH_FUNCTIONS[1]}`,
+    `  at_nojq_refuse() { echo ${sq(o.refuse)} >&2; exit 2; }`,
+    "  command -v tr >/dev/null 2>&1 && command -v cat >/dev/null 2>&1 || at_nojq_refuse",
+    "  AT_RAW=$(cat)",
+    '  [ -n "$AT_RAW" ] || at_nojq_refuse',
+    "  [[ $AT_RAW != *'\\u'* ]] || at_nojq_refuse",
+    "  # JSON's \\\\ and its control escapes carry no letter of the decoded text",
+    "  AT_RAW_D=${AT_RAW//\\\\\\\\/}; AT_RAW_D=${AT_RAW_D//\\\\[ntrbf]/}",
+    '  AT_RAW_L=$(letters "$AT_RAW_D")',
+    '  at_raw_has() { local t=$AT_RAW_L w; for w in "$@"; do [[ $t == *"$w"* ]] || return 1; t=${t#*"$w"}; done; }',
+    ...(lists.length ? [`  if ${lists.map(has).join(" || ")}; then at_nojq_refuse; fi`] : []),
+    ...(tools.length
+      ? [
+          String.raw`  AT_RE='\{[^"[:space:]}]'`,
+          String.raw`  if [[ $AT_RAW == *[\$\`\*\?\[]* || $AT_RAW =~ $AT_RE ]] && { ` + tools.map((t) => has([t])).join(" || ") + "; }; then at_nojq_refuse; fi",
+        ]
+      : []),
+    `  echo ${sq(o.pass)} >&2`,
+    `  ${FAIL_CLOSED_DONE}`,
+    "  exit 0",
+    "fi",
+  ];
+}
+
+/** The word lists a ledger is named by, for {@link noJqLines}: its file name, or with the unit in the name, its path's parts. */
+function ledgerWords(l: ProtectedLedger): string[] {
+  return l.name ? [l.letters] : l.path.split("{unit}").map(lettersOf).filter(Boolean);
+}
 
 /**
  * canon PATH (F-12): one source for the Codex `if:` filter and before-edit.sh. It needs $ROOT, the
@@ -596,13 +674,17 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this edit, so it is blocked" >&2; exit 2; }',
     ...(v === null
       ? [`ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, name)}" && pwd)"`]
       : [
           `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this edit cannot be checked and is blocked" >&2; exit 2; fi`,
           `ROOT="$(cd "$${v}" && pwd)"`,
         ]),
+    ...noJqLines({
+      refuse: "agentopology: jq is required to check this edit, so it is blocked",
+      pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
+      inOrder: ledgers.map(ledgerWords),
+    }),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
     "TOOL=$(printf '%s' \"$INPUT\" | jq -er '.tool_name | strings') || { echo \"agentopology: the hook input is not valid JSON, so the edit is blocked\" >&2; exit 2; }",
@@ -679,6 +761,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const ledgers = protectedLedgers(ast, p);
   if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
+  // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
+  const stepWords = guards.flatMap(({ action }) => (action.commands ?? []).map(stepKey));
+  const gitSteps = [...new Set(ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
+    .map(stepKey).filter((k) => k.key === "git").map((k) => k.rest.split(" ")[0]).filter(Boolean))];
 
   const lines = [
     "#!/usr/bin/env bash",
@@ -690,8 +776,13 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "# `agentopology step check` itself.",
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check this step, so it is blocked" >&2; exit 2; }',
     ...projectRootLines(p, name, "strict"),
+    ...noJqLines({
+      refuse: "agentopology: jq is required to check this step, so it is blocked",
+      pass: "agentopology: jq is not installed; this command names no gated step, so it runs. Install jq to check steps.",
+      inOrder: [...stepWords.map((s) => [s.key, ...s.rest.split(" ")]), ...ledgers.map(ledgerWords)],
+      expansion: stepWords.map((s) => s.key),
+    }),
     `DIR="${p.scriptsDir(name)}"`,
     ...(p.powershellTool
       ? [
@@ -742,6 +833,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     // PowerShell: a backslash is a path separator, not an escape (its escape is the backtick, a separator here).
     ...(p.powershellTool ? ['[ "$PWSH" = 0 ] || CMD=${CMD//\\\\//}'] : []),
     ...MATCH_FUNCTIONS,
+    `AT_GIT_STEPS=${shellQuote(gitSteps.join(" "))}`,
     "# key_count LETTERS: how often the tool's letters appear in the whole command's letters.",
     "CMD_L=$(letters \"$CMD\")",
     "key_count() { local t=$CMD_L n=0; while [[ $t == *\"$1\"* ]]; do t=${t#*\"$1\"}; n=$((n+1)); done; echo \"$n\"; }",

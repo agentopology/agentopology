@@ -171,6 +171,15 @@ describe("[0.11.4] MUST BLOCK with no jq: input that could hold the gated thing 
     for (const r of await exits("cxgates", "codex", "before-agent.sh", [["editor", launchIn("codex", "editor")], ["Editor", launchIn("codex", "Editor")]], false)) refusedLaunch(r);
   });
 
+  it("a launch refused for a missing jq says so (it used to say the input was not valid JSON)", async () => {
+    for (const [id, binding, agent] of [["compile", "claude-code", "drafter"], ["cxgates", "codex", "editor"]] as const) {
+      for (const r of await exits(id, binding, "before-agent.sh", [[agent, launchIn(binding, agent)]], false)) {
+        refused(r);
+        expect(r.stderr).toContain("jq is required to check this launch, so it is blocked");
+      }
+    }
+  });
+
   it("the action script's own gate check still refuses with no jq: the script IS the step", () => {
     const { root } = scaffolded("factory", "claude-code");
     const script = join(root, ".claude/skills/factory/scripts/action-commit.sh");
