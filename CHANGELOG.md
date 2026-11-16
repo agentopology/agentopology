@@ -21,7 +21,7 @@ All notable changes to agentopology are documented here.
 
 ### Held by tests
 
-- An exit-code differential frozen from a v0.11.2 build: 6254 runs (8 topologies, Claude Code and Codex, `before-action.sh`, `before-edit.sh` and `before-agent.sh`, every command of the existing guard tests plus the new corpora, with jq and without). 0.11.3 equals 0.11.2 on all of them. 0.11.4 equals 0.11.2 on every run except 2274 declared in advance, each from exit 2 to exit 0: 72 everyday git commands with jq, 2202 inputs without jq that name nothing gated. No run goes from 0 to 2, and without jq no hook lets through what it refuses with jq.
+- An exit-code differential frozen from a v0.11.2 build: 8048 runs (8 topologies, Claude Code and Codex, `before-action.sh`, `before-edit.sh` and `before-agent.sh`, and 3 Codex `if:` hooks through `at-if.sh`; every command of the existing guard tests plus the new corpora, with jq and without). 0.11.3 equals 0.11.2 on all of them. 0.11.4 equals 0.11.2 on every run except 2311 declared in advance, each from exit 2 to exit 0: 72 everyday git commands with jq, 37 everyday git commands behind a `strength: refuse` hook with `if: "Bash(git push*)"`, 2202 inputs without jq that name nothing gated. No run goes from 0 to 2, and without jq no hook lets through what it refuses with jq.
 - The run resolution and the settings.json merge are untouched: both 0.11.2 differentials pass, and every generated file other than the three guard scripts and the Codex `if:` filter script is byte for byte as before.
 
 ## [0.11.3] - 2026-11-16

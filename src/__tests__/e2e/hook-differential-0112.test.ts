@@ -5,7 +5,9 @@
  * differential/hooks-0112.json was frozen with a v0.11.2 build
  * (freeze-hooks.mjs): every topology of hook-corpus.mjs, scaffolded for
  * Claude Code and Codex, every generated before-action.sh, before-edit.sh and
- * before-agent.sh, every corpus input (today's guard-test commands, the
+ * before-agent.sh, and the Codex if filter (at-if.sh) behind 3 `if:` hooks
+ * of today's guard tests, run through hooks.json's command; every corpus
+ * input (today's guard-test commands, the
  * must-not-block and must-block corpora, edits, launches, raw payloads with
  * escapes), each run with jq on PATH and without it. 0.11.2 and 0.11.3 agree
  * on every pair.
@@ -26,7 +28,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
 // @ts-expect-error plain JavaScript module, shared with freeze-hooks.mjs
-import { runCorpus, pairKey } from "./differential/hook-corpus.mjs";
+import { runCorpus, pairKey, IF_TOPOLOGIES } from "./differential/hook-corpus.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
@@ -69,6 +71,21 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     expect(wrong, `${wrong.length} pairs changed outside the declared list:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
     expect(missing, `${missing.length} declared flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
     expect(flipped.length).toBe(declared.count);
+  });
+
+  it("Claude Code has no if filter script: it writes `if:` into settings.json as declared, and no generated file carries the reader", () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      for (const t of IF_TOPOLOGIES as Array<{ id: string; src: () => string; glob: string }>) {
+        const files = claudeCodeBinding.scaffold(parse(t.src().replace(/gpt-5\.2/g, "sonnet")));
+        expect(files.filter((f) => /at-if/.test(f.path) || /at_special|at_git_read/.test(String(f.content))).map((f) => f.path), t.id).toEqual([]);
+        const settings = JSON.parse(String(files.find((f) => f.path === ".claude/settings.json")!.content));
+        expect(settings.hooks.PreToolUse[0].hooks[0].if, t.id).toBe(`Bash(${t.glob})`);
+      }
+    } finally {
+      console.warn = warn;
+    }
   });
 
   it("with no jq, a hook never lets through what it refuses with jq", () => {

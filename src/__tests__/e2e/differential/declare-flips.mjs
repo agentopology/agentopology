@@ -11,6 +11,7 @@
  *   of every word of a gated step, of a ledger's file name, or of a gated
  *   agent; or, for before-action.sh, when it holds an expansion or a glob
  *   ($ ` * ? [ or a { that is no JSON brace) and the letters of a gated tool.
+ * - the Codex if filter (at-if.sh): see ifFlip below.
  *
  *   node declare-flips.mjs <hooks-0112.json> <out.json>
  */
@@ -87,12 +88,39 @@ function payloadOf(r) {
     : JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_input: { subagent_type: r.input, prompt: "go" } });
 }
 
+/**
+ * The Codex `if:` filter (at-if.sh), by hand from each topology's hook: only a strength: refuse hook
+ * treats doubt as a match, so only its pairs can flip; with no jq the filter is unchanged (it blocks).
+ */
+const IF_GUARDED = {
+  ifpush: { refuse: true, words: ["git", "push"] },
+  ifpushnote: { refuse: false, words: ["git", "push"] },
+  ifrm: { refuse: false, words: ["rm", "-rf"] },
+};
+/** git subcommands that read or record (none of them is a push). */
+const GIT_READING = ["status", "diff", "log", "show", "add", "commit", "blame", "ls-files", "restore", "rm", "mv", "branch", "tag"];
+/**
+ * at-if.sh, with jq, behind a refuse hook on a git glob: a must-not-block command, or one plain git
+ * command (no ; & | ( ) and no command substitution) whose subcommand, written out, is a reading one other
+ * than the glob's own (git commit -m "$MSG" is no push).
+ */
+function ifFlip(r) {
+  const g = IF_GUARDED[r.topology];
+  if (!r.jq || !g.refuse || g.words[0] !== "git") return null;
+  if (mnb.has(r.input)) return "must-not-block";
+  const m = /^git ([a-z-]+)( |$)/.exec(r.input);
+  if (m && !/[;&|()`]|\$\(/.test(r.input) && GIT_READING.includes(m[1]) && m[1] !== g.words[1]) return "a reading git command, not the glob's";
+  return null;
+}
+
 const frozen = JSON.parse(fs.readFileSync(frozenFile, "utf8"));
 const mnb = new Set(MUST_NOT_BLOCK);
 const flips = [];
 for (const r of frozen.rows) {
   if (r.exit !== 2) continue;
-  const why = r.jq
+  const why = r.hook === "at-if.sh"
+    ? ifFlip(r)
+    : r.jq
     ? (r.topology === "factory" && r.hook === "before-action.sh" && mnb.has(r.input) ? "must-not-block" : null)
     : (couldHold(r.hook, r.topology, payloadOf(r)) ? null : "no jq, no gated thing in the payload");
   if (why) flips.push({ topology: r.topology, binding: r.binding, hook: r.hook, input: r.input, jq: r.jq, why });

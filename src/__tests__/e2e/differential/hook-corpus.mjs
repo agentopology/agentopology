@@ -198,6 +198,59 @@ const RUNSTEP = `topology runstep : [pipeline] {
 /** Read a fixture of the e2e tests. */
 const fixture = (name) => fs.readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8");
 
+/**
+ * Codex `if:` hooks on Bash, as today's guard tests write them (f-batch-b, cx-review-fixes): the hook runs
+ * through .codex/scripts/at-if.sh, which shares before-action.sh's reader. The hook's own script refuses
+ * (exit 2), so the exit tells whether the filter let the hook run.
+ */
+const ifHooked = (hook) => `topology t : [pipeline] {
+  meta { version: "1.0.0" description: "t" }
+  agent worker {
+    description: "Does work"
+    model: gpt-5.2
+    permissions: autonomous
+    tools: [Read]
+  }
+  action intake {
+    kind: inline
+    description: "entry"
+  }
+  flow { intake -> worker }
+  hooks {
+${hook}
+  }
+}
+`;
+const IF_PUSH_REFUSE = ifHooked(`    hook no-push {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "scripts/no-push.sh"
+      type: command
+      strength: refuse
+      if: "Bash(git push*)"
+    }`);
+const IF_PUSH_NOTE = ifHooked(`    hook note-push {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "scripts/note-push.sh"
+      type: command
+      if: "Bash(git push*)"
+    }`);
+const IF_RM = ifHooked(`    hook g {
+      on: PreToolUse
+      matcher: "Bash"
+      if: "Bash(rm -rf *)"
+      run: "exit 2"
+      type: command
+    }`);
+
+/** The `if:` topologies (Codex only), each with the script its hook runs written to refuse. */
+export const IF_TOPOLOGIES = [
+  { id: "ifpush", src: () => IF_PUSH_REFUSE, script: ".codex/scripts/no-push.sh", glob: "git push*", refuse: true },
+  { id: "ifpushnote", src: () => IF_PUSH_NOTE, script: ".codex/scripts/note-push.sh", glob: "git push*", refuse: false },
+  { id: "ifrm", src: () => IF_RM, script: null, glob: "rm -rf *", refuse: false },
+];
+
 /** Every topology, and the bindings it is scaffolded with. */
 export const TOPOLOGIES = [
   { id: "factory", src: () => FACTORY, bindings: ["claude-code", "codex"] },
@@ -363,7 +416,9 @@ export const RAW_AGENT = [
 
 /** The tools a hook may call. The no-jq PATH holds these; the jq PATH holds these and jq. */
 const TOOLS = ["bash", "sh", "env", "cat", "tr", "sed", "grep", "date", "dirname", "basename", "head", "tail", "mkdir",
-  "find", "awk", "realpath", "readlink", "git", "python3", "ls", "wc", "sort", "timeout"];
+  "find", "awk", "realpath", "readlink", "git", "python3", "ls", "wc", "sort", "timeout",
+  // the Codex hook launcher (at-if.sh runs behind it)
+  "mktemp", "rm", "kill", "sleep", "pgrep"];
 
 /** Two PATH folders of symlinks, made in a fresh temp dir: one with jq and one without. */
 export function toolPaths() {
@@ -457,7 +512,41 @@ export function runHook(script, root, binding, payload, PATH) {
 }
 
 /**
- * Every pair: { topology, binding, hook, input, jq, exit }. `lib` is { parse, bindings: { "claude-code", codex } }.
+ * Scaffold an `if:` topology for Codex into a fresh git repository, its hook's script made to refuse;
+ * return the root and the hooks.json command of its one PreToolUse hook (which runs at-if.sh).
+ */
+export function scaffoldIf(lib, topo) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `at-hooks-${topo.id}-`));
+  spawnSync("git", ["init", "-q", root]);
+  for (const f of lib.bindings.codex.scaffold(lib.parse(topo.src()))) {
+    const p = path.join(root, f.path);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, f.content);
+    if (f.executable) fs.chmodSync(p, 0o755);
+  }
+  if (topo.script) fs.writeFileSync(path.join(root, topo.script), "#!/usr/bin/env bash\necho 'refused by hook' >&2\nexit 2\n", { mode: 0o755 });
+  const command = JSON.parse(fs.readFileSync(path.join(root, ".codex/hooks.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command;
+  if (!command.includes("at-if.sh")) throw new Error(`${topo.id}: the hook does not run through at-if.sh`);
+  return { root, command };
+}
+
+/** Run a hooks.json command the way Codex does: sh -c from the project root, the payload on stdin. */
+export function runCommand(command, root, payload, PATH) {
+  return new Promise((resolve) => {
+    const child = spawn("/bin/sh", ["-c", command], { cwd: root, env: { PATH, HOME: os.tmpdir(), LANG: "C.UTF-8" }, stdio: ["pipe", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+    child.on("error", () => { clearTimeout(timer); resolve({ code: null, stderr }); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ code, stderr }); });
+    child.stdin.on("error", () => {});
+    child.stdin.end(payload);
+  });
+}
+
+/**
+ * Every pair: { topology, binding, hook, input, jq, exit }. at-if.sh pairs (the `if:` topologies) have
+ * hook "at-if.sh" and the same Bash inputs as before-action.sh. `lib` is { parse, bindings: { "claude-code", codex } }.
  * `only` keeps the pairs a filter accepts (for a quick partial run).
  */
 export async function runCorpus(lib, { concurrency = Math.max(4, os.cpus().length), only } = {}) {
@@ -478,13 +567,24 @@ export async function runCorpus(lib, { concurrency = Math.max(4, os.cpus().lengt
       }
     }
   }
+  for (const topo of IF_TOPOLOGIES) {
+    const { root, command } = scaffoldIf(lib, topo);
+    for (const { input, payload } of inputsFor("before-action.sh", "codex")) {
+      for (const jq of [true, false]) {
+        const row = { topology: topo.id, binding: "codex", hook: "at-if.sh", input, jq };
+        if (only && !only(row)) continue;
+        jobs.push({ row, command, root, payload, PATH: jq ? paths.jq : paths.nojq });
+      }
+    }
+  }
   const out = new Array(jobs.length);
   let next = 0;
   const worker = async () => {
     while (next < jobs.length) {
       const i = next++;
       const j = jobs[i];
-      out[i] = { ...j.row, exit: (await runHook(j.script, j.root, j.row.binding, j.payload, j.PATH)).code };
+      const r = j.command ? await runCommand(j.command, j.root, j.payload, j.PATH) : await runHook(j.script, j.root, j.row.binding, j.payload, j.PATH);
+      out[i] = { ...j.row, exit: r.code };
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));
