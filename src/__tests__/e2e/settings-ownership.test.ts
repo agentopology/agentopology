@@ -252,11 +252,113 @@ describe("[S-48] two topologies in one directory", () => {
   });
 });
 
-describe("open: deletions the design does not yet rule on", () => {
-  // Today this removes X (and prints it) though two still declares it; two adds it back on its next run.
-  it.todo("[OWN2] par owns X, two also declares X (not owned: X was there first); par drops X: kept while two declares it");
-  // Manifests are keyed by the .at basename, so a/t.at and b/t.at share one and each removes the other's owned rules.
-  it.todo("[OWN3] two .at files with the same basename scaffolded into one project never remove each other's rules");
+const kept = (l: string, rule: string, by: string) => `${SETTINGS} ${l} ${JSON.stringify(rule)}: kept; ${by} declares it`;
+const keptLines = (out: { stdout: string; stderr: string }) =>
+  lines(out).filter((l) => l.includes(": kept; ") || l.includes("rule ownership skipped") || l.includes("re-scaffold"));
+
+describe("[OWN2] a rule another topology declares is never removed", () => {
+  it("par owns X, two declares X; par drops X: kept and printed, still par's; two drops X too; par's next run removes it", () => {
+    writeAt("par.at", withRules("par", [X, R]));
+    writeAt("two.at", withRules("two", [X]));
+    scaffold("par.at");
+    scaffold("two.at");
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [X, R] });
+    expect(ownedEntry(".claude/.scaffold-manifest.two.at.json").rulesOwned).toBeUndefined();
+    writeAt("par.at", withRules("par", [R]));
+    const p = scaffold("par.at");
+    expect(removedLines(p)).toEqual([]);
+    expect(keptLines(p)).toEqual([kept("allow", X, "two.at")]);
+    expect(named(p)).toEqual([]);
+    expect(perms().allow).toEqual([X, R]);
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [X, R] });
+    writeAt("two.at", withRules("two", [U]));
+    scaffold("two.at");
+    expect(perms().allow).toContain(X);
+    const again = scaffold("par.at");
+    expect(removedLines(again)).toEqual([removed("allow", X)]);
+    expect(perms().allow).not.toContain(X);
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [R] });
+  });
+
+  it("the same for defaultMode: another topology declaring the value keeps it", () => {
+    const mode = (name: string, m: string | null) => topo(name, `  settings {\n    allow: [Read]\n${m ? `    default-mode: ${m}\n` : ""}  }`);
+    writeAt("par.at", mode("par", "plan"));
+    writeAt("two.at", mode("two", "plan"));
+    scaffold("par.at");
+    scaffold("two.at");
+    writeAt("par.at", mode("par", null));
+    const p = scaffold("par.at");
+    expect(perms().defaultMode).toBe("plan");
+    expect(keptLines(p)).toEqual([`${SETTINGS} defaultMode "plan": kept; two.at declares it`]);
+    expect(ownedEntry().defaultModeOwned).toBe("plan");
+  });
+
+  it("a manifest from before this change (no rulesDeclared) holds every removal, named once, until it is re-scaffolded", () => {
+    writeAt("par.at", withRules("par", [A, R]));
+    writeAt("two.at", withRules("two", [X]));
+    scaffold("par.at");
+    scaffold("two.at");
+    const twoPath = ".claude/.scaffold-manifest.two.at.json";
+    const m = manifestOf(twoPath);
+    delete m.files[SETTINGS].rulesDeclared;
+    delete m.files[SETTINGS].defaultModeDeclared;
+    fs.writeFileSync(at(twoPath), JSON.stringify(m, null, 2) + "\n");
+    writeAt("par.at", withRules("par", [R]));
+    const p = scaffold("par.at");
+    expect(removedLines(p)).toEqual([]);
+    expect(perms().allow).toContain(A);
+    const held = keptLines(p);
+    expect(held).toHaveLength(1);
+    expect(held[0]).toContain(twoPath);
+    expect(held[0]).toContain("re-scaffold two.at");
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
+    scaffold("two.at");
+    expect(removedLines(scaffold("par.at"))).toEqual([removed("allow", A)]);
+  });
+
+  it("records what each topology declares", () => {
+    writeAt("t.at", withRules("t", [A, R], `    deny: ${list([D])}\n    default-mode: plan\n`));
+    scaffold("t.at");
+    expect(ownedEntry().rulesDeclared).toEqual({ allow: [A, R], deny: [D] });
+    expect(ownedEntry().defaultModeDeclared).toBe("plan");
+  });
+});
+
+describe("[OWN3] same-basename .at files sharing one manifest skip rule ownership", () => {
+  const skipped = (other: string) => `${SETTINGS}: rule ownership skipped; the manifest also belongs to ${other}`;
+
+  it("a/t.at then b/t.at: b owns nothing new, removes nothing, and says so; a carries on", () => {
+    fs.mkdirSync(at("a"));
+    fs.mkdirSync(at("b"));
+    writeAt("a/t.at", withRules("t", [A, R]));
+    writeAt("b/t.at", withRules("t", [X]));
+    scaffold("a/t.at");
+    expect(ownedEntry().sourcePath).toBe("a/t.at");
+    const b = scaffold("b/t.at");
+    expect(b.status, b.stderr).toBe(0);
+    expect(removedLines(b)).toEqual([]);
+    expect(keptLines(b)).toEqual([skipped("a/t.at")]);
+    expect(perms().allow).toEqual([A, R, X]);
+    // The entry is still a's: b took none of it.
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
+    expect(ownedEntry().sourcePath).toBe("a/t.at");
+    writeAt("a/t.at", withRules("t", [R]));
+    const a = scaffold("a/t.at");
+    expect(removedLines(a)).toEqual([removed("allow", A)]);
+  });
+
+  it("an entry that owns rules but records no sourcePath (written before it) skips too", () => {
+    writeAt("t.at", withRules("t", [A, R]));
+    scaffold("t.at");
+    const m = manifestOf();
+    delete m.files[SETTINGS].sourcePath;
+    fs.writeFileSync(at(MANIFEST), JSON.stringify(m, null, 2) + "\n");
+    writeAt("t.at", withRules("t", [R]));
+    const out = scaffold("t.at");
+    expect(removedLines(out)).toEqual([]);
+    expect(perms().allow).toContain(A);
+    expect(keptLines(out)).toEqual([skipped("an .at scaffolded before paths were recorded")]);
+  });
 });
 
 describe("[OWN1] the 0.11.2 cadence still holds for rules nobody owns", () => {
