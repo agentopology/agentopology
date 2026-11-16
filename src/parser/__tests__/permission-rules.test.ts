@@ -161,6 +161,14 @@ describe("T1: a bare deny removes a tool an agent declares (V136 -> " + UNUSABLE
     expect(hits(shipped, UNUSABLE)).toEqual([]);
   });
 
+  it("S-50: scheduled-monitor.at scopes its Edit deny, so its reporter keeps Write", () => {
+    const src = readFileSync(resolve(root, "examples/scheduled-monitor.at"), "utf8");
+    const ast = parse(src);
+    expect(ast.settings.deny ?? []).not.toContain("Edit");
+    expect((ast.nodes.find((n) => n.id === "reporter") as AgentNode).tools).toContain("Write");
+    expect(hits(src, UNUSABLE)).toEqual([]);
+  });
+
   it("a bare Edit deny also covers Write (Edit rules apply to all built-in tools that edit files)", () => {
     const r = hits(topo({ settings: "    deny: [Edit]" }), UNUSABLE);
     expect(r.some((x) => x.node === "a" && x.message.includes("Write"))).toBe(true);
