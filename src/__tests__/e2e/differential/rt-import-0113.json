@@ -89,70 +89,70 @@
    "name": "rt 13: python3 -u \"$CLAUDE_PROJECT_DIR/tools/guard.py\"",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"python3 -u \\\\\\\"$CLAUDE_PROJECT_DIR/tools/guard.py\\\\\\\"\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    python3 -u \"$CLAUDE_PROJECT_DIR/tools/guard.py\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 14: python3 -m mypkg.guard",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"python3 -m mypkg.guard\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    python3 -m mypkg.guard\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 15: uv run --project \"$CLAUDE_PROJECT_DIR\" tool",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"uv run --project \\\\\\\"$CLAUDE_PROJECT_DIR\\\\\\\" tool\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    uv run --project \"$CLAUDE_PROJECT_DIR\" tool\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 16: npx -y prettier@3 --write \"$CLAUDE_FILE_PATHS\"",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"npx -y prettier@3 --write \\\\\\\"$CLAUDE_FILE_PATHS\\\\\\\"\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    npx -y prettier@3 --write \"$CLAUDE_FILE_PATHS\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 17: prettier --write .",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"prettier --write .\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    prettier --write .\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 18: x.sh",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"x\" runs \"x.sh\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"x\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    x.sh\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 19: guard",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"guard\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    guard\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 20: make lint",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"make lint\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    make lint\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 21: git diff --quiet",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"git diff --quiet\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    git diff --quiet\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 22: jq -r '.tool_input.command' | grep -q 'rm -rf' && exit 2 || true",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"jq -r '.tool_input.command' | grep -q 'rm -rf' && exit 2 || true\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    jq -r '.tool_input.command' | grep -q 'rm -rf' && exit 2 || true\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -236,7 +236,7 @@
    "name": "rt 34: bash -c 'echo \"{\\\"a\\\": 1}\"'",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"bash -c 'echo \\\\\\\"{\\\\\\\\\\\"a\\\\\\\\\\\": 1}\\\\\\\"'\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    bash -c 'echo \"{\\\"a\\\": 1}\"'\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -271,7 +271,7 @@
    "name": "rt 39: env FOO=1 .claude/hooks/x.sh",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"env FOO=1 .claude/hooks/x.sh\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    env FOO=1 .claude/hooks/x.sh\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -292,7 +292,7 @@
    "name": "rt 42: osascript -e 'display notification \"done\"'",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"osascript -e 'display notification \\\\\\\"done\\\\\\\"'\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    osascript -e 'display notification \"done\"'\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -306,7 +306,7 @@
    "name": "rt 44: powershell -File \"$CLAUDE_PROJECT_DIR/x.ps1\"",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"powershell -File \\\\\\\"$CLAUDE_PROJECT_DIR/x.ps1\\\\\\\"\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    powershell -File \"$CLAUDE_PROJECT_DIR/x.ps1\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -320,7 +320,7 @@
    "name": "rt 46: php x.php",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"php x.php\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    php x.php\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
@@ -334,14 +334,14 @@
    "name": "rt 48: bun run \"$CLAUDE_PROJECT_DIR/x.ts\"",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"bun run \\\\\\\"$CLAUDE_PROJECT_DIR/x.ts\\\\\\\"\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    bun run \"$CLAUDE_PROJECT_DIR/x.ts\"\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {
    "name": "rt 49: docker run --rm img check",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated file passes all validation rules.\n  ERROR Hook \"pre-tool-use-bash\" runs \"docker run --rm img check\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n  Generated .at passes validation, but 1 hook(s) can't be compiled faithfully (exit 2)\n  ERROR Hook \"pre-tool-use-bash\": this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script\n    docker run --rm img check\n\nimport: 1 hook(s) can't be compiled faithfully; keep them as hand-written hooks or rewrite them as topology scripts\n"
    }
   },
   {

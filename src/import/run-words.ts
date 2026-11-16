@@ -10,7 +10,7 @@
  * @module
  */
 
-import { isProjectPath, isShellCommand, proseInRun, runParts } from "../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts } from "../parser/run.js";
 
 /** What import says for a hook whose command 0.11.3 would compile to a stub (ruled text). */
 export const UNFAITHFUL =
@@ -29,6 +29,34 @@ export function compilesToStub(run: string): boolean {
   if (!run.trim() || isShellCommand(run) || proseInRun(run)) return false;
   const { script } = runParts(run);
   return !!script && !script.startsWith("/") && !isProjectPath(script);
+}
+
+/** A first line that runs the file with a shell: `#!/bin/bash`, `#!/usr/bin/env sh`, ... */
+const SHELL_SHEBANG = /^#!\s*\S*\/(?:env\s+)?(?:ba|z|da|k)?sh(?:\s|$)/;
+
+/**
+ * Whether scaffold (0.11.2's resolution) would compile this imported `run:`
+ * to something other than what the harness ran:
+ *   - a stub of the topology's own (compilesToStub);
+ *   - D1: the user's own executable by path, run by bash because it has no
+ *     extension bash or another interpreter claims, when it is not a shell
+ *     script: a non-shell shebang (node, python, ...), a binary, or a file
+ *     import cannot read (`./node_modules/.bin/tool`, `.venv/bin/ruff`);
+ *   - D2: an absolute first word that is not an interpreter (`/bin/false`,
+ *     `/usr/bin/env python3 x.py`), which scaffold runs as `bash /bin/false`.
+ * `read` gives the text of a project file import read, by project-relative path.
+ */
+export function compilesUnfaithfully(run: string, read: (path: string) => string | undefined): boolean {
+  if (compilesToStub(run)) return true;
+  if (!run.trim() || isShellCommand(run) || proseInRun(run)) return false;
+  const { interpreter, script } = runParts(run);
+  if (interpreter || !script || interpreterFor(script) !== "bash" || /\.(?:sh|bash)$/.test(script)) return false;
+  if (script.startsWith("/")) return true;
+  if (!isProjectPath(script)) return false;
+  const text = read(script.replace(/^\.\//, ""));
+  if (text === undefined || text.includes("\u0000")) return true;
+  const first = text.split("\n", 1)[0];
+  return first.startsWith("#!") && !SHELL_SHEBANG.test(first);
 }
 
 /** Words that run the script named after them. */

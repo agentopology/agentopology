@@ -1413,6 +1413,8 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   // written either way; errors exit 2, not 1, because this is not a refusal
   // (S-68). Warnings alone exit 0.
   let errorCount: number;
+  // B: a hook scaffold would not compile faithfully is an import error (the .at is written).
+  const unfaithful = flow?.errors ?? [];
   try {
     const checked = validateResult(parseAt(atSource, outFile), outFile);
     errorCount = checked.errors;
@@ -1420,6 +1422,9 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
       console.log("");
       console.log(`  ${c.yellow(`${checked.errors} error(s), ${checked.warnings} warning(s) in generated file.`)}`);
       console.log(`  ${c.dim("Run")} agentopology validate ${outFile} ${c.dim("for details.")}`);
+    } else if (unfaithful.length > 0) {
+      // P2-1: one verdict; never "passes all validation rules" with a flagged hook.
+      console.log(`  ${c.yellow(`Generated .at passes validation, but ${unfaithful.length} hook(s) can't be compiled faithfully (exit 2)`)}`);
     } else {
       console.log(`  ${c.green("Generated file passes all validation rules.")}`);
     }
@@ -1428,9 +1433,11 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.log(`  ${c.yellow(`Parse error in generated file: ${(err as Error).message}`)}`);
     errorCount = 1;
   }
-  // B: a hook scaffold would compile to a stub is an import error (the .at is written).
-  const unfaithful = flow?.errors ?? [];
-  for (const e of unfaithful) console.log(`  ${c.red("ERROR")} ${e.message}`);
+  // P2-2: each flagged hook, then its command exactly as the harness wrote it.
+  for (const e of unfaithful) {
+    console.log(`  ${c.red("ERROR")} ${e.message}`);
+    console.log(`    ${e.command}`);
+  }
   console.log("");
   if (errorCount > 0) {
     console.error(c.red(`import: the .at it wrote has ${errorCount} validation error(s); fix them, or run validate ${outFile} for details`));
