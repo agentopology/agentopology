@@ -176,6 +176,30 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
   });
 });
 
+describe("S-51: an agent Edit deny says what it does not block", () => {
+  for (const rule of ["Edit", '"Edit(/src/**)"']) {
+    it(`deny: [${rule}] warns that Write, MultiEdit and NotebookEdit are not blocked`, () => {
+      const { warnings } = scaffold(topo({ a: `    deny: [${rule}]` }));
+      const w = warnings.find((x) => x.includes("S-51") || x.includes("NotebookEdit"));
+      expect(w).toBeDefined();
+      expect(w).toContain('agent "a"');
+      expect(w).toContain("Write, MultiEdit and NotebookEdit are not blocked");
+      expect(w).toContain("settings { deny");
+      expect(w).toContain("`Edit` rules apply to all built-in tools that edit files");
+    });
+  }
+
+  it("the matcher stays Edit (not widened)", () => {
+    const { value: files } = scaffold(topo({ a: '    deny: ["Edit(/src/**)"]' }));
+    expect(frontmatterHooks(file(files, AGENT_MD)).PreToolUse[0].matcher).toBe("Edit");
+  });
+
+  it("no such warning for a deny on another tool", () => {
+    const { warnings } = scaffold(topo({ a: '    deny: ["Bash(rm *)"]' }));
+    expect(warnings.some((x) => x.includes("NotebookEdit"))).toBe(false);
+  });
+});
+
 describe("T5: agent ask -> a frontmatter PreToolUse hook that asks", () => {
   it("returns permissionDecision ask in hookSpecificOutput", () => {
     const { value: files } = scaffold(topo({ a: '    ask: ["Bash(git push *)"]' }));
