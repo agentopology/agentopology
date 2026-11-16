@@ -2,6 +2,29 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.11.4] - 2026-11-16
+
+### [fix] A git step no longer blocks ordinary git commands
+
+- With a step whose command is `git commit` or `git push` behind a gate, `before-action.sh` refused everyday git commands: `git diff HEAD~1`, `git log @{u}..HEAD`, `git show HEAD^{commit}`, `git diff HEAD@{1}`, `git rev-parse HEAD~2`, `git log "$BR"`. It read any word holding `~` or `{` as a shell expansion, and a command it could not read ran the gate. Present in 0.11.2 and 0.11.3: against such a topology, 11 of 40 everyday commands were refused.
+- The hook now reads a word the way bash expands it. `$`, a backtick and a glob (`*` `?` `[`) still count as an expansion; `~` counts only at the start of a word or after `=` or `:`; `{` counts only as a brace list (`{a,b}`) or a sequence (`{a..b}`). `HEAD~1`, `@{u}`, `HEAD@{1}`, `HEAD^{commit}` and `a..b` are read as written.
+- A git command whose subcommand is a literal reading one (`status`, `diff`, `log`, `show`, `add`, `blame`, `ls-files`, `restore`, `rm`, `mv`, `branch`, `tag`, or `commit` when no git step starts with it), and is not the first word of any git step of the topology, is not a step, so a variable in it (`git log "$BR"`) no longer runs the gate. `git grep`, an option before the subcommand other than `--no-pager`, `--no-optional-locks`, `--no-replace-objects` or `--literal-pathspecs`, and any flag that makes git run a command (`-c`, `--exec-path`, an alias, `-C <dir>`) keep the old reading. The step's own words, written out, still count: `git commit -m "$MSG"` is a commit.
+- Still refused, as before: `git commit`, `git push origin main`, `git -C d commit`, `g=git; $g commit`, `git $(echo commit)`, `git {commit,x}`, `~/bin/git commit`, `sh -c 'git commit'`, `xargs git commit`, `git c${x}ommit`.
+- An inline git alias could run a gated step; it's now refused. `git -c alias.x=commit x` and `V=commit git --config-env=alias.x=V x` made a commit under another name, and 0.11.2 and 0.11.3 let them through. A `-c` or `--config-env` that defines an alias, or names a config file to include (`include.path`, `includeIf.<condition>.path`), is now read as a possible step. A `-c` that defines no alias reads as before: `git -c user.name=x commit -m y` is a step, `git -c core.pager=cat log` runs.
+- The same reader serves the Codex hooks, so the fix covers both, including the Codex `if:` filter (`.codex/scripts/at-if.sh`): a `strength: refuse` hook with `if: "Bash(git push*)"` no longer runs for `git log HEAD~1`.
+
+### [fix] A missing jq no longer blocks every command, edit and launch
+
+- With no `jq` on PATH, `before-action.sh`, `before-edit.sh` and `before-agent.sh` refused every call, so a machine without jq could run no command at all in a project with a gated step.
+- Without jq, each now reads its input as raw text and refuses only when that text could hold what it guards: the input is empty or holds a `\u` escape, or its letters (after JSON's escapes) hold, in order, the words of a gated step, the file name of a gate ledger, or a gated agent's name; for a command, also an expansion or glob next to a gated tool's name. Otherwise the call runs, and the hook prints one line: `agentopology: jq is not installed; this command names no gated step, so it runs. Install jq to check steps.` (for an edit and a launch, the same line about a gate ledger and a gated agent).
+- A refused call keeps its message. A launch refused for a missing jq now says `jq is required to check this launch` (it said the input was not valid JSON).
+- A gated step's own action script still refuses to run without jq: that script is the step.
+
+### Held by tests
+
+- An exit-code differential frozen from a v0.11.2 build: 9010 runs (8 topologies, Claude Code and Codex, `before-action.sh`, `before-edit.sh` and `before-agent.sh`, and 3 Codex `if:` hooks through `at-if.sh`; every command of the existing guard tests plus the new corpora, with jq and without). 0.11.3 equals 0.11.2 on all of them. 0.11.4 equals 0.11.2 on every run except two lists declared in advance: 2606 from exit 2 to exit 0 (74 everyday git commands with jq, 38 everyday git commands behind a `strength: refuse` hook with `if: "Bash(git push*)"`, 2494 inputs without jq that name nothing gated), and 84 from exit 0 to exit 2 (28 inline git alias forms, on Claude Code and Codex, and behind that `if:` hook). Without jq no hook lets through what it refuses with jq.
+- The run resolution and the settings.json merge are untouched: both 0.11.2 differentials pass, and every generated file other than the three guard scripts and the Codex `if:` filter script is byte for byte as before.
+
 ## [0.11.3] - 2026-11-16
 
 ### Changed behaviour
