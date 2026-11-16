@@ -59,6 +59,11 @@ export function projectWord(word: string): string {
 export function runParts(run: string): { interpreter?: string; script: string; args: string[] } {
   const words = run.trim().split(/\s+/).map((w, i) => (i < 2 ? projectWord(w) : w));
   const first = words[0] ?? "";
+  // F1b: `bun run x.ts` and `deno run x.ts` run x.ts; the script is the word after `run`.
+  if (/^(?:bun|deno)$/.test(first.replace(/^.*\//, "")) && words[1] === "run" && words.length > 2 && !words[2].startsWith("-")) {
+    const [script, ...args] = words.slice(2);
+    return { interpreter: `${first} run`, script, args };
+  }
   const named =
     words.length > 1 &&
     !words[1].startsWith("-") && // `bash -c '...'` runs no script file
@@ -144,11 +149,70 @@ function hasShellOperator(run: string): boolean {
  * package runner, or the line holds a shell operator outside quotes. A bare
  * name (`check-review`) still means the topology's own scripts/check-review.
  */
-export function isShellCommand(run: string | undefined): boolean {
+export function isShellCommand(run: string | undefined, declared?: ReadonlySet<string>): boolean {
   const text = run?.trim() ?? "";
   const first = text.split(/\s+/)[0] ?? "";
   if (!first) return false;
-  return SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first) || PACKAGE_RUNNER.test(first) || hasShellOperator(text);
+  const shell = SHELL_BUILTIN.test(first) || ASSIGNMENT.test(first) || PACKAGE_RUNNER.test(first) || hasShellOperator(text);
+  // F1: a line that opens with one of the topology's own scripts runs that
+  // script, whatever follows it: `scripts/guard.sh 2>/dev/null` was emitted
+  // as written, and a relative scripts/ path is not found (exit 127).
+  return shell && !topologyScriptHead(text, declared);
+}
+
+/**
+ * F1: the head of a `run:` that opens by running one of this topology's own
+ * scripts: the interpreter it names (`python3`, `bun`, `bun run`, `deno run`;
+ * as written), the script word, and the rest of the line exactly as written
+ * (arguments, redirects, operators). Null when the line opens with anything
+ * else: a builtin, keyword, assignment, package runner, a PATH tool, or a
+ * project path (the user's own file, which runs where it is).
+ *
+ * The script is the topology's when it is a `scripts/` path (the skill's own
+ * scripts folder, as it has always meant), or a bare name in `declared`: the
+ * names the topology scaffolds as scripts elsewhere (see declaredScripts). A
+ * bare name it does not declare (`jq`, `lint-tool`) stays a PATH tool (S-11).
+ */
+export function topologyScriptHead(
+  run: string | undefined,
+  declared?: ReadonlySet<string>,
+): { interpreter?: string; script: string; rest: string } | null {
+  const text = run?.trim() ?? "";
+  const tokens = [...text.matchAll(/\S+/g)];
+  if (tokens.length === 0) return null;
+  let i = 0;
+  const base = tokens[0][0].replace(/^.*\//, "");
+  if (INTERPRETER.test(base) && tokens.length > 1) {
+    i = /^(?:bun|deno)$/.test(base) && tokens[1][0] === "run" && tokens.length > 2 ? 2 : 1;
+  }
+  const tok = tokens[i];
+  // The script word ends at the first operator character: `scripts/x.sh;` or `scripts/x.sh>log`.
+  const script = tok[0].match(/^[^|;&<>`()]*/)![0];
+  if (!script || !EXECUTABLE.test(script)) return null;
+  const topology = script.startsWith("scripts/")
+    ? SCRIPT_FILE.test(script.slice("scripts/".length))
+    : !script.includes("/") && SCRIPT_FILE.test(script) && !!declared?.has(script) && !SHELL_BUILTIN.test(script) && !PACKAGE_RUNNER.test(script);
+  if (!topology) return null;
+  const interpreter = i > 0 ? text.slice(0, tokens[i - 1].index! + tokens[i - 1][0].length) : undefined;
+  return { ...(interpreter ? { interpreter } : {}), script, rest: text.slice(tok.index! + script.length) };
+}
+
+/**
+ * The bare script names a topology scaffolds into its skill's scripts folder:
+ * the script of every command hook's and gate's `run:` that is not shell,
+ * prose or a project path. A bare name followed by an operator elsewhere
+ * (`check-review | tee log`) is that script when it is in this set (F1).
+ */
+export function declaredScripts(runs: Array<string | undefined>): Set<string> {
+  const names = new Set<string>();
+  for (const run of runs) {
+    if (!run || isShellCommand(run) || proseInRun(run)) continue;
+    const { script } = runParts(run);
+    if (!script || script.startsWith("/") || isProjectPath(script)) continue;
+    const name = script.replace(/^.*\//, "");
+    if (SCRIPT_FILE.test(name)) names.add(name);
+  }
+  return names;
 }
 
 /**

@@ -76,7 +76,8 @@ export function shellStub(description: string, opts: { fail?: boolean } = {}): s
  * and fails: exit 2 with `fail` (a check that must refuse), exit 1 otherwise.
  */
 export function scriptStub(description: string, interpreter: string, opts: { fail?: boolean } = {}): string {
-  const base = interpreter.replace(/^.*\//, "");
+  // `bun run` and `deno run` (F1b) write the language of their first word.
+  const base = interpreter.split(/\s+/)[0].replace(/^.*\//, "");
   const code = opts.fail ? 2 : 1;
   const msg = "TODO: implement this script — it fails until it is written";
   if (/^python/.test(base)) {
