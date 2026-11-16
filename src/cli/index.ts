@@ -49,6 +49,7 @@ import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
+import { duplicateHooks, hookTwins } from "../scaffold/merge.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 import { renderAscii } from "../render/ascii.js";
@@ -726,9 +727,16 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     }
   };
 
+  // F2: a generated hook the user's settings.json already runs in another form is not added; say which.
+  const settingsGen = files.find((f) => f.path === ".claude/settings.json");
+  const settingsOnDisk = path.join(basePath, ".claude/settings.json");
+  const twins = settingsGen && fs.existsSync(settingsOnDisk) ? hookTwins(fs.readFileSync(settingsOnDisk, "utf-8"), settingsGen.content) : [];
+  const printTwins = () => { for (const t of twins) console.log(`  ${c.dim("=")} .claude/settings.json: ${t}`); };
+
   if (dryRun) {
     console.log(c.cyan("  Dry run — nothing is written:"));
     console.log("");
+    printTwins();
     for (const action of actions) {
       printAction(action, true);
       // A merged config file is the one to review before a write: show what changes.
@@ -744,6 +752,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
+    printTwins();
     printRuleNotice(notice);
     console.log("");
     console.log(
@@ -1462,6 +1471,9 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   for (const line of renderGuardReport(report)) console.log(line);
   if (target === "claude-code") {
     for (const w of exit127Warnings(ast, root)) console.log(`⚠ [${w.rule}] ${w.message}`);
+    // F2: a hook settings.json runs twice, in two forms.
+    const settingsPath = path.join(root, ".claude/settings.json");
+    if (fs.existsSync(settingsPath)) for (const d of duplicateHooks(fs.readFileSync(settingsPath, "utf-8"))) console.log(`⚠ .claude/settings.json: ${d}`);
   }
   process.exit(report.missing > 0 ? 1 : 0);
 }

@@ -297,11 +297,88 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function hookGroupKey(group: unknown): string {
   if (!isPlainObject(group) || !Array.isArray(group.hooks)) return JSON.stringify(group);
   const commands = group.hooks.map((h) =>
-    isPlainObject(h) && typeof h.command === "string"
-      ? h.command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim()
-      : JSON.stringify(h),
+    isPlainObject(h) && typeof h.command === "string" ? hookCommandKey(h.command) : JSON.stringify(h),
   );
   return JSON.stringify([group.matcher ?? "", commands]);
+}
+
+/**
+ * A hook command with what does not change what it runs taken away (F2): the
+ * project-dir variable in any of its forms (`"$CLAUDE_PROJECT_DIR"/x`,
+ * `"$CLAUDE_PROJECT_DIR/x"`, `${CLAUDE_PROJECT_DIR}/x`), quotes, a leading
+ * `./`, a leading `command`, and `bash` or `sh` before a script path. The form
+ * Claude Code's docs give and the form scaffold writes are one hook.
+ */
+export function hookCommandKey(command: string): string {
+  return command
+    .trim()
+    .replace(/^command\s+/, "")
+    .replace(/"?\$\{?CLAUDE_PROJECT_DIR(?::-[^}"]*)?\}?"?\/?/g, "")
+    .replace(/["']/g, "")
+    .replace(/(^|\s)\.\//g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:bash|sh) (?=[^\s-]*(?:\/|\.sh(?:\s|$)))/, "");
+}
+
+/** One line per generated hook the merge did not add because the user's settings.json already runs it (F2). */
+export function hookTwins(existingRaw: string, generatedRaw: string): string[] {
+  let ex: unknown, gen: unknown;
+  try {
+    ex = JSON.parse(existingRaw).hooks;
+    gen = JSON.parse(generatedRaw).hooks;
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(ex) || !isPlainObject(gen)) return [];
+  const lines: string[] = [];
+  for (const [event, groups] of Object.entries(gen)) {
+    const mine = Array.isArray(ex[event]) ? (ex[event] as unknown[]) : [];
+    for (const g of Array.isArray(groups) ? groups : []) {
+      const twin = mine.find((m) => hookGroupKey(m) === hookGroupKey(g) && JSON.stringify(m) !== JSON.stringify(g));
+      if (!twin) continue;
+      lines.push(`${event}${matcherText(g)} keeps your ${commandText(twin)}; the .at's ${commandText(g)} is the same hook, not added`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Hooks a settings.json runs twice: two handlers under one event and matcher
+ * whose commands differ only in form (hookCommandKey). Both fire (F2).
+ */
+export function duplicateHooks(settingsRaw: string): string[] {
+  let hooks: unknown;
+  try {
+    hooks = JSON.parse(settingsRaw).hooks;
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(hooks)) return [];
+  const lines: string[] = [];
+  for (const [event, groups] of Object.entries(hooks)) {
+    const seen = new Map<string, string>();
+    for (const g of Array.isArray(groups) ? groups : []) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        if (!isPlainObject(h) || typeof h.command !== "string") continue;
+        const key = JSON.stringify([g.matcher ?? "", hookCommandKey(h.command)]);
+        const first = seen.get(key);
+        if (first === undefined) { seen.set(key, h.command); continue; }
+        lines.push(`${event}${matcherText(g)} runs the same hook twice: ${JSON.stringify(first)} and ${JSON.stringify(h.command)}; remove one`);
+      }
+    }
+  }
+  return lines;
+}
+
+function matcherText(group: unknown): string {
+  return isPlainObject(group) && typeof group.matcher === "string" && group.matcher ? ` [${group.matcher}]` : "";
+}
+
+function commandText(group: unknown): string {
+  if (!isPlainObject(group) || !Array.isArray(group.hooks)) return JSON.stringify(group);
+  return group.hooks.map((h) => (isPlainObject(h) && typeof h.command === "string" ? JSON.stringify(h.command) : JSON.stringify(h))).join(", ");
 }
 
 /** Whether a hook group runs a script this topology owns. */
