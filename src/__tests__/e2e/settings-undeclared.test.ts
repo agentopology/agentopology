@@ -2,8 +2,9 @@
  * 0.11.2 (warn only): 0.11.x merges permission rules into .claude/settings.json
  * as a union, so a rule dropped from the .at stays in effect. Scaffold and
  * guard --target claude-code now name each rule the .at does not declare,
- * once per change, and never change what the file holds. An invalid
- * settings.json is a one-line error, not a stack trace.
+ * once per change. The file is written exactly as 0.11.1, and prune never
+ * deletes settings.json. An invalid settings.json (or one whose root is not
+ * an object) is a one-line error, not a stack trace.
  *
  * Runs the built CLI in temp dirs.
  */
@@ -144,7 +145,7 @@ function dropFlow(run: (file: string, ...more: string[]) => ReturnType<typeof cl
 describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
   it("[0.11.2-a] a rule dropped from the .at stays, and is named once with the user's rules", () => {
     const r = dropFlow(scaffold);
-    // The file is what the unchanged 0.11.1 merge gives: A still there.
+    // Written exactly as 0.11.1 (the unchanged merge): A still there.
     expect(r.after).toBe(deepMergeSettingsJson(r.before, settingsOf("t", [R]), []));
     expect(JSON.parse(r.after).permissions.allow).toContain(A);
     expect(named(r.second)).toEqual([line("allow", A), line("allow", U), line("deny", D)]);

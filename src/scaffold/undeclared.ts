@@ -5,7 +5,8 @@
  * 0.11.x merges rules into settings.json as a union and never removes one, so
  * a rule dropped from the .at stays in effect. Scaffold and
  * `guard --target claude-code` both call {@link undeclaredRuleNotice} and
- * print its lines; it changes no file.
+ * print its lines; it changes no file. settings.json is written exactly as
+ * 0.11.1, and prune never deletes settings.json.
  *
  * The manifest entry of settings.json keeps the set last named
  * (`undeclaredRulesNamed`). When the set gains a rule, every rule is named on
