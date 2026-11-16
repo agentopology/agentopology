@@ -2,11 +2,13 @@
  * The permission rules in `.claude/settings.json` that the .at does not
  * declare.
  *
- * 0.11.x merges rules into settings.json as a union and never removes one, so
- * a rule dropped from the .at stays in effect. Scaffold and
- * `guard --target claude-code` both call {@link undeclaredRuleNotice} and
- * print its lines; it changes no file. settings.json is written exactly as
- * 0.11.1, and prune never deletes settings.json.
+ * Scaffold merges rules into settings.json as a union. Since T6 it removes
+ * the rules it owns (it added them) once the .at drops them (ownership.ts);
+ * every other rule stays, and a rule nobody owns that the .at does not
+ * declare is named here. A rule another topology in the project owns is that
+ * topology's, not named (S-48). Scaffold and `guard --target claude-code` both
+ * call {@link undeclaredRuleNotice} and print its lines; it changes no file.
+ * Prune never deletes settings.json.
  *
  * The manifest entry of settings.json keeps the set last named
  * (`undeclaredRulesNamed`). When the set gains a rule, every rule is named on
@@ -21,6 +23,14 @@ import { join } from "node:path";
 
 import type { GeneratedFile } from "../bindings/types.js";
 import type { FileAction, ManifestEntry, ScaffoldManifest } from "./types.js";
+import { ownedOf, removalLine, type RuleRemoval } from "./ownership.js";
+
+/** The T6 lines: each owned rule this run removes (or the defaultMode it replaces). */
+export function removedRuleLines(actions: FileAction[]): string[] {
+  const a = actions.find((x) => x.path === SETTINGS_PATH);
+  const removed: RuleRemoval[] = a && "rules" in a && a.rules ? a.rules.removed : [];
+  return removed.map(removalLine);
+}
 
 export const SETTINGS_PATH = ".claude/settings.json";
 /** What prune (and --dry-run) says instead of deleting settings.json, which it never does. */
@@ -92,12 +102,15 @@ export function undeclaredRuleLine(rule: string): string {
  * @param generatedFiles - The files this run generates (what the .at declares)
  * @param actions - The planned actions of this run
  * @param manifest - This topology's previous manifest, or null
+ * @param ownedElsewhere - `"<list> <rule>"` items another topology in this
+ *   project owns (S-48): they are that topology's, not undeclared here
  */
 export function undeclaredRuleNotice(
   basePath: string,
   generatedFiles: GeneratedFile[],
   actions: FileAction[],
   manifest: ScaffoldManifest | null,
+  ownedElsewhere: ReadonlySet<string> = new Set(),
 ): RuleNotice {
   const generated = generatedFiles.find((f) => f.path === SETTINGS_PATH);
   const entry = manifest?.files?.[SETTINGS_PATH];
@@ -126,7 +139,7 @@ export function undeclaredRuleNotice(
   for (const list of LISTS) {
     for (const rule of present[list]) {
       const item = `${list} ${rule}`;
-      if (!declared[list].includes(rule) && !current.includes(item)) current.push(item);
+      if (!declared[list].includes(rule) && !current.includes(item) && !ownedElsewhere.has(item)) current.push(item);
     }
   }
   if (current.length === 0) return { lines: [], named: current };
@@ -142,6 +155,16 @@ export function undeclaredRuleSummary(rules: string[]): string {
   return n === 1
     ? `1 rule in ${SETTINGS_PATH} isn't declared in the .at: ${list}; declare it in the .at to keep it, or remove it`
     : `${n} rules in ${SETTINGS_PATH} aren't declared in the .at: ${list}; declare them in the .at to keep them, or remove them`;
+}
+
+/** `"<list> <rule>"` for every rule another topology's manifest in this project owns (S-48). */
+export function rulesOwnedElsewhere(others: ScaffoldManifest[]): Set<string> {
+  const out = new Set<string>();
+  for (const m of others) {
+    const owned = ownedOf(m.files?.[SETTINGS_PATH]);
+    for (const list of LISTS) for (const r of owned[list]) out.add(`${list} ${r}`);
+  }
+  return out;
 }
 
 /** Store the named set on the settings.json entry of a manifest's files (in place). */

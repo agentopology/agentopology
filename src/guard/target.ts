@@ -23,10 +23,10 @@ import { claudeCodeBinding } from "../bindings/claude-code.js";
 import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
+import { readManifest, writeManifest, hashContent, otherManifests } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
-import { undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
+import { undeclaredRuleNotice, recordNamedRules, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
 
 const SETTINGS = ".claude/settings.json";
 const CODEX_HOOKS = ".codex/hooks.json";
@@ -164,7 +164,7 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string, 
     if (a.type === "blocked" && !a.unsafe) { skipped.push({ path: a.path, why: `blocked: ${a.detail}` }); continue; }
     planned.push(a);
   }
-  const notice = undeclaredRuleNotice(root, files, planned, manifest);
+  const notice = undeclaredRuleNotice(root, files, planned, manifest, rulesOwnedElsewhere(otherManifests(root, target, source)));
   return { actions: planned, skipped, files, checks, notice };
 }
 

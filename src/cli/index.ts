@@ -51,7 +51,8 @@ import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.j
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
-import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
+import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH, undeclaredRuleNotice, recordNamedRules, removedRuleLines, rulesOwnedElsewhere, type RuleNotice } from "../scaffold/undeclared.js";
+import { otherManifests } from "../scaffold/manifest.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
@@ -586,6 +587,11 @@ function printRuleNotice(notice: RuleNotice): void {
   for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
 }
 
+/** T6: one line per owned rule removed from settings.json (the same on scaffold and guard --target). */
+function printRemovedRules(lines: string[]): void {
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
@@ -678,7 +684,11 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     exitOnInvalidSettings(err);
     throw err;
   }
-  const notice = undeclaredRuleNotice(basePath, files, actions, manifest);
+  // S-48: a rule another topology here owns is that topology's, not undeclared.
+  const ownedElsewhere = rulesOwnedElsewhere(otherManifests(basePath, targetName, path.basename(filePath)));
+  const notice = undeclaredRuleNotice(basePath, files, actions, manifest, ownedElsewhere);
+  // T6: the owned rules this run removes; printed in dry-run and real run alike.
+  const removedRules = removedRuleLines(actions);
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
@@ -734,6 +744,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         for (const line of jsonChanges(onDisk, action.content)) console.log(`      ${c.dim(line)}`);
       }
     }
+    printRemovedRules(removedRules);
     printRuleNotice(notice);
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
@@ -741,6 +752,8 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
+    // A settings.json write that failed removed nothing: say only what happened.
+    if (!result.failures.some((f) => f.path === SETTINGS_PATH)) printRemovedRules(removedRules);
     printRuleNotice(notice);
     console.log("");
     console.log(
@@ -1511,6 +1524,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     } else if (a.type === "unchanged") console.log(`  ${c.dim("=")} ${a.path}`);
   }
   for (const s of plan.skipped) console.log(`  ${c.bold("!")} ${s.path} (${s.why})`);
+  printRemovedRules(removedRuleLines(plan.actions));
   printRuleNotice(plan.notice);
   console.log("");
 

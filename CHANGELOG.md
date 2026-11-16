@@ -4,6 +4,15 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: a permission rule dropped from the .at no longer stays in effect; scaffold removes the rules it added (T6, S-37, S-48)
+
+- Scaffold now records in its manifest the `allow`, `ask` and `deny` rules (and the `defaultMode`) it added to `.claude/settings.json`. When the .at no longer declares an owned rule, the next scaffold or `guard --target claude-code` removes it and prints `.claude/settings.json allow "<rule>": removed; the .at no longer declares it`. `--dry-run` prints the same and writes nothing; prune still never deletes settings.json.
+- Scaffold never owns a rule it did not add: a rule already in the file (yours, or another topology's) is kept and, when the .at does not declare it, named as in 0.11.2. A manifest from 0.11.2 records no ownership, so the first run after the upgrade removes nothing, and only rules added from then on are owned.
+- An owned `defaultMode` is replaced when the .at changes it and removed when the .at drops it; a `defaultMode` you set before scaffold, or changed after, is yours and never touched.
+- Two topologies in one project: a rule the other topology owns is not named as undeclared, and neither removes the other's rules.
+- The one case where a hand edit is lost: if you keep, by hand, a rule scaffold added (same text), it cannot be told apart and is removed when the .at drops it. The removal is printed, never silent.
+- The settings merge itself is unchanged: with nothing owned to remove, settings.json is written byte for byte as in 0.11.2.
+
 ### [feat] An agent `deny` on Edit warns that Write, MultiEdit and NotebookEdit are not blocked (S-51)
 
 - The agent's hook matches the Edit tool only, and the hooks docs do not say whether `if: "Edit(...)"` matches a Write call. Scaffold now says so for each agent Edit deny, and points to a `settings { deny }` Edit rule, which "`Edit` rules apply to all built-in tools that edit files" makes cover them.

@@ -115,6 +115,26 @@ function tree(dir = root): string {
   return out.sort().join("\n");
 }
 
+/**
+ * T6: turn every manifest here into a 0.11.2 one (no ownership recorded).
+ * These tests pin 0.11.2's behaviour for rules nobody owns; since T6 a rule
+ * scaffold added is owned and removed when the .at drops it (see
+ * settings-ownership.test.ts). Called right after the first scaffold, so every
+ * rule below is one nobody owns and each assertion holds as written.
+ */
+function as0112(): void {
+  for (const n of fs.readdirSync(at(".claude")).filter((x) => x.startsWith(".scaffold-manifest"))) {
+    const p = at(join(".claude", n));
+    const m = JSON.parse(fs.readFileSync(p, "utf8"));
+    const e = m.files?.[SETTINGS];
+    if (e) {
+      delete e.rulesOwned;
+      delete e.defaultModeOwned;
+    }
+    fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
+  }
+}
+
 const settingsOf = (name: string, rules: string[]) =>
   claudeCodeBinding.scaffold(parse(withAllow(name, rules))).find((f) => f.path === SETTINGS)!.content;
 
@@ -129,6 +149,7 @@ function dropFlow(run: (file: string, ...more: string[]) => ReturnType<typeof cl
   const first = run("t.at");
   expect(first.stderr).not.toMatch(/\n\s+at /);
   expect(named(first)).toEqual([]);
+  as0112();
   addByHand([U], [D]);
   writeAt("t.at", withAllow("t", [R]));
   const before = fs.readFileSync(at(SETTINGS), "utf8");
@@ -195,6 +216,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
   it("[0.11.2-c] --dry-run prints the same lines and writes nothing, the manifest included", () => {
     writeAt("t.at", withAllow("t", [A, R]));
     scaffold("t.at");
+    as0112();
     addByHand([U], [D]);
     writeAt("t.at", withAllow("t", [R]));
     const hash = tree();
@@ -222,6 +244,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     it(`[0.11.2-d] a manifest ${label}: named once, no crash, nothing deleted`, () => {
       writeAt("t.at", withAllow("t", [A, R]));
       scaffold("t.at");
+      as0112();
       addByHand([U], [D]);
       writeAt("t.at", withAllow("t", [R]));
       spoil();
@@ -240,6 +263,7 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
   it("[0.11.2-e] the .at drops its settings block: the file is kept across runs and its rules named once", () => {
     writeAt("t.at", withAllow("t", [A, R]));
     scaffold("t.at");
+    as0112();
     addByHand([U], [D]);
     const before = fs.readFileSync(at(SETTINGS), "utf8");
     writeAt("t.at", topo("t", ""));
@@ -259,7 +283,9 @@ describe("[0.11.2] scaffold names the rules the .at does not declare", () => {
     writeAt("one.at", withAllow("one", [A, R]));
     writeAt("two.at", withAllow("two", [X]));
     expect(named(scaffold("one.at"))).toEqual([]);
+    as0112();
     const two = scaffold("two.at");
+    as0112();
     expect(named(two)).toEqual([line("allow", A), line("allow", R)]);
     const merged = fs.readFileSync(at(SETTINGS), "utf8");
     expect(JSON.parse(merged).permissions.allow).toEqual([A, R, X]);
@@ -327,6 +353,7 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
   it("[0.11.2-l] (a) --prune keeps settings.json, says so, and still deletes the other leftovers", () => {
     writeAt("t.at", withC(withAllow("t", [A, R])));
     expect(scaffold("t.at").status).toBe(0);
+    as0112();
     const before = fs.readFileSync(at(SETTINGS), "utf8");
     const files = paths();
     writeAt("t.at", topo("t", ""));
@@ -353,6 +380,7 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
     fs.writeFileSync(at(SETTINGS), JSON.stringify({ permissions: { allow: [U] }, env: { MINE: "1" } }, null, 2) + "\n");
     writeAt("t.at", withAllow("t", [A]));
     expect(scaffold("t.at").status).toBe(0);
+    as0112();
     const before = fs.readFileSync(at(SETTINGS), "utf8");
     expect(JSON.parse(before).permissions.allow).toEqual(expect.arrayContaining([A, U]));
     writeAt("t.at", topo("t", ""));
@@ -367,7 +395,9 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
     writeAt("one.at", withAllow("one", [A, R]));
     writeAt("two.at", withAllow("two", [X]));
     expect(scaffold("one.at").status).toBe(0);
+    as0112();
     expect(scaffold("two.at").status).toBe(0);
+    as0112();
     const merged = fs.readFileSync(at(SETTINGS), "utf8");
     expect(JSON.parse(merged).permissions.allow).toEqual([A, R, X]);
     writeAt("two.at", topo("two", ""));
@@ -387,6 +417,7 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
   it("[0.11.2-l] (d) --dry-run, with and without --prune, says the same and writes nothing", () => {
     writeAt("t.at", withAllow("t", [A, R]));
     expect(scaffold("t.at").status).toBe(0);
+    as0112();
     writeAt("t.at", topo("t", ""));
     const hash = tree();
     for (const more of [["--dry-run"], ["--dry-run", "--prune"]]) {
@@ -401,6 +432,7 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
   it("[0.11.2-l] the library plan never deletes settings.json, and executeActions refuses to", () => {
     writeAt("t.at", withAllow("t", [A, R]));
     expect(scaffold("t.at").status).toBe(0);
+    as0112();
     const before = fs.readFileSync(at(SETTINGS), "utf8");
     const manifest = readManifest(root, "claude-code", "t.at");
     const actions = computeIncrementalPlan(root, "claude-code", claudeCodeBinding.scaffold(parse(topo("t", ""))), manifest);

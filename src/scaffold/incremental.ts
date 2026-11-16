@@ -38,6 +38,10 @@ import {
   deepMergeSettingsJson,
 } from "./merge.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
+import { applyOwnership, ownedOf, recordOwnership, type Owned, type RuleOwnership } from "./ownership.js";
+
+/** Any rule or mode recorded as owned. */
+const ownsAnything = (o: Owned) => o.allow.length + o.ask.length + o.deny.length > 0 || o.defaultMode !== undefined;
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -99,6 +103,9 @@ export function computeIncrementalPlan(
   // these paths belong to it; every other hook in settings.json is the user's.
   const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
 
+  // T6: the permission rules this topology added to settings.json before.
+  const previousRules = ownedOf(manifest?.files?.[SETTINGS_PATH]);
+
   // Process each generated file
   for (const file of generatedFiles) {
     const unsafe = unsafePathReason(file.path);
@@ -123,11 +130,16 @@ export function computeIncrementalPlan(
     const onDisk = existsSync(absPath);
 
     if (!onDisk) {
+      // A settings.json scaffold creates: every rule in it is one it added.
+      const rules: RuleOwnership | undefined = file.path === SETTINGS_PATH
+        ? (({ owned, removed }) => ({ owned, removed }))(applyOwnership(null, file.content, file.content, previousRules))
+        : undefined;
       actions.push({
         type: "create",
         path: file.path,
         content: file.content,
         ...(file.executable ? { executable: true } : {}),
+        ...(rules ? { rules } : {}),
       });
       continue;
     }
@@ -141,7 +153,12 @@ export function computeIncrementalPlan(
     const manifestEntry = manifest?.files[file.path] ?? null;
 
     if (existingContent === file.content) {
-      actions.push({ type: "unchanged", path: file.path });
+      if (file.path === SETTINGS_PATH && category === "shared-config") {
+        const { owned, removed } = applyOwnership(existingContent, existingContent, file.content, previousRules);
+        actions.push({ type: "unchanged", path: file.path, rules: { owned, removed } });
+      } else {
+        actions.push({ type: "unchanged", path: file.path });
+      }
       continue;
     }
 
@@ -164,9 +181,20 @@ export function computeIncrementalPlan(
           throw new InvalidSettingsJsonError(file.path, `its root is ${kind}`, "is not a JSON object");
         }
       }
-      const merged = isSettings
+      const union = isSettings
         ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
         : deepMergeJson(existingContent, file.content);
+      // T6: on .claude/settings.json, remove the owned rules the .at dropped.
+      // The union merge itself is unchanged; with nothing owned to remove,
+      // this is its output byte for byte.
+      if (file.path === SETTINGS_PATH) {
+        const { content, owned, removed } = applyOwnership(existingContent, union, file.content, previousRules);
+        actions.push(content === existingContent
+          ? { type: "unchanged", path: file.path, rules: { owned, removed } }
+          : { type: "update", path: file.path, content, detail: "config merged", rules: { owned, removed } });
+        continue;
+      }
+      const merged = union;
       if (merged === existingContent) {
         actions.push({ type: "unchanged", path: file.path });
       } else {
@@ -243,6 +271,18 @@ export function computeIncrementalPlan(
       if (!existsSync(absPath)) continue;
       if (symlinkOnPath(basePath, manifestPath)) {
         actions.push({ type: "blocked", path: manifestPath, detail: "symlink — never deleted through" });
+        continue;
+      }
+      // T6: settings.json is no longer generated (the .at declares no rule):
+      // the owned rules go, everything else stays, and the file is never deleted.
+      if (manifestPath === SETTINGS_PATH && ownsAnything(previousRules)) {
+        const existingContent = readFileSync(absPath, "utf-8");
+        const { content, owned, removed } = applyOwnership(existingContent, existingContent, null, previousRules);
+        if (content !== existingContent) {
+          actions.push({ type: "update", path: manifestPath, content, detail: "owned rules removed", rules: { owned, removed } });
+          continue;
+        }
+        actions.push({ type: "kept", path: manifestPath, detail: SETTINGS_KEPT_DETAIL, rules: { owned, removed } });
         continue;
       }
       if (hashContent(readFileSync(absPath, "utf-8")) !== entry.hash) {
@@ -428,7 +468,16 @@ export function nextManifestFiles(
       const onDisk = readFileSync(join(basePath, action.path), "utf-8");
       files[action.path] = { hash: hashContent(onDisk), category };
     } else if (prev && !removed.has(action.path)) {
-      files[action.path] = prev;
+      files[action.path] = { ...prev };
+    }
+
+    // T6: the rules this topology owns once the run is done. A settings.json
+    // write that failed leaves the file, and so the ownership, as it was.
+    const rules = "rules" in action ? action.rules : undefined;
+    const entry = files[action.path];
+    if (rules && entry) {
+      const failed = (action.type === "create" || action.type === "update") && written === undefined;
+      if (!failed) recordOwnership(entry, rules.owned);
     }
   }
 

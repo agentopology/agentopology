@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { ScaffoldManifest } from "./types.js";
@@ -69,6 +69,29 @@ export function readManifest(
   const own = readJson(join(basePath, perSourcePath(target, source)));
   if (own) return own;
   return shared && shared.source === source ? shared : null;
+}
+
+/**
+ * The manifests of the OTHER topologies scaffolded into this project for this
+ * target: the shared file and every per-source file beside it, except the one
+ * whose `source` is `source`. Unreadable files are skipped.
+ */
+export function otherManifests(basePath: string, target: string, source: string): ScaffoldManifest[] {
+  const shared = join(basePath, getManifestPath(target));
+  const dir = dirname(shared);
+  const stem = MANIFEST_FILENAME.replace(/\.json$/, "");
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => n === MANIFEST_FILENAME || (n.startsWith(`${stem}.`) && n.endsWith(".json")));
+  } catch {
+    return [];
+  }
+  const out: ScaffoldManifest[] = [];
+  for (const n of names.sort()) {
+    const m = readJson(join(dir, n));
+    if (m && typeof m.source === "string" && m.source !== source && m.files && typeof m.files === "object") out.push(m);
+  }
+  return out;
 }
 
 /**

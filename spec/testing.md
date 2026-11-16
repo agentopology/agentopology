@@ -117,6 +117,7 @@ Run the live suite before every release, and after any change to a binding.
 | L3 | Real Claude Code registers a manual agent and an agent with a regex matcher and the phase-4 fields, registers `runs: fork`/`inline` nodes as skills, and runs a prompt hook | live/claude-code.live.test.ts |
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
 | N47 | `package.json` never lists its own name under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`, so an install does not pull a second copy of the package | packaging.test.ts |
+| OWN1 | Scaffold and `guard --target claude-code` own the permission rules (and the `defaultMode`) they added to `.claude/settings.json`, recorded in the manifest; an owned rule the .at no longer declares is removed and named (`removed; the .at no longer declares it`), dry-run printing the same and writing nothing. A rule already in the file when scaffold would add it is never owned and never removed; a rule another topology's manifest owns is not named as undeclared (S-48); a manifest with no ownership owns and removes nothing; prune never deletes settings.json. The one loss: an owned rule the user also keeps by hand with the same text is removed, and printed | e2e/settings-ownership.test.ts |
 | VO-323 | `VERIFIED_ON` is 2.1.323; `LIVE_CHECKS` records the three facts measured there on 2026-11-13; `guard --check` grades the talk and spawn guards `refuse` on 2.1.323 and `unverified` on any other version | e2e/vo-323.test.ts |
 
 ## Open findings (not yet guaranteed)
@@ -127,6 +128,8 @@ real test and the row moves to Guarantees. Source: the compile audit,
 
 | Id | Finding | Phase |
 |---|---|---|
+| OWN2 | Two topologies in one project both declare a rule; the one that added it owns it, and when its .at drops the rule it is removed (and printed) though the other still declares it, until the other's next scaffold adds it back | later |
+| OWN3 | Manifests are keyed by the .at file's basename, so `a/t.at` and `b/t.at` scaffolded into one project share a manifest: each treats the other's files and owned rules as its own, and removes the rules the other added | later |
 | I4 | V14 refuses an agent with both `tools` and `disallowed-tools`, but Claude Code accepts both, so an honest import of such a hand-built agent has validation errors | later |
 | B3 | Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only | later |
 | B7 | The `observability { }` block is ignored by the claude-code binding | later |

@@ -7,6 +7,8 @@
  * @module
  */
 
+import type { RuleOwnership } from "./ownership.js";
+
 /** A single entry in the scaffold manifest. */
 export interface ManifestEntry {
   /** SHA-256 hash of the file content at generation time. */
@@ -20,6 +22,14 @@ export interface ManifestEntry {
    * Optional; a missing or malformed value counts as none.
    */
   undeclaredRulesNamed?: string[];
+  /**
+   * `.claude/settings.json` only (T6): the rules this topology added, per
+   * list. Only these are ever removed, when the .at no longer declares them.
+   * Missing or malformed: owns nothing.
+   */
+  rulesOwned?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  /** `.claude/settings.json` only (T6): the `permissions.defaultMode` this topology wrote. */
+  defaultModeOwned?: string;
 }
 
 /** Manifest written to disk after each scaffold run. */
@@ -38,10 +48,10 @@ export interface ScaffoldManifest {
 
 /** An action to perform on a single file during incremental scaffold. */
 export type FileAction =
-  | { type: "create"; path: string; content: string; executable?: boolean }
-  | { type: "update"; path: string; content: string; detail: string; executable?: boolean }
+  | { type: "create"; path: string; content: string; executable?: boolean; rules?: RuleOwnership }
+  | { type: "update"; path: string; content: string; detail: string; executable?: boolean; rules?: RuleOwnership }
   | { type: "delete"; path: string }
-  | { type: "unchanged"; path: string }
+  | { type: "unchanged"; path: string; rules?: RuleOwnership }
   | { type: "conflict"; path: string; content: string; detail: string }
   /**
    * Never written or deleted, even with --force. `unsafe` marks a path that
@@ -50,4 +60,4 @@ export type FileAction =
    */
   | { type: "blocked"; path: string; detail: string; unsafe?: boolean }
   /** A create-only file already there: the user's. Never written or claimed. */
-  | { type: "kept"; path: string; detail: string };
+  | { type: "kept"; path: string; detail: string; rules?: RuleOwnership };

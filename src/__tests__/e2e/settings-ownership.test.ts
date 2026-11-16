@@ -111,8 +111,8 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-describe("[T6] an owned rule the .at drops is removed; the user's rules stay", () => {
-  it("[T6] drop A: A removed and named as removed; U (by hand) kept and named as undeclared", () => {
+describe("[OWN1] an owned rule the .at drops is removed; the user's rules stay", () => {
+  it("[OWN1] drop A: A removed and named as removed; U (by hand) kept and named as undeclared", () => {
     writeAt("t.at", withRules("t", [A, R]));
     expect(scaffold("t.at").status).toBe(0);
     expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
@@ -131,7 +131,7 @@ describe("[T6] an owned rule the .at drops is removed; the user's rules stay", (
     expect(perms().allow).toEqual([R, U]);
   });
 
-  it("[T6] the .at drops its whole settings block: owned rules removed, the file kept, the user's rule stays", () => {
+  it("[OWN1] the .at drops its whole settings block: owned rules removed, the file kept, the user's rule stays", () => {
     writeAt("t.at", withRules("t", [A, R]));
     scaffold("t.at");
     addByHand([U]);
@@ -145,7 +145,7 @@ describe("[T6] an owned rule the .at drops is removed; the user's rules stay", (
     expect(ownedEntry().rulesOwned).toBeUndefined();
   });
 
-  it("[T6] guard --target claude-code removes the same rule and prints the same line", () => {
+  it("[OWN1] guard --target claude-code removes the same rule and prints the same line", () => {
     writeAt("t.at", withRules("t", [A, R]));
     guard("t.at");
     addByHand([U]);
@@ -157,7 +157,7 @@ describe("[T6] an owned rule the .at drops is removed; the user's rules stay", (
   });
 });
 
-describe("[T6] the manager's question: a hand-added rule with the text of one we owned", () => {
+describe("[OWN1] the manager's question: a hand-added rule with the text of one we owned", () => {
   it("(a) we owned X, removed it; the user then adds X by hand: KEPT, never owned again, named as undeclared", () => {
     writeAt("t.at", withRules("t", [X, R]));
     scaffold("t.at");
@@ -252,7 +252,14 @@ describe("[S-48] two topologies in one directory", () => {
   });
 });
 
-describe("[T6] the 0.11.2 cadence still holds for rules nobody owns", () => {
+describe("open: deletions the design does not yet rule on", () => {
+  // Today this removes X (and prints it) though two still declares it; two adds it back on its next run.
+  it.todo("[OWN2] par owns X, two also declares X (not owned: X was there first); par drops X: kept while two declares it");
+  // Manifests are keyed by the .at basename, so a/t.at and b/t.at share one and each removes the other's owned rules.
+  it.todo("[OWN3] two .at files with the same basename scaffolded into one project never remove each other's rules");
+});
+
+describe("[OWN1] the 0.11.2 cadence still holds for rules nobody owns", () => {
   it("gain -> the list; nothing new -> the summary; none left -> silence", () => {
     writeAt("t.at", withRules("t", [R]));
     scaffold("t.at");
@@ -266,7 +273,7 @@ describe("[T6] the 0.11.2 cadence still holds for rules nobody owns", () => {
   });
 });
 
-describe("[T6] prune and dry-run", () => {
+describe("[OWN1] prune and dry-run", () => {
   it("prune never deletes settings.json, even when every rule in it was owned and removed", () => {
     writeAt("t.at", withRules("t", [A]));
     scaffold("t.at");
@@ -303,7 +310,7 @@ describe("[T6] prune and dry-run", () => {
   });
 });
 
-describe("[T6] upgrade from a 0.11.2 manifest (no ownership recorded)", () => {
+describe("[OWN1] upgrade from a 0.11.2 manifest (no ownership recorded)", () => {
   it("owns nothing and removes nothing on the first run; owns only rules it adds from then on", () => {
     writeAt("t.at", withRules("t", [A, R]));
     scaffold("t.at");
@@ -325,7 +332,7 @@ describe("[T6] upgrade from a 0.11.2 manifest (no ownership recorded)", () => {
   });
 });
 
-describe("[T6] defaultMode: owned when scaffold wrote it, the user's when it was there first", () => {
+describe("[OWN1] defaultMode: owned when scaffold wrote it, the user's when it was there first", () => {
   const withMode = (mode: string | null) => topo("t", `  settings {\n    allow: [Read]\n${mode ? `    default-mode: ${mode}\n` : ""}  }`);
 
   it("owned: changed in the .at -> replaced; dropped -> removed", () => {
