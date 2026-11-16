@@ -17,7 +17,7 @@ import * as os from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
-import { isShellCommand } from "../../parser/run.js";
+import { isShellCommand, proseInRun } from "../../parser/run.js";
 import { hookCommand, settingsHooksOf, claudeCodeBinding } from "../../bindings/claude-code.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +38,12 @@ describe("F1: a topology script followed by redirects or operators", () => {
     expect(hookCommand("bun scripts/guard.ts", "t")).toBe(`bun ${SKILL("guard.ts")}`);
     expect(hookCommand("bun run scripts/guard.ts --x", "t")).toBe(`bun run ${SKILL("guard.ts")} --x`);
     expect(hookCommand("deno run scripts/x.ts 2>&1", "t")).toBe(`deno run ${SKILL("x.ts")} 2>&1`);
+  });
+
+  it("[F-1b] bun run on a project-dir path stays as written and still validates", () => {
+    const run = 'bun run "$CLAUDE_PROJECT_DIR/x.ts"';
+    expect(hookCommand(run, "t")).toBe(run);
+    expect(proseInRun(run)).toBeNull();
   });
 
   it("[F-1] is not shell: the binding writes a stub for the script", () => {
