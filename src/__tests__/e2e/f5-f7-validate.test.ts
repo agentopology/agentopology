@@ -16,6 +16,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
+import { claudeCodeBinding } from "../../bindings/claude-code.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../../../dist/cli/index.js");
 
@@ -54,6 +55,16 @@ describe("F7: a hook script path with a space is named by validate, not refused 
   it("[F-7] a path with no space still passes", () => {
     const r = validate(parse(at(hook("bash .claude/hooks/guard.sh --flag a"))));
     expect(r.filter((x) => x.level === "error")).toEqual([]);
+  });
+
+  it("[F-7] an agent hook bash \"$CLAUDE_PROJECT_DIR\"/x.sh validates and scaffolds as in 0.11.2", () => {
+    const run = 'bash "$CLAUDE_PROJECT_DIR"/x.sh';
+    const src = at(`  agent c {\n    model: sonnet\n    description: "c"\n    invocation: manual\n    hooks {\n      hook ah {\n        on: PreToolUse\n        matcher: "Bash"\n        run: ${JSON.stringify(run)}\n        type: command\n      }\n    }\n  }`);
+    const ast = parse(src);
+    expect(validate(ast).filter((x) => x.level === "error")).toEqual([]);
+    const agent = claudeCodeBinding.scaffold(ast).find((f) => f.path === ".claude/agents/c/AGENT.md")!;
+    // 0.11.2's output for this run (differential/runs-0112.json): the skill's own a-x.sh, by bash
+    expect(agent.content).toContain('command: "bash \\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/c-x.sh\\""');
   });
 
   it("[P-2] a redirect right after the first word: V96 names the command, not the redirect", () => {

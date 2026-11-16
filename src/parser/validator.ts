@@ -1157,9 +1157,12 @@ function unsafeScriptPath(run: string): string | null {
 
 function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  const check = (owner: string, run: string | undefined, nodeId?: string) => {
+  // F7 applies to topology hooks and gates, whose project-path stub 0.11.2's
+  // scaffold refused. An agent hook compiles to the skill's own script, which
+  // 0.11.2 scaffolded, so it is not refused here.
+  const check = (owner: string, run: string | undefined, nodeId?: string, agentHook = false) => {
     if (run === undefined) return;
-    const why = proseInRun(run) ?? unsafeScriptPath(run);
+    const why = proseInRun(run) ?? (agentHook ? null : unsafeScriptPath(run));
     if (!why) return;
     results.push({
       rule: "V96",
@@ -1178,7 +1181,7 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
     if (isGate(node)) check(`Gate "${node.id}"`, node.run, node.id);
     if (node.type === "agent") {
       for (const hook of ((node as AgentNode).hooks ?? []).filter(isCommand)) {
-        check(`Hook "${hook.name}" on agent "${node.id}"`, hook.run, node.id);
+        check(`Hook "${hook.name}" on agent "${node.id}"`, hook.run, node.id, true);
       }
     }
   }
