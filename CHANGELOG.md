@@ -4,7 +4,7 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
-Scope: 0.11.2 only warns. It names the rules in `.claude/settings.json` that the .at does not declare, and `scaffold --prune` keeps settings.json instead of deleting it. The rules are written exactly as 0.11.1, and prune never deletes settings.json; removing a rule the .at no longer declares is not in 0.11.2.
+Scope: 0.11.2 only warns, except that a `.claude/settings.json` that is not valid JSON or whose root is not an object now stops the run instead of being overwritten. It names the rules in `.claude/settings.json` that the .at does not declare, and `scaffold --prune` keeps settings.json instead of deleting it. The rules are written exactly as 0.11.1, and prune never deletes settings.json; removing a rule the .at no longer declares is not in 0.11.2.
 
 ### [fix] Fixed: a rule removed from the .at stays in settings.json, and now scaffold says so
 
@@ -13,11 +13,11 @@ Scope: 0.11.2 only warns. It names the rules in `.claude/settings.json` that the
 
 ### [fix] Fixed: scaffold --prune never deletes settings.json
 
-- A `scaffold --prune` after the .at stopped generating `.claude/settings.json` deleted the file, with every rule, hook and key written into it by hand, and also when the file existed before the first scaffold. Prune now keeps it and prints `= .claude/settings.json (kept: holds settings; delete it by hand if you want)`; `--dry-run` prints the same line. Every other file prune deletes is deleted as before.
+- A `scaffold --prune` after the .at stopped generating `.claude/settings.json` deleted the file, with every rule, hook and key written into it by hand, and also when the file existed before the first scaffold. Prune now keeps it and prints `= .claude/settings.json (kept: holds settings; delete it by hand if you want)`; `--dry-run` prints the same line. Every other file prune deletes is deleted as before. A kept settings.json counts as unchanged in the summary line, so a run after the .at stopped generating it shows one more `unchanged` than 0.11.1, and a prune one fewer `deleted`.
 
 ### [fix] Fixed: an invalid settings.json gives a clear error
 
-- `scaffold` and `guard --target claude-code` stopped with a stack trace when the .at writes `.claude/settings.json` and the file on disk was not valid JSON, or was valid JSON whose root is `null`; a root of `[]`, a string or a number did not stop the run. They now print one line, `Error: .claude/settings.json is not valid JSON (<parse message>). Nothing was written.` or `Error: .claude/settings.json is not a JSON object (its root is an array). Nothing was written.`, exit 1, and write nothing.
+- `scaffold` and `guard --target claude-code` stopped with a stack trace when the .at writes `.claude/settings.json` and the file on disk was not valid JSON, or was valid JSON whose root is `null`; a root of `[]`, a string, a number or a boolean did not stop the run, and the file was rewritten without its content. They now print one line, `Error: .claude/settings.json is not valid JSON (<parse message>). Nothing was written.` or `Error: .claude/settings.json is not a JSON object (its root is an array). Nothing was written.`, exit 1, and write nothing.
 
 ### [fix] Security: validate warns that a compiled Codex allow rule runs outside the sandbox (CX13-allow)
 
