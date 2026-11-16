@@ -13,7 +13,7 @@ Scope: 0.11.2 only warns, except that a `.claude/settings.json` that is not vali
 
 ### [fix] Fixed: scaffold --prune never deletes settings.json
 
-- A `scaffold --prune` after the .at stopped generating `.claude/settings.json` deleted the file, with every rule, hook and key written into it by hand, and also when the file existed before the first scaffold. Prune now keeps it and prints `= .claude/settings.json (kept: holds settings; delete it by hand if you want)`; `--dry-run` prints the same line. Every other file prune deletes is deleted as before. A kept settings.json counts as unchanged in the summary line, so a run after the .at stopped generating it shows one more `unchanged` than 0.11.1, and a prune one fewer `deleted`.
+- A `scaffold --prune` after the .at stopped generating `.claude/settings.json` deleted the file, with every rule, hook and key written into it by hand, and also when the file existed before the first scaffold. Prune now keeps it and prints `= .claude/settings.json (kept: holds settings; delete it by hand if you want)`; `--dry-run` prints the same line. A settings.json changed since this topology wrote it (by hand, or by another topology in the same directory) is kept with the 0.11.1 line `⊘ .claude/settings.json (no longer generated, but edited — kept)`, as before. Every other file prune deletes is deleted as before. A kept settings.json counts as unchanged in the summary line, so a run after the .at stopped generating it shows one more `unchanged` than 0.11.1, and a prune one fewer `deleted`.
 
 ### [fix] Fixed: an invalid settings.json gives a clear error
 
