@@ -236,6 +236,12 @@ const ROWS: Row[] = [
   [RM, B, bash("g() { ls; }"), "block", "R5-function"],
   [RM, B, bash("function g { ls; }"), "block", "R5-function"],
   [RM, B, bash("trap ls EXIT"), "block", "R5-trap"],
+  // found while building round 2: bash evaluates a quoted array subscript, running its substitution
+  [RM, B, bash("[[ -v 'a[$(rm x)]' ]]"), "block", "own-subscript"],
+  [RM, B, bash("printf -v 'a[$(rm x)]' x"), "block", "own-subscript"],
+  [RM, B, bash("read 'a[`rm x`]' <<< y"), "block", "own-subscript"],
+  [RM, B, bash("echo '$(rm x)'"), "pass", "own-subscript"],
+  [RM, B, bash("echo 'a[1]'"), "pass", "own-subscript"],
   // --- fable r4 / R1, R9: ordinary trailing syntax on an exact rule
   ["Bash(npm run deploy)", B, bash("npm run deploy"), "block", "fable-r4"],
   ["Bash(npm run deploy)", B, bash("npm  run   deploy"), "block", "fable-r4"],
