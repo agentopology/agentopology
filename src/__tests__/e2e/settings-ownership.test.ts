@@ -342,9 +342,31 @@ describe("[OWN3] same-basename .at files sharing one manifest skip rule ownershi
     // The entry is still a's: b took none of it.
     expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
     expect(ownedEntry().sourcePath).toBe("a/t.at");
+    // F2: once shared, the entry holds every removal, for a too.
+    expect(ownedEntry().ownershipSharedWith).toEqual(["b/t.at"]);
     writeAt("a/t.at", withRules("t", [R]));
     const a = scaffold("a/t.at");
-    expect(removedLines(a)).toEqual([removed("allow", A)]);
+    expect(removedLines(a)).toEqual([]);
+    expect(perms().allow).toContain(A);
+    expect(keptLines(a)).toEqual([`${SETTINGS}: owned rules kept, none removed; this manifest is shared by a/t.at and b/t.at (the same file name)`]);
+    expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
+  });
+
+  it("P2-3: b's skip writes nothing to a's entry but the shared mark, not even undeclaredRulesNamed", () => {
+    fs.mkdirSync(at("a"));
+    fs.mkdirSync(at("b"));
+    writeAt("a/t.at", withRules("t", [A]));
+    writeAt("b/t.at", withRules("t", [X]));
+    scaffold("a/t.at");
+    addByHand([U]);
+    scaffold("a/t.at");
+    const before = ownedEntry();
+    expect(before.undeclaredRulesNamed).toEqual([`allow ${U}`]);
+    scaffold("b/t.at");
+    const after = ownedEntry();
+    const { ownershipSharedWith, ...restAfter } = after;
+    expect(ownershipSharedWith).toEqual(["b/t.at"]);
+    expect(restAfter).toEqual(before);
   });
 
   it("an entry that owns rules but records no sourcePath (written before it) skips too", () => {
@@ -477,5 +499,181 @@ describe("[OWN1] defaultMode: owned when scaffold wrote it, the user's when it w
     expect(removedLines(out)).toEqual([]);
     expect(perms().defaultMode).toBe("default");
     expect(ownedEntry().defaultModeOwned).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T6 fix round (the attack's findings)
+// ---------------------------------------------------------------------------
+
+const allLines = (out: { stdout: string; stderr: string }) => lines(out).filter((l) => l.includes(SETTINGS));
+
+describe("[OWN1] fix round: guard --target with the whole settings block dropped (P1-1/F11)", () => {
+  it("removes the owned rules, prints the lines and records that the .at declares nothing", () => {
+    writeAt("t.at", withRules("t", [A, R]));
+    guard("t.at");
+    addByHand([U]);
+    writeAt("t.at", topo("t", ""));
+    const out = guard("t.at");
+    expect(out.status, out.stderr).toBe(0);
+    expect(removedLines(out)).toEqual([removed("allow", A), removed("allow", R)]);
+    expect(perms().allow).toEqual([U]);
+    expect(ownedEntry().rulesOwned).toBeUndefined();
+    expect(ownedEntry().rulesDeclared).toEqual({});
+  });
+});
+
+describe("[OWN1] fix round: a failed write prints no removal (F3) and owns nothing it did not write (F7)", () => {
+  const readOnly = (p: string) => fs.chmodSync(at(p), 0o444);
+  const writable = (p: string) => fs.chmodSync(at(p), 0o644);
+
+  for (const [label, run] of [["scaffold", scaffold], ["guard --target", guard]] as const) {
+    it(`${label}: settings.json cannot be written -> no removal line, exit 1; the dropped rule is kept and unowned`, () => {
+      writeAt("t.at", withRules("t", [A, R]));
+      run("t.at");
+      writeAt("t.at", withRules("t", [R, N]));
+      readOnly(SETTINGS);
+      const out = run("t.at");
+      writable(SETTINGS);
+      expect(out.status).toBe(1);
+      expect(removedLines(out)).toEqual([]);
+      expect(perms().allow).toEqual([A, R]);
+      // Written before settings.json: neither the rule it would remove nor the one it would add is owned.
+      expect(ownedEntry().rulesOwned).toEqual({ allow: [R] });
+      const again = run("t.at");
+      expect(again.status, again.stderr).toBe(0);
+      expect(removedLines(again)).toEqual([]);
+      expect(perms().allow).toEqual([A, R, N]);
+      expect(named(again)).toEqual([undeclared("allow", A)]);
+      expect(ownedEntry().rulesOwned).toEqual({ allow: [R, N] });
+    });
+  }
+
+  it("the manifest cannot be written -> settings.json is not touched, exit 1 with the error", () => {
+    writeAt("t.at", withRules("t", [A, R]));
+    scaffold("t.at");
+    const before = fs.readFileSync(at(SETTINGS), "utf8");
+    writeAt("t.at", withRules("t", [R]));
+    readOnly(MANIFEST);
+    const out = scaffold("t.at");
+    writable(MANIFEST);
+    expect(out.status).toBe(1);
+    expect(out.stderr).toContain(".scaffold-manifest.json");
+    expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(before);
+    expect(removedLines(out)).toEqual([]);
+  });
+});
+
+describe("[OWN1] fix round: malformed manifests own nothing and hold removals (F5, F6)", () => {
+  for (const [label, value] of [["null", null], ["a string", "x"], ["an array", []]] as const) {
+    it(`F5: this topology's settings entry is ${label}: no crash, owns nothing, removes nothing`, () => {
+      writeAt("t.at", withRules("t", [A, R]));
+      scaffold("t.at");
+      const m = manifestOf();
+      m.files[SETTINGS] = value;
+      fs.writeFileSync(at(MANIFEST), JSON.stringify(m, null, 2) + "\n");
+      writeAt("t.at", withRules("t", [R]));
+      const out = scaffold("t.at");
+      expect(out.status, out.stderr).toBe(0);
+      expect(out.stderr).not.toMatch(/\n\s+at /);
+      expect(removedLines(out)).toEqual([]);
+      expect(perms().allow).toEqual([A, R]);
+    });
+  }
+
+  const twoPath = ".claude/.scaffold-manifest.two.at.json";
+  for (const [label, spoil, name] of [
+    ["unreadable", () => fs.writeFileSync(at(twoPath), "{ not json"), twoPath],
+    ["rulesDeclared holding numbers", () => {
+      const m = manifestOf(twoPath);
+      m.files[SETTINGS].rulesDeclared = { allow: [1, 2] };
+      fs.writeFileSync(at(twoPath), JSON.stringify(m, null, 2) + "\n");
+    }, twoPath],
+    ["rulesDeclared a string", () => {
+      const m = manifestOf(twoPath);
+      m.files[SETTINGS].rulesDeclared = "allow Read";
+      fs.writeFileSync(at(twoPath), JSON.stringify(m, null, 2) + "\n");
+    }, twoPath],
+  ] as const) {
+    it(`F6: a neighbour manifest ${label} holds every removal, named in one line`, () => {
+      writeAt("par.at", withRules("par", [A, R]));
+      writeAt("two.at", withRules("two", [X]));
+      scaffold("par.at");
+      scaffold("two.at");
+      spoil();
+      writeAt("par.at", withRules("par", [R]));
+      const p = scaffold("par.at");
+      expect(p.status, p.stderr).toBe(0);
+      expect(removedLines(p)).toEqual([]);
+      expect(perms().allow).toContain(A);
+      const held = keptLines(p);
+      expect(held).toHaveLength(1);
+      expect(held[0]).toContain(name);
+      expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
+    });
+  }
+});
+
+describe("[OWN1] fix round: what the user wrote (P2-2, F9)", () => {
+  it("P2-2: the user's defaultMode differs from the .at's: one line, kept", () => {
+    fs.mkdirSync(at(".claude"), { recursive: true });
+    fs.writeFileSync(at(SETTINGS), JSON.stringify({ permissions: { defaultMode: "default" } }, null, 2) + "\n");
+    writeAt("t.at", topo("t", "  settings {\n    allow: [Read]\n    default-mode: plan\n  }"));
+    const out = scaffold("t.at");
+    expect(allLines(out).filter((l) => l.includes("defaultMode"))).toEqual([
+      `${SETTINGS} defaultMode "default": kept, yours; the .at says "plan"`,
+    ]);
+    expect(perms().defaultMode).toBe("default");
+  });
+
+  it("F9: a rule listed twice in rulesOwned (or in the file) is removed with one line", () => {
+    writeAt("t.at", withRules("t", [A, R]));
+    scaffold("t.at");
+    const m = manifestOf();
+    m.files[SETTINGS].rulesOwned.allow = [A, A, R];
+    fs.writeFileSync(at(MANIFEST), JSON.stringify(m, null, 2) + "\n");
+    const s = JSON.parse(fs.readFileSync(at(SETTINGS), "utf8"));
+    s.permissions.allow = [A, R, A];
+    fs.writeFileSync(at(SETTINGS), JSON.stringify(s, null, 2) + "\n");
+    writeAt("t.at", withRules("t", [R]));
+    const out = scaffold("t.at");
+    expect(removedLines(out)).toEqual([removed("allow", A)]);
+    expect(perms().allow).toEqual([R]);
+  });
+});
+
+describe("[OWN1] fix round: remove only from a file that round-trips byte for byte (F1, ruling a)", () => {
+  const rewrite = (l: string, rule: string) => `${SETTINGS} ${l} ${JSON.stringify(rule)}: kept; removing it would rewrite other values in the file`;
+  const settled = (text: string) => {
+    writeAt("t.at", withRules("t", [A, R]));
+    scaffold("t.at");
+    fs.writeFileSync(at(SETTINGS), text);
+    writeAt("t.at", withRules("t", [R]));
+  };
+  const cases: Array<[string, string]> = [
+    ["CRLF line ends", `{\r\n  "permissions": {\r\n    "allow": [\r\n      "${A}",\r\n      "Read"\r\n    ]\r\n  }\r\n}\r\n`],
+    ["tab indent", `{\n\t"permissions": {\n\t\t"allow": [\n\t\t\t"${A}",\n\t\t\t"Read"\n\t\t]\n\t}\n}\n`],
+    ["a duplicate key", `{\n  "model": "a",\n  "model": "b",\n  "permissions": {\n    "allow": [\n      "${A}",\n      "Read"\n    ]\n  }\n}\n`],
+    ["1e400", `{\n  "x": 1e400,\n  "permissions": {\n    "allow": [\n      "${A}",\n      "Read"\n    ]\n  }\n}\n`],
+  ];
+  for (const [label, text] of cases) {
+    it(`${label}: the owned rule is kept, still owned, and the file is not touched`, () => {
+      settled(text);
+      const out = scaffold("t.at");
+      expect(out.status, out.stderr).toBe(0);
+      expect(removedLines(out)).toEqual([]);
+      expect(keptLines(out)).toEqual([rewrite("allow", A)]);
+      expect(named(out)).toEqual([]);
+      expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(text);
+      expect(ownedEntry().rulesOwned).toEqual({ allow: [A, R] });
+    });
+  }
+
+  it("a clean file (two-space JSON, one newline) still has the rule removed", () => {
+    settled(JSON.stringify({ model: "opus", permissions: { allow: [A, R] } }, null, 2) + "\n");
+    const out = scaffold("t.at");
+    expect(removedLines(out)).toEqual([removed("allow", A)]);
+    expect(perms().allow).toEqual([R]);
+    expect(JSON.parse(fs.readFileSync(at(SETTINGS), "utf8")).model).toBe("opus");
   });
 });

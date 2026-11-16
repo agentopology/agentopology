@@ -98,9 +98,38 @@ function frontmatterHooks(md: string): Record<string, Array<{ matcher?: string; 
   return out;
 }
 
-/** Run a hook command the way Claude Code does: a shell, the payload on stdin. */
-function runHook(command: string, payload: object) {
-  return spawnSync("/bin/sh", ["-c", command], { input: JSON.stringify(payload), encoding: "utf8" });
+/**
+ * Run a hook command the way Claude Code does: a shell in the project, the
+ * payload on stdin, CLAUDE_PROJECT_DIR set. The scaffold is written to a temp
+ * project first, since the command runs a generated script. `stdin` replaces
+ * the payload (for broken input); `path` replaces PATH (for a PATH without jq).
+ */
+function runHook(files: Array<{ path: string; content: string }>, command: string, payload: object, opts: { stdin?: string; path?: string } = {}) {
+  const dir = fs.mkdtempSync(join(os.tmpdir(), "at-hook-"));
+  try {
+    for (const f of files) {
+      fs.mkdirSync(dirname(join(dir, f.path)), { recursive: true });
+      fs.writeFileSync(join(dir, f.path), f.content);
+    }
+    return spawnSync("/bin/sh", ["-c", command], {
+      cwd: dir,
+      input: opts.stdin ?? JSON.stringify(payload),
+      encoding: "utf8",
+      env: { ...process.env, CLAUDE_PROJECT_DIR: dir, ...(opts.path !== undefined ? { PATH: opts.path } : {}) },
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** A PATH holding bash and tr but no jq. */
+function pathWithoutJq(): string {
+  const bin = fs.mkdtempSync(join(os.tmpdir(), "at-nojq-"));
+  for (const tool of ["bash", "tr", "cat", "sh"]) {
+    const real = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+    if (real) fs.symlinkSync(real, join(bin, tool));
+  }
+  return bin;
 }
 
 const AGENT_MD = ".claude/agents/a/AGENT.md";
@@ -118,7 +147,7 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
     expect(h.if).toBe("Bash(kubectl delete *)");
     // A deny hook that cannot start must not let the call through (Claude Code 2.1.295+).
     expect(h.onFailure).toBe("block");
-    const r = runHook(h.command as string, { tool_name: "Bash", tool_input: { command: "kubectl delete pod x" } });
+    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "kubectl delete pod x" } });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("Bash(kubectl delete *)");
     // The frontmatter hooks pass the same contract settings.json hooks do.
@@ -144,7 +173,7 @@ describe("T5: agent deny -> a frontmatter PreToolUse hook that refuses", () => {
   it("a rule holding a single quote still runs and names the rule", () => {
     const { value: files } = scaffold(topo({ a: `    deny: ["Bash(echo 'x' *)"]` }));
     const h = frontmatterHooks(file(files, AGENT_MD)).PreToolUse[0].hooks[0];
-    const r = runHook(h.command as string, { tool_name: "Bash" });
+    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "echo 'x' y" } });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("Bash(echo 'x' *)");
   });
@@ -207,13 +236,120 @@ describe("T5: agent ask -> a frontmatter PreToolUse hook that asks", () => {
     expect(group.matcher).toBe("Bash");
     const h = group.hooks[0];
     expect(h.if).toBe("Bash(git push *)");
-    const r = runHook(h.command as string, { tool_name: "Bash", tool_input: { command: "git push origin main" } });
+    const r = runHook(files, h.command as string, { tool_name: "Bash", tool_input: { command: "git push origin main" } });
     expect(r.status).toBe(0);
     expect(checkStdout("PreToolUse", r.stdout)).toBeNull();
     const out = JSON.parse(r.stdout);
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
     expect(out.hookSpecificOutput.permissionDecision).toBe("ask");
     expect(out.hookSpecificOutput.permissionDecisionReason).toContain("Bash(git push *)");
+  });
+});
+
+describe("condition C: the agent hook matches the rule itself and fails closed", () => {
+  /** The scaffold and the one rule hook of agent a. */
+  function rig(list: "deny" | "ask", rule: string) {
+    const { value: files, warnings } = scaffold(topo({ a: `    ${list}: [${JSON.stringify(rule)}]` }));
+    const h = frontmatterHooks(file(files, AGENT_MD)).PreToolUse[0].hooks[0];
+    const run = (payload: object, opts: { stdin?: string; path?: string } = {}) => runHook(files, h.command as string, payload, opts);
+    return { h, run, warnings };
+  }
+  const bash = (command: string) => ({ tool_name: "Bash", tool_input: { command } });
+  const asked = (r: { status: number | null; stdout: string }) =>
+    r.status === 0 && r.stdout.trim() !== "" && JSON.parse(r.stdout).hookSpecificOutput.permissionDecision === "ask";
+
+  describe("deny", () => {
+    const deny = () => rig("deny", "Bash(kubectl delete *)");
+
+    it("keeps if: as well", () => {
+      expect(deny().h.if).toBe("Bash(kubectl delete *)");
+    });
+    it("a non-matching Bash call passes", () => {
+      const r = deny().run(bash("kubectl get pods"));
+      expect(r.status, r.stderr).toBe(0);
+    });
+    it("a matching call blocks", () => {
+      const r = deny().run(bash("kubectl delete pod web-1"));
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("Bash(kubectl delete *)");
+    });
+    it("a compound command containing the match blocks", () => {
+      for (const c of ["echo hi && kubectl delete pod x", "true; kubectl delete pod x", "ls | kubectl delete -f -", "(kubectl delete ns a)"]) {
+        expect(deny().run(bash(c)).status, c).toBe(2);
+      }
+    });
+    it("a wrapper or an assignment in front still blocks (as Claude Code strips them)", () => {
+      for (const c of ["timeout 30 kubectl delete pod x", "nohup kubectl delete pod x", "KUBECONFIG=/x kubectl delete pod x", "command kubectl delete pod x"]) {
+        expect(deny().run(bash(c)).status, c).toBe(2);
+      }
+    });
+    it("a trailing ' *' also matches the bare command; 'ls *' does not match lsof", () => {
+      const ls = rig("deny", "Bash(ls *)");
+      expect(ls.run(bash("ls")).status).toBe(2);
+      expect(ls.run(bash("ls -la")).status).toBe(2);
+      expect(ls.run(bash("lsof")).status).toBe(0);
+    });
+    it("broken stdin blocks, and says why", () => {
+      const r = deny().run({}, { stdin: "{ not json" });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("not valid JSON");
+    });
+    it("jq missing blocks, and says why", () => {
+      const r = deny().run(bash("kubectl get pods"), { path: pathWithoutJq() });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("jq");
+    });
+    it("a command substitution that could hide the match blocks", () => {
+      expect(deny().run(bash("echo $(kubectl delete pod x)")).status).toBe(2);
+      expect(deny().run(bash("x=`kubectl delete pod x`")).status).toBe(2);
+    });
+    it("an unsupported rule form blocks with its reason, and scaffold says so", () => {
+      const e = rig("deny", "Edit(/src/**)");
+      const r = e.run({ tool_name: "Edit", tool_input: { file_path: "/p/README.md" } });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("cannot match");
+      expect(e.warnings.some((w) => w.includes("Edit(/src/**)") && w.includes("every Edit call"))).toBe(true);
+    });
+    it("a parameter rule matches the input field", () => {
+      const p = rig("deny", "Agent(model:opus)");
+      expect(p.run({ tool_name: "Agent", tool_input: { model: "opus", prompt: "x" } }).status).toBe(2);
+      expect(p.run({ tool_name: "Agent", tool_input: { model: "sonnet", prompt: "x" } }).status).toBe(0);
+      expect(p.run({ tool_name: "Agent", tool_input: { prompt: "x" } }).status).toBe(0);
+    });
+    it("a domain rule matches the host and its subdomains", () => {
+      const d = rig("deny", "WebFetch(domain:example.com)");
+      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://example.com/a" } }).status).toBe(2);
+      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://docs.example.com/a" } }).status).toBe(2);
+      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "https://other.org/" } }).status).toBe(0);
+      expect(d.run({ tool_name: "WebFetch", tool_input: { url: "not a url" } }).status).toBe(2);
+    });
+    it("a bare tool rule blocks every call, even without jq", () => {
+      const w = rig("deny", "Write");
+      expect(w.run({ tool_name: "Write", tool_input: { file_path: "x" } }, { path: pathWithoutJq() }).status).toBe(2);
+    });
+  });
+
+  describe("ask", () => {
+    const ask = () => rig("ask", "Bash(git push *)");
+
+    it("a non-matching call prints nothing and exits 0", () => {
+      const r = ask().run(bash("git status"));
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.trim()).toBe("");
+    });
+    it("a matching call, also inside a compound command, asks", () => {
+      expect(asked(ask().run(bash("git push origin main")))).toBe(true);
+      expect(asked(ask().run(bash("git add . && git push")))).toBe(true);
+    });
+    it("asks on every doubt: broken stdin, jq missing, a command substitution, an unsupported form", () => {
+      expect(asked(ask().run({}, { stdin: "nope" }))).toBe(true);
+      expect(asked(ask().run(bash("git status"), { path: pathWithoutJq() }))).toBe(true);
+      expect(asked(ask().run(bash("echo $(git push)")))).toBe(true);
+      const e = rig("ask", "Read(./secrets/**)");
+      const r = e.run({ tool_name: "Read", tool_input: { file_path: "a" } });
+      expect(asked(r)).toBe(true);
+      expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason).toContain("cannot match");
+    });
   });
 });
 
