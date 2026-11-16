@@ -70,3 +70,37 @@ describe("S-67: import does not overwrite an existing .at unless told to", () =>
     expect(text).toContain("agent writer");
   });
 });
+
+describe("S-68: import exits non-zero when the .at it wrote has validation errors", () => {
+  it("[S-68] errors: the file is written, a loud line names the count, exit 2", () => {
+    hooks([{ type: "command" }]);
+    const r = run();
+    expect(r.code).toBe(2);
+    expect(fs.existsSync(out())).toBe(true);
+    expect(r.all).toContain(`import: the .at it wrote has 1 validation error(s); fix them, or run validate ${out()} for details`);
+  });
+
+  it("[S-68] the count is the one validate reports for the written file", () => {
+    hooks([{ type: "command" }, { type: "http" }]);
+    const r = run();
+    expect(r.code).toBe(2);
+    const v = spawnSync(process.execPath, [CLI, "validate", out()], { encoding: "utf8" });
+    expect(v.status).toBe(1);
+    const n = Number(/(\d+) error\(s\)/.exec(`${v.stdout}${v.stderr}`)?.[1]);
+    expect(n).toBeGreaterThan(1);
+    expect(r.all).toContain(`the .at it wrote has ${n} validation error(s)`);
+  });
+
+  it("[S-68] warnings only: exit 0", () => {
+    hooks([{ type: "command", command: "exit 1" }]);
+    const r = run();
+    expect(r.all).toContain("0 error(s), 1 warning(s)");
+    expect(r.code).toBe(0);
+  });
+
+  it("[S-68] no findings: exit 0", () => {
+    const r = run();
+    expect(r.all).toContain("Generated file passes all validation rules.");
+    expect(r.code).toBe(0);
+  });
+});
