@@ -525,7 +525,8 @@ describe("[0.11.2-h] every example scaffolds as before", () => {
     for (let i = 0; i < 2; i++) {
       const files = claudeCodeBinding.scaffold(parse(src));
       const manifest = readManifest(dir, "claude-code", file);
-      const actions = computeIncrementalPlan(dir, "claude-code", files, manifest);
+      // OWN3: the .at path the CLI records, relative to the project.
+      const actions = computeIncrementalPlan(dir, "claude-code", files, manifest, relative(dir, join(EXAMPLES, file)));
       const result = executeActions(dir, actions, { prune: false, force: false });
       writeManifest(dir, "claude-code", {
         source: file,

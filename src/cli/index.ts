@@ -587,6 +587,11 @@ function printRuleNotice(notice: RuleNotice): void {
   for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
 }
 
+/** OWN3: the .at path relative to the project, with forward slashes, as the manifest records it. */
+function projectRelative(basePath: string, filePath: string): string {
+  return path.relative(basePath, path.resolve(filePath)).split(path.sep).join("/");
+}
+
 /** T6: one line per owned rule removed from settings.json (the same on scaffold and guard --target). */
 function printRemovedRules(lines: string[]): void {
   for (const line of lines) console.log(`  ${c.yellow(line)}`);
@@ -679,7 +684,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   const manifest = readManifest(basePath, targetName, path.basename(filePath));
   let actions: FileAction[];
   try {
-    actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+    actions = computeIncrementalPlan(basePath, targetName, files, manifest, projectRelative(basePath, filePath));
   } catch (err) {
     exitOnInvalidSettings(err);
     throw err;
@@ -1488,7 +1493,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   const name = path.basename(filePath);
   let plan;
   try {
-    plan = planGuardTarget(ast, root, name, targetName);
+    plan = planGuardTarget(ast, root, name, targetName, projectRelative(root, filePath));
   } catch (e) {
     exitOnInvalidSettings(e);
     if (e instanceof BindingRefusal) {

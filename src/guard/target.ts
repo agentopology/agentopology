@@ -137,14 +137,14 @@ export interface GuardTargetPlan {
 }
 
 /** Plan the guard write for a project. Reads the disk; writes nothing. */
-export function planGuardTarget(ast: TopologyAST, root: string, source: string, target: GuardTargetName = "claude-code"): GuardTargetPlan {
+export function planGuardTarget(ast: TopologyAST, root: string, source: string, target: GuardTargetName = "claude-code", sourcePath?: string): GuardTargetPlan {
   const binding = target === "codex" ? codexBinding : claudeCodeBinding;
   const { files, checks } = discover(binding.scaffold(ast), target);
   const manifest = readManifest(root, target, source);
   const owned = new Set(files.map((f) => f.path));
   // The planner deletes manifest files the run no longer generates; this run
   // generates a subset on purpose, so only its own paths are planned.
-  const actions = computeIncrementalPlan(root, target, files, manifest).filter((a) => owned.has(a.path));
+  const actions = computeIncrementalPlan(root, target, files, manifest, sourcePath).filter((a) => owned.has(a.path));
   const skipped: GuardTargetPlan["skipped"] = [];
   const planned: FileAction[] = [];
   for (const a of actions) {

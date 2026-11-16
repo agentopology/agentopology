@@ -38,10 +38,43 @@ import {
   deepMergeSettingsJson,
 } from "./merge.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
-import { applyOwnership, ownedOf, recordOwnership, type Owned, type RuleOwnership } from "./ownership.js";
+import {
+  applyOwnership,
+  declaredIn,
+  declaredOf,
+  ownedOf,
+  ownsAnything,
+  recordOwnership,
+  skippedLine,
+  NO_OTHERS,
+  type Others,
+  type RuleOwnership,
+} from "./ownership.js";
+import { getManifestPath, otherManifests } from "./manifest.js";
 
-/** Any rule or mode recorded as owned. */
-const ownsAnything = (o: Owned) => o.allow.length + o.ask.length + o.deny.length > 0 || o.defaultMode !== undefined;
+/**
+ * What the other topologies in this project declare (OWN2): each rule they
+ * declare is kept; an entry from before `rulesDeclared` holds every removal.
+ */
+function othersOf(basePath: string, target: string, source: string): Others {
+  const keptBy = new Map<string, string>();
+  let heldBy: string | null = null;
+  for (const m of otherManifests(basePath, target, source)) {
+    const entry = m.files?.[SETTINGS_PATH];
+    if (!entry) continue; // never wrote settings.json: declares no rule
+    const declared = declaredOf(entry);
+    if (!declared) {
+      const file = getManifestPath(target).replace(/\.json$/, `.${m.source.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`);
+      const shared = getManifestPath(target);
+      const where = existsSync(join(basePath, file)) ? file : shared;
+      heldBy ??= `${SETTINGS_PATH}: owned rules kept, none removed; ${where} records no declared rules (written before this version); re-scaffold ${m.source} to release them`;
+      continue;
+    }
+    for (const l of ["allow", "ask", "deny"] as const) for (const r of declared[l]) if (!keptBy.has(`${l} ${r}`)) keptBy.set(`${l} ${r}`, m.source);
+    if (declared.defaultMode !== undefined && !keptBy.has(`defaultMode ${declared.defaultMode}`)) keptBy.set(`defaultMode ${declared.defaultMode}`, m.source);
+  }
+  return { keptBy, heldBy };
+}
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -83,6 +116,8 @@ function isDirectory(absPath: string): boolean {
  * @param target - Binding target name (e.g. "claude-code")
  * @param generatedFiles - Files produced by the binding's scaffold function
  * @param manifest - Previous scaffold manifest (null if first scaffold)
+ * @param sourcePath - The .at path relative to the project (OWN3); recorded on
+ *   the settings.json entry and checked against it. Unknown when omitted.
  * @returns Array of file actions to execute
  */
 export function computeIncrementalPlan(
@@ -90,6 +125,7 @@ export function computeIncrementalPlan(
   target: string,
   generatedFiles: GeneratedFile[],
   manifest: ScaffoldManifest | null,
+  sourcePath?: string,
 ): FileAction[] {
   const actions: FileAction[] = [];
 
@@ -104,7 +140,28 @@ export function computeIncrementalPlan(
   const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
 
   // T6: the permission rules this topology added to settings.json before.
-  const previousRules = ownedOf(manifest?.files?.[SETTINGS_PATH]);
+  const previousEntry = manifest?.files?.[SETTINGS_PATH];
+  const previousRules = ownedOf(previousEntry);
+  // OWN3: the manifest is keyed by the .at basename; an entry another path
+  // owns (or one that owns rules and records no path) is not this run's.
+  const skip = sourcePath !== undefined && previousEntry !== undefined &&
+    (typeof previousEntry.sourcePath === "string"
+      ? previousEntry.sourcePath !== sourcePath
+      : ownsAnything(previousRules));
+  // OWN2: only a run that may remove something reads the other manifests.
+  const others = manifest && !skip && ownsAnything(previousRules) ? othersOf(basePath, target, manifest.source) : NO_OTHERS;
+
+  /** The ownership pass on settings.json: the content to write and what to record. */
+  const own = (existingRaw: string | null, mergedRaw: string, generatedRaw: string | null): { content: string; rules: RuleOwnership } => {
+    if (skip) {
+      return {
+        content: mergedRaw,
+        rules: { owned: { allow: [], ask: [], deny: [] }, declared: declaredIn(generatedRaw), removed: [], retained: [], notes: [skippedLine(previousEntry?.sourcePath)], preserve: true },
+      };
+    }
+    const { content, ...rules } = applyOwnership(existingRaw, mergedRaw, generatedRaw, previousRules, others);
+    return { content, rules: { ...rules, ...(sourcePath !== undefined ? { sourcePath } : {}) } };
+  };
 
   // Process each generated file
   for (const file of generatedFiles) {
@@ -131,9 +188,7 @@ export function computeIncrementalPlan(
 
     if (!onDisk) {
       // A settings.json scaffold creates: every rule in it is one it added.
-      const rules: RuleOwnership | undefined = file.path === SETTINGS_PATH
-        ? (({ owned, removed }) => ({ owned, removed }))(applyOwnership(null, file.content, file.content, previousRules))
-        : undefined;
+      const rules: RuleOwnership | undefined = file.path === SETTINGS_PATH ? own(null, file.content, file.content).rules : undefined;
       actions.push({
         type: "create",
         path: file.path,
@@ -154,8 +209,7 @@ export function computeIncrementalPlan(
 
     if (existingContent === file.content) {
       if (file.path === SETTINGS_PATH && category === "shared-config") {
-        const { owned, removed } = applyOwnership(existingContent, existingContent, file.content, previousRules);
-        actions.push({ type: "unchanged", path: file.path, rules: { owned, removed } });
+        actions.push({ type: "unchanged", path: file.path, rules: own(existingContent, existingContent, file.content).rules });
       } else {
         actions.push({ type: "unchanged", path: file.path });
       }
@@ -188,10 +242,10 @@ export function computeIncrementalPlan(
       // The union merge itself is unchanged; with nothing owned to remove,
       // this is its output byte for byte.
       if (file.path === SETTINGS_PATH) {
-        const { content, owned, removed } = applyOwnership(existingContent, union, file.content, previousRules);
+        const { content, rules } = own(existingContent, union, file.content);
         actions.push(content === existingContent
-          ? { type: "unchanged", path: file.path, rules: { owned, removed } }
-          : { type: "update", path: file.path, content, detail: "config merged", rules: { owned, removed } });
+          ? { type: "unchanged", path: file.path, rules }
+          : { type: "update", path: file.path, content, detail: "config merged", rules });
         continue;
       }
       const merged = union;
@@ -275,14 +329,17 @@ export function computeIncrementalPlan(
       }
       // T6: settings.json is no longer generated (the .at declares no rule):
       // the owned rules go, everything else stays, and the file is never deleted.
-      if (manifestPath === SETTINGS_PATH && ownsAnything(previousRules)) {
+      // It also records that the .at now declares nothing (OWN2).
+      if (manifestPath === SETTINGS_PATH) {
         const existingContent = readFileSync(absPath, "utf-8");
-        const { content, owned, removed } = applyOwnership(existingContent, existingContent, null, previousRules);
+        const { content, rules } = own(existingContent, existingContent, null);
         if (content !== existingContent) {
-          actions.push({ type: "update", path: manifestPath, content, detail: "owned rules removed", rules: { owned, removed } });
-          continue;
+          actions.push({ type: "update", path: manifestPath, content, detail: "owned rules removed", rules });
+        } else if (hashContent(existingContent) !== entry.hash) {
+          actions.push({ type: "blocked", path: manifestPath, detail: "no longer generated, but edited — kept", rules });
+        } else {
+          actions.push({ type: "kept", path: manifestPath, detail: SETTINGS_KEPT_DETAIL, rules });
         }
-        actions.push({ type: "kept", path: manifestPath, detail: SETTINGS_KEPT_DETAIL, rules: { owned, removed } });
         continue;
       }
       if (hashContent(readFileSync(absPath, "utf-8")) !== entry.hash) {
@@ -477,7 +534,7 @@ export function nextManifestFiles(
     const entry = files[action.path];
     if (rules && entry) {
       const failed = (action.type === "create" || action.type === "update") && written === undefined;
-      if (!failed) recordOwnership(entry, rules.owned);
+      if (!failed) recordOwnership(entry, rules, prev);
     }
   }
 

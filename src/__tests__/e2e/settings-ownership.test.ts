@@ -408,7 +408,7 @@ describe("[OWN1] prune and dry-run", () => {
     const actions = computeIncrementalPlan(root, "claude-code", claudeCodeBinding.scaffold(parse(withRules("t", [R]))), readManifest(root, "claude-code", "t.at"));
     const s = actions.find((a) => a.path === SETTINGS) as { type: string; rules?: { removed: unknown[] } };
     expect(s.type).toBe("update");
-    expect(s.rules?.removed).toEqual([{ list: "allow", rule: A }]);
+    expect(s.rules?.removed).toEqual([{ kind: "removed", list: "allow", rule: A }]);
   });
 });
 

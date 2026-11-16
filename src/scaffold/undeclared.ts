@@ -25,11 +25,21 @@ import type { GeneratedFile } from "../bindings/types.js";
 import type { FileAction, ManifestEntry, ScaffoldManifest } from "./types.js";
 import { ownedOf, removalLine, type RuleRemoval } from "./ownership.js";
 
-/** The T6 lines: each owned rule this run removes (or the defaultMode it replaces). */
-export function removedRuleLines(actions: FileAction[]): string[] {
+/** The settings.json action's ownership result, if any. */
+function rulesOf_(actions: FileAction[]) {
   const a = actions.find((x) => x.path === SETTINGS_PATH);
-  const removed: RuleRemoval[] = a && "rules" in a && a.rules ? a.rules.removed : [];
-  return removed.map(removalLine);
+  return a && "rules" in a && a.rules ? a.rules : null;
+}
+
+/**
+ * The T6 lines: a note when ownership was skipped (OWN3) or a removal held
+ * (OWN2), then each owned rule this run removes, replaces or keeps for
+ * another topology.
+ */
+export function removedRuleLines(actions: FileAction[]): string[] {
+  const r = rulesOf_(actions);
+  const removed: RuleRemoval[] = r ? r.removed : [];
+  return [...(r?.notes ?? []), ...removed.map(removalLine)];
 }
 
 export const SETTINGS_PATH = ".claude/settings.json";
@@ -135,11 +145,13 @@ export function undeclaredRuleNotice(
   const present = finalRaw === null ? { allow: [], ask: [], deny: [] } : rulesOf(finalRaw);
   if (!declared || !present) return { lines: [], named: null };
 
+  // An owned rule kept for another topology (or held) is printed as kept, not as undeclared.
+  const retained = new Set(rulesOf_(actions)?.retained ?? []);
   const current: string[] = [];
   for (const list of LISTS) {
     for (const rule of present[list]) {
       const item = `${list} ${rule}`;
-      if (!declared[list].includes(rule) && !current.includes(item) && !ownedElsewhere.has(item)) current.push(item);
+      if (!declared[list].includes(rule) && !current.includes(item) && !ownedElsewhere.has(item) && !retained.has(item)) current.push(item);
     }
   }
   if (current.length === 0) return { lines: [], named: current };

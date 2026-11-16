@@ -30,6 +30,16 @@ export interface ManifestEntry {
   rulesOwned?: { allow?: string[]; ask?: string[]; deny?: string[] };
   /** `.claude/settings.json` only (T6): the `permissions.defaultMode` this topology wrote. */
   defaultModeOwned?: string;
+  /**
+   * `.claude/settings.json` only (OWN2): the rules this topology's .at declares.
+   * Another topology never removes a rule listed here. An entry without it
+   * (written before it) holds every other topology's removals.
+   */
+  rulesDeclared?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  /** `.claude/settings.json` only (OWN2): the `default-mode` the .at declares. */
+  defaultModeDeclared?: string;
+  /** `.claude/settings.json` only (OWN3): the .at path, relative to the project, that owns this entry's rules. */
+  sourcePath?: string;
 }
 
 /** Manifest written to disk after each scaffold run. */
@@ -58,6 +68,6 @@ export type FileAction =
    * must abort the whole run before anything is written (an empty or
    * malformed file name — the EISDIR class).
    */
-  | { type: "blocked"; path: string; detail: string; unsafe?: boolean }
+  | { type: "blocked"; path: string; detail: string; unsafe?: boolean; rules?: RuleOwnership }
   /** A create-only file already there: the user's. Never written or claimed. */
   | { type: "kept"; path: string; detail: string; rules?: RuleOwnership };
