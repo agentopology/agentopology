@@ -20,13 +20,6 @@ export interface ManifestEntry {
    * Optional; a missing or malformed value counts as none.
    */
   undeclaredRulesNamed?: string[];
-  /**
-   * A settings file only: the hook groups this scaffold wrote, as
-   * "<event>\0<group key>" (P-1). The next scaffold treats exactly these as
-   * the topology's, so a hook the .at changed replaces its entry and a user's
-   * hook on the same script is kept. Optional; older manifests have none.
-   */
-  hookKeys?: string[];
 }
 
 /** Manifest written to disk after each scaffold run. */

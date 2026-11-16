@@ -202,8 +202,6 @@ export function deepMergeSettingsJson(
   existingRaw: string,
   generatedRaw: string,
   ownedPaths: string[] = [],
-  /** P-1: "<event>\0<group key>" of the hook groups the last scaffold wrote (manifest `hookKeys`). */
-  ownedHookKeys: string[] = [],
 ): string {
   // Empty existing means first scaffold — return generated unchanged
   if (existingRaw.trim() === "") {
@@ -265,7 +263,7 @@ export function deepMergeSettingsJson(
   }
 
   // --- hooks: replace the topology's own groups, keep the user's ---
-  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths, ownedHookKeys);
+  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths);
   if (mergedHooks) {
     merged.hooks = mergedHooks;
   } else {
@@ -298,40 +296,12 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  */
 function hookGroupKey(group: unknown): string {
   if (!isPlainObject(group) || !Array.isArray(group.hooks)) return JSON.stringify(group);
-  // P-1: a hook is also its `if`, timeout, onFailure (strength) and async. Two
-  // hooks on one script and matcher with a different `if` are two hooks (the
-  // merge used to keep one and delete the other), and a timeout the .at
-  // changed is a new entry that replaces the topology's old one.
   const commands = group.hooks.map((h) =>
     isPlainObject(h) && typeof h.command === "string"
-      ? [
-          h.command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim(),
-          h.if ?? null,
-          h.timeout ?? null,
-          h.onFailure ?? null,
-          h.async ?? null,
-        ]
+      ? h.command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim()
       : JSON.stringify(h),
   );
   return JSON.stringify([group.matcher ?? "", commands]);
-}
-
-/**
- * The identity of every hook group a settings file holds, as
- * "<event>\0<group key>": recorded in the manifest (`hookKeys`) for the
- * generated file, so the next scaffold knows which groups it wrote (P-1).
- */
-export function hookGroupKeys(settingsRaw: string): string[] {
-  let hooks: unknown;
-  try {
-    hooks = JSON.parse(settingsRaw).hooks;
-  } catch {
-    return [];
-  }
-  if (!isPlainObject(hooks)) return [];
-  return Object.entries(hooks).flatMap(([event, groups]) =>
-    (Array.isArray(groups) ? groups : []).map((g) => `${event}\u0000${hookGroupKey(g)}`),
-  );
 }
 
 /** Whether a hook group runs a script this topology owns. */
@@ -365,7 +335,6 @@ function mergeHooks(
   existingHooks: unknown,
   generatedHooks: unknown,
   ownedPaths: string[],
-  ownedHookKeys: string[] = [],
 ): Record<string, unknown[]> | undefined {
   // Config files are never hook scripts; matching them would claim a user hook
   // that merely mentions CLAUDE.md.
@@ -380,12 +349,8 @@ function mergeHooks(
     // A group generated again stays where it is, so reruns (and two
     // topologies taking turns) do not reorder the file.
     const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map(hookGroupKey));
-    // A group is the topology's when it runs a script the topology writes, or
-    // when it is one the last scaffold wrote (P-1: its key, recorded in the
-    // manifest), so a hook the .at changed replaces its old entry.
-    const ownedKey = new Set(ownedHookKeys);
     const kept = (Array.isArray(ex[event]) ? ex[event] : []).filter(
-      (g) => regenerated.has(hookGroupKey(g)) || !(isOwnedHookGroup(g, scripts) || ownedKey.has(`${event}\u0000${hookGroupKey(g)}`)),
+      (g) => regenerated.has(hookGroupKey(g)) || !isOwnedHookGroup(g, scripts),
     );
     const seen = new Set<string>();
     const groups: unknown[] = [];

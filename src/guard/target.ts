@@ -24,7 +24,7 @@ import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, recordHookKeys, type ExecuteResult } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 
@@ -184,7 +184,6 @@ export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: st
     files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, plan.actions, plan.files, previous, result) },
   };
   recordNamedRules(manifest.files, plan.notice?.named ?? null);
-  recordHookKeys(manifest.files, plan.files.filter((f) => plan.actions.some((a) => a.path === f.path)));
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.
   const same = previous && previous.sourceHash === manifest.sourceHash && JSON.stringify(previous.files) === JSON.stringify(manifest.files);
   if (!same) writeManifest(root, target, manifest);
