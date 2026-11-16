@@ -1144,9 +1144,14 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
  */
 function unsafeScriptPath(run: string): string | null {
   if (isShellCommand(run)) return null;
-  const { script } = runParts(run);
+  const { interpreter, script } = runParts(run);
   if (!script || script.startsWith("/") || !isProjectPath(script)) return null;
   const why = unsafePathReason(script.replace(/^\.\//, ""));
+  // P2: `lintme 2>/dev/null || true` reads as lintme running the script
+  // "2>/dev/null"; name the command, not the redirect.
+  if (why && interpreter && /^[0-9]*[<>|&;]/.test(script)) {
+    return `"${interpreter}" is followed by ${JSON.stringify(script)}, which 0.11.3 reads as a script path ${interpreter} runs, and scaffold cannot write it (${why}). Put the command in a script (e.g. run: "scripts/${interpreter.replace(/^.*\//, "")}.sh")`;
+  }
   return why ? `its script path ${JSON.stringify(script)} is not a file name scaffold can write (${why}); a path with a space or a quote in it cannot be scaffolded. Rename the file, or run it from a shell line` : null;
 }
 
