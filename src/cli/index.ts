@@ -56,6 +56,7 @@ import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { exit127Warnings, projectRootOf } from "../guard/exit127.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
@@ -430,7 +431,8 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const checked = validateResult(ast, path.resolve(filePath), target);
   // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
-  const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+  // CC-exit127: a hook or gate command whose first word the shell cannot find from the project.
+  const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...exit127Warnings(ast, dir ? path.resolve(dir) : projectRootOf(filePath))] : [];
   const results = [...checked.results, ...ccExtra];
   const errorCount = checked.errors;
   const warningCount = checked.warnings + ccExtra.length;
@@ -492,7 +494,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log("");
     if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
     const checked = validateResult(ast, path.resolve(f), target);
-    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+    const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...exit127Warnings(ast, dir ? path.resolve(dir) : projectRootOf(f))] : [];
     const results = [...checked.results, ...ccExtra];
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
@@ -1458,6 +1460,9 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
+  if (target === "claude-code") {
+    for (const w of exit127Warnings(ast, root)) console.log(`⚠ [${w.rule}] ${w.message}`);
+  }
   process.exit(report.missing > 0 ? 1 : 0);
 }
 
