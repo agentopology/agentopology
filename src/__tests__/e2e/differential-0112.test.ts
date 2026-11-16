@@ -18,7 +18,7 @@
  * refused where it refused, with no exception.
  */
 
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,11 +42,25 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
     expect(frozen.rows.length).toBeGreaterThan(2500);
   });
 
-  it("byte-identical where 0.11.2 resolved, refused where it refused", async () => {
-    const lib = await loadLib(DIST);
-    const baselines = baselinesFor(lib);
+  // T1: the rows run in chunks of CHUNK, one test each, so a worker returns to
+  // its event loop every few seconds (one 70-s loop tripped vitest's 60-s RPC
+  // timeout). Every row is still asserted; the last test counts them.
+  const CHUNK = 100;
+  const chunks = Array.from({ length: Math.ceil(frozen.rows.length / CHUNK) }, (_, i) => i);
+  let lib: unknown;
+  let baselines: unknown;
+  let asserted = 0;
+  beforeAll(async () => {
+    lib = await loadLib(DIST);
+    baselines = baselinesFor(lib);
+  });
+
+  it.each(chunks)("byte-identical where 0.11.2 resolved, refused where it refused: rows %i00+", async (chunk) => {
+    // Yield a macrotask first, so the worker reads vitest's RPC replies between chunks (T1).
+    await new Promise((r) => setImmediate(r));
     const diffs: string[] = [];
-    for (const row of frozen.rows) {
+    for (const row of frozen.rows.slice(chunk * CHUNK, (chunk + 1) * CHUNK)) {
+      asserted++;
       const now = compileRun(lib, row.kind, row.run, baselines, { lit: row.lit, crlf: row.crlf }) as Row;
       const label = `${row.kind} ${row.lit ?? JSON.stringify(row.run)}${row.crlf ? " (CRLF)" : ""} (${row.source})`;
       if (row.refused) {
@@ -70,5 +84,9 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
       if (row.step !== now.step) diffs.push(`${label}: step check ${JSON.stringify(row.step)} -> ${JSON.stringify(now.step)}`);
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 40).join("\n")}`).toEqual([]);
-  }, 600_000);
+  }, 120_000);
+
+  it("asserted every frozen row", () => {
+    expect(asserted).toBe(frozen.rows.length);
+  });
 });

@@ -39,10 +39,21 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
     expect(frozen.sequences.map((s) => s.name)).toEqual((SEQUENCES as Array<{ name: string }>).map((s) => s.name));
   });
 
-  it("exit code, output and settings.json are byte-identical after every step", () => {
+  // T1: one test per sequence, so a worker returns to its event loop every few
+  // seconds (one 120-s loop tripped vitest's 60-s RPC timeout). The last test
+  // counts the steps asserted.
+  let asserted = 0;
+  const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
+
+  it.each(indexed)("exit code, output and settings.json are byte-identical after every step: %s", async (_name, i) => {
+    // Yield a macrotask first: synchronous tests chained on promises never let the
+    // worker read vitest's RPC replies, and its 60-s timer then fires (T1).
+    await new Promise((r) => setImmediate(r));
     const diffs: string[] = [];
-    for (const [i, seq] of (SEQUENCES as Array<{ name: string }>).entries()) {
+    {
+      const seq = (SEQUENCES as Array<{ name: string }>)[i];
       const now = runSequence(CLI, seq) as Step[];
+      asserted += now.length;
       const was = frozen.sequences[i].steps;
       const rt = seq.name.startsWith("rt ");
       now.forEach((step, n) => {
@@ -70,5 +81,9 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
       });
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
-  }, 600_000);
+  }, 120_000);
+
+  it("asserted every frozen step", () => {
+    expect(asserted).toBe(frozen.sequences.reduce((n, s) => n + s.steps.length, 0));
+  });
 });
