@@ -4,10 +4,42 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### Changed behaviour
+
+- `import` refuses, exits 1 and writes nothing when `<output>/<name>.at` exists (S-67); `--force` overwrites it. It used to overwrite silently. With `--force`, a symlink at that path is written through, to the file it points at, as 0.11.2 did.
+- `import` exits 2 when the .at it wrote has validation errors (S-68). It used to exit 0. The file is written either way; a script that ran `import` and checked only for 0 now sees 2 for a .at with errors.
+- `validate` and `guard --check` can print a new warning, `CC-exit127` (below); `validate` can print a V102 warning for an `env` block inside `settings`, and a V96 error for a hook script path with a space (F7). Warnings do not change an exit code.
+
+### [fix] Fixed: a run that opens with a topology script runs it, whatever follows on the line (F1, F1b)
+
+- S-11 emitted any `run:` holding a shell operator as written, so `run: "scripts/guard.sh 2>/dev/null"` became the settings.json command `scripts/guard.sh 2>/dev/null`. That path is relative to the session's directory and names no file there: the shell exits 127, and 127 does not block, so a guard that refused in 0.11.2 let every call through after a re-scaffold, with no message. The same held for `bun scripts/x.ts` (S-11 counted `bun` and `deno` as package runners) and for a gate's `run:`. Now, when the first word (after an interpreter, `bun run` or `deno run`) is a `scripts/` path, or a bare name the topology scaffolds as a script elsewhere, it resolves as 0.11.2 did, to `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/<name>"`, and the rest of the line (arguments, redirects, operators) is kept exactly as written. Everything else S-11 emits as written is unchanged: builtins, keywords, assignments, package runners, PATH tools and the user's own project paths.
+- On main, from #50 (3390b39) until this fix, scaffold carried the F1 behaviour. It was never released: 0.11.2 and earlier resolve the script.
+- Measured: a project scaffolded by 0.11.2, its `guard.sh` implemented as `exit 2`, re-scaffolded by this build: the hook command run by bash with a PreToolUse payload exits 2, and the gate wrapper exits 2 with the script's message (`f1-topology-script-run.test.ts`).
+
+### [feature] validate and guard --check warn when a hook or gate command would exit 127 (CC-exit127)
+
+- For a `run:` emitted as written, the first word of the command is looked up from the project root: a path that is not there, or a name that is not on PATH, prints `CC-exit127: Hook "<id>" runs "<command>": <word> is not found from the project root` (or `is not on PATH`), `so the shell exits 127, which does not block`. A script the topology scaffolds is not judged (scaffold writes it). The project root is `--dir`, else the nearest folder at or above the .at that holds `.claude` or `.git`. `validate` checks it for the Claude Code target only.
+
+### [fix] Fixed: import then scaffold no longer leaves a hook twice in settings.json (F2)
+
+- A hook written the way Claude Code's docs give it, `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh`, came back from scaffold as `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"`, and a PATH tool `prettier --write .` as `command prettier --write .`. The merge read them as two hooks, kept the user's and added the other, so both fired. Hooks under the same event and matcher whose commands differ only in the project-dir form, quotes, a leading `./`, a leading `command`, or `bash`/`sh` before a script path are now one hook: scaffold keeps the user's, does not add the twin, and prints `= .claude/settings.json: <event> [<matcher>] keeps your "<command>"; the .at's "<command>" is the same hook, not added`. `guard --check` prints `.claude/settings.json: <event> [<matcher>] runs the same hook twice: ...; remove one` for a settings.json that already holds both.
+
+### [fix] Fixed: import's write is exclusive, and a bad output path is a one-line error (F3, F4)
+
+- Without `--force`, import creates the .at exclusively, so of several imports racing for one path one writes and the others refuse with the S-67 line. A directory at `<name>.at` prints `Error: <path> is a directory, not a .at file. Nothing was written.` with or without `--force` (it was an EISDIR stack with `--force`, and a `--force` hint without). An `--output` that is a file prints `Error: --output <dir> is not a directory. Nothing was written.` (it was an ENOTDIR stack). Each exits 1 and writes nothing, and every refusal prints before the `Importing from` line.
+
+### [fix] Fixed: validate warns about an `env` block inside `settings` (F5)
+
+- Since S-13 only a top-level `env { }` is the topology env, so the keys of `settings { env { ... } }` are no longer written to settings.json. `validate` now warns (V102): `` `env` is not a settings field, so its keys (FOO, ...) are not written to settings.json. Move them to a top-level env { } block. `` A project re-scaffolded in place keeps the keys that leaked into its `.claude/settings.json` before (the merge never removes an env key); remove them by hand.
+
+### [fix] Fixed: a hook script path with a space is named by validate, not refused later by scaffold (F7)
+
+- `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"` passed `validate` and `import`, then `scaffold` refused it ("not safe file names"). V96 now reports a run whose script is a project path scaffold cannot write, with the same rule scaffold uses, so `import` exits 2 and names it.
+
 ### [fix] Fixed: import exits 2 when the .at it wrote has validation errors (S-68)
 
 - `import` printed `N error(s), M warning(s) in generated file.` and still exited 0, so a script could not tell a broken .at from a good one. Now, after writing, it validates the file as `validate <path>` does (the same rules, imports resolved from the file, so the counts match) and, when there are errors, prints `import: the .at it wrote has N validation error(s); fix them, or run validate <path> for details` and exits 2. The file is still written. A generated file that does not parse counts as one error, as in `validate`; it used to print a note and exit 0.
-- Exit codes of `import`: 0, the .at is written and has no errors (warnings allowed); 2, the .at is written and has errors; 1, nothing was written (the .at exists without `--force`, or the files could not be read).
+- Exit codes of `import`: 0, the .at is written and has no errors (warnings allowed); 2, the .at is written and has errors; 1, nothing was written (the .at exists without `--force`, the output path is a directory or under a file, or the files could not be read).
 
 ### [fix] Fixed: import no longer overwrites an existing .at; `--force` does (S-67)
 

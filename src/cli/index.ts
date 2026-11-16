@@ -109,9 +109,10 @@ ${c.bold("Usage:")}
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>] [--force]
                        Write <name>.at into --output (default: cwd). Refuses, exit 1, when
-                       that .at exists; --force overwrites it. Then validates it: exit 0
-                       when it has no errors (warnings allowed), exit 2 when it has
-                       errors (the file is written), exit 1 when nothing was written.
+                       that .at exists; --force overwrites it (through a symlink, too).
+                       Then validates it: exit 0 when it has no errors (warnings allowed),
+                       exit 2 when it has errors (the file is written), exit 1 when
+                       nothing was written.
   agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and

@@ -324,7 +324,7 @@ agentopology import --target claude-code --dir .claude/
 
 The CLI reads the platform files, generates a `.at` file, and runs validation on it. Supported targets: claude-code, codex, gemini-cli, copilot-cli, openclaw, kiro.
 
-The `.at` is written as `<name>.at` in `--output` (default: the current directory). When that file already exists, import refuses, writes nothing and exits 1; `--force` overwrites it. The `.at` is the only file import writes.
+The `.at` is written as `<name>.at` in `--output` (default: the current directory). When that file already exists, import refuses, writes nothing and exits 1; `--force` overwrites it (through a symlink at that path, to the file it points at). The `.at` is the only file import writes.
 
 Exit codes: 0 when the written `.at` has no validation errors (warnings allowed); 2 when it has errors (the file is written, and import prints `import: the .at it wrote has N validation error(s); fix them, or run validate <path> for details`); 1 when nothing was written (the `.at` exists, or the files could not be read).
 
