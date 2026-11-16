@@ -352,6 +352,9 @@ agent-field     = 'role' ':' identifier
                 | 'max-turns' ':' number
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
+                | 'allow' ':' rule-list
+                | 'ask' ':' rule-list
+                | 'deny' ':' rule-list
                 | agent-extensions
                 | agent-hooks
                 | agent-scale
@@ -405,7 +408,21 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime) |
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
 | `fallback-chain` | name-list | no | `[]` | Ordered model fallback list |
+| `allow` | rule-list | no | `[]` | Permission rules that run this agent's matching calls without asking (see §4.17 for the rule syntax) |
+| `ask` | rule-list | no | `[]` | Permission rules that make this agent's matching calls prompt |
+| `deny` | rule-list | no | `[]` | Permission rules that refuse this agent's matching calls |
 | `extensions` | agent-extensions | no | -- | Platform-specific extension fields (see below) |
+
+**Agent `allow` / `ask` / `deny`:** the same rule strings as `settings { }` (§4.17), for one agent. `tools` and `disallowed-tools` decide which tools the agent has; the rules decide whether a call runs, prompts or is refused. `permissions:` and `permission-mode:` pick the mode; rules layer on top ("Modes set the baseline. Layer permission rules on top to pre-approve or block specific tools.", Claude Code permission modes docs). A Claude Code subagent file has no rule field (its frontmatter fields are "`description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `mcpServers`, `hooks`, ..."), so how a binding carries agent rules is the binding's concern; in this release no binding writes them, and validate checks them (V130-V135). V132 warns on an agent rule that names a tool the agent does not have.
+
+```agenttopology
+agent deployer {
+  model: sonnet
+  tools: [Bash, Read]
+  ask:  ["Bash(kubectl apply *)"]
+  deny: ["Bash(kubectl delete *)"]
+}
+```
 
 **Per-agent `hooks`:** Hooks defined inside an agent block are scoped to that agent's lifetime. They only fire while the agent is active. The hook sub-block syntax is identical to the global `hooks` section -- same fields (`on`, `matcher`, `run`, `type`, `timeout`), same hook events.
 
@@ -1265,24 +1282,37 @@ its matcher misses one of the server's tools that the topology names.
 
 ```ebnf
 settings        = 'settings' '{' settings-field* '}'
-settings-field  = 'allow' ':' string-list
-                | 'deny' ':' string-list
-                | 'ask' ':' string-list
+settings-field  = 'allow' ':' rule-list
+                | 'deny' ':' rule-list
+                | 'ask' ':' rule-list
+                | 'default-mode' ':' mode-id
+rule-list       = '[' rule (',' rule)* ']' | '[]'
+rule            = identifier | string        # string = Tool(specifier)
+mode-id         = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk'
+                | 'bypassPermissions' | 'manual'
 ```
 
 ```agenttopology
 settings {
-  allow: ["Bash(npm run *)", "Read", "Grep", "Glob"]
-  deny: ["Bash(rm -rf *)", "Bash(git push --force)"]
-  ask: ["Bash(git push)"]
+  allow: [Read, Grep, "Bash(npm run *)", "WebFetch(domain:docs.example.com)"]
+  ask:   ["Bash(git push *)"]
+  deny:  ["Read(./.env)", "Read(./secrets/**)", "Bash(curl *)", "mcp.prod-db.*"]
+  default-mode: acceptEdits
 }
 ```
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
-| `allow` | string-list | no | `[]` |
-| `deny` | string-list | no | `[]` |
-| `ask` | string-list | no | `[]` |
+| `allow` | rule-list | no | `[]` |
+| `deny` | rule-list | no | `[]` |
+| `ask` | rule-list | no | `[]` |
+| `default-mode` | mode-id | no | -- |
+
+**Rule syntax.** A rule is the Claude Code permission rule, verbatim: "Permission rules follow the format `Tool` or `Tool(specifier)`. Parentheses inside the specifier are literal, so a command or path that contains them needs no escaping." (Claude Code permissions docs). A rule with a specifier or a glob is a quoted string; a bare tool name may stay unquoted. Inside quotes, `\"` and `\\` are the only escapes, and a rule keeps its commas and brackets, so it round-trips byte for byte. The one form the language adds is the dotted MCP name: `mcp.<server>` and `mcp.<server>.*` (every tool on the server) and `mcp.<server>.<tool>`, written to Claude Code as `mcp__<server>`, `mcp__<server>__*` and `mcp__<server>__<tool>`.
+
+How the lists combine, in the docs' words: "Rules are evaluated in order: deny, then ask, then allow. The first match in that order determines the outcome, and rule specificity doesn't change the order." V130-V135 check what a rule says against the rest of the .at (see spec/validation.md).
+
+**`default-mode`** is the session's starting mode (`permissions.defaultMode`). The Claude Code settings reference says "`auto` and `bypassPermissions` don't take effect from project or local settings", so V134 warns on those two values. In this release validate checks `default-mode`; no binding writes it yet.
 
 ---
 

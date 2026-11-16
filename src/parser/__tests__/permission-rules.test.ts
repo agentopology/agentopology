@@ -341,6 +341,8 @@ describe("V139 -> " + SUSPECT + ": wildcard before the subcommand, unknown tool 
 
   it("exempts names with _ or *, MCP names, and known tools", () => {
     expect(hits(topo({ settings: '    deny: [my_tool, "Foo*", TaskOutput, WebSearch, "mcp.db.q"]' }), SUSPECT)).toEqual([]);
+    // Every tool a shipped example names in its rules.
+    expect(hits(topo({ settings: "    allow: [Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch]" }), SUSPECT)).toEqual([]);
   });
 });
 

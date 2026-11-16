@@ -4,6 +4,13 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feat] Permission rules are declared, parsed and checked: agent `allow`/`ask`/`deny`, `settings { default-mode }`, V130-V135 (S-19)
+
+- An agent takes `allow`, `ask` and `deny` rule lists; `settings { }` takes `default-mode`. Rules are the Claude Code syntax verbatim (`Tool` or `Tool(specifier)`), plus the dotted `mcp.<server>.<tool>`. A quoted rule keeps its commas, brackets and escaped quotes, and `import` → serialize → parse returns every rule byte for byte (before, `Bash(git commit -m "a, b")` split at the comma). Bindings do not write agent rules or `default-mode` yet; validate checks them.
+- Six checks of the declaration: V130 (error) malformed rule or unknown `default-mode`; V131 (error) a rule Claude Code skips or never matches; V132 (warning) a deny that removes a tool an agent lists, an `Agent(x)` deny on an agent the flow invokes, an agent rule on a tool the agent lacks; V133 (warning) a rule in two lists, or an allow a deny or ask always matches first; V134 (warning) a mode that makes a rule moot; V135 (warning) a `*` before the subcommand in an allow, or a tool name the docs do not list. Each message quotes the Claude Code docs it relies on.
+- `examples/code-review.at` denied bare `Write` and `Edit` while its `reporter` lists `Write`: "A bare tool name like `Bash` removes the tool from Claude's context entirely", and "`Edit` rules apply to all built-in tools that edit files", so the reporter could not write its report. The deny is now `Edit(/src/**)` and `Bash`.
+- Numbering map: the S-19 spec names these V134-V139. They are V130-V135 here because rule numbers are contiguous; if V130-V133 from another branch land first, V130→V134, V131→V135, V132→V136, V133→V137, V134→V138, V135→V139.
+
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
 - The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.

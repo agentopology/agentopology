@@ -35,6 +35,14 @@ import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { parse as parseSource } from "./index.js";
+import {
+  v130PermissionRuleForm,
+  v131PermissionRuleSkipped,
+  v132PermissionToolUnusable,
+  v133PermissionRuleShadowed,
+  v134PermissionModeMoot,
+  v135PermissionRuleSuspect,
+} from "./permission-checks.js";
 import type {
   HookDef,
   TopologyAST,
@@ -4170,6 +4178,13 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v86AgentMemoryRefsValid(ast),
     ...v87OrchestratorDelegation(ast),
     ...v88CustodyRefsValid(ast),
+    // S-19: permission rules (spec V134-V139; renumbered at merge if needed).
+    ...v130PermissionRuleForm(ast),
+    ...v131PermissionRuleSkipped(ast),
+    ...v132PermissionToolUnusable(ast),
+    ...v133PermissionRuleShadowed(ast),
+    ...v134PermissionModeMoot(ast),
+    ...v135PermissionRuleSuspect(ast),
   ];
 }
 

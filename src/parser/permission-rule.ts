@@ -63,7 +63,7 @@ export const KNOWN_TOOLS = new Set([
   "Glob", "Grep", "ListAgents", "LSP", "Monitor", "MultiEdit", "NotebookEdit", "PowerShell",
   "Read", "ScheduleWakeup", "SendMessage", "Skill", "SubagentHandback", "TaskCreate", "TaskGet",
   "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch",
-  "WaitForMcpServers", "WebFetch", "WebSearch", "Workflow",
+  "WaitForMcpServers", "WebFetch", "WebSearch", "Workflow", "Write",
 ]);
 
 /** A tool name: letters, digits, `_`, `-` and `*` (a glob). */
