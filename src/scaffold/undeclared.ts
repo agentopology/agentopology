@@ -138,7 +138,9 @@ export function undeclaredRuleNotice(
 export function undeclaredRuleSummary(rules: string[]): string {
   const n = rules.length;
   const list = rules.slice(0, 5).map(shown).join(", ") + (n > 5 ? ` and ${n - 5} more` : "");
-  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS_PATH} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${list}; declare them in the .at to keep them, or remove them`;
+  return n === 1
+    ? `1 rule in ${SETTINGS_PATH} isn't declared in the .at: ${list}; declare it in the .at to keep it, or remove it`
+    : `${n} rules in ${SETTINGS_PATH} aren't declared in the .at: ${list}; declare them in the .at to keep them, or remove them`;
 }
 
 /** Store the named set on the settings.json entry of a manifest's files (in place). */
