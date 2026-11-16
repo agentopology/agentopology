@@ -62,7 +62,7 @@ export function runParts(run: string): { interpreter?: string; script: string; a
   // F1b: `bun run x.ts` and `deno run x.ts` run x.ts; the script is the word after `run`.
   if (/^(?:bun|deno)$/.test(first.replace(/^.*\//, "")) && words[1] === "run" && words.length > 2 && !words[2].startsWith("-")) {
     const [script, ...args] = words.slice(2);
-    return { interpreter: `${first} run`, script, args };
+    return { interpreter: `${first} run`, script: projectWord(script), args };
   }
   const named =
     words.length > 1 &&
