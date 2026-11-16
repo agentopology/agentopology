@@ -470,9 +470,11 @@ describe("[0.11.2-o] a settings.json whose root is not an object is a one-line e
 });
 
 describe("[0.11.2] the CHANGELOG cites the Codex docs by their public URL only", () => {
-  it("[0.11.2-k] the Unreleased section names the URL, and no file name or line number", () => {
+  it("[0.11.2-k] the 0.11.2 section names the URL, and no file name or line number", () => {
     const log = fs.readFileSync(resolve(here, "../../../CHANGELOG.md"), "utf8");
-    const unreleased = log.slice(log.indexOf("## [Unreleased]"), log.indexOf("## [0.11.1]"));
+    const start = log.indexOf("## [0.11.2]");
+    expect(start).toBeGreaterThan(-1);
+    const unreleased = log.slice(start, log.indexOf("## [0.11.1]"));
     expect(unreleased).toContain("https://learn.chatgpt.com/docs/agent-configuration/rules.md");
     expect(unreleased).not.toMatch(/codex-rules\.md|line 65|rules\.md:\d/);
   });
