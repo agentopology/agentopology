@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [feat] An agent `deny` on Edit warns that Write, MultiEdit and NotebookEdit are not blocked (S-51)
+
+- The agent's hook matches the Edit tool only, and the hooks docs do not say whether `if: "Edit(...)"` matches a Write call. Scaffold now says so for each agent Edit deny, and points to a `settings { deny }` Edit rule, which "`Edit` rules apply to all built-in tools that edit files" makes cover them.
+
 ### [feat] claude-code scaffold writes agent `deny`/`ask` rules and `default-mode` (S-19)
 
 - An agent's `deny` and `ask` rules become `PreToolUse` hooks in its own frontmatter: the matcher is the rule's tool, the specifier goes in `if` (one rule per handler, as the hooks docs require), a deny exits 2 and blocks if the hook fails to run, an ask returns `permissionDecision: "ask"`. Claude Code skips frontmatter hooks of a project subagent until the folder is trusted; scaffold prints that, and the topology skill carries it under "Permission rules".

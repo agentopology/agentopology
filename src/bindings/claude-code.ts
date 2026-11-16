@@ -212,6 +212,17 @@ function warnRuleLimits(ast: TopologyAST): void {
   if (ruled.length > 0) {
     console.warn(`[claude-code] Agent rules (${ruled.map((a) => a.id).join(", ")}) are frontmatter PreToolUse hooks. ${AGENT_RULE_TRUST_NOTE}`);
   }
+  // S-51: the hook's matcher is Edit, and the docs do not say whether an
+  // `if: "Edit(...)"` matches a Write call, so the other edit tools pass.
+  for (const a of ruled) {
+    const edits = (a.deny ?? []).filter((r) => parsePermissionRule(r).tool === "Edit");
+    if (edits.length === 0) continue;
+    console.warn(
+      `[claude-code] agent "${a.id}" deny ${edits.map((r) => JSON.stringify(r)).join(", ")} is a hook on the Edit tool only: ` +
+        `Write, MultiEdit and NotebookEdit are not blocked by it. A settings { deny: [...] } Edit rule covers them ` +
+        `("\`Edit\` rules apply to all built-in tools that edit files"), for every agent.`,
+    );
+  }
 }
 
 /**
