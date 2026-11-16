@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: import no longer overwrites an existing .at; `--force` does (S-67)
+
+- `import --output <dir>` replaced `<dir>/<name>.at` when it already existed, so a second run lost every edit made to it. Now, when that file exists (a symlink counts, even a broken one), import prints `Error: <path> exists; pass --force to overwrite. Nothing was written.`, writes nothing and exits 1. With `--force` it overwrites the file as before. The .at is the only file import writes, so the rule covers everything it writes. `--force` already meant "overwrite" for `scaffold`; for `import` it means only this file.
+
 ### [fix] Fixed: an MCP server's `env` or an `environments {}` block no longer leaks into the scaffolded settings.json; only a top-level `env` block is the topology env (S-13)
 
 - The parser took the topology `env` from the first `env`-named block at any depth, or any word that starts with `env`, so an MCP server's `env` or an `environments { }` block leaked into the scaffolded `settings.json` `env`. Now only a top-level `env` block counts. `examples/data-processing.at` has no `env` block: its scaffolded `settings.json` no longer carries `bucket` and `output-bucket` from `environments.production`.

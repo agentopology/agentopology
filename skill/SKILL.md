@@ -324,6 +324,8 @@ agentopology import --target claude-code --dir .claude/
 
 The CLI reads the platform files, generates a `.at` file, and runs validation on it. Supported targets: claude-code, codex, gemini-cli, copilot-cli, openclaw, kiro.
 
+The `.at` is written as `<name>.at` in `--output` (default: the current directory). When that file already exists, import refuses, writes nothing and exits 1; `--force` overwrites it. The `.at` is the only file import writes.
+
 ---
 
 ## Mode: Evolve (--evolve)
@@ -383,7 +385,7 @@ agentopology info <file.at>              # Detect patterns, layers, suggestions
 agentopology export <file.at> --format <markdown|mermaid|json>
 
 # Reverse engineering
-agentopology import --target <binding> --dir <path>
+agentopology import --target <binding> --dir <path> [--output <dir>] [--force]
 
 # Discovery
 agentopology targets                     # List all binding targets

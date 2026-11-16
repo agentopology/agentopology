@@ -52,6 +52,15 @@ describe("S-67: import does not overwrite an existing .at unless told to", () =>
     expect(r.stdout).not.toContain("Written:");
   });
 
+  it("[S-67] a link at the output path counts as there, even when it points nowhere", () => {
+    fs.mkdirSync(join(root, "o"));
+    fs.symlinkSync(join(root, "nowhere.at"), out());
+    const r = run();
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`Error: ${out()} exists; pass --force to overwrite.`);
+    expect(fs.existsSync(join(root, "nowhere.at"))).toBe(false);
+  });
+
   it("[S-67] with --force the existing .at is overwritten", () => {
     put("o/shop.at", "# my marker line\n");
     const r = run("--force");

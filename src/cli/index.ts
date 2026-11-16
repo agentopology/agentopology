@@ -105,7 +105,9 @@ ${c.bold("Usage:")}
   agentopology visualize-brain <vault-folder> [--output <dir>]
   agentopology export <file.at> --format <markdown|mermaid|json|ascii|brief> [--output <dir>]
   agentopology info <file.at>
-  agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>]
+  agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>] [--force]
+                       Write <name>.at into --output (default: cwd). Refuses, exit 1, when
+                       that .at exists; --force overwrites it.
   agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and
@@ -153,12 +155,13 @@ ${c.bold("Options:")}
   --format <name>   Export format (markdown, mermaid, json, ascii, brief).
   --dir <path>      Directory to read platform files from (used with sync, import).
   --name <name>     Topology name for the generated .at file (used with import).
-  --output, -o <dir> Output directory for generated files (scaffold, visualize, export).
+  --output, -o <dir> Output directory for generated files (scaffold, visualize, export, import).
   --no-open         visualize: write the page, do not open a browser.
   --no-check        visualize: do not read the project; every fact reads "not checked".
   --print-summary   visualize: print node counts and facts to stdout.
   --dry-run         Preview generated files without writing to disk.
-  --force           Overwrite files scaffold did not create or that were edited (never symlinks).
+  --force           scaffold: overwrite files scaffold did not create or that were edited (never symlinks).
+                    import: overwrite the .at that is already at the output path.
   --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
   --prune           Delete files that were previously scaffolded but are no longer generated (never .claude/settings.json).
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
@@ -1308,7 +1311,7 @@ function cmdInfo(filePath: string): void {
   }
 }
 
-function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string): void {
+function cmdImport(targetName: string, dirPath: string, topologyName?: string, outputDir?: string, force = false): void {
   const resolved = requireDir(dirPath);
   const name = topologyName ?? path.basename(resolved).replace(/^\./, "");
 
@@ -1317,6 +1320,16 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     c.bold(`Importing from ${targetName} files in ${dirPath}`)
   );
   console.log("");
+
+  // The .at is the only file import writes. One already there may hold the
+  // user's edits, so it is replaced only with --force (S-67). lstat, so a
+  // link at that path counts as there even when it points nowhere.
+  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
+  const outFile = path.join(outDir, `${name}.at`);
+  if (!force && fs.lstatSync(outFile, { throwIfNoEntry: false })) {
+    console.error(c.red(`Error: ${outFile} exists; pass --force to overwrite. Nothing was written.`));
+    process.exit(1);
+  }
 
   let project: ReturnType<typeof readClaudeProject> = null;
   let read: Pick<ClaudeProject, "files" | "unread">;
@@ -1341,10 +1354,6 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.error(c.red(`Import error: ${(err as Error).message}`));
     process.exit(1);
   }
-
-  // Determine output path
-  const outDir = outputDir ? path.resolve(outputDir) : process.cwd();
-  const outFile = path.join(outDir, `${name}.at`);
 
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(outFile, atSource, "utf-8");
@@ -1711,7 +1720,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdImport(args.target, args.dir, args.name, args.output);
+      cmdImport(args.target, args.dir, args.name, args.output, args.force);
       break;
 
     case "targets":
