@@ -1,0 +1,942 @@
+{
+ "version": "0.11.2",
+ "sequences": [
+  {
+   "name": "project path: timeout 5 -> 9",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: if A -> B",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: matcher Bash -> Edit",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: strength refuse added",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: added, then removed",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/settings.json\n\n  1 created, 0 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: removed with --prune",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  = .claude/settings.json (kept: holds settings; delete it by hand if you want)\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts, 0 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: timeout change, --dry-run",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/hooks/x.sh (the user's own file; created only when missing)\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: timeout 5 -> 9 (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: if A -> B (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: matcher Bash -> Edit (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: strength refuse added (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: added, then removed (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/settings.json\n\n  1 created, 0 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: removed with --prune (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked, 0 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "project path: timeout change, --dry-run (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/hooks/x.sh (the user's own file; created only when missing)\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: timeout 5 -> 9",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: if A -> B",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: matcher Bash -> Edit",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/scripts/guard.sh (script regenerated)\n  ~ .claude/settings.json (config merged)\n\n  0 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: strength refuse added",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: added, then removed",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n\n  2 created, 0 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: removed with --prune",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  - .claude/skills/t/scripts/guard.sh\n  = .claude/settings.json (kept: holds settings; delete it by hand if you want)\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts, 1 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: timeout change, --dry-run",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/skills/t/scripts/guard.sh\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: timeout 5 -> 9 (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: if A -> B (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: matcher Bash -> Edit (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/scripts/guard.sh (script regenerated)\n  ~ .claude/settings.json (config merged)\n\n  0 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: strength refuse added (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: added, then removed (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n\n  2 created, 0 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: removed with --prune (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  - .claude/skills/t/scripts/guard.sh\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked, 1 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "topology script: timeout change, --dry-run (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/skills/t/scripts/guard.sh\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: timeout 5 -> 9",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: if A -> B",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: matcher Bash -> Edit",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/scripts/prettier (script regenerated)\n  ~ .claude/settings.json (config merged)\n\n  0 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: strength refuse added",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: added, then removed",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n\n  2 created, 0 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: removed with --prune",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  - .claude/skills/t/scripts/prettier\n  = .claude/settings.json (kept: holds settings; delete it by hand if you want)\n\n  0 created, 0 updated, 5 unchanged, 0 conflicts, 1 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: timeout change, --dry-run",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/skills/t/scripts/prettier\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: timeout 5 -> 9 (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: if A -> B (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: matcher Bash -> Edit (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/scripts/prettier (script regenerated)\n  ~ .claude/settings.json (config merged)\n\n  0 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Edit\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: strength refuse added (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: added, then removed (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 0 unchanged, 0 conflicts\n\n",
+     "settings": null
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n\n  2 created, 0 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: removed with --prune (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --prune",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  - .claude/skills/t/scripts/prettier\n  ⊘ .claude/settings.json (no longer generated, but edited — kept)\n\n  0 created, 0 updated, 4 unchanged, 0 conflicts, 1 blocked, 1 deleted\n\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "PATH tool: timeout change, --dry-run (settings.json edited between)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/prettier\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code --dry-run",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  Dry run — nothing is written:\n\n  = .claude/agents/a/AGENT.md\n  = .claude/agents/b/AGENT.md\n  = .claude/skills/t/SKILL.md\n  = .claude/skills/t/scripts/prettier\n  = .claude/settings.json\n  = .claude/rules/t.md\n\n  6 file(s) would be generated.\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/prettier\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/prettier\\\" --write .\",\n            \"timeout\": 5\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "run changed: scripts/a.sh -> scripts/b.sh",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/a.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/a.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/a.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/skills/t/scripts/b.sh\n  ~ .claude/settings.json (config merged)\n\n  1 created, 1 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/b.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/b.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "run changed: .claude/hooks/a.sh -> .claude/hooks/b.sh",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/a.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/b.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/a.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      },\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/b.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "gate run changed",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/check.sh\n  + .claude/skills/t/scripts/gate-g.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  7 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/check.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"matcher\": \"a\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/gate-g.sh\\\"\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/SKILL.md (prompt preserved)\n  + .claude/skills/t/scripts/check2.sh\n  ~ .claude/skills/t/scripts/gate-g.sh (script regenerated)\n\n  1 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/check2.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"matcher\": \"a\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/gate-g.sh\\\"\"\n          }\n        ]\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "gate run with a redirect",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/check.sh\n  + .claude/skills/t/scripts/gate-g.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  7 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/check.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"matcher\": \"a\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/gate-g.sh\\\"\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 7 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/check.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"SubagentStop\": [\n      {\n        \"matcher\": \"a\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/gate-g.sh\\\"\"\n          }\n        ]\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "user hook on the same project script before the first scaffold (if A vs the .at's if B)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 2 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "user hook on the same project script, timeout 1 vs the .at's 600000",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/rules/t.md\n\n  4 created, 0 updated, 2 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 1\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"timeout\": 1\n          }\n        ]\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "user hook added after the first scaffold, on the topology script",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "user rule and a new key between scaffolds",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  .claude/settings.json allow \"Bash(npm test)\": still in effect; the .at does not declare it — remove it if you didn't add it by hand\n\n  0 created, 0 updated, 6 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(npm test)\"\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "two hooks, one topology script, different if (P-1)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      },\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(git push *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "two hooks, one project script, different if (P-1)",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  5 created, 0 updated, 1 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      },\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(git push *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/settings.json (config merged)\n\n  0 created, 1 updated, 5 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/hooks/x.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\\\"\",\n            \"if\": \"Bash(rm *)\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  },
+  {
+   "name": "hook moved to another event",
+   "steps": [
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  + .claude/agents/a/AGENT.md\n  + .claude/agents/b/AGENT.md\n  + .claude/skills/t/SKILL.md\n  + .claude/skills/t/scripts/guard.sh\n  + .claude/settings.json\n  + .claude/rules/t.md\n\n  6 created, 0 updated, 0 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  }\n}\n"
+    },
+    {
+     "args": "scaffold t.at --target claude-code",
+     "code": 0,
+     "output": "Scaffolding t for Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.\n\n\n  ~ .claude/skills/t/scripts/guard.sh (script regenerated)\n  ~ .claude/settings.json (config merged)\n\n  0 created, 2 updated, 4 unchanged, 0 conflicts\n\n\n  1 stub(s) need implementation before this topology can run:\n    · .claude/skills/t/scripts/guard.sh\n  Search for \"# AGENTOPOLOGY_STUB — fill this in before relying on this script\" — remove that line when each script is implemented.\n",
+     "settings": "{\n  \"hooks\": {\n    \"PostToolUse\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"bash \\\"$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/guard.sh\\\"\"\n          }\n        ],\n        \"matcher\": \"Bash\"\n      }\n    ]\n  },\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"echo hi\"\n  }\n}\n"
+    }
+   ]
+  }
+ ]
+}
