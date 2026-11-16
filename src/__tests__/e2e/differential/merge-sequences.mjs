@@ -65,6 +65,7 @@ const userHook = (command, extra = {}) => ({
   settings: (s) => ({ ...s, hooks: { ...(s.hooks ?? {}), PreToolUse: [...(s.hooks?.PreToolUse ?? []), { matcher: "Bash", hooks: [{ type: "command", command, ...extra }] }] } }),
 });
 
+const SCRIPT = "#!/bin/bash\nexit 0\n";
 const PROJ = ".claude/hooks/x.sh";
 const TOPO = "scripts/guard.sh";
 const TOOL = "prettier --write .";
@@ -113,23 +114,46 @@ function normalize(text, root) {
     .join("\n");
 }
 
-/** Run one sequence with `cli`; one record per step that runs the CLI. */
+/**
+ * Run one sequence with `cli`; one record per step that runs the CLI.
+ *
+ * A step may: write the .at (`at`, as t.at; `atFile: { name, text }`, as
+ * <name>.at), write files (`files`), edit settings.json (`settings`), edit or
+ * remove the scaffold manifest (`manifest`, `nomanifest`), and run the CLI
+ * (`run`: its arguments; "<ROOT>" is the project folder). A sequence's
+ * `setup` replaces the default user scripts written before the first step.
+ */
 export function runSequence(cliPath, sequence, tmpBase = os.tmpdir()) {
   const cli = path.resolve(cliPath);
   const root = fs.mkdtempSync(path.join(tmpBase, "at-merge-"));
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), content);
+  };
   try {
-    fs.mkdirSync(path.join(root, ".claude/hooks"), { recursive: true });
-    for (const f of ["a.sh", "b.sh", "x.sh"]) fs.writeFileSync(path.join(root, ".claude/hooks", f), "#!/bin/bash\nexit 0\n");
+    fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
+    const setup = sequence.setup ?? { ".claude/hooks/a.sh": SCRIPT, ".claude/hooks/b.sh": SCRIPT, ".claude/hooks/x.sh": SCRIPT };
+    for (const [rel, content] of Object.entries(setup)) write(rel, content);
     const settingsPath = path.join(root, ".claude/settings.json");
+    const manifestPath = path.join(root, ".claude/.scaffold-manifest.json");
     const records = [];
     for (const step of sequence.steps) {
       if (step.at) fs.writeFileSync(path.join(root, "t.at"), step.at);
+      if (step.atFile) fs.writeFileSync(path.join(root, `${step.atFile.name}.at`), step.atFile.text);
+      if (step.files) for (const [rel, content] of Object.entries(step.files)) write(rel, content);
       if (step.settings) {
         const s = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, "utf8")) : {};
         fs.writeFileSync(settingsPath, JSON.stringify(step.settings(s), null, 2) + "\n");
       }
+      if (step.manifest && fs.existsSync(manifestPath)) {
+        const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        step.manifest(m);
+        fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2));
+      }
+      if (step.nomanifest && fs.existsSync(manifestPath)) fs.renameSync(manifestPath, path.join(root, ".claude/manifest.gone"));
       if (step.run) {
-        const r = spawnSync(process.execPath, [cli, ...step.run], { cwd: root, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } });
+        const args = step.run.map((a) => a.split("<ROOT>").join(root));
+        const r = spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } });
         records.push({
           args: step.run.join(" "),
           code: r.status,

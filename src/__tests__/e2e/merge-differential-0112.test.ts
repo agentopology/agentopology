@@ -20,7 +20,9 @@ import * as fs from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error plain JavaScript module, shared with freeze-merge.mjs
-import { SEQUENCES, runSequence } from "./differential/merge-sequences.mjs";
+import { runSequence } from "./differential/merge-sequences.mjs";
+// @ts-expect-error plain JavaScript module, shared with freeze-merge.mjs
+import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");

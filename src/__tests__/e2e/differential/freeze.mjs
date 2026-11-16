@@ -27,11 +27,32 @@ const FIRST = [
 const OPERATOR = ["", " 2>/dev/null", " > /dev/null", " || exit 2", " || true", " | cat", " && y", " ; z"];
 const INTERPRETER = ["", "bash ", "sh ", "node ", "python3 ", "bun ", "deno run "];
 
+/**
+ * Parser shapes: the run's literal .at text (not JSON-encoded), with escaped
+ * quotes, backslashes, braces and `#` as a person writes them.
+ */
+const LITERALS = [
+  String.raw`"scripts/guard.sh --msg \"a;b\""`,
+  String.raw`"scripts/x.sh '}'"`,
+  String.raw`"scripts/x.sh '{'"`,
+  String.raw`"scripts/x.sh {a}"`,
+  String.raw`"echo \"#not a comment\""`,
+  String.raw`"scripts/x.sh # not a comment"`,
+  String.raw`"scripts/x.sh" # a comment after the value`,
+  String.raw`"scripts/x.sh --re \\d+"`,
+  String.raw`"echo \"ends with backslash \\\""`,
+  String.raw`"scripts/x.sh \\\"x\\\""`,
+  String.raw`"path C:\\Users\\x"`,
+  String.raw`scripts/x.sh`,
+  String.raw`"scripts/x.sh" `,
+];
+const KINDS = ["hook", "gate", "agent-hook"];
+
 const lib = await loadLib(path.resolve(dist));
 const corpus = new Map();
-const add = (source, kind, run) => {
-  const key = `${kind}\u0000${run}`;
-  if (!corpus.has(key)) corpus.set(key, { source, kind, run });
+const add = (source, kind, run, opts = {}) => {
+  const key = `${kind}\u0000${run}\u0000${opts.lit ?? ""}\u0000${opts.crlf ? 1 : 0}`;
+  if (!corpus.has(key)) corpus.set(key, { source, kind, run, ...opts });
 };
 
 for (const f of fs.readdirSync(examples).filter((n) => n.endsWith(".at")).sort()) {
@@ -41,19 +62,19 @@ for (const f of fs.readdirSync(examples).filter((n) => n.endsWith(".at")).sort()
     ...ast.nodes.flatMap((n) => (n.type === "agent" ? (n.hooks ?? []).filter((h) => (h.type ?? "command") === "command").map((h) => h.run) : [])),
     ...ast.nodes.filter((n) => n.type === "gate").map((g) => g.run),
   ].filter((r) => typeof r === "string" && r.length > 0);
-  for (const r of runs) {
-    add(`examples/${f}`, "hook", r);
-    add(`examples/${f}`, "gate", r);
+  for (const r of runs) for (const k of KINDS) add(`examples/${f}`, k, r);
+}
+if (extra) {
+  for (const e of JSON.parse(fs.readFileSync(extra, "utf-8"))) {
+    add(e.source, e.kind, e.run);
+    if (e.kind === "hook") add(e.source, "agent-hook", e.run);
   }
 }
-if (extra) for (const e of JSON.parse(fs.readFileSync(extra, "utf-8"))) add(e.source, e.kind, e.run);
-for (const i of INTERPRETER) for (const w of FIRST) for (const o of OPERATOR) {
-  add("cross", "hook", `${i}${w}${o}`);
-  add("cross", "gate", `${i}${w}${o}`);
-}
+for (const i of INTERPRETER) for (const w of FIRST) for (const o of OPERATOR) for (const k of KINDS) add("cross", k, `${i}${w}${o}`);
+for (const lit of LITERALS) for (const crlf of [false, true]) for (const k of KINDS) add("parser", k, null, { lit, crlf });
 
 const baselines = baselinesFor(lib);
-const rows = [...corpus.values()].map((c) => ({ ...c, ...compileRun(lib, c.kind, c.run, baselines) }));
+const rows = [...corpus.values()].map((c) => ({ ...c, ...compileRun(lib, c.kind, c.run, baselines, { lit: c.lit, crlf: c.crlf }) }));
 fs.writeFileSync(outFile, JSON.stringify({ version: "0.11.2", count: rows.length, rows }, null, 1) + "\n");
 const refused = rows.filter((r) => r.refused).length;
 console.log(`${rows.length} runs: ${rows.length - refused} resolved, ${refused} refused`);
