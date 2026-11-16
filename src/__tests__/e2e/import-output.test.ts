@@ -161,3 +161,38 @@ describe("F3/F4: the output path, under concurrency and when it is not a file", 
     expect(fs.readFileSync(join(root, "o"), "utf-8")).toBe("a file\n");
   });
 });
+
+// A permission bit is not a barrier to root, so these run as a normal user only.
+describe.skipIf(process.getuid?.() === 0)("J(3): an --output the user may not read or write", () => {
+  const importTo = (output: string) => {
+    const r = spawnSync(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", root, "--name", "shop", "--output", output], { encoding: "utf8" });
+    return { code: r.status, stderr: r.stderr, all: `${r.stdout}${r.stderr}` };
+  };
+  /** Run `fn` with `dir` at mode `mode`, restored to 0o755 after. */
+  const locked = <T>(dir: string, mode: number, fn: () => T): T => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, mode);
+    try {
+      return fn();
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+  };
+
+  it("[J-3] a parent that cannot be read (mode 000): one line, exit 1, nothing written", () => {
+    const output = join(root, "locked", "sub");
+    const r = locked(join(root, "locked"), 0o000, () => importTo(output));
+    expect(r.code).toBe(1);
+    expect(r.stderr.trim()).toBe(`Error: cannot write to --output ${output}: permission denied. Nothing was written.`);
+    expect(r.all).not.toMatch(/EACCES|\n\s+at /);
+    expect(fs.existsSync(join(output, "shop.at"))).toBe(false);
+  });
+
+  it("[J-3] an output folder that cannot be written (mode 555): the same line, exit 1, nothing written", () => {
+    const output = join(root, "ro");
+    const r = locked(output, 0o555, () => importTo(output));
+    expect(r.code).toBe(1);
+    expect(r.stderr.trim()).toBe(`Error: cannot write to --output ${output}: permission denied. Nothing was written.`);
+    expect(fs.existsSync(join(output, "shop.at"))).toBe(false);
+  });
+});
