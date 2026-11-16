@@ -29,7 +29,7 @@ import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
 import { isClaudeModelName } from "../conformance/codex.js";
-import { planCodexRules } from "../bindings/lib/codex-rules.js";
+import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
@@ -4442,8 +4442,13 @@ export function codexWarnings(ast: TopologyAST): ValidationResult[] {
       warn("CX9-timeout", gate.id, `gate "${gate.id}" can run up to ${worst}s (timeout ${gate.timeout} x ${(gate.retry ?? 0) + 1} attempt(s)); its hook timeout is raised to ${hook}s, so a guarded call waits that long while it is checked. Shorten the timeout or the retries.`);
     }
   }
-  for (const p of planCodexRules(ast).problems) {
+  const codexRules = planCodexRules(ast);
+  for (const p of codexRules.problems) {
     warn("CX13", p.list, `settings ${p.list}: ${p.message}`);
+  }
+  // A compiled allow rule lifts the command out of the sandbox; say so where it is written.
+  for (const r of codexRules.rules) {
+    if (r.decision === "allow") warn("CX13-allow", "allow", allowRuleWarning(r));
   }
   for (const id of writingJobsWithoutSandbox(ast)) {
     warn("CX20", id, `schedule job "${id}" runs an agent that writes, but no sandbox is set, and exec is read-only by default; the job runs with --sandbox read-only and cannot write. Set sandbox: workspace-write.`);

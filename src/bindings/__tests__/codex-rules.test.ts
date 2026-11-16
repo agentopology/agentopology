@@ -131,3 +131,41 @@ describe("[CX-13] permission rules", () => {
     console.warn("[CX-13] codex not installed: the `codex execpolicy check` part of this test was skipped");
   });
 });
+
+describe("[CX13-allow] a Codex allow rule runs the command outside the sandbox, and says so", () => {
+  // learn.chatgpt.com/docs/agent-configuration/rules.md line 65 (fetched 2026-11-15).
+  const DOC_LINE = "`allow`: Run the command outside the sandbox without prompting.";
+  const DOC_URL = "https://learn.chatgpt.com/docs/agent-configuration/rules.md";
+
+  it("[CX13-allow] every compiled allow rule warns at scaffold, quoting the docs line and its page", () => {
+    const { files, warnings } = scaffold(topo(`    allow: [Read, "Bash(npm test *)", "Bash(git status *)"]`));
+    const w = warnings.filter((x) => x.includes("outside the sandbox"));
+    expect(w).toHaveLength(2);
+    expect(w.filter((x) => x.includes('"Bash(npm test *)"'))).toHaveLength(1);
+    expect(w.filter((x) => x.includes('"Bash(git status *)"'))).toHaveLength(1);
+    for (const x of w) {
+      expect(x).toContain(DOC_LINE);
+      expect(x).toContain(DOC_URL);
+      expect(x).toContain("line 65");
+    }
+    // What is written does not change.
+    const rules = files.find((f) => f.path === ".codex/rules/guarded.rules")!.content;
+    expect(rules).toMatch(/pattern = \["npm", "test"\],\n\s+decision = "allow"/);
+  });
+
+  it("[CX13-allow] validate --target codex gives the same warning, one per allow rule", () => {
+    const v = validate(parse(codexSource(topo(`    allow: [Read, "Bash(npm test *)"]`))), { target: "codex" });
+    const hits = v.filter((r) => r.rule === "CX13-allow");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].level).toBe("warning");
+    expect(hits[0].message).toContain('"Bash(npm test *)"');
+    expect(hits[0].message).toContain(DOC_LINE);
+  });
+
+  it("[CX13-allow] no warning when the strictest rule for the command is not allow, or the allow names a whole tool", () => {
+    const { warnings } = scaffold(topo(`    deny: ["Bash(git push *)"]\n    allow: [Read, "Bash(git push *)"]`));
+    expect(warnings.filter((x) => x.includes("outside the sandbox"))).toHaveLength(0);
+    const v = validate(parse(codexSource(topo(`    allow: [Read, Write]`))), { target: "codex" });
+    expect(v.filter((r) => r.rule === "CX13-allow")).toHaveLength(0);
+  });
+});

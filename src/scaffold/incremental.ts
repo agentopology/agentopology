@@ -37,6 +37,7 @@ import {
   deepMergeJson,
   deepMergeSettingsJson,
 } from "./merge.js";
+import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -148,6 +149,21 @@ export function computeIncrementalPlan(
     // every key, hook and rule the user wrote.
     if (category === "shared-config") {
       const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
+      // An invalid file, or one whose root is not an object, stops the run
+      // before anything is written, with the file's name and what is wrong
+      // (it used to be a stack trace, or a silent overwrite).
+      if (isSettings && existingContent.trim() !== "") {
+        let root: unknown;
+        try {
+          root = JSON.parse(existingContent);
+        } catch (err) {
+          throw new InvalidSettingsJsonError(file.path, (err as Error).message);
+        }
+        if (root === null || typeof root !== "object" || Array.isArray(root)) {
+          const kind = root === null ? "null" : Array.isArray(root) ? "an array" : `a ${typeof root}`;
+          throw new InvalidSettingsJsonError(file.path, `its root is ${kind}`, "is not a JSON object");
+        }
+      }
       const merged = isSettings
         ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
         : deepMergeJson(existingContent, file.content);
@@ -231,6 +247,12 @@ export function computeIncrementalPlan(
       }
       if (hashContent(readFileSync(absPath, "utf-8")) !== entry.hash) {
         actions.push({ type: "blocked", path: manifestPath, detail: "no longer generated, but edited — kept" });
+        continue;
+      }
+      // settings.json is never deleted: it can hold rules, hooks and keys
+      // that no manifest hash tells apart from scaffold's.
+      if (manifestPath === SETTINGS_PATH) {
+        actions.push({ type: "kept", path: manifestPath, detail: SETTINGS_KEPT_DETAIL });
         continue;
       }
       actions.push({ type: "delete", path: manifestPath });
@@ -335,7 +357,8 @@ export function executeActions(
 
       case "delete": {
         const absPath = join(basePath, action.path);
-        if (options.prune && existsSync(absPath)) {
+        // A delete of settings.json from any plan is refused, as in computeIncrementalPlan.
+        if (options.prune && action.path !== SETTINGS_PATH && existsSync(absPath)) {
           try {
             unlinkSync(absPath);
             result.removed.push(action.path);

@@ -26,6 +26,7 @@ import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
+import { undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 
 const SETTINGS = ".claude/settings.json";
 const CODEX_HOOKS = ".codex/hooks.json";
@@ -131,6 +132,8 @@ export interface GuardTargetPlan {
   files: GeneratedFile[];
   /** Check scripts, reached through a gate, among `files`. */
   checks: Set<string>;
+  /** The settings.json rules the .at does not declare (the same notice scaffold prints). */
+  notice: RuleNotice;
 }
 
 /** Plan the guard write for a project. Reads the disk; writes nothing. */
@@ -161,7 +164,8 @@ export function planGuardTarget(ast: TopologyAST, root: string, source: string, 
     if (a.type === "blocked" && !a.unsafe) { skipped.push({ path: a.path, why: `blocked: ${a.detail}` }); continue; }
     planned.push(a);
   }
-  return { actions: planned, skipped, files, checks };
+  const notice = undeclaredRuleNotice(root, files, planned, manifest);
+  return { actions: planned, skipped, files, checks, notice };
 }
 
 /**
@@ -179,6 +183,7 @@ export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: st
     generatedAt: new Date().toISOString(),
     files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, plan.actions, plan.files, previous, result) },
   };
+  recordNamedRules(manifest.files, plan.notice?.named ?? null);
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.
   const same = previous && previous.sourceHash === manifest.sourceHash && JSON.stringify(previous.files) === JSON.stringify(manifest.files);
   if (!same) writeManifest(root, target, manifest);

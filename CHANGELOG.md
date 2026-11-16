@@ -45,6 +45,27 @@ All notable changes to agentopology are documented here.
 
 - `import --target claude-code` named a settings.json hook after the last path segment of its command, raw: `hook guard.py" --flag {`, `hook uv run --project "$CLAUDE_PROJECT_DIR" tool {`, and `hook null 2>&1 || true {` when the command named no script. The parser then lost the hooks block (V102, V98, V95, V100). The id is now the script's name when the command runs a script file with a clean name, else the event and matcher (`pre-tool-use-edit-write`, `session-start-startup`), lower case, de-duplicated with `-2`, `-3`. In a scan of 12 public repos this took 6 imports from failing to V96 only, and 2 to passing.
 
+## [0.11.2] - 2026-11-16
+
+Scope: 0.11.2 only warns, except that a `.claude/settings.json` that is not valid JSON or whose root is not an object now stops the run instead of being overwritten. It names the rules in `.claude/settings.json` that the .at does not declare, and `scaffold --prune` keeps settings.json instead of deleting it. The rules are written exactly as 0.11.1, and prune never deletes settings.json; removing a rule the .at no longer declares is not in 0.11.2.
+
+### [fix] Fixed: a rule removed from the .at stays in settings.json, and now scaffold says so
+
+- 0.11.x merges permission rules into `.claude/settings.json` and removes none automatically, so a rule removed from the .at stays in effect. `scaffold` and `guard --target claude-code` now name each allow, ask and deny rule in `.claude/settings.json` that the .at does not declare in that list: `.claude/settings.json allow "<rule>": still in effect; the .at does not declare it — remove it if you didn't add it by hand`. Each rule prints as a JSON string, so a newline or an escape sequence in a rule cannot forge or erase a line of output. The file is written exactly as 0.11.1, and prune never deletes settings.json.
+- The manifest entry of `.claude/settings.json` keeps the set last named (`undeclaredRulesNamed`, optional). The full list prints when a rule joins the set; every other run while any rule is undeclared prints one line, `N rules in .claude/settings.json aren't declared in the .at: <the first 5> and K more; declare them in the .at to keep them, or remove them` (for one rule: `1 rule in .claude/settings.json isn't declared in the .at: <rule>; declare it in the .at to keep it, or remove it`). It stops only when each rule is declared in the .at or removed from settings.json. `--dry-run` prints the same lines and writes nothing. Removing the rules the .at wrote is planned for 0.12.
+
+### [fix] Fixed: scaffold --prune never deletes settings.json
+
+- A `scaffold --prune` after the .at stopped generating `.claude/settings.json` deleted the file, with every rule, hook and key written into it by hand, and also when the file existed before the first scaffold. Prune now keeps it and prints `= .claude/settings.json (kept: holds settings; delete it by hand if you want)`; `--dry-run` prints the same line. A settings.json changed since this topology wrote it (by hand, or by another topology in the same directory) is kept with the 0.11.1 line `⊘ .claude/settings.json (no longer generated, but edited — kept)`, as before. Every other file prune deletes is deleted as before. A kept settings.json counts as unchanged in the summary line, so a run after the .at stopped generating it shows one more `unchanged` than 0.11.1, and a prune one fewer `deleted`.
+
+### [fix] Fixed: an invalid settings.json gives a clear error
+
+- `scaffold` and `guard --target claude-code` stopped with a stack trace when the .at writes `.claude/settings.json` and the file on disk was not valid JSON, or was valid JSON whose root is `null`; a root of `[]`, a string, a number or a boolean did not stop the run, and the file was rewritten without its content. They now print one line, `Error: .claude/settings.json is not valid JSON (<parse message>). Nothing was written.` or `Error: .claude/settings.json is not a JSON object (its root is an array). Nothing was written.`, exit 1, and write nothing.
+
+### [fix] Security: validate warns that a compiled Codex allow rule runs outside the sandbox (CX13-allow)
+
+- Each settings allow entry that compiles to a Codex rule with `decision = "allow"` now gives a `CX13-allow` warning at `validate --target codex`, quoting the Codex docs at https://learn.chatgpt.com/docs/agent-configuration/rules.md: "`allow`: Run the command outside the sandbox without prompting." The rules written do not change.
+
 ## [0.11.1] - 2026-11-13
 
 
