@@ -50,7 +50,7 @@ import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.j
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
-import { InvalidSettingsJsonError, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
+import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
@@ -160,7 +160,7 @@ ${c.bold("Options:")}
   --dry-run         Preview generated files without writing to disk.
   --force           Overwrite files scaffold did not create or that were edited (never symlinks).
   --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
-  --prune           Delete files that were previously scaffolded but are no longer generated.
+  --prune           Delete files that were previously scaffolded but are no longer generated (never .claude/settings.json).
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
   --brief           Emit the machine brief only, without the terminal render.
   --task <text>     The concrete task, baked into every role prompt (plan).
@@ -674,7 +674,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     exitOnInvalidSettings(err);
     throw err;
   }
-  const notice = undeclaredRuleNotice(basePath, files, actions, manifest, !!prune);
+  const notice = undeclaredRuleNotice(basePath, files, actions, manifest);
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
@@ -712,7 +712,10 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         console.log(`  ${c.bold("!")} ${action.path} (${action.detail} — ${force ? "overwritten (--force)" : "kept"})`);
         break;
       case "blocked": console.log(`  ${c.red("⊘")} ${action.path} (${action.detail})`); break;
-      case "kept": if (preview) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`); break;
+      case "kept":
+        // settings.json, kept where a delete used to be: said wherever the delete was.
+        if (preview || (prune && action.detail === SETTINGS_KEPT_DETAIL)) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`);
+        break;
     }
   };
 

@@ -22,6 +22,8 @@ import type { GeneratedFile } from "../bindings/types.js";
 import type { FileAction, ManifestEntry, ScaffoldManifest } from "./types.js";
 
 export const SETTINGS_PATH = ".claude/settings.json";
+/** What prune (and --dry-run) says instead of deleting settings.json, which it never does. */
+export const SETTINGS_KEPT_DETAIL = "kept: holds settings; delete it by hand if you want";
 const LISTS = ["allow", "ask", "deny"] as const;
 
 /** A settings file that is not valid JSON; nothing is written when this is thrown. */
@@ -81,26 +83,22 @@ export function undeclaredRuleLine(rule: string): string {
  * @param generatedFiles - The files this run generates (what the .at declares)
  * @param actions - The planned actions of this run
  * @param manifest - This topology's previous manifest, or null
- * @param prune - Whether a planned delete of settings.json removes it
  */
 export function undeclaredRuleNotice(
   basePath: string,
   generatedFiles: GeneratedFile[],
   actions: FileAction[],
   manifest: ScaffoldManifest | null,
-  prune = false,
 ): RuleNotice {
   const generated = generatedFiles.find((f) => f.path === SETTINGS_PATH);
   const entry = manifest?.files?.[SETTINGS_PATH];
   if (!generated && !entry) return { lines: [], named: null };
 
-  // What settings.json holds once this run is done.
+  // What settings.json holds once this run is done (prune never deletes it).
   const action = actions.find((a) => a.path === SETTINGS_PATH);
   let finalRaw: string | null;
   if (action && (action.type === "create" || action.type === "update")) {
     finalRaw = action.content;
-  } else if (action && action.type === "delete" && prune) {
-    finalRaw = null;
   } else {
     const abs = join(basePath, SETTINGS_PATH);
     try {

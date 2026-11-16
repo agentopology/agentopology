@@ -37,7 +37,7 @@ import {
   deepMergeJson,
   deepMergeSettingsJson,
 } from "./merge.js";
-import { InvalidSettingsJsonError } from "./undeclared.js";
+import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -243,6 +243,12 @@ export function computeIncrementalPlan(
         actions.push({ type: "blocked", path: manifestPath, detail: "no longer generated, but edited — kept" });
         continue;
       }
+      // settings.json is never deleted: it can hold rules, hooks and keys
+      // that no manifest hash tells apart from scaffold's.
+      if (manifestPath === SETTINGS_PATH) {
+        actions.push({ type: "kept", path: manifestPath, detail: SETTINGS_KEPT_DETAIL });
+        continue;
+      }
       actions.push({ type: "delete", path: manifestPath });
     }
   }
@@ -345,7 +351,8 @@ export function executeActions(
 
       case "delete": {
         const absPath = join(basePath, action.path);
-        if (options.prune && existsSync(absPath)) {
+        // A delete of settings.json from any plan is refused, as in computeIncrementalPlan.
+        if (options.prune && action.path !== SETTINGS_PATH && existsSync(absPath)) {
           try {
             unlinkSync(absPath);
             result.removed.push(action.path);

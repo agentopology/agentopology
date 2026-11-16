@@ -377,7 +377,9 @@ describe("[0.11.2-l] scaffold --prune never deletes .claude/settings.json", () =
     writeAt("one.at", topo("one", ""));
     const one = scaffold("one.at", "--prune");
     expect(one.status, one.stderr).toBe(0);
-    expect(lines(one)).toContain(KEPT);
+    // two changed the file after one wrote it, so one sees an edited leftover
+    // (kept, as in 0.11.1); either way it is never deleted.
+    expect(lines(one)).toContain(`⊘ ${SETTINGS} (no longer generated, but edited — kept)`);
     expect(fs.readFileSync(at(SETTINGS), "utf8")).toBe(merged);
   });
 
