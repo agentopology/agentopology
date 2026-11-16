@@ -29,6 +29,10 @@ const CLI = resolve(here, "../../../dist/cli/index.js");
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 const frozen = JSON.parse(fs.readFileSync(join(here, "differential/merge-0112.json"), "utf-8")) as { sequences: Array<{ name: string; steps: Step[] }> };
+const rtImport = new Map(
+  (JSON.parse(fs.readFileSync(join(here, "differential/rt-import-0113.json"), "utf-8")) as { rows: Array<{ name: string; import: { code: number | null; output: string } }> })
+    .rows.map((r) => [r.name, r.import] as const),
+);
 
 describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matches 0.11.2", () => {
   it("the frozen sequences are the ones defined", () => {
@@ -40,10 +44,26 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
     for (const [i, seq] of (SEQUENCES as Array<{ name: string }>).entries()) {
       const now = runSequence(CLI, seq) as Step[];
       const was = frozen.sequences[i].steps;
+      const rt = seq.name.startsWith("rt ");
       now.forEach((step, n) => {
         const w = was[n];
         const at = `${seq.name}, step ${n + 1} (${step.args})`;
         if (!w) return void diffs.push(`${at}: 0.11.2 has no such step`);
+        // C (ruled): rt's import step is held to 0.11.3's reviewed reference (rt-import-0113.json);
+        // its validate and scaffold steps to 0.11.2 wherever 0.11.2's import wrote a .at that
+        // validated. Elsewhere the import invariant applies (import-invariant.test.ts).
+        if (rt && n === 0) {
+          const ref = rtImport.get(seq.name);
+          if (!ref || ref.code !== step.code || ref.output !== step.output) diffs.push(`${at}: differs from 0.11.3's reviewed import reference`);
+          return;
+        }
+        if (rt && was[1].code !== 0) return;
+        // F7 (approved): a run 0.11.2's scaffold refused ("not safe file names") is refused by
+        // validate now, and import says so (exit 2); scaffold still refuses, with V96's text.
+        if (rt && n > 0 && now[0].code === 2 && was[2].code === 1 && now[2].code === 1) {
+          if (n === 2 && w.settings !== step.settings) diffs.push(`${at}: settings.json differs`);
+          return;
+        }
         if (w.code !== step.code) diffs.push(`${at}: exit ${w.code} -> ${step.code}`);
         if (w.settings !== step.settings) diffs.push(`${at}: settings.json differs\n--- 0.11.2\n${w.settings}\n--- now\n${step.settings}`);
         if (w.output !== step.output) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
