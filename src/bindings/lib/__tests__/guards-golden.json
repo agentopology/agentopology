@@ -13,7 +13,7 @@
   ".claude/skills/code-review/scripts/log-findings.sh": "22fa4383054529c6a70a9c1e13e4d6590004e66f7553393e4c40f21480369571",
   ".claude/commands/review.md": "d31d10a832e7dc52e4f7543a781eb1cb39844f70a01cc29a7a584e9acd30340e",
   ".claude/commands/audit.md": "103956f928a5f1b2ad0f26fe2f13e1785f393318a40cccff7af3d8de0113024b",
-  ".claude/settings.json": "81bc6d15dd5c6aa7908aa62a0fbf636e525c57c74aa2f88e2089368c1268d2f5",
+  ".claude/settings.json": "365e3ef5fe37cfd6d13f0f8fa8eab5d75438b88202cf9ddd6936c6782cd9a50d",
   ".claude/rules/code-review.md": "da6f91619a1962228a3635e93994c148ff2927624be10475434d290911c793e4"
  },
  "examples/company-brain-team.at": {

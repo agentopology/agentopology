@@ -190,6 +190,9 @@ topology code-review : [pipeline, fan-out, human-gate] {
 
   settings {
     allow: ["Read", "Grep", "Glob"]
-    deny: ["Write", "Edit", "Bash"]
+    # Reviewers never touch the code under review. A bare "Write" or "Edit"
+    # deny would remove the tool from every agent, and the reporter writes its
+    # report; scope the deny to the source instead (Edit rules cover Write).
+    deny: ["Edit(/src/**)", "Bash"]
   }
 }
