@@ -26,7 +26,7 @@ import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.js";
 import { scriptNameFromRun } from "../parser/run.js";
 import { parseWindow, today as todayDate } from "../parser/window.js";
-import { hookCommand, topologyScripts } from "../bindings/claude-code.js";
+import { hookCommand } from "../bindings/claude-code.js";
 
 export interface StepCheckOptions {
   /** The unit (an episode id, a ticket); filters ledger records. */
@@ -85,7 +85,7 @@ function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string,
   }
 
   if (gate.run && runnable) {
-    const r = spawnSync("/bin/sh", ["-c", hookCommand(gate.run, ast.topology.name, topologyScripts(ast))], {
+    const r = spawnSync("/bin/sh", ["-c", hookCommand(gate.run, ast.topology.name)], {
       cwd: root,
       env: { ...process.env, CLAUDE_PROJECT_DIR: root },
       encoding: "utf8",

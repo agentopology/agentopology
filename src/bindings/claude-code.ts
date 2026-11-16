@@ -54,7 +54,7 @@ import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
-import { declaredScripts, interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun, topologyScriptHead } from "../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2144,13 +2144,12 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
   const name = ast.topology.name;
 
-  const declared = topologyScripts(ast);
   for (const hook of ast.hooks) {
     if (!hook.run) continue;
     // A Mod's run: is the user's TypeScript module — never overwrite it with a
     // bash stub. generateModPlugin imports it instead.
     if (!isCommandHook(hook)) continue; // a mod's module, or no script at all
-    if (isShellCommand(hook.run, declared)) continue; // run as written: no script to stub
+    if (isShellCommand(hook.run)) continue; // run as written: no script to stub
     const runPath = hook.run;
 
     // If the run path starts with '.' or '/' it is already project-relative —
@@ -2243,23 +2242,8 @@ export function skillScriptPath(topologyName: string, file: string): string {
  *
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
-/** The bare script names this topology scaffolds (F1): from its command hooks, agent hooks and gates. */
-export function topologyScripts(ast: TopologyAST): Set<string> {
-  const agentHooks = ast.nodes.flatMap((n) => (n.type === "agent" ? (n as AgentNode).hooks ?? [] : []));
-  return declaredScripts([
-    ...[...(ast.hooks ?? []), ...agentHooks].filter(isCommandHook).map((h) => h.run),
-    ...ast.nodes.filter((n): n is GateNode => n.type === "gate").map((g) => g.run),
-  ]);
-}
-
-export function hookCommand(run: string, topologyName: string, declared?: ReadonlySet<string>): string {
-  if (isShellCommand(run, declared)) return run.trim();
-  // F1: the topology's own script, then the rest of the line exactly as written.
-  const head = topologyScriptHead(run, declared);
-  if (head) {
-    const base = head.script.replace(/^.*\//, "");
-    return `${interpreterFor(head.script, head.interpreter)} ${skillScriptPath(topologyName, base)}${head.rest}`;
-  }
+export function hookCommand(run: string, topologyName: string): string {
+  if (isShellCommand(run)) return run.trim();
   const { interpreter: named, script: first, args: rest } = runParts(run);
   // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
   const interpreter = interpreterFor(first, named);
@@ -2284,7 +2268,6 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
   const topologyName = ast.topology.name;
   const isInline = getDelegationMode(ast) === "inline";
   const hooksByEvent: Record<string, unknown[]> = {};
-  const declared = topologyScripts(ast);
 
   for (const hook of ast.hooks) {
     // A Mod is a module inside the engine, not a settings.json command: it is
@@ -2309,7 +2292,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
     }
 
     const hookEntry: Record<string, unknown> = {
-      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName, declared))],
+      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName))],
     };
 
     // Only add matcher when it has a value
@@ -3455,8 +3438,7 @@ export const claudeCodeBinding: BindingTarget = {
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
-    const declared = topologyScripts(ast);
-    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, (run, t) => hookCommand(run, t, declared)));
+    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, hookCommand));
     const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);

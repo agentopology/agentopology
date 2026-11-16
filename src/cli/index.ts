@@ -49,7 +49,6 @@ import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
 import { jsonChanges } from "../scaffold/diff.js";
-import { duplicateHooks, hookTwins } from "../scaffold/merge.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 import { renderAscii } from "../render/ascii.js";
@@ -57,7 +56,6 @@ import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
-import { exit127Warnings, projectRootOf } from "../guard/exit127.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
@@ -433,8 +431,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const checked = validateResult(ast, path.resolve(filePath), target);
   // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
-  // CC-exit127: a hook or gate command whose first word the shell cannot find from the project.
-  const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...exit127Warnings(ast, dir ? path.resolve(dir) : projectRootOf(filePath))] : [];
+  const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
   const results = [...checked.results, ...ccExtra];
   const errorCount = checked.errors;
   const warningCount = checked.warnings + ccExtra.length;
@@ -496,7 +493,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log("");
     if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
     const checked = validateResult(ast, path.resolve(f), target);
-    const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...exit127Warnings(ast, dir ? path.resolve(dir) : projectRootOf(f))] : [];
+    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
     const results = [...checked.results, ...ccExtra];
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
@@ -728,16 +725,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     }
   };
 
-  // F2: a generated hook the user's settings.json already runs in another form is not added; say which.
-  const settingsGen = files.find((f) => f.path === ".claude/settings.json");
-  const settingsOnDisk = path.join(basePath, ".claude/settings.json");
-  const twins = settingsGen && fs.existsSync(settingsOnDisk) ? hookTwins(fs.readFileSync(settingsOnDisk, "utf-8"), settingsGen.content) : [];
-  const printTwins = () => { for (const t of twins) console.log(`  ${c.dim("=")} .claude/settings.json: ${t}`); };
-
   if (dryRun) {
     console.log(c.cyan("  Dry run — nothing is written:"));
     console.log("");
-    printTwins();
     for (const action of actions) {
       printAction(action, true);
       // A merged config file is the one to review before a write: show what changes.
@@ -753,7 +743,6 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
-    printTwins();
     printRuleNotice(notice);
     console.log("");
     console.log(
@@ -1492,12 +1481,6 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
-  if (target === "claude-code") {
-    for (const w of exit127Warnings(ast, root)) console.log(`⚠ [${w.rule}] ${w.message}`);
-    // F2: a hook settings.json runs twice, in two forms.
-    const settingsPath = path.join(root, ".claude/settings.json");
-    if (fs.existsSync(settingsPath)) for (const d of duplicateHooks(fs.readFileSync(settingsPath, "utf-8"))) console.log(`⚠ .claude/settings.json: ${d}`);
-  }
   process.exit(report.missing > 0 ? 1 : 0);
 }
 

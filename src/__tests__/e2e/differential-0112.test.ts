@@ -55,7 +55,12 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
         const was = row[target]!;
         const is = now[target]!;
         if (was.refused !== is.refused) diffs.push(`${label} [${target}]: refused ${was.refused} -> ${is.refused}`);
-        if (was.command !== is.command) diffs.push(`${label} [${target}]: ${JSON.stringify(was.command)} -> ${JSON.stringify(is.command)}`);
+        // The one difference allowed: S-01 decodes `\"` and `\\` in a quoted .at value
+        // (lexer unquote), which import needs to round-trip a command with quotes.
+        // 0.11.2 kept the backslashes, so `run: "echo \"x\""` ran `echo \"x\"`.
+        const s01 = (c: string | null) => c && c.replace(/\\(["\\])/g, "$1");
+        const decodedOnly = /["\\]/.test(row.run) && s01(was.command) === is.command;
+        if (was.command !== is.command && !decodedOnly) diffs.push(`${label} [${target}]: ${JSON.stringify(was.command)} -> ${JSON.stringify(is.command)}`);
         if (JSON.stringify(was.stubs) !== JSON.stringify(is.stubs)) diffs.push(`${label} [${target}]: stubs ${JSON.stringify(was.stubs)} -> ${JSON.stringify(is.stubs)}`);
       }
     }

@@ -31,7 +31,7 @@ import type {
 } from "../parser/ast.js";
 import type { PlatformFile } from "../sync/index.js";
 import { extractSectionUntilKnownHeading, CLAUDE_CODE_STRUCTURAL_HEADINGS } from "../sync/index.js";
-import { runParts, isShellCommand } from "../parser/run.js";
+import { commandParts } from "./run-words.js";
 
 // ---------------------------------------------------------------------------
 // YAML frontmatter parser (minimal, no deps)
@@ -727,7 +727,7 @@ function slug(text: string, max = 40): string {
 
 /** The script file a command hook runs, by its name without extension, when it names one cleanly. */
 function hookScriptName(command: string): string | null {
-  const { interpreter, script } = runParts(command);
+  const { interpreter, script } = commandParts(command);
   const word = script.replace(/^["']+|["']+$/g, "");
   const base = word.replace(/^.*\//, "");
   // Only a script file counts: `uv`, `jq` or `cd` names a program, not this
@@ -751,19 +751,6 @@ export function hookId(event: string, matcher: string, type: string, command: st
   const parts = [slug(event) || "hook", slug(matcher), type === "command" ? "" : slug(type)].filter(Boolean);
   const id = parts.join("-");
   return /^[a-z]/.test(id) ? id : `hook-${id}`;
-}
-
-/**
- * A command hook whose script word is a bare name (no '/', no script
- * extension, no interpreter before it) that is not a file in the project and
- * that isShellCommand does not already run as written: a tool on PATH.
- */
-function isBarePathTool(hook: HookDef, onDisk: Set<string>): boolean {
-  if ((hook.type ?? "command") !== "command" || !hook.run || isShellCommand(hook.run)) return false;
-  const { interpreter, script } = runParts(hook.run);
-  if (interpreter || !script || script.includes("/")) return false;
-  if (/\.(?:sh|bash|py|mjs|cjs|js|ts|rb|pl)$/.test(script)) return false;
-  return /^[A-Za-z0-9_][A-Za-z0-9_.@+-]*$/.test(script) && !onDisk.has(script);
 }
 
 /** `id`, or `id-2`, `id-3`... when it is already taken; records the result. */
@@ -1004,12 +991,9 @@ export function importClaudeCode(
   if (settingsFile) {
     const parsed = parseSettingsJson(settingsFile.content);
     settings = parsed.settings;
-    // S-11 (c): a bare PATH tool (`chunk validate`) would scaffold as the
-    // topology's own scripts/chunk stub. Unless the project holds that file,
-    // write it as `command chunk validate`: the shell runs it identically,
-    // and every binding emits it as written.
-    const onDisk = new Set(files.map((f) => f.path.replace(/\\/g, "/").replace(/^.*\//, "")));
-    hooks = parsed.hooks.map((h) => (isBarePathTool(h, onDisk) ? { ...h, run: `command ${h.run.trim()}` } : h));
+    // The command is written as it is in settings.json. (S-11's `command <tool>`
+    // for a bare PATH tool needs emit-as-written, which moved to 0.12.)
+    hooks = parsed.hooks;
   }
 
   // 4. Parse .mcp.json

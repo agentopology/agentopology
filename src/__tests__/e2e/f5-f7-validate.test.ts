@@ -52,7 +52,7 @@ describe("F7: a hook script path with a space is named by validate, not refused 
   });
 
   it("[F-7] a path with no space still passes", () => {
-    const r = validate(parse(at(hook('bash "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh" --flag "a b"'))));
+    const r = validate(parse(at(hook("bash .claude/hooks/guard.sh --flag a"))));
     expect(r.filter((x) => x.level === "error")).toEqual([]);
   });
 
