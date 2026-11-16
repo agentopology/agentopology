@@ -4,6 +4,10 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: `examples/scheduled-monitor.at` no longer blocks its reporter's Write (S-50)
+
+- The example denied bare `Edit` while agent `reporter` lists `Write`, and "`Edit` rules apply to all built-in tools that edit files", so the reporter could not write its report (V132 warned). The deny is now `Edit(/src/**)`.
+
 ### [feat] Permission rules are declared, parsed and checked: agent `allow`/`ask`/`deny`, `settings { default-mode }`, V130-V135 (S-19)
 
 - An agent takes `allow`, `ask` and `deny` rule lists; `settings { }` takes `default-mode`. Rules are the Claude Code syntax verbatim (`Tool` or `Tool(specifier)`), plus the dotted `mcp.<server>.<tool>`. A quoted rule keeps its commas, brackets and escaped quotes, and `import` → serialize → parse returns every rule byte for byte (before, `Bash(git commit -m "a, b")` split at the comma). Bindings do not write agent rules or `default-mode` yet; validate checks them.

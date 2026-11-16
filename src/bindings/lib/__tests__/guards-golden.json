@@ -146,7 +146,7 @@
   "crontab.fragment": "7a6789e3fc832cc0d670de4414aaba751494c1782f9f5263a4b03539aaf08100",
   ".claude/commands/monitor.md": "685352b3596e7e5e79b024809cfc9dce3d57842ce05eb9dc131163963831e800",
   ".claude/commands/report.md": "fc1bb75c9972ffb4bcf5c13376e969e57d3e52506ec568c47fe66b3173ae2f8f",
-  ".claude/settings.json": "da5041340d02cf124760273af96cafe6be978b75a7a9206334a516adc6e597ba",
+  ".claude/settings.json": "674344db628c58a37bd47b99e24edf5297bd8ad3234a951279372c053d169072",
   "scripts/collect-metrics.sh": "686e1b206a6de330c87599e147441f828403cb9562155137b8c30b467c5ef06f",
   ".claude/rules/scheduled-monitor.md": "ab1ca788ba0af12fe750ba44ad7098d09d3af9b1622b4d17e4165c5a47117d8f"
  },

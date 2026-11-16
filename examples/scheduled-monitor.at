@@ -160,7 +160,10 @@ topology scheduled-monitor : [pipeline, fan-out] {
 
   settings {
     allow: [Read, Write, Bash, WebFetch, Grep]
-    deny: [Edit]
+    # The monitor never changes the code it watches. A bare Edit deny would
+    # also block the reporter's Write (Edit rules cover every tool that edits
+    # files); scope it to the source instead.
+    deny: ["Edit(/src/**)"]
     # First-class sandbox — topology-wide default
     sandbox: docker
     # First-class fallback chain — topology-wide default

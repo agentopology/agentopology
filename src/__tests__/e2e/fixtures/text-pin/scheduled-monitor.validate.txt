@@ -1,8 +1,6 @@
 Validating scheduled-monitor.at (scheduled-monitor v1.0)
 
-  WARN  [V132] line 71: agent "reporter" lists "Write" in tools, but settings deny "Edit" denies every file edit: "`Edit` rules apply to all built-in tools that edit files." Scope the rule to a path, for example "Edit(/src/**)". (reporter)
-
-  0 error(s), 1 warning(s)
+  All validation rules passed.
 
 checked against Claude Code 2.1.323 (supports 2.1.295 and later)
 --- exit 0
