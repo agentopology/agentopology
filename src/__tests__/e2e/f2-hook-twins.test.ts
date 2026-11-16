@@ -72,6 +72,15 @@ describe("F2: import then scaffold in place", () => {
     expect(lines[0]).toContain(JSON.stringify(cmd));
   });
 
+  it("[F-2] the same command, written the same way, prints no line (only the key order differs)", () => {
+    fs.writeFileSync(join(root, "x.sh"), "#!/bin/bash\nexit 0\n");
+    fs.writeFileSync(join(root, ".claude/settings.json"), settings('bash "$CLAUDE_PROJECT_DIR/x.sh"'));
+    expect(cli("import", "--target", "claude-code", "--dir", ".", "--name", "t").code).toBe(0);
+    const sc = cli("scaffold", "t.at", "--target", "claude-code");
+    expect(commandsOf(fs.readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(['bash "$CLAUDE_PROJECT_DIR/x.sh"']);
+    expect(sc.all).not.toContain("same hook");
+  });
+
   it("[F-2] guard --check names a hook that is in settings.json twice in two forms", () => {
     fs.writeFileSync(join(root, ".claude/settings.json"), settingsGroups(DOC_FORM, 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"'));
     cli("import", "--target", "claude-code", "--dir", ".", "--name", "t", "--force");
