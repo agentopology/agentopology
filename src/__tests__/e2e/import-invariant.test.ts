@@ -31,8 +31,12 @@ import { RT_COMMANDS } from "./differential/fable-sequences.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const runs = JSON.parse(fs.readFileSync(join(here, "differential/runs-0112.json"), "utf-8")) as { rows: Array<{ kind: string; run: string | null; source: string }> };
 
+/** Fable's final-pass detector shapes (det0), as the harness wrote them. */
+const DET0 = ["./bin/guard","bin/guard --x","./node_modules/.bin/tool --check","node_modules/.bin/tool","tools/guard.pl","./tools/guard.py","tools/guard.py --strict",".venv/bin/ruff check .","./vendor/bin/phpstan analyse","tools/guard.sh","./tools/guard.sh --a b","tools/guard.sh 2>/dev/null","tools/guard.sh || exit 2",".claude/hooks/guard.sh","sh tools/guard.sh","bash ./tools/guard.sh --a","python3 tools/guard.py","perl tools/guard.pl","node bin/guard-node","python3 tools/guard.py 2>/dev/null","/bin/sh tools/guard.sh","/usr/bin/python3 tools/guard.py","/usr/bin/env python3 tools/guard.py","/bin/false","/usr/bin/test -f nosuch","cat ./tools/data.json","touch ./marker-new","tools/guard.sh tools/data.json","nice tools/guard.sh","exec tools/guard.sh",". tools/exit2.sh","source tools/exit2.sh","grep -q x ./tools/data.json","wc ./tools/data.json","cp ./tools/data.json ./tools/copy.json","ls ./tools","exit 2","true","false","echo hi","test -f ./tools/guard.sh","[ -f tools/nosuch ]",": noop","printf x","prettier --write .","jq -r .x","npm run lint","npx eslint .","make lint","git diff --quiet","python3 -m json.tool tools/data.json","bash -c true","cd tools && ./guard.sh","env FOO=1 tools/guard.sh","timeout 5 tools/guard.sh","uv run tools/guard.py","bun run tools/x.ts","if true; then exit 2; fi","FOO=1 tools/guard.sh","guard","guard.sh","scripts/guard.sh","python3 scripts/guard.py"];
+
 const CORPUS: string[] = [...new Set<string>([
   ...(RT_COMMANDS as string[]),
+  ...DET0,
   ...runs.rows.filter((r) => r.kind === "hook" && typeof r.run === "string").map((r) => r.run as string),
 ])];
 
