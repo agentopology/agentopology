@@ -28,7 +28,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
 // @ts-expect-error plain JavaScript module, shared with freeze-hooks.mjs
-import { runCorpus, pairKey, IF_TOPOLOGIES } from "./differential/hook-corpus.mjs";
+import { runCorpus, pairKey, IF_TOPOLOGIES, ALIAS_CLOSED } from "./differential/hook-corpus.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
@@ -36,6 +36,8 @@ const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 interface Pair { topology: string; binding: string; hook: string; input: string; jq: boolean; exit: number | null }
 const frozen = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0112.json"), "utf8")) as { version: string; count: number; rows: Pair[] };
 const declared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-flips.json"), "utf8")) as { count: number; flips: Array<Omit<Pair, "exit"> & { why: string }> };
+/** The declared 0->2 list, kept apart: an inline git alias that ran a gated step under another name. */
+const closedDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-closed.json"), "utf8")) as { count: number; closed: Array<Omit<Pair, "exit"> & { why: string }> };
 
 describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for the declared flips", () => {
   let now: Pair[] = [];
@@ -55,22 +57,36 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     expect(now.filter((r) => r.exit !== 0 && r.exit !== 2)).toEqual([]);
   });
 
-  it("every pair equals 0.11.2's exit, except the declared list, which goes from 2 to 0", () => {
+  it("every pair equals 0.11.2's exit, except the two declared lists: 2 -> 0, and the inline git alias 0 -> 2", () => {
     const was = new Map(frozen.rows.map((r) => [pairKey(r), r.exit]));
     const flipsDeclared = new Set<string>(declared.flips.map((f) => pairKey(f) as string));
+    const closedSet = new Set<string>(closedDeclared.closed.map((f) => pairKey(f) as string));
     const flipped: string[] = [];
+    const closed: string[] = [];
     const wrong: string[] = [];
     for (const r of now) {
       const k = pairKey(r);
       const before = was.get(k);
       if (before === r.exit) continue;
       if (before === 2 && r.exit === 0 && flipsDeclared.has(k)) flipped.push(k);
-      else wrong.push(`${k}: ${before} -> ${r.exit}${flipsDeclared.has(k) ? "" : " (not declared)"}`);
+      else if (before === 0 && r.exit === 2 && closedSet.has(k)) closed.push(k);
+      else wrong.push(`${k}: ${before} -> ${r.exit}${flipsDeclared.has(k) || closedSet.has(k) ? "" : " (not declared)"}`);
     }
     const missing = [...flipsDeclared].filter((k) => !flipped.includes(k));
-    expect(wrong, `${wrong.length} pairs changed outside the declared list:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
-    expect(missing, `${missing.length} declared flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
+    const missingClosed = [...closedSet].filter((k) => !closed.includes(k));
+    expect(wrong, `${wrong.length} pairs changed outside the declared lists:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
+    expect(missing, `${missing.length} declared 2->0 flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
+    expect(missingClosed, `${missingClosed.length} declared 0->2 (inline alias) did not happen:\n${missingClosed.join("\n")}`).toEqual([]);
     expect(flipped.length).toBe(declared.count);
+    expect(closed.length).toBe(closedDeclared.count);
+  });
+
+  it("the 0->2 list is exactly the inline git alias forms, with jq, on the git step's before-action.sh and behind the refuse if: hook on git push*", () => {
+    expect(new Set(closedDeclared.closed.map((c) => `${c.topology}|${c.hook}|${c.jq}`))).toEqual(new Set(["factory|before-action.sh|true", "ifpush|at-if.sh|true"]));
+    for (const where of [["factory", "before-action.sh"], ["ifpush", "at-if.sh"]]) {
+      const inputs = closedDeclared.closed.filter((c) => c.topology === where[0] && c.hook === where[1]).map((c) => c.input);
+      expect([...new Set(inputs)].sort(), where.join(" ")).toEqual([...ALIAS_CLOSED].sort());
+    }
   });
 
   it("Claude Code has no if filter script: it writes `if:` into settings.json as declared, and no generated file carries the reader", () => {

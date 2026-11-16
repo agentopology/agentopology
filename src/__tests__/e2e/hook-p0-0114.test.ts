@@ -20,7 +20,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
 // @ts-expect-error plain JavaScript module, shared with freeze-hooks.mjs
-import { TOPOLOGIES, MUST_NOT_BLOCK, MUST_BLOCK, runHook, scaffoldOne, toolPaths } from "./differential/hook-corpus.mjs";
+import { TOPOLOGIES, MUST_NOT_BLOCK, MUST_BLOCK, ALIAS_CLOSED, PLAIN_CONFIG, runHook, scaffoldOne, toolPaths } from "./differential/hook-corpus.mjs";
 
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 const lib = { parse, bindings: { "claude-code": claudeCodeBinding, codex: codexBinding } };
@@ -120,6 +120,33 @@ describe.skipIf(!hasJq)("[0.11.4] MUST BLOCK with jq: a commit or a push, plain 
       expect(passed, passed.join("\n")).toEqual([]);
     }, 120_000);
   }
+});
+
+describe.skipIf(!hasJq)("[0.11.4] an inline git alias could run a gated step; it's now refused", () => {
+  for (const binding of ["claude-code", "codex"] as const) {
+    for (const form of ALIAS_CLOSED as string[]) {
+      it(`${binding}: ${form} exits 2`, async () => {
+        const [r] = await exits("factory", binding, "before-action.sh", [[form, bashIn(form)]], true);
+        expect(r.code, r.stderr).toBe(2);
+      });
+    }
+
+    it(`${binding}: a -c that defines no alias reads as 0.11.2 read it`, async () => {
+      for (const r of await exits("factory", binding, "before-action.sh", PLAIN_CONFIG.step.map((c: string) => [c, bashIn(c)]), true)) {
+        expect(r.code, `${r.input}: still a step`).toBe(2);
+      }
+      for (const r of await exits("factory", binding, "before-action.sh", PLAIN_CONFIG.reads.map((c: string) => [c, bashIn(c)]), true)) {
+        expect(r.code, `${r.input}: ${r.stderr}`).toBe(0);
+      }
+    });
+  }
+
+  it("with no jq, an inline alias next to a git step is refused too", async () => {
+    for (const form of ALIAS_CLOSED as string[]) {
+      const [r] = await exits("factory", "claude-code", "before-action.sh", [[form, bashIn(form)]], false);
+      expect(r.code, `${form}: ${r.stderr}`).toBe(2);
+    }
+  });
 });
 
 describe("[0.11.4] MUST BLOCK with no jq: input that could hold the gated thing keeps today's refusal", () => {

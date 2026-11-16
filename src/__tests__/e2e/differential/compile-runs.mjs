@@ -159,6 +159,9 @@ export function as0112(path, content, on) {
     t = once(t, indent(BLOCKS_0114.atSpecial, reader), reader + OLD_AT_SPECIAL, "at_special", path);
     t = once(t, indent(BLOCKS_0114.atGitRead, reader) + "\n", "", "at_git_read", path);
     t = once(t, reader + BLOCKS_0114.loop, reader + OLD_LOOP, "the at_git_read call", path);
+    // the inline git alias check (0.11.4, its own commit)
+    t = once(t, indent(BLOCKS_0114.atGitAlias, reader) + "\n", "", "at_git_alias", path);
+    t = once(t, reader + BLOCKS_0114.aliasCall + "\n", "", "the at_git_alias call", path);
   }
   if (base === "before-action.sh") t = once(t, /^AT_GIT_STEPS='[^'\n]*'\n/gm, "", "AT_GIT_STEPS", path);
   return t;

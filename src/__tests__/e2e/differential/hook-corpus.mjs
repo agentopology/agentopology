@@ -305,8 +305,29 @@ export const MUST_BLOCK = [
   "cd ~ && git commit", "git --no-pager commit", "git -c x=y log; git push", "git log $(git commit)", "GIT_DIR=x git commit",
 ];
 
-/** Forms that 0.11.2 lets through, kept out of MUST_BLOCK until ruled on (see the 0.11.4 report). */
-export const OPEN_FORMS = ["git -c alias.x=commit x", "git -c alias.x=push x"];
+/**
+ * An inline git alias that runs a gated step under another name. 0.11.2 lets each through (exit 0); 0.11.4
+ * refuses it (exit 2): the declared 0->2 list. A real git 2.43 made a commit with each commit form.
+ * The `-c alias.x='!git commit' x` forms are not here: 0.11.2 already refuses them. An inline alias can
+ * name anything, so every one next to a git step is refused, including one that runs no git step
+ * (`alias.lg=log`, and today's guard-test form `alias.k='!./media kit s1'`).
+ */
+export const ALIAS_CLOSED = [
+  "git -c alias.x=commit x", "git -c alias.x=push x", "git -c Alias.X=commit x", "git -c alias.lg=log lg",
+  "git -c alias.k='!./media kit s1' k",
+  "V=commit git --config-env=alias.x=V x", "V=commit git --config-env alias.x=V x",
+  "V='!git commit' git --config-env=alias.x=V x",
+];
+
+/** Non-alias -c, held as 0.11.2 reads it (a commit stays a step, a reading command runs). */
+export const PLAIN_CONFIG = { step: ["git -c user.name=x commit -m y"], reads: ["git -c core.pager=cat log", "git -c color.ui=never diff HEAD~1"] };
+
+/** Alias routes 0.11.4 does not patch, frozen so their exit does not move: an alias set earlier, and git's config env vars. */
+export const ALIAS_OUT_OF_SCOPE = [
+  "git config alias.x commit && git x", "git x",
+  "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=commit git x",
+  "GIT_CONFIG_PARAMETERS=\"'alias.x'='commit'\" git x",
+];
 
 /** A Bash payload as Claude Code and Codex send it. */
 const bashPayload = (tool, command) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: { command } });
@@ -382,7 +403,8 @@ export const GUARD_TEST_COMMANDS = [
 ];
 
 /** Every Bash command of the corpus, once. */
-export const ACTION_COMMANDS = [...new Set([...MUST_NOT_BLOCK, ...MUST_BLOCK, ...OPEN_FORMS, ...GUARD_TEST_COMMANDS])];
+export const ACTION_COMMANDS = [...new Set([...MUST_NOT_BLOCK, ...MUST_BLOCK, ...ALIAS_CLOSED, ...PLAIN_CONFIG.step,
+  ...PLAIN_CONFIG.reads, ...ALIAS_OUT_OF_SCOPE, ...GUARD_TEST_COMMANDS])];
 
 /** Paths an edit names: ledgers in several spellings, the Codex approvals file, and ordinary files. */
 export const EDIT_PATHS = [

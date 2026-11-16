@@ -65,12 +65,15 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
         expect(count(s.content, indent(BLOCKS_0114.atSpecial, s.reader)), `${s.path}: at_special`).toBe(1);
         expect(count(s.content, indent(BLOCKS_0114.atGitRead, s.reader)), `${s.path}: at_git_read`).toBe(1);
         expect(count(s.content, s.reader + BLOCKS_0114.loop), `${s.path}: at_git_read call`).toBe(1);
+        expect(count(s.content, indent(BLOCKS_0114.atGitAlias, s.reader)), `${s.path}: at_git_alias`).toBe(1);
+        expect(count(s.content, s.reader + BLOCKS_0114.aliasCall), `${s.path}: at_git_alias call`).toBe(1);
       }
       if (s.hook === "before-action.sh") expect(s.content.match(/^AT_GIT_STEPS='[^'\n]*'$/gm), s.path).toHaveLength(1);
       // the undo changes the text and leaves none of the blocks behind
       const undone = as0112(s.path, s.content, true);
       expect(undone, s.path).not.toBe(s.content);
       expect(undone).not.toContain("at_git_read");
+      expect(undone).not.toContain("at_git_alias");
       expect(undone).not.toContain("# No jq (0.11.4)");
       expect(undone).not.toContain("AT_GIT_STEPS=");
     }

@@ -11,23 +11,29 @@
  *   of every word of a gated step, of a ledger's file name, or of a gated
  *   agent; or, for before-action.sh, when it holds an expansion or a glob
  *   ($ ` * ? [ or a { that is no JSON brace) and the letters of a gated tool.
+ *   A git step is also held by the words git, alias (an inline alias).
  * - the Codex if filter (at-if.sh): see ifFlip below.
  *
- *   node declare-flips.mjs <hooks-0112.json> <out.json>
+ * And, separately, the 0->2 list (hooks-0114-closed.json): an inline git alias
+ * form (ALIAS_CLOSED), with jq, where 0.11.2 let it through, against the
+ * factory topology's before-action.sh, or behind a strength: refuse if: hook
+ * on a git glob (at-if.sh; a plain if: hook ignores doubt).
+ *
+ *   node declare-flips.mjs <hooks-0112.json> <flips.json> [closed.json]
  */
 
 import fs from "node:fs";
-import { MUST_NOT_BLOCK, RAW_ACTION, RAW_EDIT, RAW_AGENT } from "./hook-corpus.mjs";
+import { MUST_NOT_BLOCK, PLAIN_CONFIG, ALIAS_CLOSED, RAW_ACTION, RAW_EDIT, RAW_AGENT } from "./hook-corpus.mjs";
 
-const [frozenFile, outFile] = process.argv.slice(2);
+const [frozenFile, outFile, closedFile] = process.argv.slice(2);
 if (!frozenFile || !outFile) {
-  console.error("usage: node declare-flips.mjs <hooks-0112.json> <out.json>");
+  console.error("usage: node declare-flips.mjs <hooks-0112.json> <flips.json> [closed.json]");
   process.exit(1);
 }
 
 /** What each topology guards, by hand from its .at text: steps as words, ledger file names, agents. */
 const GUARDED = {
-  factory: { steps: [["git", "commit"], ["git", "push"]], ledgers: [], agents: [] },
+  factory: { steps: [["git", "commit"], ["git", "push"], ["git", "alias"]], ledgers: [], agents: [] },
   ship: { steps: [["tool", "publish"], ["tool", "republish"]], ledgers: ["trace.jsonl"], agents: [] },
   show: { steps: [["media", "episode", "render"]], ledgers: ["trace.jsonl"], agents: [] },
   post: { steps: [["post-ig.py", "upload"]], ledgers: ["trace.jsonl"], agents: [] },
@@ -114,19 +120,29 @@ function ifFlip(r) {
 }
 
 const frozen = JSON.parse(fs.readFileSync(frozenFile, "utf8"));
-const mnb = new Set(MUST_NOT_BLOCK);
+const mnb = new Set([...MUST_NOT_BLOCK, ...PLAIN_CONFIG.reads]);
+const alias = new Set(ALIAS_CLOSED);
 const flips = [];
+const closed = [];
 for (const r of frozen.rows) {
+  const factoryAction = r.topology === "factory" && r.hook === "before-action.sh";
+  const refuseGitIf = r.hook === "at-if.sh" && IF_GUARDED[r.topology].refuse && IF_GUARDED[r.topology].words[0] === "git";
+  if (r.exit === 0 && r.jq && (factoryAction || refuseGitIf) && alias.has(r.input)) {
+    closed.push({ topology: r.topology, binding: r.binding, hook: r.hook, input: r.input, jq: r.jq, why: "an inline git alias" });
+  }
   if (r.exit !== 2) continue;
   const why = r.hook === "at-if.sh"
     ? ifFlip(r)
     : r.jq
-    ? (r.topology === "factory" && r.hook === "before-action.sh" && mnb.has(r.input) ? "must-not-block" : null)
+    ? (factoryAction && mnb.has(r.input) ? "must-not-block" : null)
     : (couldHold(r.hook, r.topology, payloadOf(r)) ? null : "no jq, no gated thing in the payload");
   if (why) flips.push({ topology: r.topology, binding: r.binding, hook: r.hook, input: r.input, jq: r.jq, why });
 }
-fs.writeFileSync(outFile, JSON.stringify({ count: flips.length, flips }, null, 0).replace(/\},\{/g, "},\n{") + "\n");
+const write = (file, key, list) => fs.writeFileSync(file, JSON.stringify({ count: list.length, [key]: list }, null, 0).replace(/\},\{/g, "},\n{") + "\n");
+write(outFile, "flips", flips);
+if (closedFile) write(closedFile, "closed", closed);
 const by = {};
 for (const f of flips) { const k = `${f.topology}|${f.binding}|${f.hook}|${f.jq ? "jq" : "nojq"}`; by[k] = (by[k] ?? 0) + 1; }
-console.log(`${flips.length} declared flips`);
+console.log(`${flips.length} declared 2->0 flips`);
 for (const [k, n] of Object.entries(by)) console.log(`  ${k}: ${n}`);
+console.log(`${closed.length} declared 0->2 (inline git alias): ${closed.map((c) => `${c.binding}: ${c.input}`).join(" ## ")}`);
