@@ -56,6 +56,13 @@ describe("F7: a hook script path with a space is named by validate, not refused 
     expect(r.filter((x) => x.level === "error")).toEqual([]);
   });
 
+  it("[P-2] a redirect right after the first word: V96 names the command, not the redirect", () => {
+    const r = validate(parse(at(hook("lintme 2>/dev/null || true")))).filter((x) => x.rule === "V96");
+    expect(r).toHaveLength(1);
+    expect(r[0].message).toContain('"lintme"');
+    expect(r[0].message).not.toMatch(/its script path "2>\/dev\/null"/);
+  });
+
   describe("import reports it", () => {
     let root: string;
     beforeEach(() => {
