@@ -49,7 +49,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "test": "vitest run",
     "drift": "npm run build && node scripts/claude-code-drift.mjs",
     "prepublishOnly": "npm run build"
