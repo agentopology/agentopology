@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [Unreleased]
+## [0.11.2] - 2026-11-16
 
 Scope: 0.11.2 only warns, except that a `.claude/settings.json` that is not valid JSON or whose root is not an object now stops the run instead of being overwritten. It names the rules in `.claude/settings.json` that the .at does not declare, and `scaffold --prune` keeps settings.json instead of deleting it. The rules are written exactly as 0.11.1, and prune never deletes settings.json; removing a rule the .at no longer declares is not in 0.11.2.
 
