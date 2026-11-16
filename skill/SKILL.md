@@ -326,6 +326,8 @@ The CLI reads the platform files, generates a `.at` file, and runs validation on
 
 The `.at` is written as `<name>.at` in `--output` (default: the current directory). When that file already exists, import refuses, writes nothing and exits 1; `--force` overwrites it. The `.at` is the only file import writes.
 
+Exit codes: 0 when the written `.at` has no validation errors (warnings allowed); 2 when it has errors (the file is written, and import prints `import: the .at it wrote has N validation error(s); fix them, or run validate <path> for details`); 1 when nothing was written (the `.at` exists, or the files could not be read).
+
 ---
 
 ## Mode: Evolve (--evolve)

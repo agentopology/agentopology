@@ -645,7 +645,7 @@ agentopology validate <file>              Validate an .at file (129 rules)
 agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at
-agentopology import --target <t> --dir <d> [--output <o>] [--force]  Reverse-engineer platform files to .at; refuses (exit 1) when the .at exists, --force overwrites
+agentopology import --target <t> --dir <d> [--output <o>] [--force]  Reverse-engineer platform files to .at; refuses (exit 1) when the .at exists, --force overwrites; exit 2 when the .at it wrote has validation errors
 agentopology visualize <file>             Interactive topology graph (+ cross-links any brains)
 agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-style graph (no Obsidian)
 agentopology export <file> --format <fmt> Export as markdown, mermaid, json, ascii, or brief

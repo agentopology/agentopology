@@ -107,7 +107,9 @@ ${c.bold("Usage:")}
   agentopology info <file.at>
   agentopology import --target <binding> --dir <path> [--name <topology-name>] [--output <dir>] [--force]
                        Write <name>.at into --output (default: cwd). Refuses, exit 1, when
-                       that .at exists; --force overwrites it.
+                       that .at exists; --force overwrites it. Then validates it: exit 0
+                       when it has no errors (warnings allowed), exit 2 when it has
+                       errors (the file is written), exit 1 when nothing was written.
   agentopology guard <file.at> --target <claude-code|codex> [--dir <project-dir>] [--dry-run]
                        Write only the guard part of scaffold into a project that may be
                        hand-built: hook scripts, gates, checks, and the hooks and
@@ -1367,24 +1369,31 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     console.log(`  ${c.dim(`Not read: ${nested} (a .claude folder below the root; run import there for it)`)}`);
   }
 
-  // Validate the generated file
+  // Validate the written file as `validate <outFile>` does (same parse, same
+  // rules, imports resolved from the file), so the counts match. The file is
+  // written either way; errors exit 2, not 1, because this is not a refusal
+  // (S-68). Warnings alone exit 0.
+  let errorCount: number;
   try {
-    const ast = parse(atSource);
-    const results = validate(ast);
-    const errors = results.filter((r) => r.level === "error");
-    const warnings = results.filter((r) => r.level === "warning");
-    if (errors.length > 0 || warnings.length > 0) {
+    const checked = validateResult(parseAt(atSource, outFile), outFile);
+    errorCount = checked.errors;
+    if (checked.errors > 0 || checked.warnings > 0) {
       console.log("");
-      console.log(`  ${c.yellow(`${errors.length} error(s), ${warnings.length} warning(s) in generated file.`)}`);
+      console.log(`  ${c.yellow(`${checked.errors} error(s), ${checked.warnings} warning(s) in generated file.`)}`);
       console.log(`  ${c.dim("Run")} agentopology validate ${outFile} ${c.dim("for details.")}`);
     } else {
       console.log(`  ${c.green("Generated file passes all validation rules.")}`);
     }
-  } catch {
-    // Validation is best-effort; don't fail the import
-    console.log(`  ${c.yellow("Note: generated file may need manual review.")}`);
+  } catch (err) {
+    // validate reports a file that does not parse as one error, and so does import.
+    console.log(`  ${c.yellow(`Parse error in generated file: ${(err as Error).message}`)}`);
+    errorCount = 1;
   }
   console.log("");
+  if (errorCount > 0) {
+    console.error(c.red(`import: the .at it wrote has ${errorCount} validation error(s); fix them, or run validate ${outFile} for details`));
+    process.exit(2);
+  }
 }
 
 /** Targets removed in 0.10.0, named so the error says so instead of "unknown". */

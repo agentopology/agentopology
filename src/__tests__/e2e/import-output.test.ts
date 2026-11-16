@@ -77,7 +77,8 @@ describe("S-68: import exits non-zero when the .at it wrote has validation error
     const r = run();
     expect(r.code).toBe(2);
     expect(fs.existsSync(out())).toBe(true);
-    expect(r.all).toContain(`import: the .at it wrote has 1 validation error(s); fix them, or run validate ${out()} for details`);
+    // A bare command hook is two errors; the next test ties the count to validate's.
+    expect(r.all).toContain(`import: the .at it wrote has 2 validation error(s); fix them, or run validate ${out()} for details`);
   });
 
   it("[S-68] the count is the one validate reports for the written file", () => {
@@ -89,6 +90,16 @@ describe("S-68: import exits non-zero when the .at it wrote has validation error
     const n = Number(/(\d+) error\(s\)/.exec(`${v.stdout}${v.stderr}`)?.[1]);
     expect(n).toBeGreaterThan(1);
     expect(r.all).toContain(`the .at it wrote has ${n} validation error(s)`);
+  });
+
+  it("[S-68] a written .at that does not parse counts as one error, as in validate", () => {
+    const r = spawnSync(process.execPath, [CLI, "import", "--target", "claude-code", "--dir", root, "--name", "my shop", "--output", join(root, "o")], { encoding: "utf8" });
+    const file = join(root, "o", "my shop.at");
+    expect(r.status).toBe(2);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(`${r.stdout}${r.stderr}`).toContain("Parse error in generated file:");
+    expect(r.stderr).toContain(`import: the .at it wrote has 1 validation error(s); fix them, or run validate ${file} for details`);
+    expect(spawnSync(process.execPath, [CLI, "validate", file], { encoding: "utf8" }).status).toBe(1);
   });
 
   it("[S-68] warnings only: exit 0", () => {

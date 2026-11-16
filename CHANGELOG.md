@@ -4,6 +4,11 @@ All notable changes to agentopology are documented here.
 
 ## [Unreleased]
 
+### [fix] Fixed: import exits 2 when the .at it wrote has validation errors (S-68)
+
+- `import` printed `N error(s), M warning(s) in generated file.` and still exited 0, so a script could not tell a broken .at from a good one. Now, after writing, it validates the file as `validate <path>` does (the same rules, imports resolved from the file, so the counts match) and, when there are errors, prints `import: the .at it wrote has N validation error(s); fix them, or run validate <path> for details` and exits 2. The file is still written. A generated file that does not parse counts as one error, as in `validate`; it used to print a note and exit 0.
+- Exit codes of `import`: 0, the .at is written and has no errors (warnings allowed); 2, the .at is written and has errors; 1, nothing was written (the .at exists without `--force`, or the files could not be read).
+
 ### [fix] Fixed: import no longer overwrites an existing .at; `--force` does (S-67)
 
 - `import --output <dir>` replaced `<dir>/<name>.at` when it already existed, so a second run lost every edit made to it. Now, when that file exists (a symlink counts, even a broken one), import prints `Error: <path> exists; pass --force to overwrite. Nothing was written.`, writes nothing and exits 1. With `--force` it overwrites the file as before. The .at is the only file import writes, so the rule covers everything it writes. `--force` already meant "overwrite" for `scaffold`; for `import` it means only this file.
