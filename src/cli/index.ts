@@ -1332,14 +1332,28 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
   const exists = `${outFile} exists; pass --force to overwrite.`;
   const isDir = `${outFile} is a directory, not a .at file.`;
   const notDir = `--output ${outDir} is not a directory.`;
-  for (let dir = outDir; ; dir = path.dirname(dir)) {
-    const st = fs.statSync(dir, { throwIfNoEntry: false });
-    if (st) { if (!st.isDirectory()) refuse(notDir); break; }
-    if (path.dirname(dir) === dir) break;
+  // J(3): a folder on the way that cannot be read, or the one import writes in
+  // that cannot be written (EACCES, EPERM), is one line, not a stack.
+  const noAccess = `cannot write to --output ${outDir}: permission denied.`;
+  const denied = (err: unknown) => ["EACCES", "EPERM"].includes((err as NodeJS.ErrnoException).code ?? "");
+  try {
+    for (let dir = outDir; ; dir = path.dirname(dir)) {
+      const st = fs.statSync(dir, { throwIfNoEntry: false });
+      if (st) {
+        if (!st.isDirectory()) refuse(notDir);
+        fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK);
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+    const atStat = fs.lstatSync(outFile, { throwIfNoEntry: false });
+    if (atStat?.isDirectory() || (atStat?.isSymbolicLink() && fs.statSync(outFile, { throwIfNoEntry: false })?.isDirectory())) refuse(isDir);
+    if (atStat && !force) refuse(exists);
+  } catch (err) {
+    if (denied(err)) refuse(noAccess);
+    if ((err as NodeJS.ErrnoException).code === "ENOTDIR") refuse(notDir);
+    throw err;
   }
-  const atStat = fs.lstatSync(outFile, { throwIfNoEntry: false });
-  if (atStat?.isDirectory() || (atStat?.isSymbolicLink() && fs.statSync(outFile, { throwIfNoEntry: false })?.isDirectory())) refuse(isDir);
-  if (atStat && !force) refuse(exists);
 
   // First, before any read: a run that fails must still have said something.
   console.log(
@@ -1380,6 +1394,8 @@ function cmdImport(targetName: string, dirPath: string, topologyName?: string, o
     if (code === "EEXIST" && !force) refuse(exists);
     if (code === "EISDIR") refuse(isDir);
     if (code === "ENOTDIR" || code === "EEXIST") refuse(notDir);
+    // A read-only .at with --force is the file's own permission, not the folder's.
+    if (denied(err)) refuse(fs.existsSync(outFile) ? `cannot write ${outFile}: permission denied.` : noAccess);
     refuse(`cannot write ${outFile}: ${(err as Error).message}.`);
   }
   console.log(c.green(`  Written: ${outFile}`));
