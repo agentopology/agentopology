@@ -65,10 +65,18 @@ function storedSet(entry: ManifestEntry | undefined): string[] {
   return Array.isArray(v) && v.every((r) => typeof r === "string") ? v : [];
 }
 
+/**
+ * `"<list> <rule>"` as printed: the rule as a JSON string, so a newline or an
+ * escape sequence in it can never forge or erase a line of output.
+ */
+function shown(item: string): string {
+  const space = item.indexOf(" ");
+  return `${item.slice(0, space)} ${JSON.stringify(item.slice(space + 1))}`;
+}
+
 /** One printed line per undeclared rule. */
 export function undeclaredRuleLine(rule: string): string {
-  const space = rule.indexOf(" ");
-  return `${SETTINGS_PATH} ${rule.slice(0, space)} ${rule.slice(space + 1)}: still in effect; the .at does not declare it — remove it if you didn't add it by hand`;
+  return `${SETTINGS_PATH} ${shown(rule)}: still in effect; the .at does not declare it — remove it if you didn't add it by hand`;
 }
 
 /**
@@ -129,8 +137,8 @@ export function undeclaredRuleNotice(
 /** The one line printed on every run that adds no rule to a set that is not empty. */
 export function undeclaredRuleSummary(rules: string[]): string {
   const n = rules.length;
-  const shown = rules.slice(0, 5).join(", ") + (n > 5 ? ` and ${n - 5} more` : "");
-  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS_PATH} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${shown}; declare them in the .at to keep them, or remove them`;
+  const list = rules.slice(0, 5).map(shown).join(", ") + (n > 5 ? ` and ${n - 5} more` : "");
+  return `${n} rule${n === 1 ? "" : "s"} in ${SETTINGS_PATH} ${n === 1 ? "isn't" : "aren't"} declared in the .at: ${list}; declare them in the .at to keep them, or remove them`;
 }
 
 /** Store the named set on the settings.json entry of a manifest's files (in place). */
