@@ -26,10 +26,10 @@ export const SETTINGS_PATH = ".claude/settings.json";
 export const SETTINGS_KEPT_DETAIL = "kept: holds settings; delete it by hand if you want";
 const LISTS = ["allow", "ask", "deny"] as const;
 
-/** A settings file that is not valid JSON; nothing is written when this is thrown. */
+/** A settings file that is not valid JSON, or whose root is not an object; nothing is written when this is thrown. */
 export class InvalidSettingsJsonError extends Error {
-  constructor(readonly path: string, readonly parseMessage: string) {
-    super(`${path} is not valid JSON (${parseMessage})`);
+  constructor(readonly path: string, readonly parseMessage: string, problem = "is not valid JSON") {
+    super(`${path} ${problem} (${parseMessage})`);
     this.name = "InvalidSettingsJsonError";
   }
 }

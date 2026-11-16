@@ -572,7 +572,7 @@ function printLessons(rules: string[]): void {
   }
 }
 
-/** An invalid settings file: one line naming it and the parse message, exit 1, nothing written. */
+/** An invalid settings file (bad JSON, or a root that is not an object): one line naming it and what is wrong, exit 1, nothing written. */
 function exitOnInvalidSettings(err: unknown): void {
   if (err instanceof InvalidSettingsJsonError) {
     console.error(c.red(`Error: ${err.message}. Nothing was written.`));

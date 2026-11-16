@@ -149,13 +149,19 @@ export function computeIncrementalPlan(
     // every key, hook and rule the user wrote.
     if (category === "shared-config") {
       const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
-      // An invalid file stops the run before anything is written, with the
-      // file's name and the parse message (it used to be a stack trace).
+      // An invalid file, or one whose root is not an object, stops the run
+      // before anything is written, with the file's name and what is wrong
+      // (it used to be a stack trace, or a silent overwrite).
       if (isSettings && existingContent.trim() !== "") {
+        let root: unknown;
         try {
-          JSON.parse(existingContent);
+          root = JSON.parse(existingContent);
         } catch (err) {
           throw new InvalidSettingsJsonError(file.path, (err as Error).message);
+        }
+        if (root === null || typeof root !== "object" || Array.isArray(root)) {
+          const kind = root === null ? "null" : Array.isArray(root) ? "an array" : `a ${typeof root}`;
+          throw new InvalidSettingsJsonError(file.path, `its root is ${kind}`, "is not a JSON object");
         }
       }
       const merged = isSettings
