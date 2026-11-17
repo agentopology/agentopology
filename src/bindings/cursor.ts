@@ -34,7 +34,7 @@ import type {
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile } from "./types.js";
-import { gateAnchors } from "../parser/ast.js";
+import { gateAnchors, pluginMcpServer } from "../parser/ast.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1258,6 +1258,13 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
 
   // Global MCP servers
   for (const [name, config] of Object.entries(ast.mcpServers)) {
+    const plugin = pluginMcpServer(name, config);
+    if (plugin) {
+      console.warn(
+        `[cursor] Warning: MCP server "${name}" comes from the Claude Code plugin "${plugin.plugin}"; Cursor has no Claude Code plugins -- skipped. Declare its command or url for Cursor.`,
+      );
+      continue;
+    }
     allServers[name] = config;
   }
 

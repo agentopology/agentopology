@@ -23,7 +23,7 @@ import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
-import { approvalTargets, checkableActionGate, claudeEvent, convertMcpToolName, gateWiring, settingsHooksOf } from "../bindings/claude-code.js";
+import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
@@ -339,7 +339,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
 
   for (const key of ["deny", "ask"] as const) {
     for (const raw of (ast.settings?.[key] as string[] | undefined) ?? []) {
-      const rule = convertMcpToolName(raw);
+      const rule = mcpRefs(ast).tool(raw);
       const onDisk = ((settings?.permissions?.[key] ?? []) as string[]).includes(rule);
       items.push({
         kind: "permission",

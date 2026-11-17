@@ -453,8 +453,13 @@ function serializeMcpServers(servers: Record<string, Record<string, unknown>>): 
   const lines: string[] = ["  mcp-servers {"];
   for (const [name, config] of entries) {
     lines.push(`    ${name} {`);
+    // from: plugin "<name>" is parsed into from + plugin; written back as one line.
+    const fromPlugin = config.from === "plugin" && typeof config.plugin === "string";
     for (const [k, v] of Object.entries(config)) {
-      if (Array.isArray(v)) {
+      if (fromPlugin && k === "plugin") continue;
+      if (fromPlugin && k === "from") {
+        lines.push(`      from: plugin "${String(config.plugin)}"`);
+      } else if (Array.isArray(v)) {
         lines.push(`      ${k}: ${inlineList(v.map(String))}`);
       } else if (typeof v === "object" && v !== null) {
         lines.push(`      ${k} {`);

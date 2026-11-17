@@ -53,7 +53,7 @@ import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath,
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
 export const AGENTS_MD_END = "<!-- /agentopology:end -->";
-import { gateAnchors } from "../parser/ast.js";
+import { gateAnchors, pluginMcpServer } from "../parser/ast.js";
 import { gateLedger } from "../parser/ledger.js";
 
 // ---------------------------------------------------------------------------
@@ -213,6 +213,12 @@ function generateCodexToml(ast: TopologyAST): GeneratedFile {
   // MCP servers — [mcp_servers.<id>] with its env table nested under it.
   if (ast.mcpServers && Object.keys(ast.mcpServers).length > 0) {
     for (const [name, config] of Object.entries(ast.mcpServers)) {
+      // A Claude Code plugin's server: Codex has no such plugin, so no table (validate: CX5-mcp-plugin).
+      const plugin = pluginMcpServer(name, config);
+      if (plugin) {
+        codexWarn(`[codex] MCP server "${name}" comes from the Claude Code plugin "${plugin.plugin}"; Codex has no Claude Code plugins, so no [mcp_servers.${name}] table is written`);
+        continue;
+      }
       const server: Record<string, unknown> = {};
       for (const [ck, cv] of Object.entries(config as Record<string, unknown>)) {
         const key = snakeKey(ck);

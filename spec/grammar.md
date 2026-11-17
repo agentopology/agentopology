@@ -225,7 +225,7 @@ perm-enum       = perm-identifier
 | `interactive` | Agent requires confirmation for all actions |
 | `unrestricted` | Agent bypasses all permission checks |
 
-> **Note for binding authors:** Bindings may alias these to platform-specific terms. For example, a Claude Code binding maps `autonomous` to `auto` and `supervised` to `plan`. Short aliases (`auto`, `plan`, `confirm`, `bypass`) are also accepted by the parser for backward compatibility.
+> **Note for binding authors:** Bindings may alias these to platform-specific terms. For example, the Claude Code binding writes no `permissionMode` for `autonomous` (the session's own mode) and `plan` for `supervised`. Short aliases (`plan`, `confirm`, `bypass`) are also accepted by the parser for backward compatibility. `auto` is not a short form of `autonomous`: it is Claude Code's auto mode (a classifier approves actions without asking), compiles to `permissionMode: auto`, and validation warns (V132).
 
 **Patterns** -- composable list from the topology catalog:
 
@@ -1293,7 +1293,8 @@ mcp-servers     = 'mcp-servers' '{' mcp-decl* '}'
 mcp-decl        = identifier '{' mcp-fields '}'
 mcp-fields      = ('type' ':' mcp-type | 'url' ':' string
                   | 'command' ':' string | 'args' ':' string-list
-                  | 'env' ':' env-map)*
+                  | 'env' ':' env-map
+                  | 'from' ':' 'plugin' string | 'server' ':' string)*
 mcp-type        = 'http' | 'stdio' | 'sse'
 env-map         = '{' (identifier ':' string)* '}'
 ```
@@ -1322,6 +1323,18 @@ mcp-servers {
 | `env` | env-map | no | `{}` |
 
 `type: http` requires `url`. `type: stdio` requires `command`. Parser error if the required companion field is missing.
+
+**A plugin's server (`from: plugin "<plugin>"`).** A server a Claude Code plugin provides is declared with `from: plugin "<plugin-name>"` and, when the plugin's server name differs from the block key, `server: "<server-name>"` (default: the key). It takes no `type`, `command` or `url`: the plugin configures it, so no `.mcp.json` entry is written. Every reference to it compiles to Claude Code's plugin names: `mcp.<key>.<tool>` is `mcp__plugin_<plugin>_<server>__<tool>`, `mcp.<key>.*` is `mcp__plugin_<plugin>_<server>__*` and `mcp.<key>` is `mcp__plugin_<plugin>_<server>`, where any character outside `A-Za-z0-9_-` in the plugin or server name becomes `_`. This holds in an agent's `tools` and `disallowed-tools`, a skill's `allowed-tools` and `disallowed-tools`, `settings { allow ask deny }`, and in a hook `matcher` or `if:` written with the key (`mcp__<key>__.*` becomes `mcp__plugin_<plugin>_<server>__.*`). An `mcp_tool` hook's `server` naming it is the plugin server's registered name, `plugin:<plugin>:<server>`. An agent's `mcp-servers` entry naming it is left out of the agent's `mcpServers` for now (V130 notes it): the scoped name is not yet verified there, and the agent's `tools` already reach the server, since a plugin's servers are session-wide. A server with no `from` is a project server and compiles as before.
+
+```agenttopology
+mcp-servers {
+  playwright {
+    from: plugin "playwright"   # tools: [mcp.playwright.*] -> mcp__plugin_playwright_playwright__*
+  }
+}
+```
+
+Any other `from:` value is a V133 error naming the expected form. Codex and Cursor have no Claude Code plugins: they write no entry for such a server and say so (`validate --target codex`: CX5-mcp-plugin; Cursor: a scaffold warning).
 
 ---
 
@@ -1984,12 +1997,15 @@ Bindings map model identifiers to their platform's model format:
 
 Bindings map universal permissions to platform-specific modes:
 
-| Universal | Claude Code | Description |
+| Universal | Claude Code `permissionMode` | Description |
 |-----------|-------------|-------------|
-| `autonomous` | `auto` | Read-write without confirmation |
+| `autonomous` | omitted (the session's own mode) | Read-write without confirmation |
 | `supervised` | `plan` | Read-only, proposes changes |
-| `interactive` | `confirm` | Asks before each action |
-| `unrestricted` | `bypass` | No permission checks |
+| `interactive` | omitted (asks; `acceptEdits` before 0.12.2) | Asks before each action |
+| `unrestricted` | `bypassPermissions` | No permission checks |
+| `auto` | `auto` | Claude Code's auto mode, not a short form of `autonomous` (V132) |
+
+Claude Code's own values (`default`, `acceptEdits`, `dontAsk`, `plan`, `auto`, `bypassPermissions`) pass through as written.
 
 ### Available bindings
 

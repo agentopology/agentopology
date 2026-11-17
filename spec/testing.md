@@ -42,7 +42,7 @@ Run the live suite before every release, and after any change to a binding.
 | R3 | The imported .at validates with no errors (was: 22) | e2e/roundtrip.test.ts |
 | R4 | Import keeps frontmatter the language has no field for, comma-string lists, and the real `permissions` block | e2e/roundtrip.test.ts |
 | A4 | Agents, groups, skills and commands found on disk are imported with `file:` and never generated | e2e/roundtrip.test.ts |
-| F3 | `--allow-invalid` compiles despite validation errors; `--force` only overwrites kept files | e2e/roundtrip.test.ts |
+| F3 | `--allow-invalid` compiles the agents without errors, never the shared files (settings.json kept byte-identical), and exits 1 while errors remain; `--force` only overwrites kept files | e2e/roundtrip.test.ts, e2e/allow-invalid-scope.test.ts |
 | C5 | A hook's own script is created only when missing: never overwritten (even with `--force`), reported or claimed | e2e/roundtrip.test.ts |
 | N4 | A url MCP server gets `type: http` (Claude Code skipped it) | e2e/compile.test.ts |
 | N5 | A `type: prompt` hook compiles to a prompt handler, in settings and in agent frontmatter | e2e/compile.test.ts |

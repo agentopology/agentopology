@@ -1727,6 +1727,13 @@ export function parseMcpServers(
       for (const [k, v] of Object.entries(fields)) {
         server[k] = unquote(v);
       }
+      // from: plugin "<name>": a server a Claude Code plugin provides. Any
+      // other from: stays as written; validation (V130) reports it.
+      const from = typeof fields.from === "string" ? /^plugin\s+(?:"([^"]+)"|([A-Za-z0-9._-]+))$/.exec(fields.from.trim()) : null;
+      if (from) {
+        server.from = "plugin";
+        server.plugin = from[1] ?? from[2];
+      }
       const args = parseMultilineList(innerBody, "args");
       if (args.length) server.args = args;
 
