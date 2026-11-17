@@ -110,8 +110,12 @@ export interface DriftRow {
    * file holds otherwise; the merge never replaces it, --force included. With
    * `key` null, `kept` is a scaffolded agent file whose body is the user's
    * and holds generated sections the .at changed (`detail` names them).
+   * `kept-narrower`: a capability key (tools, disallowedTools, mcpServers,
+   * permissionMode, allowed-tools, disallowed-tools) whose file value
+   * scaffold did not write and the .at's would widen; kept, `detail` says
+   * what it would add or drop; --force takes the .at's.
    */
-  state: "at-ahead" | "file-ahead" | "conflict" | "at-removed" | "released" | "blocked" | "kept";
+  state: "at-ahead" | "file-ahead" | "conflict" | "at-removed" | "released" | "blocked" | "kept" | "kept-narrower";
   at: FieldValue | null;
   file: FieldValue | null;
   base: FieldValue | null;

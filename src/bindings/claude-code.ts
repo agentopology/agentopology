@@ -2638,9 +2638,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // place; under --allow-invalid it is skipped here with a warning.
   for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
     const where = resolveSettingsKey(k);
-    const value = where && (!where.row || where.row.projectFile) ? coerceCcValue(where.row, v) : undefined;
+    const value = where && (!where.row || (where.row.projectFile && !where.row.removed)) ? coerceCcValue(where.row, v) : undefined;
     if (!where || !value || !value.ok) {
-      const why = !where ? `Claude Code has no settings key "${k}"` : !value ? `a project's settings.json cannot set ${where.path}` : (value as { reason: string }).reason;
+      const why = ccKey("global-config", k) ? `${k} is a ~/.claude.json global-config key, not a project setting`
+        : !where ? `Claude Code has no settings key "${k}"`
+        : where.row?.removed ? `Claude Code removed ${where.path}`
+        : !value ? `a project's settings.json cannot set ${where.path}` : (value as { reason: string }).reason;
       console.warn(`[claude-code] extensions: key "${k}" not written to settings.json (${why}).`);
       continue;
     }

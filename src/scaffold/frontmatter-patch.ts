@@ -406,6 +406,11 @@ function splitTools(s: string): string[] {
   return out;
 }
 
+/** The entries of a tool list as written: a comma or space string, or a YAML list. */
+export function toolList(v: string | string[]): string[] {
+  return typeof v === "string" ? splitTools(v) : v.map((x) => x.trim()).filter(Boolean);
+}
+
 function asSet(v: FieldValue): string[] | null {
   if (typeof v === "string") return [...new Set(splitTools(v))].sort();
   if (Array.isArray(v)) return [...new Set(v.map((x) => x.trim()).filter(Boolean))].sort();

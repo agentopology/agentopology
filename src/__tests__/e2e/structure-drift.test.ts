@@ -82,7 +82,10 @@ describe("validate --inventory: structure drift", () => {
     expect(code, out).toBe(3);
     expect(out).toContain("Structure drift (2 of 3 owned keys)");
     expect(out).toMatch(/\.claude\/agents\/builder\.md\s+model\s+at-ahead\s+\.at haiku\s+file sonnet/);
-    expect(out).toMatch(/\.claude\/agents\/builder\.md\s+tools\s+at-ahead\s+\.at \[Read, Grep, Bash\]\s+file \[Read, Grep\]/);
+    // Adding Bash widens a tool list scaffold never wrote: kept, and the row says so.
+    expect(out).toMatch(
+      /\.claude\/agents\/builder\.md\s+tools\s+kept-narrower\s+tools kept as written: the \.at would widen them \(\+Bash\); --force applies the \.at's/,
+    );
     expect(fs.readFileSync(file(AGENT), "utf-8")).toBe(AGENT_TEXT);
   });
 

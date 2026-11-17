@@ -27,6 +27,12 @@ export interface DocSettingsKey {
   values?: string[];
   /** True when a project's `.claude/settings.json` may set the key. */
   projectFile: boolean;
+  /** Present (true) when the Scope is `Global config`: the key lives in ~/.claude.json, not a settings file. */
+  globalConfig?: boolean;
+  /** The warning box's text when it says the key was removed. */
+  removed?: string;
+  /** The warning box's text when it says the key is deprecated. */
+  deprecated?: string;
 }
 
 /** Read a settings Type line (plus the bullets under it) as a value type. */
@@ -58,6 +64,22 @@ function projectFileOf(scope: string): boolean {
   return /^Any file\b/i.test(s) || /^[^.]*\bproject\b/i.test(s);
 }
 
+/** Whether a Scope line puts the key in ~/.claude.json (`Global config`) rather than a settings file. */
+function globalConfigOf(scope: string): boolean {
+  return /^Global config\b/i.test(scope.replace(/\[`?([^`\]]*)`?\]\([^)]*\)/g, "$1").trim());
+}
+
+/** A warning box's text as plain words: links become their text, bold marks go. */
+function plainWarning(lines: string[]): string {
+  return lines
+    .join(" ")
+    .replace(/\[!WARNING\]/g, "")
+    .replace(/\[(`?[^\]]*`?)\]\([^)]*\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Every key on the settings reference page that has a Type line. */
 export function extractSettingsKeys(markdown: string): DocSettingsKey[] {
   const out: DocSettingsKey[] = [];
@@ -66,16 +88,26 @@ export function extractSettingsKeys(markdown: string): DocSettingsKey[] {
   let type: string | null = null;
   let scope: string | null = null;
   let bullets: string[] = [];
+  let warning: string[] = [];
   let inType = false;
   const flush = () => {
-    if (key && type !== null && scope !== null) out.push({ key, ...typeOf(type, bullets), projectFile: projectFileOf(scope) });
-    key = null; type = null; scope = null; bullets = []; inType = false;
+    if (key && type !== null && scope !== null) {
+      const note = plainWarning(warning);
+      out.push({
+        key, ...typeOf(type, bullets), projectFile: projectFileOf(scope),
+        ...(globalConfigOf(scope) ? { globalConfig: true } : {}),
+        ...(/^Removed\b/.test(note) ? { removed: note } : /^Deprecated\b/.test(note) ? { deprecated: note } : {}),
+      });
+    }
+    key = null; type = null; scope = null; bullets = []; warning = []; inType = false;
   };
   for (const line of lines) {
     const h = line.match(/^#{3,5} `([A-Za-z][A-Za-z0-9_.]*)`\s*$/);
     if (h) { flush(); key = h[1]; continue; }
     if (/^#{1,2} /.test(line)) { flush(); continue; }
     if (!key) continue;
+    // The warning box under the heading (removed, deprecated), before the Scope and Type lines.
+    if (type === null && scope === null && /^>/.test(line)) { warning.push(line.replace(/^>\s?/, "")); continue; }
     const ty = line.match(/^\* \*\*Type\*\*: (.*)$/);
     if (ty && type === null) { type = ty[1]; inType = true; continue; }
     const sc = line.match(/^\* \*\*Scope\*\*: (.*)$/);

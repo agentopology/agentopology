@@ -176,7 +176,11 @@ describe("an imported project: .at edits reach the hand-written files, prose sta
 
   it("changing the tools writes tools: in the binding's comma form", () => {
     editAt("tools: [Read, Grep]", "tools: [Read, Grep, Bash]");
-    const { out } = scaffold();
+    // Adding a tool widens a list scaffold never wrote: a plain run keeps it and says so.
+    const plain = scaffold();
+    expect(read(AGENT)).toBe(AGENT_TEXT);
+    expect(plain.out).toContain(`! ${AGENT}: tools kept as written: the .at would widen them (+Bash); --force applies the .at's`);
+    const { out } = scaffold("--force");
     expect(read(AGENT)).toBe(AGENT_TEXT.replace("tools: Read, Grep", "tools: Read, Grep, Bash"));
     expect(out).toContain(`~ ${AGENT}: tools [Read, Grep] → [Read, Grep, Bash]`);
   });
@@ -189,7 +193,11 @@ describe("an imported project: .at edits reach the hand-written files, prose sta
 
   it("changing a skill's allowed-tools writes allowed-tools: into SKILL.md", () => {
     editAt("allowed-tools: [Read]", "allowed-tools: [Read, Bash]");
-    const { out } = scaffold();
+    // Approving one more tool widens a list scaffold never wrote: a plain run keeps it and says so.
+    const plain = scaffold();
+    expect(read(SKILL)).toBe(SKILL_TEXT);
+    expect(plain.out).toContain(`! ${SKILL}: allowed-tools kept as written: the .at would widen them (+Bash); --force applies the .at's`);
+    const { out } = scaffold("--force");
     expect(read(SKILL)).toBe(SKILL_TEXT.replace("allowed-tools: Read", "allowed-tools: Read, Bash"));
     expect(out).toContain(`~ ${SKILL}: allowed-tools [Read] → [Read, Bash]`);
   });

@@ -46,7 +46,7 @@ import {
   type FlowReport,
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
-import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
+import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
@@ -107,6 +107,8 @@ ${c.bold("Usage:")}
                        disagree (exits 3 when that is all that is wrong). --json prints
                        that report as JSON instead: { schema, file, errors, missing,
                        ownedKeys, drift: [{ path, kind, id, key, state, at, file, base }] }.
+                       state "kept-narrower": a tool, server or permission key the user
+                       holds narrower than the .at; scaffold keeps it (--force widens).
   agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
@@ -447,7 +449,14 @@ function cmdValidateJson(filePath: string, inventory: string, dir: string | unde
   const { items, root } = loadInventory(inventory, dir, ast.inventoryRoots ?? [], user);
   const r = coverageResult(ast, items, root, user);
   const at = driftRoot(inventory, dir);
-  const drift = at ? structureDrift(ast, at, name) : { ownedKeys: 0, rows: [] };
+  let drift: ReturnType<typeof structureDrift>;
+  try {
+    drift = at ? structureDrift(ast, at, name) : { ownedKeys: 0, rows: [] };
+  } catch (err) {
+    if (!(err instanceof InvalidManifestError)) throw err;
+    console.log(JSON.stringify({ schema: 1, file: name, error: err.message + "." }, null, 2));
+    process.exit(1);
+  }
   console.log(
     JSON.stringify(
       { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows },
@@ -492,7 +501,13 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   // Structure drift: per frontmatter key, where the .at and a file disagree.
   // Exit 3 when that is all that is wrong (1 wins).
   const at = driftRoot(inventory, dir);
-  const drift = at ? structureDrift(ast, at, path.basename(filePath)) : null;
+  let drift: ReturnType<typeof structureDrift> | null;
+  try {
+    drift = at ? structureDrift(ast, at, path.basename(filePath)) : null;
+  } catch (err) {
+    exitOnInvalidManifest(err, false);
+    throw err;
+  }
   const driftLines = drift ? renderDrift(drift) : [];
   if (driftLines.length > 0) {
     console.log(`  ${c.yellow(driftLines[0])}`);
@@ -662,6 +677,14 @@ function exitOnInvalidSettings(err: unknown): void {
   }
 }
 
+/** A manifest scaffold cannot read: one line naming it and what is wrong, exit 1, nothing written. */
+function exitOnInvalidManifest(err: unknown, writes = true): void {
+  if (err instanceof InvalidManifestError) {
+    console.error(c.red(`Error: ${err.message}.${writes ? " Fix or remove it by hand; nothing was written." : ""}`));
+    process.exit(1);
+  }
+}
+
 /** The same lines on scaffold and guard --target: each settings.json rule the .at does not declare. */
 function printRuleNotice(notice: RuleNotice): void {
   for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
@@ -765,7 +788,13 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // One plan for every run — the first one too. The first scaffold used to
   // skip it and write everything, overwriting real files (and, through a
   // symlink, files in another repository) before crashing half way.
-  const manifest = readManifest(basePath, targetName, path.basename(filePath));
+  let manifest: ReturnType<typeof readManifest>;
+  try {
+    manifest = readManifest(basePath, targetName, path.basename(filePath));
+  } catch (err) {
+    exitOnInvalidManifest(err);
+    throw err;
+  }
   let actions: FileAction[];
   try {
     actions = computeIncrementalPlan(basePath, targetName, files, manifest, {
@@ -1717,6 +1746,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     plan = planGuardTarget(ast, root, name, targetName);
   } catch (e) {
     exitOnInvalidSettings(e);
+    exitOnInvalidManifest(e);
     if (e instanceof BindingRefusal) {
       console.error(c.red(`  ${e.message}`));
       process.exit(1);
