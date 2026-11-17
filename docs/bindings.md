@@ -165,22 +165,25 @@ The spec defines four universal permission levels. Bindings map these to platfor
 | `interactive` | Confirm all actions |
 | `unrestricted` | No permission checks |
 
-Example:
+`auto` is not a short form of `autonomous`: on Claude Code it is the platform's own auto mode (a classifier approves actions without asking), and validation warns about it (V132). A word that has no platform mode leaves the mode to the session rather than guessing a looser one.
+
+Example (the Claude Code binding's mapping to `permissionMode`; `undefined` means the key is not written):
 
 ```typescript
-function resolvePermission(permission: string): string {
-  const mapping: Record<string, string> = {
-    "autonomous": "auto",
+function resolvePermission(permission: string): string | undefined {
+  const mapping: Record<string, string | undefined> = {
+    "autonomous": undefined,           // the session's own mode
     "supervised": "plan",
-    "interactive": "confirm",
-    "unrestricted": "bypass",
-    // Accept short aliases too
-    "auto": "auto",
+    "interactive": undefined,          // asks: the platform default
+    "unrestricted": "bypassPermissions",
+    // Short aliases
     "plan": "plan",
-    "confirm": "confirm",
-    "bypass": "bypass",
+    "confirm": undefined,
+    "bypass": "bypassPermissions",
+    // The platform's own value, passed through (not an alias of autonomous)
+    "auto": "auto",
   };
-  return mapping[permission] || permission;
+  return permission in mapping ? mapping[permission] : permission;
 }
 ```
 

@@ -58,7 +58,7 @@ import {
 } from "./claude-code-schema.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
-import { gateAnchors } from "../parser/ast.js";
+import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
@@ -79,6 +79,85 @@ export function convertMcpToolName(tool: string): string {
   const dot = rest.indexOf(".");
   if (dot === -1) return `mcp__${rest}`;
   return `mcp__${rest.slice(0, dot)}__${rest.slice(dot + 1)}`;
+}
+
+/**
+ * The name prefix of a plugin server's tools: mcp__plugin_<plugin>_<server>,
+ * any character outside A-Za-z0-9_- replaced with _
+ * (code.claude.com/docs/en/mcp.md, "Plugin MCP tool names").
+ */
+export function pluginMcpPrefix(p: PluginMcpServer): string {
+  const clean = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "_");
+  return `mcp__plugin_${clean(p.plugin)}_${clean(p.server)}`;
+}
+
+/** The name a plugin server registers under, plugin:<plugin>:<server>: where Claude Code expects a configured server name. */
+export function pluginMcpRegisteredName(p: PluginMcpServer): string {
+  return `plugin:${p.plugin}:${p.server}`;
+}
+
+/**
+ * How this topology's MCP refs compile. A project server compiles as
+ * convertMcpToolName does; a `from: plugin` server's tools are
+ * mcp__plugin_<plugin>_<server>__<tool>, because a ref to mcp__<key>__<tool>
+ * names a server that does not exist (the agent silently loses the tools).
+ *
+ * - `tool` compiles a tools / disallowed-tools / allowed-tools entry or a
+ *   permission rule: the dotted form, or an entry whose tool part is an
+ *   mcp__<key> name (never text inside a rule's argument).
+ * - `matcher` compiles a hook matcher (Claude Code names in a regex
+ *   or a `|` list): every mcp__<key> token of a plugin server is rewritten.
+ * - `server` compiles an mcp_tool hook's server: a plugin server is its
+ *   registered name. (An agent's mcp-servers entry for a plugin server is left
+ *   out instead; see generateAgents.)
+ */
+export function mcpRefs(ast: Pick<TopologyAST, "mcpServers">): { tool: (t: string) => string; matcher: (m: string) => string; server: (s: string) => string } {
+  const plugins = pluginMcpServers(ast);
+  if (plugins.size === 0) return { tool: (t) => convertMcpToolName(t), matcher: (m) => m, server: (s) => s };
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tokens = [...plugins].map(([key, p]) => ({
+    re: new RegExp(`(^|[^A-Za-z0-9_])mcp__${esc(key)}(?=__|[^A-Za-z0-9_-]|$)`, "g"),
+    prefix: pluginMcpPrefix(p),
+  }));
+  const matcher = (m: string) => tokens.reduce((out, t) => out.replace(t.re, (_, before: string) => `${before}${t.prefix}`), m);
+  // A tool entry or permission rule is rewritten only when it IS an MCP name
+  // (the whole entry, or the tool part before `(`): mcp__<key>, mcp__<key>__<tool>.
+  // Text inside a rule's argument (Read(./mcp__<key>/**)) is a path or a
+  // command, never a tool name, and stays as written.
+  const keys = [...plugins.keys()].sort((a, b) => b.length - a.length);
+  const handWritten = (t: string) => {
+    const paren = t.indexOf("(");
+    const head = paren === -1 ? t : t.slice(0, paren);
+    const tail = paren === -1 ? "" : t.slice(paren);
+    for (const key of keys) {
+      const bare = `mcp__${key}`;
+      if (head === bare || head.startsWith(`${bare}__`)) return `${pluginMcpPrefix(plugins.get(key)!)}${head.slice(bare.length)}${tail}`;
+    }
+    return t;
+  };
+  const tool = (t: string) => {
+    if (!t.startsWith("mcp.")) return handWritten(t);
+    const rest = t.slice(4);
+    const dot = rest.indexOf(".");
+    const p = plugins.get(dot === -1 ? rest : rest.slice(0, dot));
+    if (!p) return convertMcpToolName(t);
+    return dot === -1 ? pluginMcpPrefix(p) : `${pluginMcpPrefix(p)}__${rest.slice(dot + 1)}`;
+  };
+  const server = (s: string) => {
+    const p = plugins.get(s);
+    return p ? pluginMcpRegisteredName(p) : s;
+  };
+  return { tool, matcher, server };
+}
+
+/** A hook with its matcher, `if:` (a permission rule, compiled as one) and mcp_tool server compiled for this topology's MCP servers. */
+function withMcpRefs(hook: HookDef, refs: ReturnType<typeof mcpRefs>): HookDef {
+  return {
+    ...hook,
+    ...(hook.matcher ? { matcher: refs.matcher(hook.matcher) } : {}),
+    ...(hook.if ? { if: refs.tool(hook.if) } : {}),
+    ...(hook.type === "mcp_tool" && hook.server ? { server: refs.server(hook.server) } : {}),
+  };
 }
 
 /**
@@ -408,7 +487,9 @@ function workflowRunLabel(ast: TopologyAST, run: number[]): string {
 
 /**
  * Map topology permission strings to Claude Code permissionMode values.
- * Returns undefined when the permission mode should be omitted (default/autonomous).
+ * Returns undefined when the permission mode should be omitted (the session's
+ * own mode: default, autonomous, confirm, interactive). `auto` is Claude
+ * Code's auto mode, not a short form of `autonomous` (V132).
  */
 function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
@@ -428,7 +509,9 @@ function mapPermissionMode(perm: string): string | undefined {
     case "confirm":
       return undefined; // asks before each action: Claude Code's default
     case "interactive":
-      return "acceptEdits";
+      // Asks, as documented: Claude Code's default. Before 0.12.2 this wrote
+      // acceptEdits, which approves file edits without asking; V132 says so.
+      return undefined;
     case "unrestricted":
     case "bypass":
       return "bypassPermissions";
@@ -610,9 +693,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       }
     }
     if (agent.maxTurns != null) fm.maxTurns = agent.maxTurns;
-    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(convertMcpToolName).join(", ");
-    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(convertMcpToolName).join(", ");
-    if (agent.mcpServers && agent.mcpServers.length > 0) fm.mcpServers = agent.mcpServers;
+    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(mcpRefs(ast).tool).join(", ");
+    if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
+    // A plugin's server is left out of mcpServers: its scoped name there is not
+    // verified, and the agent's tools (in the plugin form) already reach it
+    // (plugin servers are session-wide). V130 notes each one left out.
+    const plugins = pluginMcpServers(ast);
+    const agentServers = (agent.mcpServers ?? []).filter((s) => !plugins.has(s));
+    if (agentServers.length > 0) fm.mcpServers = agentServers;
     if (agent.background === true) fm.background = true;
 
     if (agent.permissions) {
@@ -657,7 +745,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
         // In an agent's frontmatter Claude Code turns Stop into SubagentStop itself.
         const event = hook.on === "AgentStop" ? "Stop" : claudeEvent(hook.on);
         if (!hooksByEvent[event]) hooksByEvent[event] = [];
-        hooksByEvent[event].push(hook);
+        hooksByEvent[event].push(withMcpRefs(hook, mcpRefs(ast)));
       }
 
       const hookLines: string[] = ["hooks:"];
@@ -1298,7 +1386,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     if (mainSkill.context) fm.context = mainSkill.context;
     if (mainSkill.agent) fm.agent = mainSkill.agent;
     if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
-      fm["allowed-tools"] = mainSkill.allowedTools.map(convertMcpToolName).join(", ");
+      fm["allowed-tools"] = mainSkill.allowedTools.map(mcpRefs(ast).tool).join(", ");
     }
   }
 
@@ -1683,9 +1771,9 @@ function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
     if (agent.runs === "fork") fm.context = "fork";
     if (agent.model && isClaudeCodeModel(agent.model)) fm.model = agent.model;
     if (agent.thinking && agent.thinking !== "off") fm.effort = agent.thinking;
-    if (agent.tools && agent.tools.length > 0) fm["allowed-tools"] = agent.tools.map(convertMcpToolName).join(", ");
+    if (agent.tools && agent.tools.length > 0) fm["allowed-tools"] = agent.tools.map(mcpRefs(ast).tool).join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) {
-      fm["disallowed-tools"] = agent.disallowedTools.map(convertMcpToolName).join(", ");
+      fm["disallowed-tools"] = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
     if (agent.invocation === "manual") fm["disable-model-invocation"] = true;
     // An agent that runs as a skill takes skill keys from its extension.
@@ -1726,10 +1814,10 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     if (skill.context) sfm.context = skill.context;
     if (skill.agent) sfm.agent = skill.agent;
     if (skill.allowedTools && skill.allowedTools.length > 0) {
-      sfm["allowed-tools"] = skill.allowedTools.map(convertMcpToolName).join(", ");
+      sfm["allowed-tools"] = skill.allowedTools.map(mcpRefs(ast).tool).join(", ");
     }
     if (skill.disallowedTools && skill.disallowedTools.length > 0) {
-      sfm["disallowed-tools"] = skill.disallowedTools.map(convertMcpToolName).join(", ");
+      sfm["disallowed-tools"] = skill.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
     if (skill.whenToUse) sfm.when_to_use = skill.whenToUse;
     if (skill.argumentHint) sfm["argument-hint"] = skill.argumentHint;
@@ -2218,7 +2306,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     files.push({
       path: filePath,
       content: interp === "bash"
-        ? observabilityStub(hook.name, hook.on, hook.matcher ?? "")
+        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""))
         : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
       executable: true,
@@ -2317,8 +2405,10 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
   const topologyName = ast.topology.name;
   const isInline = getDelegationMode(ast) === "inline";
   const hooksByEvent: Record<string, unknown[]> = {};
+  const refs = mcpRefs(ast);
 
-  for (const hook of ast.hooks) {
+  for (const declared of ast.hooks) {
+    const hook = withMcpRefs(declared, refs);
     // A Mod is a module inside the engine, not a settings.json command: it is
     // emitted as a plugin (generateModPlugin).
     if (hook.type === "mod") continue;
@@ -2524,7 +2614,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
       const rules = perms[key] as string[] | undefined;
-      if (rules && rules.length > 0) permObj[key] = rules.map(convertMcpToolName);
+      if (rules && rules.length > 0) permObj[key] = rules.map(mcpRefs(ast).tool);
     }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
 

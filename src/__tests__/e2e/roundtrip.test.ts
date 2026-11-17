@@ -170,8 +170,13 @@ describe("file: is checked, and scaffold's two overrides are separate", () => {
     const forced = cli(["scaffold", at, "--target", "claude-code", "--output", project, "--force"]);
     expect(forced.code).toBe(1);
     expect(forced.out).toContain("Nothing was written");
+    const settingsBefore = fs.readFileSync(join(project, ".claude/settings.json"), "utf-8");
     const allowed = cli(["scaffold", at, "--target", "claude-code", "--output", project, "--allow-invalid"]);
-    expect(allowed.code).toBe(0);
+    // It compiles the nodes without errors, and exits 1 while errors remain.
+    expect(allowed.code).toBe(1);
+    expect(allowed.out).toContain("⊘ .claude/skills/handbuilt/SKILL.md (not written while validation errors are open)");
+    // settings.json is never written while an error is open.
+    expect(fs.readFileSync(join(project, ".claude/settings.json"), "utf-8")).toBe(settingsBefore);
     // --allow-invalid does not overwrite what scaffold did not create.
     expect(fs.readFileSync(join(project, ".claude/hooks/guard.sh"), "utf-8")).toContain("Blocks a push");
   });

@@ -49,6 +49,7 @@ import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
+import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
 import { echoFields } from "../scaffold/echo.js";
 import { renderDrift, structureDrift } from "../scaffold/drift.js";
 import { keptSettings } from "../scaffold/settings-kept.js";
@@ -176,7 +177,8 @@ ${c.bold("Options:")}
   --dry-run         Preview generated files without writing to disk.
   --force           scaffold: overwrite files scaffold did not create or that were edited (never symlinks).
                     import: overwrite the .at that is already at the output path.
-  --allow-invalid   Scaffold even when validation reports errors (output may be incomplete).
+  --allow-invalid   With validation errors, scaffold the agents they do not touch; shared files such as
+                    settings.json and .mcp.json wait until the topology validates. Exits 1 while errors remain.
   --prune           Delete files that were previously scaffolded but are no longer generated (never .claude/settings.json).
   --mode <notch>    Autonomy for plan: plan | execute | auto (default: execute).
   --brief           Emit the machine brief only, without the terminal render.
@@ -692,16 +694,28 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   }
 
   // Never compile what does not validate: fields the validator rejects can
-  // vanish silently in the output. --allow-invalid compiles anyway. It used to
-  // be --force, which also overwrites kept files: one flag, two risks.
+  // vanish silently in the output. --allow-invalid compiles the nodes the
+  // errors do not touch, never the files the whole topology shares, and exits
+  // 1 while errors remain. It used to be --force, which also overwrites kept
+  // files: one flag, two risks.
   const errors = validate(ast).filter((r) => r.level === "error");
+  let scope: InvalidScope | null = null;
   if (errors.length > 0) {
     const say = allowInvalid ? console.log : console.error;
-    say(c[allowInvalid ? "yellow" : "red"](`  ${errors.length} validation error(s)${allowInvalid ? " — scaffolding anyway (--allow-invalid)" : ". Nothing was written."}`));
+    say(c[allowInvalid ? "yellow" : "red"](`  ${errors.length} validation error(s)${allowInvalid ? " — writing only the nodes without errors (--allow-invalid)" : ". Nothing was written."}`));
     for (const e of errors.slice(0, 5)) say(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
     if (errors.length > 5) say(c.dim(`  … and ${errors.length - 5} more`));
     if (!allowInvalid) {
       console.error(c.dim(`  Run: agentopology validate ${path.basename(filePath)} (--allow-invalid scaffolds anyway)`));
+      process.exit(1);
+    }
+    scope = scopeErrors(ast, errors);
+    if (scope.topologyLevel.length > 0) {
+      // An error no node owns reaches every file: write nothing, as without the flag.
+      const e = scope.topologyLevel[0];
+      const why = e.node ? `names "${e.node}", which no single agent owns` : "names no node";
+      console.error(c.red(`  Nothing was written: [${e.rule}] ${why}, so it reaches the whole topology.`));
+      console.error(c.dim(`  Run: agentopology validate ${path.basename(filePath)}`));
       process.exit(1);
     }
     say("");
@@ -763,13 +777,16 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     exitOnInvalidSettings(err);
     throw err;
   }
+  // --allow-invalid with errors open: every write the errors touch becomes a skip (⊘).
+  let skipped: string[] = [];
+  if (scope) ({ actions, skipped } = scopePlan(actions, agentOwnedPaths(ast, targetName), scope.erroredAgents, !!prune));
   const notice = undeclaredRuleNotice(basePath, files, actions, manifest);
   // settings.json values the .at states that the union-only merge keeps as
   // the file has them: one line per key, on a dry run too.
   const settingsFile = targetName === "claude-code" ? files.find((f) => f.path === SETTINGS_PATH) : undefined;
   const settingsOnDisk = settingsFile ? path.join(basePath, SETTINGS_PATH) : null;
   const keptSettingLines =
-    settingsFile && settingsOnDisk && fs.existsSync(settingsOnDisk) && fs.statSync(settingsOnDisk).isFile()
+    !scope && settingsFile && settingsOnDisk && fs.existsSync(settingsOnDisk) && fs.statSync(settingsOnDisk).isFile()
       ? keptSettings(fs.readFileSync(settingsOnDisk, "utf-8"), settingsFile.content, SETTINGS_PATH).map((k) => k.line)
       : [];
   // Warn only: rules at the top level of a settings file stay where they are (the merge never moves a user's keys).
@@ -855,6 +872,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     printRuleNotice(notice);
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
+    if (scope) printOpenErrors(errors.length, skipped.length, true);
   } else {
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
@@ -916,13 +934,14 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       for (const f of result.failures) console.error(`  ${c.red("✗")} ${f.path} — ${f.error}`);
       process.exit(1);
     }
+    if (scope) printOpenErrors(errors.length, skipped.length, false);
   }
 
   // Stub summary: count and list any generated files that are unimplemented
   // stubs. We detect them by the AGENTOPOLOGY_STUB marker (see
   // src/bindings/lib/stub.ts). The summary goes to stderr so CI scripts can
   // capture it without polluting stdout.
-  const stubFiles = files.filter((f) => isStubContent(f.content));
+  const stubFiles = files.filter((f) => isStubContent(f.content) && !skipped.includes(f.path));
   if (stubFiles.length > 0) {
     console.error("");
     console.error(
@@ -938,6 +957,18 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     );
   }
   console.log("");
+  // Some files were written, but the topology is still invalid: CI must not read this as success.
+  if (scope) process.exit(1);
+}
+
+/** The closing lines of an --allow-invalid run with errors open. */
+function printOpenErrors(errorCount: number, skippedCount: number, dryRun: boolean): void {
+  console.log(
+    c.yellow(
+      `  ${errorCount} validation error(s) open: ${skippedCount} file(s) ${dryRun ? "would not be" : "not"} written (marked ⊘), ` +
+        `exit 1. Fix them and scaffold again to write the rest.`,
+    ),
+  );
 }
 
 function readDirRecursive(dirPath: string): PlatformFile[] {

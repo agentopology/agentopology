@@ -812,6 +812,33 @@ export interface GateNode extends BaseNode {
   extensions?: Record<string, Record<string, unknown>>;
 }
 
+/** An MCP server a Claude Code plugin provides: `from: plugin "<plugin>"`, with `server:` (default: the block key). */
+export interface PluginMcpServer {
+  plugin: string;
+  server: string;
+}
+
+/**
+ * The plugin server an `mcp-servers` entry names, or null for a project
+ * server. The parser stores `from: plugin "<name>"` as from = "plugin",
+ * plugin = "<name>"; any other `from:` stays as written (V130 reports it).
+ */
+export function pluginMcpServer(key: string, config: Record<string, unknown> | undefined): PluginMcpServer | null {
+  if (!config || config.from !== "plugin" || typeof config.plugin !== "string" || config.plugin === "") return null;
+  const server = typeof config.server === "string" && config.server !== "" ? config.server : key;
+  return { plugin: config.plugin, server };
+}
+
+/** Every plugin MCP server the topology declares, by its block key. */
+export function pluginMcpServers(ast: Pick<TopologyAST, "mcpServers">): Map<string, PluginMcpServer> {
+  const out = new Map<string, PluginMcpServer>();
+  for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
+    const p = pluginMcpServer(key, config);
+    if (p) out.set(key, p);
+  }
+  return out;
+}
+
 /**
  * The anchors of a gate, always as a list.
  *

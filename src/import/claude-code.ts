@@ -263,7 +263,9 @@ function reversePermissionMode(mode: string | undefined): string | undefined {
     case "plan": return "supervised";
     case "bypassPermissions": return "unrestricted";
     case "askUser": return "interactive";
-    case "auto": return "autonomous";
+    // Claude Code's auto mode stays `auto`: `autonomous` writes no
+    // permissionMode, so mapping it there lost auto mode on import -> scaffold.
+    case "auto": return "auto";
     case "confirm": return "confirm";
     default: return mode;
   }

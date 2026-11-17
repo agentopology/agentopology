@@ -218,12 +218,19 @@ agent NAME {
 
 ## Permission Modes
 
-| Long form | Short form | Description |
-|-----------|------------|-------------|
-| autonomous | auto | Agent acts without human approval |
-| supervised | plan | Agent presents a plan, then executes after approval |
-| interactive | confirm | Agent asks for confirmation on each action |
-| unrestricted | bypass | No safety checks (use with caution) |
+| Word | Also written | Description | Claude Code agent file |
+|------|--------------|-------------|------------------------|
+| autonomous | -- | Agent acts without human approval | no permissionMode (the session's own mode) |
+| supervised | plan | Agent presents a plan, then executes after approval | \`permissionMode: plan\` |
+| interactive | confirm | Agent asks for confirmation on each action | no permissionMode (asks); \`acceptEdits\` before 0.12.2 |
+| unrestricted | bypass | No safety checks (use with caution) | \`permissionMode: bypassPermissions\` |
+| auto | -- | Claude Code's auto mode: a classifier approves actions without asking | \`permissionMode: auto\` |
+
+\`auto\` is not a short form of \`autonomous\`: it is Claude Code's auto mode, and validation says so (V132). Write \`autonomous\` for the session's own mode.
+
+\`interactive\` (and \`confirm\`) write no permissionMode, so Claude Code asks. Before 0.12.2, \`interactive\` wrote \`acceptEdits\` (file edits approved without asking) and V132 names that change; write \`permissions: acceptEdits\` to keep it.
+
+Claude Code's own values pass through as written: \`default\` (written as no permissionMode), \`acceptEdits\`, \`dontAsk\`, \`plan\`, \`auto\`, \`bypassPermissions\`.
 
 ## RetryConfig Fields
 
@@ -1997,6 +2004,20 @@ mcp-servers {
 - Agents reference MCP servers via the \`mcp-servers\` field: \`mcp-servers: [database]\`.
 - Tool names from MCP servers can be referenced with wildcards: \`tools: [mcp.database.*]\`.
 - Environment variables in \`env\` should use \`\${ENV_VAR}\` syntax for secrets.
+
+## A plugin's server
+
+A server a Claude Code plugin provides is declared with \`from: plugin "<plugin-name>"\`; add \`server: "<server-name>"\` when the plugin's server name differs from the block key. No \`.mcp.json\` entry is written for it: the plugin configures it.
+
+\`\`\`at
+mcp-servers {
+  playwright {
+    from: plugin "playwright"
+  }
+}
+\`\`\`
+
+Claude Code names a plugin server's tools \`mcp__plugin_<plugin>_<server>__<tool>\` (any character outside \`A-Za-z0-9_-\` becomes \`_\`), so every reference compiles to that form: \`tools: [mcp.playwright.*]\` is \`mcp__plugin_playwright_playwright__*\`. The same holds in \`disallowed-tools\`, a skill's \`allowed-tools\`, \`settings { allow ask deny }\`, and a hook \`matcher\` written with the key (\`mcp__playwright__.*\`). An \`mcp_tool\` hook's \`server\` becomes the registered name \`plugin:playwright:playwright\`. An agent's \`mcp-servers: [playwright]\` entry is left out of the agent's \`mcpServers\` for now (validate notes it): that scoped name is not yet verified there, and the agent's \`tools\` already reach the server. Codex and Cursor have no Claude Code plugins and write no entry for such a server.
 `,
   },
 
@@ -3318,7 +3339,7 @@ Action \`kind\` must be: external, git, decision, inline, or report.
 **Fix:** Use a recognized kind value.
 
 ### V27: Agent Permissions Enum (warning)
-Agent \`permissions\` should be a recognized mode: autonomous/auto, supervised/plan, interactive/confirm, unrestricted/bypass.
+Agent \`permissions\` should be a recognized mode: autonomous, supervised/plan, interactive/confirm, unrestricted/bypass, auto (Claude Code's auto mode, see V132), or one of Claude Code's own values (default, acceptEdits, dontAsk, bypassPermissions).
 
 **Violation:** \`permissions: custom-mode\`.
 **Fix:** Use a recognized permission mode.

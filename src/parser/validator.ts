@@ -20,9 +20,10 @@
  */
 
 import { MISSING } from "./index.js";
-import { gateAnchors } from "./ast.js";
+import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
+import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
-import { matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
+import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
@@ -1863,6 +1864,8 @@ function v27AgentPermissionsEnum(ast: TopologyAST): ValidationResult[] {
   const VALID_PERMISSIONS = new Set([
     "autonomous", "supervised", "interactive", "unrestricted",
     "plan", "auto", "confirm", "bypass",
+    // Claude Code's own permissionMode values pass through as written.
+    "default", "acceptEdits", "dontAsk", "bypassPermissions",
   ]);
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
@@ -1870,7 +1873,7 @@ function v27AgentPermissionsEnum(ast: TopologyAST): ValidationResult[] {
       results.push({
         rule: "V27",
         level: "warning",
-        message: `Agent "${node.id}" has unrecognized permissions "${node.permissions}" — known values: autonomous, supervised, interactive, unrestricted, plan, auto, confirm, bypass`,
+        message: `Agent "${node.id}" has unrecognized permissions "${node.permissions}" — known values: autonomous, supervised, interactive, unrestricted, plan, auto, confirm, bypass, and Claude Code's default, acceptEdits, dontAsk, bypassPermissions`,
         node: node.id,
         line: lookupLine(ast, node.id),
       });
@@ -4133,6 +4136,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v129NeedsOutside(ast),
     ...v130ClaudeCodePlacement(ast, opts),
     ...v131LostStructure(ast),
+    ...v132PermissionWords(ast, opts),
+    ...v133McpServerFrom(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4411,6 +4416,54 @@ function v131LostStructure(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
+ * V133: an `mcp-servers` entry's `from:` is not an accepted form. The only
+ * source a server can name is a Claude Code plugin, written
+ * `from: plugin "<plugin-name>"` (or the bare name, `from: plugin playwright`).
+ * A near miss (single quotes, `Plugin`, the whole value quoted, an empty or
+ * spaced name, two names) used to fall back to a project server, so every ref
+ * compiled to mcp__<key>__ and the agent silently lost the plugin's tools. An
+ * error, so validate and scaffold stop.
+ */
+function v133McpServerFrom(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
+    if (config.from === undefined || pluginMcpServer(key, config)) continue;
+    results.push({
+      rule: "V133",
+      level: "error",
+      message: `mcp-servers ${key}: from: ${String(config.from)} is not an accepted form; write from: plugin "<plugin-name>" (a server a Claude Code plugin provides), or remove from: for a project server.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V132: a `permissions:` word whose Claude Code compile is not what the word
+ * reads as. `auto` is Claude Code's auto mode (a classifier approves actions
+ * without asking) and compiles to `permissionMode: auto`; it is not a short
+ * form of `autonomous`, which leaves the mode to the session. `interactive`
+ * compiled to `acceptEdits` before 0.12.2 and now leaves the mode out (asks);
+ * the warning names the old value and how to keep it. Warnings only: the
+ * compile of `auto` is unchanged, and nothing turns invalid. Only when
+ * compiling for Claude Code (no target, or claude-code): no other binding
+ * writes a permissionMode.
+ */
+function v132PermissionWords(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (opts.target && opts.target !== "claude-code") return results;
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    const at = { rule: "V132", level: "warning" as const, node: node.id, line: lookupLine(ast, node.id) };
+    if (node.permissions === "auto") {
+      results.push({ ...at, message: `Agent "${node.id}": \`permissions: auto\` is Claude Code's auto mode (a classifier approves actions without asking), not \`autonomous\`; write \`autonomous\` for the session's own mode.` });
+    } else if (node.permissions === "interactive") {
+      results.push({ ...at, message: `Agent "${node.id}": \`permissions: interactive\` now leaves permissionMode out, so Claude Code asks as documented; it compiled to \`permissionMode: acceptEdits\` before (file edits and common filesystem commands approved without asking). Write \`permissions: acceptEdits\` to keep it.` });
+    }
+  }
+  return results;
+}
+
+/**
  * V130: the .at states something Claude Code cannot be given. Claude Code
  * ignores a key it does not know, silently, so the claude-code binding writes
  * only keys in its schema (src/bindings/claude-code-schema.ts) and this rule
@@ -4467,11 +4520,53 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
     if (h.extensions?.["claude-code"]) err(`hook "${h.name}": Claude Code reads no extension on a hook, so extensions { claude-code } there is never written.`);
   }
 
+  // mcp-servers { x { from: plugin "<name>" } }: the one source a server can name.
+  for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
+    if (config.from === undefined) continue;
+    if (config.from !== "plugin" || typeof config.plugin !== "string") continue; // V133
+    const written = ["command", "url", "args", "env", "type", "headers"].filter((k) => config[k] !== undefined);
+    if (written.length > 0) warn(`mcp-servers ${key} comes from plugin "${config.plugin}", which configures it; ${written.join(", ")} ${written.length === 1 ? "is" : "are"} not written to .mcp.json.`);
+  }
+
   if (opts.target && opts.target !== "claude-code") return results;
+
+  // A dotted if: (mcp.server.tool(…)) compiles to Claude Code's tool name
+  // since 0.12.2; 0.12.1 wrote it as is, so it never matched and the hook
+  // never ran. Say so for each one: the hook now runs.
+  {
+    const refs = mcpRefs(ast);
+    for (const h of hooks) {
+      if (!h.if || !h.if.startsWith("mcp.")) continue;
+      const compiled = refs.tool(h.if);
+      if (compiled !== h.if) warn(`hook "${h.name}" if: ${JSON.stringify(h.if)} now matches ${compiled}; in 0.12.1 it was written as is and never matched, so this hook now runs.`);
+    }
+  }
+
+  // A matcher that still matches a plugin server's project-form names after
+  // scaffold's rewrite (a regex such as mcp__(playwright|x)__.* or mcp__play.*),
+  // but none of its plugin-form names, never fires for that server's tools.
+  const plugins = pluginMcpServers(ast);
+  if (plugins.size > 0) {
+    const refs = mcpRefs(ast);
+    for (const h of hooks) {
+      if (!h.matcher) continue;
+      const compiled = refs.matcher(h.matcher);
+      const probes = ["x", ...(h.matcher.match(/[A-Za-z0-9_-]+/g) ?? []).map((w) => w.replace(/^_+|_+$/g, ""))];
+      for (const [key, p] of plugins) {
+        const prefix = pluginMcpPrefix(p);
+        const missed = probes.some((t) => matcherMatches(h.on, compiled, `mcp__${key}__${t}`) && !matcherMatches(h.on, compiled, `${prefix}__${t}`));
+        if (missed) warn(`hook "${h.name}" matcher ${JSON.stringify(h.matcher)} names the plugin server ${key} in a form scaffold can't rewrite, so it never fires for that server's tools; write ${prefix}__… or mcp__${key}__… (rewritten to it) so it fires.`);
+      }
+    }
+  }
 
   for (const n of ast.nodes) {
     if (n.type !== "agent") continue;
     const a = n as AgentNode;
+    for (const key of a.mcpServers ?? []) {
+      const p = pluginMcpServer(key, ast.mcpServers?.[key]);
+      if (p) warn(`agent "${a.id}" mcp-servers: "${key}" is a plugin's server; it is not written to mcpServers until Claude Code's scoped name plugin:${p.plugin}:${p.server} is verified; the agent's tools already reach it.`, a.id);
+    }
     if (a.sandbox != null) warn(`agent "${a.id}" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled).`, a.id);
     if (a.fallbackChain && a.fallbackChain.length > 0) warn(`agent "${a.id}" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel.`, a.id);
   }
@@ -4515,6 +4610,10 @@ function stepPlaceholderWarnings(ast: TopologyAST): ValidationResult[] {
 export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const warn = (rule: string, node: string, message: string) => results.push({ rule, level: "warning", node, message: `[codex] ${message}` });
+  for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
+    const p = pluginMcpServer(key, config);
+    if (p) warn("CX5-mcp-plugin", key, `MCP server "${key}" comes from the Claude Code plugin "${p.plugin}"; Codex has no Claude Code plugins, so no [mcp_servers.${key}] table is written. Declare the server's command or url for Codex.`);
+  }
   for (const n of ast.nodes) {
     const model = (n as { model?: string }).model;
     if (model && isClaudeModelName(model)) {

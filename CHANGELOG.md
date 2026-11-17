@@ -2,6 +2,25 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.12.2] - 2026-11-17
+
+### Changed behaviour
+
+- `permissions: interactive` no longer writes `permissionMode: acceptEdits` into the Claude Code agent file. It writes no permissionMode, so Claude Code asks, as the word is documented; `acceptEdits` approved file edits and common filesystem commands without asking. Validation warns on every `permissions: interactive` (V132) naming the old value. Write `permissions: acceptEdits` to keep the old behaviour.
+- `scaffold --allow-invalid` no longer writes the whole topology as if it were valid. Each validation error is attributed to the node it names, and only the files of agents with no error are written (new files, and frontmatter updates as usual). `.claude/settings.json`, `.claude/settings.local.json`, `.mcp.json`, `.codex/hooks.json` and the other files the whole topology shares (the topology skill, rules, gate and hook scripts) are never written while any error is open, so a partial run cannot leave a hook pointing at a script that was not written or a deny rule missing. Each file held back is listed, as `⊘ .claude/agents/planner/AGENT.md (not written: node planner has validation errors)` or `⊘ .claude/settings.json (not written while validation errors are open)`. An error that names no node writes nothing at all. The command now exits 1 while errors remain, even when some files were written (it exited 0), and `--dry-run` lists the same files as the real run. Without the flag nothing changes.
+- A hook's `if:` written in dotted form (`mcp.server.tool(…)`) now compiles to Claude Code's tool name; before, it was written as is and never matched, so that hook now runs. `validate` names each such hook.
+
+### Added
+
+- An MCP server a Claude Code plugin provides can be declared in `mcp-servers` with `from: plugin "<plugin-name>"` (and `server: "<server-name>"` when it differs from the block key). Its tool references compile to Claude Code's plugin names, `mcp__plugin_<plugin>_<server>__<tool>`, with any character outside `A-Za-z0-9_-` replaced by `_`: in agent `tools` and `disallowed-tools`, skill `allowed-tools`, `settings { allow ask deny }` and hook matchers. An `mcp_tool` hook's `server` becomes `plugin:<plugin>:<server>`. An agent's `mcp-servers` entry naming a plugin's server is left out of the agent's `mcpServers` for now, and `validate` notes it: the scoped name is not yet verified there, and the agent's tools already reach the server. No `.mcp.json` entry is written for the server. In tool lists, permission rules and a hook's `if:`, only an entry whose tool part is the server's MCP name (`mcp__<key>`, `mcp__<key>__<tool>`) is rewritten; text inside a rule's argument, such as `Read(./mcp__playwright/**)`, stays as written. A hook matcher that names the server in a form scaffold can't rewrite, such as `mcp__(playwright|x)__.*`, is a V130 warning naming the form that fires. Before, a plugin's playwright server could only be named as a project server, so `mcp.playwright.*` compiled to `mcp__playwright__*`, which matches no tool, and the agent silently had no browser tools. A server without `from` compiles as before. Codex and Cursor write no entry for a plugin's server and warn.
+- Validation rule V133 (error): an `mcp-servers` entry's `from:` that is not `from: plugin "<plugin-name>"` (single quotes, `Plugin`, the whole value quoted, an empty or spaced name) stops `validate` and `scaffold` and names the expected form, where a near miss would have fallen back to a project server and silently lost the plugin's tools.
+- Validation rule V132 (warning) for `permissions:` words whose Claude Code compile is not what they read as. `permissions: auto` still compiles to `permissionMode: auto` and now warns that it is Claude Code's auto mode (a classifier approves actions without asking), not `autonomous`; write `autonomous` for the session's own mode. The docs no longer call `auto` the short form of `autonomous`.
+- Claude Code's own permission values `default`, `acceptEdits`, `dontAsk` and `bypassPermissions` are recognized `permissions:` values: they pass through as written, and V27 no longer warns that they are unrecognized.
+
+### Fixed
+
+- `import` reads an agent's `permissionMode: auto` as `permissions: auto`, not `autonomous`. `autonomous` writes no permissionMode, so an import followed by `scaffold` dropped Claude Code's auto mode from the agent file without a message; it is now written back, and validation names it (V132).
+
 ## [0.12.1] - 2026-11-17
 
 ### Security
