@@ -13,13 +13,16 @@
  */
 
 import type { CcValueType } from "../conformance/extract-schema.js";
-import { SETTINGS_KEYS, SETTINGS_DOC_DATE } from "./claude-code-settings-keys.js";
+import { SETTINGS_KEYS, GLOBAL_CONFIG_KEYS, SETTINGS_DOC_DATE } from "./claude-code-settings-keys.js";
 import { scanList } from "../parser/lexer.js";
 
 export type { CcValueType };
 
-/** Where a key lives. */
-export type CcSurface = "agent" | "skill" | "command" | "settings" | "mcp-server";
+/**
+ * Where a key lives. `global-config` is ~/.claude.json: no binding writes it,
+ * and its rows exist so validation can say why such a key is not written.
+ */
+export type CcSurface = "agent" | "skill" | "command" | "settings" | "mcp-server" | "global-config";
 
 /**
  * What Claude Code does with the key, measured by a live probe where one ran:
@@ -53,6 +56,10 @@ export interface CcKey {
   note?: string;
   /** settings only: whether a project's .claude/settings.json may set the key. */
   projectFile?: boolean;
+  /** The docs' removal line: Claude Code no longer reads the key, so it is not written. */
+  removed?: string;
+  /** The docs' deprecation line: Claude Code still reads the key, so it is written, with a warning. */
+  deprecated?: string;
 }
 
 const AGENTS_DOC = "https://code.claude.com/docs/en/sub-agents.md";
@@ -158,16 +165,27 @@ const SETTINGS_ENFORCEMENT: Record<string, Pick<CcKey, "enforcement" | "verified
   hooks: probed("refuses"),
 };
 
-const SETTINGS_ROWS: CcKey[] = SETTINGS_KEYS.map((k) => ({
-  surface: "settings",
+const docRow = (surface: "settings" | "global-config") => (k: (typeof SETTINGS_KEYS)[number]): CcKey => ({
+  surface,
   key: k.key,
   type: k.type,
   ...(k.values ? { values: k.values } : {}),
   doc: `${SETTINGS_DOC}#${k.key.toLowerCase().replace(/\./g, "")}`,
   projectFile: k.projectFile,
+  ...(k.removed ? { removed: k.removed } : {}),
+  ...(k.deprecated ? { deprecated: k.deprecated } : {}),
   ...(k.key === "autoCompactWindow" ? { min: 100000, max: 1000000 } : {}),
   ...(SETTINGS_ENFORCEMENT[k.key] ?? { verifiedOn: `docs ${SETTINGS_DOC_DATE}`, enforcement: "unknown" }),
-}));
+});
+
+const SETTINGS_ROWS: CcKey[] = SETTINGS_KEYS.map(docRow("settings"));
+
+/**
+ * Keys the settings reference scopes to `Global config`, which it defines as
+ * ~/.claude.json. Claude Code does not read them from a settings file, so no
+ * binding writes them; validation (V130) names them when an .at sets one.
+ */
+const GLOBAL_CONFIG_ROWS: CcKey[] = GLOBAL_CONFIG_KEYS.map(docRow("global-config"));
 
 /**
  * Whether Claude Code accepts a model name as written: an alias (optionally
@@ -178,7 +196,7 @@ export function isClaudeCodeModelName(model: string): boolean {
 }
 
 /** Every row. */
-export const CLAUDE_CODE_SCHEMA: readonly CcKey[] = [...AGENT_KEYS, ...SKILL_KEYS, ...COMMAND_KEYS, ...MCP_SERVER_KEYS, ...SETTINGS_ROWS];
+export const CLAUDE_CODE_SCHEMA: readonly CcKey[] = [...AGENT_KEYS, ...SKILL_KEYS, ...COMMAND_KEYS, ...MCP_SERVER_KEYS, ...SETTINGS_ROWS, ...GLOBAL_CONFIG_ROWS];
 
 const bySurface = new Map<CcSurface, Map<string, CcKey>>();
 for (const row of CLAUDE_CODE_SCHEMA) {

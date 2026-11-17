@@ -110,6 +110,10 @@ Available targets:
 - `claude-code` -- Claude Code agent files, settings, and MCP config (supported)
 - `codex`, `cursor`, `claude-workflow` -- experimental
 
+### Existing files and drift
+
+On a project that already has agent, skill or command files, scaffold writes only the frontmatter keys the `.at` states and never the body. It never widens a tool list, an allowed-tools list, a server list or a permission mode over a value it did not write: it keeps yours and reports it as drift. Once a scaffold run has happened with the `.at` and the file agreeing on a key, the `.at` owns that key and later `.at` edits to it apply. To keep a hand-narrowed value, don't scaffold with the .at stating the same value; use `validate --inventory` to see who owns each key.
+
 ## Visualize
 
 Generate an HTML visualization of your topology's flow graph:

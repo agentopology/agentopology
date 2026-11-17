@@ -5,7 +5,7 @@ import type { DocSettingsKey } from "../conformance/extract-schema.js";
 /** The date the settings reference page was read. */
 export const SETTINGS_DOC_DATE = "2026-11-17";
 
-/** Every key the settings reference documents with a type. */
+/** Every key the settings reference documents with a type, for a settings file. */
 export const SETTINGS_KEYS: readonly DocSettingsKey[] = [
   {"key":"advisorModel","type":"string","projectFile":true},
   {"key":"alwaysThinkingEnabled","type":"boolean","projectFile":true},
@@ -111,7 +111,7 @@ export const SETTINGS_KEYS: readonly DocSettingsKey[] = [
   {"key":"emojiCompletionEnabled","type":"boolean","projectFile":true},
   {"key":"fileSuggestion","type":"object","projectFile":true},
   {"key":"footerLinksRegexes","type":"list","projectFile":false},
-  {"key":"keybindingFlavor","type":"enum","values":["classic","readline"],"projectFile":true},
+  {"key":"keybindingFlavor","type":"enum","values":["classic","readline"],"projectFile":true,"deprecated":"Deprecated since v2.1.261 and has no effect. The prompt's word-editing keys always follow readline conventions, as in Bash. Claude Code still accepts `keybindingFlavor`, so a settings file that sets it stays valid."},
   {"key":"maxProseWidth","type":"number","projectFile":true},
   {"key":"prefersReducedMotion","type":"boolean","projectFile":true},
   {"key":"promptSuggestionEnabled","type":"boolean","projectFile":true},
@@ -135,10 +135,10 @@ export const SETTINGS_KEYS: readonly DocSettingsKey[] = [
   {"key":"viewMode","type":"enum","values":["default","verbose","focus"],"projectFile":true},
   {"key":"vimInsertModeRemaps","type":"object","projectFile":false},
   {"key":"voice","type":"object","projectFile":true},
-  {"key":"voiceEnabled","type":"boolean","projectFile":true},
+  {"key":"voiceEnabled","type":"boolean","projectFile":true,"deprecated":"Deprecated since v2.1.92, when the `voice` object replaced it. Claude Code still reads it so older settings files keep working, but new configurations should set `voice.enabled`."},
   {"key":"wheelScrollAccelerationEnabled","type":"boolean","projectFile":true},
   {"key":"attribution","type":"object","projectFile":true},
-  {"key":"includeCoAuthoredBy","type":"boolean","projectFile":true},
+  {"key":"includeCoAuthoredBy","type":"boolean","projectFile":true,"deprecated":"Deprecated since v2.0.62, when `attribution` replaced it. Claude Code still reads it, but new configurations should set `attribution`."},
   {"key":"includeGitInstructions","type":"boolean","projectFile":true},
   {"key":"prUrlTemplate","type":"string","projectFile":true},
   {"key":"attribution.commit","type":"string","projectFile":true},
@@ -195,7 +195,7 @@ export const SETTINGS_KEYS: readonly DocSettingsKey[] = [
   {"key":"worktree.location","type":"string","projectFile":false},
   {"key":"agentPushNotifEnabled","type":"boolean","projectFile":true},
   {"key":"awaySummaryEnabled","type":"boolean","projectFile":true},
-  {"key":"disableArtifact","type":"boolean","projectFile":true},
+  {"key":"disableArtifact","type":"boolean","projectFile":true,"deprecated":"Deprecated, and replaced by `enableArtifact`. Claude Code still honors `disableArtifact: true` as equivalent to `enableArtifact: false`, and ignores `disableArtifact: false`."},
   {"key":"disableDeepLinkRegistration","type":"enum","values":["disable"],"projectFile":true},
   {"key":"disableDesktopLocalSessions","type":"boolean","projectFile":false},
   {"key":"disableRemoteControl","type":"boolean","projectFile":true},
@@ -239,16 +239,20 @@ export const SETTINGS_KEYS: readonly DocSettingsKey[] = [
   {"key":"policyHelper.timeoutMs","type":"number","projectFile":false},
   {"key":"policyHelper.refreshIntervalMs","type":"number","projectFile":false},
   {"key":"wslInheritsWindowsSettings","type":"boolean","projectFile":false},
-  {"key":"autoConnectIde","type":"boolean","projectFile":false},
-  {"key":"autoInstallIdeExtension","type":"boolean","projectFile":false},
-  {"key":"claudeInChromeDefaultEnabled","type":"boolean","projectFile":false},
-  {"key":"copyFullResponse","type":"boolean","projectFile":false},
-  {"key":"copyOnSelect","type":"boolean","projectFile":false},
-  {"key":"defaultToAgentsView","type":"boolean","projectFile":false},
-  {"key":"diffTool","type":"enum","values":["auto","terminal"],"projectFile":false},
-  {"key":"externalEditorContext","type":"boolean","projectFile":false},
-  {"key":"leftArrowOpensAgents","type":"boolean","projectFile":false},
-  {"key":"permissionExplainerEnabled","type":"boolean","projectFile":false},
-  {"key":"prStatusFooterEnabled","type":"boolean","projectFile":false},
-  {"key":"teammateDefaultModel","type":"string","projectFile":false},
+];
+
+/** Keys whose Scope is Global config: they live in ~/.claude.json, and no binding writes them. */
+export const GLOBAL_CONFIG_KEYS: readonly DocSettingsKey[] = [
+  {"key":"autoConnectIde","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"autoInstallIdeExtension","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"claudeInChromeDefaultEnabled","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"copyFullResponse","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"copyOnSelect","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"defaultToAgentsView","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"diffTool","type":"enum","values":["auto","terminal"],"projectFile":false,"globalConfig":true},
+  {"key":"externalEditorContext","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"leftArrowOpensAgents","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"permissionExplainerEnabled","type":"boolean","projectFile":false,"globalConfig":true,"removed":"Removed in v2.1.257, together with the `Ctrl+E` command explanation on Bash and PowerShell permission prompts. Setting it has no effect on current versions."},
+  {"key":"prStatusFooterEnabled","type":"boolean","projectFile":false,"globalConfig":true},
+  {"key":"teammateDefaultModel","type":"string","projectFile":false,"globalConfig":true,"removed":"Removed in v2.1.234, together with its `/config` row Default teammate model. Setting it has no effect on current versions."},
 ];

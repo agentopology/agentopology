@@ -4497,11 +4497,21 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
   };
 
   for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    const global = ccKey("global-config", k);
+    if (global) {
+      const scope = `${k} is a ~/.claude.json global-config key, not a project setting; Claude Code does not read it from .claude/settings.json (the settings reference gives its Scope "Global config", which "means ~/.claude.json")`;
+      warn(global.removed
+        ? `extensions { claude-code { ${k} } }: ${scope}, and it is removed: "${global.removed}" So it is not written.`
+        : `extensions { claude-code { ${k} } }: ${scope}, so it is not written.`);
+      continue;
+    }
     const where = resolveSettingsKey(k);
+    if (where?.row?.removed) { warn(`extensions { claude-code { ${k} } } (${where.path}) is removed from Claude Code: "${where.row.removed}" So it is not written.`); continue; }
     if (!where) { err(`extensions { claude-code { ${k} } } is not a Claude Code settings key, so it is not written to settings.json.${near("settings", k)}`); continue; }
     if (where.row && where.row.projectFile === false) { err(`extensions { claude-code { ${k} } }: Claude Code reads ${where.path} only from user or managed settings, never from a project's .claude/settings.json, so it is not written.`); continue; }
     const c = coerceCcValue(where.row, v);
-    if (!c.ok) err(`extensions { claude-code { ${k} } } (${where.path}) ${c.reason}, so it is not written.`);
+    if (!c.ok) { err(`extensions { claude-code { ${k} } } (${where.path}) ${c.reason}, so it is not written.`); continue; }
+    if (where.row?.deprecated) warn(`extensions { claude-code { ${k} } } (${where.path}) is deprecated: "${where.row.deprecated}" It is still written to .claude/settings.json.`);
   }
 
   for (const n of ast.nodes) {

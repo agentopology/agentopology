@@ -299,12 +299,18 @@ describe("a list item YAML reads specially never makes the writer skip a file si
     const mine = "---\nname: helper\ndescription: my old description\n---\n\nMY SKILL BODY\n";
     put(SKILL, mine);
     const { out } = scaffold();
-    const after = read(SKILL);
+    let after = read(SKILL);
     expect(after).toMatch(/^description: Helps with TypeScript$/m);
     expect(after).toMatch(/^paths:\n {2}- "\*\.ts"$/m);
-    expect(after).toMatch(/^allowed-tools: Read$/m);
+    // allowed-tools approves tools the file approved none of: kept and said on a plain run.
+    expect(after).not.toMatch(/^allowed-tools:/m);
+    expect(out).toContain(`! ${SKILL}: allowed-tools kept as written: the .at would widen them (+Read); --force applies the .at's`);
     expect(after.endsWith("\n---\n\nMY SKILL BODY\n")).toBe(true);
     expect(out).toContain(`~ ${SKILL}: paths (absent) → [*.ts]`);
+    scaffold("--force");
+    after = read(SKILL);
+    expect(after).toMatch(/^allowed-tools: Read$/m);
+    expect(after.endsWith("\n---\n\nMY SKILL BODY\n")).toBe(true);
   });
 
   it("a key the patcher refuses to read is named with the file and the reason, and is a drift row", () => {

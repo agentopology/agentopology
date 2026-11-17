@@ -14,7 +14,7 @@ writes nothing that is not on it.
 
 | Field | Meaning |
 |---|---|
-| `surface` | `agent`, `skill`, `command`, `settings` or `mcp-server` |
+| `surface` | `agent`, `skill`, `command`, `settings`, `mcp-server` or `global-config` (`~/.claude.json`, which no binding writes) |
 | `key` | the key as Claude Code spells it; a settings key is its dotted path (`permissions.defaultMode`, `sandbox.enabled`) |
 | `type` | `string`, `boolean`, `number`, `list` (a string list), `enum`, `object`, `hooks` |
 | `values` | the allowed values of an `enum` |
@@ -24,9 +24,15 @@ writes nothing that is not on it.
 | `enforcedWhen` | the conditions the enforcement value holds under, when a probe found it depends on them: `path` (`subagent` or `session-agent`) and `afterTrust` (nothing happens until the folder is trusted) |
 | `note` | what the probe saw, when the value alone would mislead (agent `maxTurns` refuses for a subagent, not for a session agent) |
 | `projectFile` | settings only: whether a project's `.claude/settings.json` may set it (some keys are read from user or managed settings only) |
+| `removed` | the docs' removal line: Claude Code no longer reads the key, so it is not written and validation quotes the line |
+| `deprecated` | the docs' deprecation line: Claude Code still reads the key, so it is written, and validation quotes the line |
 
 The settings rows are generated from the settings reference page
-(`src/bindings/claude-code-settings-keys.ts`, do not edit by hand). The
+(`src/bindings/claude-code-settings-keys.ts`, do not edit by hand). A key
+whose Scope there is `Global config` lives in `~/.claude.json`, not in a
+settings file: it becomes a `global-config` row, never a settings row, so the
+binding cannot write it to `.claude/settings.json` and validation (V130) says
+where it lives. The
 frontmatter and `.mcp.json` rows are written by hand: those pages give no
 per-key type line to read.
 

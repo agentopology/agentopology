@@ -103,7 +103,9 @@ export function renderDrift(report: DriftReport): string[] {
       lines.push(`  ${r.path.padEnd(width)}  ${r.key}  ${r.state}  .at ${r.at}  ${why} (settings.json values the file holds are never replaced)`);
       continue;
     }
-    if (r.key === null || r.state === "blocked") {
+    // A kept-narrower row's detail is the line scaffold prints: what the
+    // .at would add or drop, and that --force applies it.
+    if (r.key === null || r.state === "blocked" || r.state === "kept-narrower") {
       lines.push(`  ${r.path.padEnd(width)}  ${r.key === null ? "" : `${r.key}  `}${r.state}  ${r.detail ?? ""}`);
       continue;
     }

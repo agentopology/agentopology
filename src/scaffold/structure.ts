@@ -13,6 +13,11 @@
  *   drift; --force writes D.
  * - all three differ: the file's value stays, reported as a conflict naming
  *   both values; --force writes D.
+ * - a capability key (tools, disallowedTools, mcpServers, permissionMode,
+ *   allowed-tools, disallowed-tools; see capability.ts) whose file value
+ *   scaffold did not write (no B, or L differs from B) and that D would
+ *   widen: the file's value stays, reported as `kept-narrower`; --force
+ *   writes D. A narrowing is written as above.
  * A key B holds that the .at no longer states leaves the file only when the
  * file still holds B; otherwise it stays and is reported. The body is never
  * written, with or without --force.
@@ -30,6 +35,7 @@ import {
   type FieldValue,
   type FrontmatterEdit,
 } from "./frontmatter-patch.js";
+import { keptWideningNote, widening } from "./capability.js";
 
 /** The patch for one file, or a refusal (`blocked`) when its frontmatter cannot be edited safely. */
 export function planStructurePatch(
@@ -101,6 +107,18 @@ export function planStructurePatch(
     if (unread) {
       const note = `${k} not written: ${unread}, so the .at's ${show(k, d)} may come from a misreading (kept the file's; edit it by hand)`;
       rows.push({ path, kind: spec.kind, id: spec.id, key: k, state: "blocked", at: d, file: l ?? null, base: b ?? null, detail: note });
+      notes.push(note);
+      if (b !== undefined) fields[k] = b;
+      continue;
+    }
+    // A capability key is never widened over a value scaffold did not
+    // write (no base, or the file no longer holds it): the user may have
+    // narrowed it on purpose. Kept and said; --force writes the .at's.
+    const wroteIt = b !== undefined && (same(k, l, b) || same(k, s, b));
+    const wider = !force && state === "at-ahead" && !wroteIt ? widening(spec.kind, k, l, d) : null;
+    if (wider) {
+      const note = keptWideningNote(k, wider);
+      rows.push({ path, kind: spec.kind, id: spec.id, key: k, state: "kept-narrower", at: d, file: l ?? null, base: b ?? null, detail: note });
       notes.push(note);
       if (b !== undefined) fields[k] = b;
       continue;
