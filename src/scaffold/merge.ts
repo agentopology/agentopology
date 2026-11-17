@@ -350,17 +350,42 @@ function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
   return group.hooks.some((h) => namesOwnedScript(h, scripts));
 }
 
+/** Words a binding writes before a script to run it (`bash <script>`), as `run:` names them. */
+const RUNNER = /^(?:python[0-9.]*|bash|sh|zsh|node|bun|deno|ruby|perl|tsx)$/;
+
+/** The folder a binding anchors a script path to: Claude Code's project dir, Codex's launcher root. */
+const ANCHOR = /^\$\{?(?:CLAUDE_PROJECT_DIR|AT_ROOT)\}?\//;
+
 /**
- * Whether a command that names one of the topology's scripts starts with a
- * program of the user's own that is not a topology script
- * (`./my-lint.sh <topology script>`): the user's command, never removed.
- * Any other command naming a topology script is the topology's, edited or
- * not, as in 0.11.x.
+ * Whether a command that names one of the topology's scripts is the command
+ * a binding writes for it, edited or not (as in 0.11.x): the script run by
+ * an interpreter (`bash "$CLAUDE_PROJECT_DIR/<script>"`, the Codex launcher's
+ * `bash "$AT_ROOT/<script>"`), or the script itself as the first word
+ * (`<script> --flag`). An appended argument, a command chained before or
+ * after it, still leaves it the topology's.
+ *
+ * Every other command naming a script is the user's, never removed: one
+ * that starts with a program of the user's own (`./my-lint.sh <script>`), or
+ * that only passes the script to one (`bash ./wrap.sh <script>`,
+ * `STRICT=1 ./env.sh <script>`, `node tools/audit.js <script>`,
+ * `cat <script> | ./audit.sh`). The first word's shape alone used to decide,
+ * and the last four were removed with no line.
  */
-function ownProgram(command: string, scripts: string[]): boolean {
-  const first = (command.trim().split(/\s+/)[0] ?? "").replace(/["']/g, "");
-  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first) || !first.includes("/")) return false;
-  return !scripts.includes(first.replace(/^\$\{?CLAUDE_PROJECT_DIR\}?\//, "").replace(/^\.\//, ""));
+function writesTopologyScript(command: string, scripts: string[]): boolean {
+  const raw = command.replace(/["']/g, "").trim().split(/\s+/);
+  const words = raw.map((w) => w.replace(ANCHOR, "").replace(/^\.\//, ""));
+  const first = words[0] ?? "";
+  if (scripts.includes(first)) return true;
+  // A program of the user's own, by its path as written (`./name`,
+  // `$CLAUDE_PROJECT_DIR/name`, `tools/name`), is the user's command (0.12.0).
+  // Test the raw word: stripping `./` first made `./name` look bare.
+  const firstRaw = raw[0] ?? "";
+  if (firstRaw.includes("/") && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(firstRaw)) return false;
+  return words.some(
+    (w, i) =>
+      (RUNNER.test(w) && scripts.includes(words[i + 1] ?? "")) ||
+      (/^\$\{?AT_ROOT\}?\//.test(raw[i]) && scripts.includes(w)),
+  );
 }
 
 /** A hook entry the merge kept although it sits with, or names, what the topology owns. */
@@ -399,9 +424,9 @@ export function keptHookCommands(
  * Returns undefined when no event keeps any group.
  *
  * Ownership is per hook entry, never per group. An entry is the topology's
- * when the .at generates it now, or when it names one of the topology's
- * scripts and does not start with a program of the user's own (see
- * ownProgram). The topology's entries that changed
+ * when the .at generates it now, or when it is the command a binding writes
+ * for one of the topology's scripts, edited or not (see
+ * writesTopologyScript). The topology's entries that changed
  * are replaced by the generated ones; every other entry stays where it is,
  * and each one that sits in a group with the topology's hooks, or names one
  * of its scripts, is reported in `kept`.
@@ -441,7 +466,7 @@ function mergeHooks(
     // hook on a project path the user owns stays, as in 0.11.x).
     const ours = (h: unknown) =>
       genIds.has(hookId(h)) ||
-      (namesOwnedScript(h, scripts) && !(isPlainObject(h) && typeof h.command === "string" && ownProgram(h.command, scripts)));
+      (namesOwnedScript(h, scripts) && isPlainObject(h) && typeof h.command === "string" && writesTopologyScript(h.command, scripts));
 
     const groups: unknown[] = [];
     for (const g of (Array.isArray(ex[event]) ? ex[event] : []) as unknown[]) {

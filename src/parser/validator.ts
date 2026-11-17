@@ -705,6 +705,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _blockFieldMisuseWarnings?: ValidationResult[];
   _unknownNameErrors?: ValidationResult[];
   _importErrors?: ValidationResult[];
+  _lostStructure?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;
 }
@@ -4131,6 +4132,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v128InventoryRoots(ast),
     ...v129NeedsOutside(ast),
     ...v130ClaudeCodePlacement(ast, opts),
+    ...v131LostStructure(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4393,6 +4395,19 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
   }
   return results;
+}
+
+/**
+ * V131: a block the source declares that the parse does not hold as written.
+ * Block ends are found by counting braces, and a brace inside a quoted
+ * string still counts, so a stray brace can end the topology or a block
+ * early and drop what follows without a message (a topology could parse to
+ * no agents and no settings). Collected at parse time by comparing that
+ * reading with a structural scan (src/parser/lost-structure.ts); every
+ * finding names the line where the parse went wrong.
+ */
+function v131LostStructure(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyASTWithParseErrors)._lostStructure ?? [];
 }
 
 /**

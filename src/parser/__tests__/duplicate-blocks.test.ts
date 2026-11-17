@@ -145,6 +145,14 @@ describe("a second copy of a single section is a V23 warning, never silent", () 
     });
   }
 
+  it("V131 says nothing about the unused copy: it is not a lost block", () => {
+    for (const [keyword, block] of Object.entries(SINGLE)) {
+      const src = IN_HEAD.has(keyword) ? topo(block("second")) : topo(block("first"), block("second"));
+      const v131 = validate(parse(src)).filter((r) => r.rule === "V131");
+      expect(v131, keyword).toEqual([]);
+    }
+  });
+
   it("one of each validates without V23", () => {
     for (const [keyword, block] of Object.entries(SINGLE)) {
       if (IN_HEAD.has(keyword)) continue;

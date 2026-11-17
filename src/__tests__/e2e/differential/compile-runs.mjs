@@ -158,6 +158,13 @@ const OLD_AT_NAMES = [
   "  return 1",
   "}",
 ].join("\n");
+/**
+ * After 0.12.0: the stdin runner check (a helper that hands a gated tool its arguments from standard input),
+ * as literal pieces (as0112-blocks-stdin.json, written once by freeze-stdin-blocks.mjs). The no-jq block
+ * follows one line that names the gated tools and the git steps.
+ */
+export const BLOCKS_STDIN = JSON.parse(fs.readFileSync(new URL("./as0112-blocks-stdin.json", import.meta.url), "utf8"));
+const STDIN_NOJQ = new RegExp(`  AT_STDIN_TOOLS=\\(${QW}(?: ${QW})*\\); AT_STDIN_GIT_STEPS='[^'\\n]*'\\n${reEsc(BLOCKS_STDIN.noJq)}\\n`, "g");
 /** Either no-jq block, 0.11.4's (letters) or the word reading's: exactly one of them must occur. */
 const anyNoJqBlock = (hook) => new RegExp(`(?:${noJqBlock(hook).source})|(?:${noJqWordsBlock(hook).source})`, "g");
 
@@ -185,10 +192,18 @@ export function as0112(path, content, on) {
   const hook = /^(before-action|before-edit|before-agent)\.sh$/.test(base) ? base : null;
   const reader = base === "before-action.sh" ? "" : base === "at-if.sh" ? "  " : null;
   if (!hook && reader === null) {
-    if (text.includes("at_git_read") || text.includes("# No jq (0.11.4)") || text.includes("at_words_has") || text.includes("at_brace_names")) throw new Error(`as0112: ${path} holds a 0.11.4 guard block`);
+    if (text.includes("at_git_read") || text.includes("# No jq (0.11.4)") || text.includes("at_words_has") || text.includes("at_brace_names") || text.includes("at_stdin_")) throw new Error(`as0112: ${path} holds a 0.11.4 guard block`);
     return text;
   }
   let t = text;
+  // the stdin runner check (after 0.12.0, its own commit), in a build that has it: cut first, exactly
+  if (t.includes("at_stdin_")) {
+    if (base === "before-action.sh") t = once(t, STDIN_NOJQ, "", "the no-jq stdin block", path);
+    if (reader !== null) {
+      t = once(t, indent(BLOCKS_STDIN.jqFunctions, reader) + "\n", "", "at_stdin_runner", path);
+      t = once(t, indent(BLOCKS_STDIN.jqCheck, reader), reader + BLOCKS_STDIN.jqCheckWas, "the stdin check", path);
+    }
+  }
   if (hook) {
     t = once(t, anyNoJqBlock(hook), "", "the no-jq block", path);
     if (OLD_JQ_LINE[hook]) t = once(t, TRAP, (m) => `${m}\n${OLD_JQ_LINE[hook]}`, "the trap line", path);

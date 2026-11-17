@@ -9,7 +9,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
 // @ts-expect-error plain JavaScript module, shared with freeze.mjs
-import { BLOCKS_0114, BLOCKS_WORDS, as0112 } from "./differential/compile-runs.mjs";
+import { BLOCKS_0114, BLOCKS_WORDS, BLOCKS_STDIN, as0112 } from "./differential/compile-runs.mjs";
 // @ts-expect-error plain JavaScript module, shared with freeze-hooks.mjs
 import { TOPOLOGIES } from "./differential/hook-corpus.mjs";
 
@@ -75,7 +75,10 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
         expect(count(s.content, indent(BLOCKS_0114.atGitAlias, s.reader)), `${s.path}: at_git_alias`).toBe(1);
         expect(count(s.content, s.reader + BLOCKS_0114.aliasCall), `${s.path}: at_git_alias call`).toBe(1);
         expect(count(s.content, indent(BLOCKS_WORDS.atNames, s.reader)), `${s.path}: at_names`).toBe(1);
+        expect(count(s.content, indent(BLOCKS_STDIN.jqFunctions, s.reader)), `${s.path}: at_stdin_runner`).toBe(1);
+        expect(count(s.content, indent(BLOCKS_STDIN.jqCheck, s.reader)), `${s.path}: the stdin check`).toBe(1);
       }
+      if (s.hook === "before-action.sh") expect(count(s.content, BLOCKS_STDIN.noJq), `${s.path}: the no-jq stdin block`).toBe(1);
       if (s.hook === "before-action.sh") expect(s.content.match(/^AT_GIT_STEPS='[^'\n]*'$/gm), s.path).toHaveLength(1);
       // the undo changes the text and leaves none of the blocks behind
       const undone = as0112(s.path, s.content, true);
@@ -88,6 +91,8 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
       expect(undone).not.toContain("at_glob_program");
       expect(undone).not.toContain("at_brace_names");
       expect(undone).not.toContain("AT_GIT_STEPS=");
+      expect(undone).not.toContain("at_stdin_");
+      expect(undone).not.toContain("AT_STDIN_");
     }
   });
 
@@ -107,6 +112,11 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
     // (the step reader's copy at column 0, not the no-jq block's indented one)
     expect(() => as0112(action.path, action.content.replace("\n  case $b in *.exe|*.cmd|*.bat|*.com) b=${b%.*} ;; esac", "\n  case $b in *.exe) b=${b%.*} ;; esac"), true)).toThrow(/at_names occurs 0 times/);
     expect(() => as0112("x/other.sh", "at_git_read", true)).toThrow(/holds a 0.11.4 guard block/);
+    // the stdin runner check: a piece changed or twice
+    expect(() => as0112(action.path, action.content.replace(BLOCKS_STDIN.jqCheck, "# gone\n    fi"), true)).toThrow(/the stdin check occurs 0 times/);
+    expect(() => as0112(action.path, action.content + "\n" + BLOCKS_STDIN.jqFunctions + "\n", true)).toThrow(/at_stdin_runner occurs 2 times/);
+    expect(() => as0112(action.path, action.content.replace("set +u; if at_stdin_program", "set +u; if  at_stdin_program"), true)).toThrow(/no-jq stdin block occurs 0 times/);
+    expect(() => as0112("x/other.sh", "at_stdin_runner", true)).toThrow(/holds a 0.11.4 guard block/);
   });
 
   it("off (a 0.11.2 or 0.11.3 build), the text is used as is", () => {

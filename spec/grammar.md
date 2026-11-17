@@ -23,7 +23,7 @@ Created by Nadav Naveh
 # single-line comment
 ```
 
-Everything after `#` until end-of-line is ignored.
+Everything after `#` until end-of-line is ignored, braces included: a `{` or `}` in a comment never opens or closes a block. A `#` starts a comment at the start of a line or after whitespace, outside a quoted string and outside a `prompt { }` block (there it is text, such as a Markdown heading); a `#` inside a word, as in a URL fragment, is not a comment.
 
 ### Primitive Types
 

@@ -1,0 +1,4 @@
+{
+  "deny": "[\"Read(./.env)\", \"Bash(rm -rf *)\"]",
+  "allow": "[\"Bash(npm test)\"]"
+}
