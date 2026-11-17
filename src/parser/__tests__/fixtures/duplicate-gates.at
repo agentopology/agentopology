@@ -1,0 +1,37 @@
+topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "two gates blocks"
+  }
+  agent alpha {
+    model: sonnet
+    prompt {
+      Do alpha.
+    }
+  }
+  agent beta {
+    model: haiku
+    prompt {
+      Do beta.
+    }
+  }
+  flow {
+    alpha -> beta
+  }
+  gates {
+    gate g1 {
+      after: alpha
+      before: beta
+      run: "scripts/check.sh"
+      on-fail: halt
+    }
+  }
+  gates {
+    gate g2 {
+      after: alpha
+      before: beta
+      run: "scripts/check2.sh"
+      on-fail: halt
+    }
+  }
+}

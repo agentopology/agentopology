@@ -87,13 +87,13 @@ function wordsInOrder(words, list) {
   return i === list.length;
 }
 
-const LEAD = ["if", "then", "elif", "else", "while", "until", "do", "!", "{", "time"];
+export const LEAD = ["if", "then", "elif", "else", "while", "until", "do", "!", "{", "time"];
 const READS = ["cat", "ls", "head", "tail", "wc", "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "stat", "file", "diff", "cmp", "md5sum",
   "sha1sum", "sha256sum", "shasum", "du", "tree", "realpath", "basename", "dirname", "readlink", "test", "[", "true", "false", "bat", "jq",
   "get-content", "gc", "select-string", "sls"];
-const GIT_READS = ["status", "diff", "log", "show", "add", "commit", "blame", "ls-files", "grep", "restore", "rm", "mv", "branch", "tag"];
+export const GIT_READS = ["status", "diff", "log", "show", "add", "commit", "blame", "ls-files", "grep", "restore", "rm", "mv", "branch", "tag"];
 const RUNS = (x) => /^(-c.*|-x|-e|--exec.*|--extcmd.*|--command.*|--eval.*|--pre|--pre=.*|--ext-diff|\+.*|.*alias.*|!.*)$/.test(x);
-function readsOnly(base, args) {
+export function readsOnly(base, args) {
   if (args.some(RUNS)) return false;
   if (base === "git") {
     if (args.some((x) => x === "run" || x === "exec" || x.startsWith("--exec"))) return false;

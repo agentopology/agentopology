@@ -21,6 +21,10 @@
  * After 0.11.4 (the no-jq word reading): differential/hooks-0114.json is the same corpus frozen with a
  * v0.11.4 build, and differential/hooks-0114-words-flips.json the declared no-jq pairs it frees
  * (declare-flips-words.mjs). The same one run of this build is held to both.
+ *
+ * After 0.12.0: differential/hooks-0114-stdin-closed.json is the declared 0 -> 2 list for a helper that
+ * hands a gated tool its arguments from standard input (declare-flips-stdin.mjs, from the topologies'
+ * gated words). Every pair of it must close, with jq and without; no other pair may move.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -53,6 +57,14 @@ const wordsDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-
 const frozen0114 = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114.json"), "utf8")) as { version: string; count: number; rows: Pair[] };
 /** The declared 0->2 list, kept apart: an inline git alias that ran a gated step under another name. */
 const closedDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-closed.json"), "utf8")) as { count: number; closed: Array<Omit<Pair, "exit"> & { why: string }> };
+/**
+ * The declared 0->2 list for a helper that hands a gated tool its arguments from standard input
+ * (declare-flips-stdin.mjs, written from the topologies' gated words, run on both frozen 0.11.4 corpora).
+ */
+const stdinDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-stdin-closed.json"), "utf8")) as { count: number; closed: Array<Omit<Pair, "exit"> & { why: string }> };
+const stdinSet = new Set<string>(stdinDeclared.closed.map((f) => pairKey(f) as string));
+/** A pair of the declared stdin list that went from 0 to 2, as declared. */
+const stdinClosed = (k: string, before: number | null | undefined, exit: number | null) => stdinSet.has(k) && before === 0 && exit === 2;
 
 describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for the declared flips", () => {
   let now: Pair[] = [];
@@ -83,17 +95,21 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     for (const r of now) {
       const k = pairKey(r);
       const before = was.get(k);
-      if (before === r.exit) continue;
+      if (before === r.exit || stdinClosed(k, before, r.exit)) continue;
       if (before === 2 && r.exit === 0 && flipsDeclared.has(k)) flipped.push(k);
       else if (before === 0 && r.exit === 2 && closedSet.has(k)) closed.push(k);
       else wrong.push(`${k}: ${before} -> ${r.exit}${flipsDeclared.has(k) || closedSet.has(k) ? "" : " (not declared)"}`);
     }
-    const missing = [...flipsDeclared].filter((k) => !flipped.includes(k));
+    // a declared 2->0 word flip that the declared stdin list closes again exits 2, as 0.11.2 did
+    const exitNow = new Map(now.map((r) => [pairKey(r), r.exit]));
+    const reclosed = [...flipsDeclared].filter((k) => stdinSet.has(k) && was.get(k) === 2 && exitNow.get(k) === 2);
+    const missing = [...flipsDeclared].filter((k) => !flipped.includes(k) && !reclosed.includes(k));
     const missingClosed = [...closedSet].filter((k) => !closed.includes(k));
     expect(wrong, `${wrong.length} pairs changed outside the declared lists:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
     expect(missing, `${missing.length} declared 2->0 flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
     expect(missingClosed, `${missingClosed.length} declared 0->2 (inline alias) did not happen:\n${missingClosed.join("\n")}`).toEqual([]);
-    expect(flipped.length).toBe(declared.count + wordsDeclared.count);
+    expect(reclosed.every((k) => k.includes("|nojq|")), reclosed.join("\n")).toBe(true);
+    expect(flipped.length).toBe(declared.count + wordsDeclared.count - reclosed.length);
     expect(closed.length).toBe(closedDeclared.count);
   });
 
@@ -128,13 +144,23 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     expect(wordsDeclared.flips.filter((f) => f.jq)).toEqual([]);
   });
 
-  it("against the frozen 0.11.4 run: with jq, every pair exits as 0.11.4's did", () => {
+  it("against the frozen 0.11.4 run: with jq, every pair exits as 0.11.4's did, except the declared stdin list (0 -> 2)", () => {
     const was = new Map(frozen0114.rows.map((r) => [pairKey(r), r.exit]));
-    const changed = now.filter((r) => r.jq && was.get(pairKey(r)) !== r.exit).map((r) => `${pairKey(r)}: ${was.get(pairKey(r))} -> ${r.exit}`);
+    const changed = now.filter((r) => r.jq && was.get(pairKey(r)) !== r.exit && !stdinClosed(pairKey(r), was.get(pairKey(r)), r.exit))
+      .map((r) => `${pairKey(r)}: ${was.get(pairKey(r))} -> ${r.exit}`);
     expect(changed, changed.join("\n")).toEqual([]);
   });
 
-  it("against the frozen 0.11.4 run: with no jq, every pair exits as 0.11.4's did, except the declared word flips (2 -> 0), exactly", () => {
+  it("against the frozen 0.11.4 run: the declared stdin list (a helper that hands a gated tool its arguments from standard input) goes 0 -> 2, every pair of it", () => {
+    expect(stdinDeclared.closed.length).toBe(stdinDeclared.count);
+    expect(stdinDeclared.count).toBeGreaterThan(0);
+    const was = new Map(frozen0114.rows.map((r) => [pairKey(r), r.exit]));
+    const exit = new Map(now.map((r) => [pairKey(r), r.exit]));
+    const missing = [...stdinSet].filter((k) => !stdinClosed(k, was.get(k), exit.get(k) ?? null));
+    expect(missing, missing.join("\n")).toEqual([]);
+  });
+
+  it("against the frozen 0.11.4 run: with no jq, every pair exits as 0.11.4's did, except the declared word flips (2 -> 0) and the declared stdin list (0 -> 2), exactly", () => {
     const was = new Map(frozen0114.rows.map((r) => [pairKey(r), r.exit]));
     const flipsDeclared = new Set<string>(wordsDeclared.flips.map((f) => pairKey(f) as string));
     const flipped: string[] = [];
@@ -142,7 +168,7 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     for (const r of now.filter((x) => !x.jq)) {
       const k = pairKey(r);
       const before = was.get(k);
-      if (before === r.exit) continue;
+      if (before === r.exit || stdinClosed(k, before, r.exit)) continue;
       if (before === 2 && r.exit === 0 && flipsDeclared.has(k)) flipped.push(k);
       else wrong.push(`${k}: ${before} -> ${r.exit}${flipsDeclared.has(k) ? "" : " (not declared)"}`);
     }

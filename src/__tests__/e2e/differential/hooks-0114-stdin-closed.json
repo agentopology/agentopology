@@ -1,0 +1,4 @@
+{"count":4,"closed":[{"topology":"show","binding":"claude-code","hook":"before-action.sh","input":"echo s1 | xargs ./media kit","jq":true,"why":"a helper hands the gated tool its arguments from standard input"},
+{"topology":"show","binding":"claude-code","hook":"before-action.sh","input":"echo s1 | xargs ./media kit","jq":false,"why":"a helper hands the gated tool its arguments from standard input"},
+{"topology":"show","binding":"codex","hook":"before-action.sh","input":"echo s1 | xargs ./media kit","jq":true,"why":"a helper hands the gated tool its arguments from standard input"},
+{"topology":"show","binding":"codex","hook":"before-action.sh","input":"echo s1 | xargs ./media kit","jq":false,"why":"a helper hands the gated tool its arguments from standard input"}]}

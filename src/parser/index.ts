@@ -105,6 +105,7 @@ function namedSubBlocks(body: string, skipNested = false): Array<{ name: string;
   return out;
 }
 import { findUnknownNames } from "./known-fields.js";
+import { findLostStructure } from "./lost-structure.js";
 import { SINGLE_SECTIONS } from "./sections.js";
 
 // Re-export AST types for convenience
@@ -2910,6 +2911,7 @@ export function parse(source: string): TopologyAST {
     _misplacedBlockErrors?: typeof misplacedBlockErrors;
     _unknownMemorySubBlockWarnings?: typeof unknownMemorySubBlockWarnings;
     _blockFieldMisuseWarnings?: typeof blockFieldMisuseWarnings;
+    _lostStructure?: ReturnType<typeof findLostStructure>;
     _sourceMap?: Record<string, number>;
   } = {
     topology,
@@ -2984,6 +2986,12 @@ export function parse(source: string): TopologyAST {
   }
   if (unknownNameErrors.length > 0) {
     ast._unknownNameErrors = unknownNameErrors;
+  }
+
+  // V131: a block the source declares that the parse does not hold as written.
+  const lostStructure = findLostStructure(source, isFragment ? "fragment" : "topology", new Set(nodes.map((n) => n.id)));
+  if (lostStructure.length > 0) {
+    ast._lostStructure = lostStructure;
   }
 
   // Attach source map for line number tracking in validation results.

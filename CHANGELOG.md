@@ -2,6 +2,23 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.12.1] - 2026-11-17
+
+### Security
+
+- The generated step guard closes additional ways to reach a gated command: a helper that hands a gated tool its arguments from standard input is refused, with jq and without it. The tool counts only when it is the program the helper runs, read from each helper's own option list with letter case as written, so the helper running another program that merely names the tool still runs.
+
+### Changed behaviour
+
+- A topology that parses to less than its source declares now fails `validate` and `scaffold` (V131) where it used to pass with parts silently missing. If an upgrade turns a file red with V131, the message names the line where parsing stopped: balance the braces there, or move a brace out of a quoted string.
+
+### Fixed
+
+- Old scaffolds wrote deny rules where Claude Code doesn't read them; run `validate --inventory` to find them. agentopology 0.11.4 and earlier wrote an `extensions { claude-code { deny: [...], allow: [...] } }` list into the top level of `.claude/settings.json` as a string, and Claude Code reads permission rules only under `permissions`, so those rules refused nothing. `validate --inventory`, `guard --check` and `scaffold` now print one line per `allow`, `deny` or `ask` list found at the top level of `.claude/settings.json` or `.claude/settings.local.json`, with the rules and where they go, for example `! .claude/settings.json: "deny" at the top level is not read by Claude Code; move ["Read(./.env)"] into "permissions": { "deny": [...] }`. Move them by hand: nothing rewrites the file, and no exit code changes.
+- A `{` or `}` inside a `#` comment no longer opens or closes a block. A comment such as `# }` in an agent, or a trailing `model: sonnet # see } note`, could end the topology early: every agent and the settings were dropped, `validate` still said all rules passed and `scaffold` wrote no agents and no `settings.json`, so the deny rules were silently missing. A `#` inside a quoted string, inside a prompt, or inside a word (a URL fragment) is still text, not a comment.
+- A topology that parses to less than its source declares is now an error (V131), never a silent partial or empty parse. When a brace inside a quoted string, or a brace that does not balance, ends the topology or a block before its written end, `validate` and `scaffold` exit 1 and name the line where parsing stopped and the blocks that would not be read. A second copy of a section that may appear once, such as two `gates { }` blocks, stays a V23 warning (only the first copy is used) and is not reported as lost.
+- `scaffold` no longer deletes a hook command of your own that names one of the topology's scripts when its first word is an interpreter or a variable, such as `bash ./wrap.sh <script>`, `STRICT=1 ./check.sh <script>`, `node tools/audit.js <script>` or `cat <script> | ./audit.sh`. It is kept, with `--force` and `--prune` too, and scaffold prints `kept a command the .at does not generate` for it, in `.claude/settings.json` and `.codex/hooks.json`. A command is the topology's only when it is the command the binding writes for one of its scripts; an edited copy of that command (an argument added, a command chained to it) is still replaced, as before.
+
 ## [0.12.0] - 2026-11-17
 
 ### Breaking

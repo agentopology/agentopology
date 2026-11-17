@@ -61,6 +61,7 @@ import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
@@ -574,6 +575,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     lines[0] = lines[0].replace("coverage:", `coverage (union of ${files.length} files):`);
     for (const line of lines) console.log(`  ${line}`);
     console.log("");
+    printTopLevelPermissions(root);
     if (u.missing.length) failed = true;
   }
   printVersionLines(target);
@@ -611,7 +613,16 @@ function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefi
   const r = coverageResult(ast, items, root, user);
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
+  printTopLevelPermissions(root);
   return r.missing.length === 0;
+}
+
+/** Warn only: allow / deny / ask lists at the top level of the project's settings files, and the move. Changes no exit code. */
+function printTopLevelPermissions(root: string): void {
+  const lines = topLevelPermissionLines(root);
+  if (lines.length === 0) return;
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+  console.log("");
 }
 
 /**
@@ -761,8 +772,11 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     settingsFile && settingsOnDisk && fs.existsSync(settingsOnDisk) && fs.statSync(settingsOnDisk).isFile()
       ? keptSettings(fs.readFileSync(settingsOnDisk, "utf-8"), settingsFile.content, SETTINGS_PATH).map((k) => k.line)
       : [];
+  // Warn only: rules at the top level of a settings file stay where they are (the merge never moves a user's keys).
+  const topLevelLines = targetName === "claude-code" ? topLevelPermissionLines(basePath) : [];
   const printKeptSettings = (): void => {
     for (const line of keptSettingLines) console.log(`  ${c.bold("!")} ${c.yellow(line)}`);
+    for (const line of topLevelLines) console.log(`  ${c.yellow(line)}`);
   };
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);

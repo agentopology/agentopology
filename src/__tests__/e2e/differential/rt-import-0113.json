@@ -187,7 +187,7 @@
    "name": "rt 27: echo \"}\"",
    "import": {
     "code": 2,
-    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  1 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 1 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
+    "output": "Importing from claude-code files in .\n\n  Written: <ROOT>/t.at\n\n  Flow: none found. Nothing on disk records one, so none was invented.\n  Flow: 0 of 1 agents wired\n  Flow unknown for: a (imported as invocation: manual)\n\n  2 error(s), 0 warning(s) in generated file.\n  Run agentopology validate <ROOT>/t.at for details.\n\nimport: the .at it wrote has 2 validation error(s); fix them, or run validate <ROOT>/t.at for details\n"
    }
   },
   {

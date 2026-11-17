@@ -183,12 +183,14 @@ export function extractBlock(
 /**
  * The text block depth is counted on. Lookups (where a block or a field is)
  * read {@link maskProse}; depth (where a block ends) is counted as 0.11.4
- * counted it, on the source itself: a brace inside a quoted string still
- * counts. A prompt's content balances its own braces (that is where the
- * prompt ends), so counting it changes no depth outside it.
+ * counted it, on the source itself, except that a `#` comment's content is
+ * blanked: a brace in a comment is text and never opens or closes a block.
+ * A brace inside a quoted string still counts. A prompt's content balances
+ * its own braces (that is where the prompt ends), so counting it changes no
+ * depth outside it; a `#` inside a prompt or a quoted string is not a comment.
  */
 export function braceText(src: string): string {
-  return src;
+  return blankProse(src, false);
 }
 
 /**
@@ -366,6 +368,25 @@ export function scanList(src: string, open: number): ScannedList {
  * whitespace, as in {@link stripComments}.
  */
 export function maskProse(src: string): string {
+  return blankProse(src, true);
+}
+
+/**
+ * The content ranges `[start, end)` of every double-quoted string outside a
+ * prompt and a comment, as {@link maskProse} reads them.
+ */
+export function quotedStrings(src: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  blankProse(src, false, (a, b) => spans.push([a, b]));
+  return spans;
+}
+
+/**
+ * Scan `src` for prompts, quoted strings and `#` comments (in reading order:
+ * a `#` inside a string or a prompt is not a comment) and blank every
+ * comment's content; with `all`, also the content of every string and prompt.
+ */
+function blankProse(src: string, all: boolean, onString?: (start: number, end: number) => void): string {
   const out = src.split("");
   const blank = (a: number, b: number) => {
     for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " ";
@@ -379,7 +400,8 @@ export function maskProse(src: string): string {
       let j = i + 1;
       while (j < n && src[j] !== "\n" && src[j] !== '"') j += src[j] === "\\" && src[j + 1] !== "\n" ? 2 : 1;
       j = Math.min(j, n);
-      blank(i + 1, j);
+      onString?.(i + 1, j);
+      if (all) blank(i + 1, j);
       i = j < n && src[j] === '"' ? j + 1 : j;
       continue;
     }
@@ -402,7 +424,7 @@ export function maskProse(src: string): string {
           j++;
         }
         // The content is prose; the closing brace is structure.
-        blank(start, j);
+        if (all) blank(start, j);
         i = j;
         continue;
       }

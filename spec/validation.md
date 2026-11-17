@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 130 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 131 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -804,6 +804,7 @@ through the validator like any other rule.
 | V128 | error | An `inventory { roots }` entry is an absolute path, a home path (`~`) or holds `..`; a root must be a folder inside the project |
 | V129 | error | `needs memory:` is not a `~/<path>` under the user's home (an absolute path or `..` is refused), or a `user-skills` or `connectors` entry is a path instead of a bare name |
 | V130 | warning | The `.at` states something Claude Code cannot be given, so it is not written: an `extensions { claude-code }` key Claude Code does not have on that surface (topology = settings.json, agent = agent frontmatter, skill or `runs: inline/fork` agent = skill frontmatter; the message names the nearest key), a value of the wrong type or outside the documented values, a settings key a project's settings.json cannot set, or a claude-code extension on a hook or gate; and, for target claude-code or none, an agent's `sandbox` or `fallback-chain`, a `settings { sandbox }` that is not true/false, or a `settings { fallback-chain }` naming a model Claude Code cannot run. The keys are in `src/bindings/claude-code-schema.ts` |
+| V131 | error | A block the source declares is not in the parse as written: a brace inside a quoted string, or a brace that does not balance, ends the topology or a block before its written end, so what follows would be dropped without a message. The message names the line where parsing stopped and the blocks that are not read (a `#` comment's braces are text and never count). The unused second copy of a single section, such as a second `gates { }` block, is a V23 warning and not reported here |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

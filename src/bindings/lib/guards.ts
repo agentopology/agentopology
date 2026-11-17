@@ -380,6 +380,195 @@ const PROGRAM_WORDS: string[] = [
 ];
 
 /**
+ * at_stdin_runner WORD (MATCH_FUNCTIONS, the no-jq stdin check): the program word WORD (at_names) runs another
+ * program with arguments it reads from standard input or a file, so a step's words can reach that program
+ * without being written in the command.
+ */
+const STDIN_RUNNER_FUNCTION: string[] = [
+  "# at_stdin_runner WORD: WORD (at_names) runs another program with arguments it reads from standard input.",
+  "at_stdin_runner() {",
+  "  local x",
+  "  for x in xargs parallel rush xe xjobs; do at_names \"$1\" \"$x\" && return 0; done",
+  "  return 1",
+  "}",
+  "# at_stdin_optarg R X: the option word X, given to the stdin runner R, may take the next word as its value.",
+  "# Each runner's own options, letters case-sensitive: so, letters that take no value; sa, letters whose value",
+  "# is optional and only attached (xargs -i[str] -l[n] -e[str]); sv, letters that take one, attached or the",
+  "# next word; sl, long names that take no value (xargs' --eof and --replace take one only after =; parallel's",
+  "# long names in any letter case). In a letter group, a letter that takes a value takes the rest of the word,",
+  "# or the next word when it is last. A long option with =VALUE takes no next word. Any other option (an",
+  "# abbreviation, a letter not listed, a runner named by a glob, parallel's +X) may take it.",
+  "at_stdin_optarg() {",
+  "  local x=$2 r i c so= sa= sv= sl=",
+  "  r=$(lower \"${1##*/}\"); case $r in *.exe|*.cmd|*.bat|*.com) r=${r%.*} ;; esac",
+  "  case $r in",
+  "    xargs) so=0oprtx; sa=eil; sv=adEIJLnPRsS",
+  "      sl=' null no-run-if-empty verbose interactive exit open-tty show-limits help version eof replace ' ;;",
+  "    parallel) so=0MTVXYghkmopqrtuvx; sv=BCDEHIJLNPSUWadjns",
+  "      sl=' bar bg bibtex cat cf citation cleanup color color-fail color-failed colorfail colorfailed colour'",
+  "      sl+=' colour-fail colour-failed colourfail colourfailed compress controlmaster csv ctag ctrl-c ctrlc dr'",
+  "      sl+=' dry-run dryrun embed eta exit fg fifo files files0 filter-host filter-hosts filterhosts gnu group'",
+  "      sl+=' hashbang help hgrp hostgroup hostgroups hostgrp interactive keep-order keeporder latest-line'",
+  "      sl+=' latestline lb line-buffer line-buffered linebuffer linebuffered link ll max-line-length-allowed'",
+  "      sl+=' maxlinelengthallowed nn no-ctrl-c no-ctrlc no-k no-keep-order no-notice no-run-if-empty noctrlc'",
+  "      sl+=' nok nokeeporder nonall nonotice norunifempty noswap null number-of-cores number-of-cpus'",
+  "      sl+=' number-of-sockets number-of-threads numberofcores numberofcpus numberofsockets numberofthreads'",
+  "      sl+=' onall open-tty output-as-files output-as-files0 outputasfiles outputasfiles0 pipe pipe-part'",
+  "      sl+=' pipepart plain plus progress quote record-env recordenv regex regexp remove-rec-sep removerecsep'",
+  "      sl+=' resume resume-failed resumefailed retry-failed retryfailed round round-robin roundrobin rrs'",
+  "      sl+=' semaphore session shebang shell-quote shell_quote shellquote show-limits showlimits shuf silent'",
+  "      sl+=' skip-first-line skipfirstline spreadstdin tag tee tmux tmux-pane tmuxpane tollef transfer tty'",
+  "      sl+=' ungroup use-cores-instead-of-threads use-cpus-instead-of-cores use-sockets-instead-of-threads'",
+  "      sl+=' usecoresinsteadofthreads usecpusinsteadofcores usesocketsinsteadofthreads verbose version wait'",
+  "      sl+=' will-cite willcite xapply xargs ' ;;",
+  "    rush) so=IRVcehkq; sv=CDJQTWdijnortvw",
+  "      sl=' continue dry-run escape eta help immediate-output keep-order pipe print-retry-output'",
+  "      sl+=' propagate-exit-status stop-on-error verbose version wait-for-process-regexp ' ;;",
+  "    xe) so=0FLRanpqv; sv=AINfjs ;;",
+  "    xjobs) so=01NVdehnprt; sv=jlqsv ;;",
+  "  esac",
+  "  [[ $x == +* ]] && return 0",
+  "  if [[ $x == --* ]]; then",
+  "    [[ $x == *=* ]] && return 1",
+  "    x=${x#--}; [ \"$r\" = parallel ] && x=$(lower \"$x\")",
+  "    [[ $sl == *\" $x \"* ]] && return 1",
+  "    return 0",
+  "  fi",
+  "  for ((i=1; i<${#x}; i++)); do",
+  "    c=${x:i:1}",
+  "    [[ $so == *\"$c\"* ]] && continue",
+  "    [[ $sa == *\"$c\"* ]] && return 1",
+  "    if [[ $sv == *\"$c\"* ]]; then [ \"$((i+1))\" -eq \"${#x}\" ]; return; fi",
+  "    return 0",
+  "  done",
+  "  return 1",
+  "}",
+  "# at_stdin_wraps X: the program X runs its own arguments as a command (a wrapper, a shell, find, a stdin runner).",
+  "at_stdin_wraps() {",
+  "  local x",
+  "  for x in env sudo doas nice nohup timeout command exec stdbuf ionice chrt taskset setsid time unbuffer sh bash zsh dash ksh fish busybox find; do",
+  "    at_names \"$1\" \"$x\" && return 0",
+  "  done",
+  "  at_stdin_runner \"$1\"",
+  "}",
+  "# at_stdin_prog R W...: the words W after the stdin runner R that may be the program R runs: past R's options",
+  "# (a word starting with -, or with + for parallel, which reads +X as an option),",
+  "# the first word that is no option's value (a word an option may take as its value may be the program too).",
+  "# Sets AT_STDIN_CAND to their offsets in W, and AT_STDIN_WRAP to 1 + the offset of the first of them that runs",
+  "# its own arguments (at_stdin_wraps), every word after it a possible program as well, or to 0.",
+  "at_stdin_prog() {",
+  "  local r=$1 j x m=0",
+  "  local -a v",
+  "  shift; v=(\"$@\"); AT_STDIN_CAND=(); AT_STDIN_WRAP=0",
+  "  for ((j=0; j<${#v[@]}; j++)); do",
+  "    x=${v[j]}",
+  "    if [ \"$m\" = 0 ] && { [[ $x == -?* ]] || { [[ $x == +?* ]] && at_names \"$r\" parallel; }; }; then",
+  "      if [ \"$x\" = -- ]; then m=1; elif at_stdin_optarg \"$r\" \"$x\"; then m=2; fi",
+  "      continue",
+  "    fi",
+  "    AT_STDIN_CAND+=(\"$j\")",
+  "    [ \"$AT_STDIN_WRAP\" = 0 ] && at_stdin_wraps \"$x\" && AT_STDIN_WRAP=$((j+1))",
+  "    [ \"$m\" = 2 ] || return 0",
+  "    m=0",
+  "  done",
+  "  return 0",
+  "}",
+];
+
+/** The stdin runner check of the step reader (MATCH_FUNCTIONS): its functions, one block of fixed text. */
+export const STDIN_JQ_FUNCTIONS: string[] = [
+  ...STDIN_RUNNER_FUNCTION,
+  "# at_stdin_fed I (in _seg_steps): word I is the program a stdin runner (at_stdin_runner) from the segment's",
+  "# program on runs (at_stdin_prog), or comes after one such program that runs its own arguments: the step's",
+  "# words may arrive on its standard input, unseen. The tool as another program's argument is not. The runner's",
+  "# options are read from the words as written (the caller's segment C; xargs -P takes a value, -p none); when",
+  "# those are not the segment's words, it is doubt.",
+  "at_stdin_fed() {",
+  "  local q o s",
+  "  local -a u",
+  "  read -ra u <<< \"$(norm \"${C:-}\")\"",
+  "  [ \"$(lower \"${u[*]}\")\" = \"${w[*]}\" ] || return 0",
+  "  for ((q=p; q<$1; q++)); do",
+  "    at_stdin_runner \"${u[q]}\" || continue",
+  "    at_stdin_prog \"${u[q]}\" \"${u[@]:q+1}\"",
+  "    o=$(($1-q-1))",
+  "    [ \"$AT_STDIN_WRAP\" -gt 0 ] && [ \"$o\" -ge \"$AT_STDIN_WRAP\" ] && return 0",
+  "    for s in \"${AT_STDIN_CAND[@]}\"; do [ \"$s\" = \"$o\" ] && return 0; done",
+  "  done",
+  "  return 1",
+  "}",
+];
+
+/**
+ * In _seg_steps, where the step's words do not all follow the tool (fixed text; it replaced the line
+ * `[ "$k" -eq "${#r[@]}" ] || continue`): a tool run by a stdin runner is doubt, unless git's own words
+ * make it a read.
+ */
+export const STDIN_JQ_CHECK: string[] = [
+  "    if [ \"$k\" -lt \"${#r[@]}\" ]; then",
+  "      # the tool is run by a program that reads more arguments from standard input: the step's words may",
+  "      # come from there, so it is doubt, unless the tool's own words make it a read (at_git_read)",
+  "      if at_stdin_fed \"$i\" && ! at_git_read \"$i\"; then SEG_DOUBT=1; fi",
+  "      continue",
+  "    fi",
+];
+
+/**
+ * The no-jq stdin runner check (before-action.sh), fixed text after one line that sets AT_STDIN_TOOLS (the
+ * gated tools) and AT_STDIN_GIT_STEPS (the first word of every git step). Needs the no-jq glob check's
+ * functions (at_names, at_reads_only, AT_LEAD, AT_GIT_READS) and its readings AT_TS and AT_BS.
+ */
+export const STDIN_NOJQ_BLOCK: string[] = [
+  "# A gated tool run by a stdin runner (a word from the segment's program on): the step's words may come",
+  "# from its standard input. Not refused: git with a reading subcommand written out (as the jq check's",
+  "# at_git_read reads it), since those words can only follow it. The words keep their letter case, as the",
+  "# jq check reads them: a runner's option letters differ by case (xargs -P takes a value, -p none).",
+  ...STDIN_RUNNER_FUNCTION,
+  "at_stdin_git_read() {",
+  "  while [ \"$#\" -gt 0 ]; do case $1 in --no-pager|--no-optional-locks|--no-replace-objects|--literal-pathspecs) shift ;; *) break ;; esac; done",
+  "  [ \"$#\" -gt 0 ] || return 1",
+  "  [[ $1 != -* && $1 != grep && \"$AT_GIT_READS\" == *\" $1 \"* && \"$AT_STDIN_GIT_STEPS\" != *\" $1 \"* ]] || return 1",
+  "  at_reads_only git \"$@\"",
+  "}",
+  "at_stdin_tool() {",
+  "  local k",
+  "  for k in \"${AT_STDIN_TOOLS[@]}\"; do",
+  "    at_names \"${ws[$1]}\" \"$k\" || continue",
+  "    [ \"$k\" = git ] && at_stdin_git_read \"${ws[@]:$1+1}\" && continue",
+  "    return 0",
+  "  done",
+  "  return 1",
+  "}",
+  "at_stdin_program() {",
+  "  local seg x p i j s; local -a ws",
+  "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+  "    read -ra ws <<< \"$seg\"",
+  "    p=0",
+  "    while [ \"$p\" -lt \"${#ws[@]}\" ]; do",
+  "      x=${ws[p]}",
+  "      [[ $x =~ ^[A-Za-z_][A-Za-z0-9_]*= || \"$AT_LEAD\" == *\" $x \"* ]] || break",
+  "      p=$((p+1))",
+  "    done",
+  "    [ \"$p\" -lt \"${#ws[@]}\" ] || continue",
+  "    at_reads_only \"${ws[p]##*/}\" \"${ws[@]:p+1}\" && continue",
+  "    for ((i=p; i<${#ws[@]}; i++)); do",
+  "      at_stdin_runner \"${ws[i]}\" || continue",
+  "      at_stdin_prog \"${ws[i]}\" \"${ws[@]:i+1}\"",
+  "      for s in \"${AT_STDIN_CAND[@]}\"; do at_stdin_tool $((i+1+s)) && return 0; done",
+  "      if [ \"$AT_STDIN_WRAP\" -gt 0 ]; then",
+  "        for ((j=i+1+AT_STDIN_WRAP; j<${#ws[@]}; j++)); do at_stdin_tool \"$j\" && return 0; done",
+  "      fi",
+  "    done",
+  "  done <<< \"$1\"",
+  "  return 1",
+  "}",
+  "for AT_S in \"${AT_TS//$AT_BS/}\" \"${AT_TS//$AT_BS//}\"; do",
+  "  AT_S=$(printf '%s' \"$AT_S\" | LC_ALL=C tr ';&|()`' '[\\n*]')",
+  "  set +u; if at_stdin_program \"$AT_S\"; then set -u; at_nojq_refuse; fi; set -u",
+  "done",
+];
+
+/**
  * at_names WORD KEY (MATCH_FUNCTIONS, the no-jq glob check): the program word WORD runs the tool KEY. Its
  * basename, case-folded and with a trailing .exe .cmd .bat or .com dropped (Windows runs git.exe as git),
  * is KEY; or a glob or a brace expansion in it could make KEY. `gitk`, `git-lfs` and `legit` are not git.
@@ -468,6 +657,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "}",
   ...AT_NAMES_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
+  ...STDIN_JQ_FUNCTIONS,
   // 0.11.4: `git log "$BR"` is no commit and no push, whatever $BR holds.
   "# at_git_read I (in _seg_steps, step tool git): word I is git by a literal name, and its subcommand, the next",
   "# word (after --no-pager, --no-optional-locks, --no-replace-objects or --literal-pathspecs only), is literal, a",
@@ -553,7 +743,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "      [ \"${w[j]}\" = \"${r[k]}\" ] && k=$((k+1))",
   "      j=$((j+1))",
   "    done",
-  "    [ \"$k\" -eq \"${#r[@]}\" ] || continue",
+  ...STDIN_JQ_CHECK,
   "    # D-1: an action script's own check (AT_NO_USAGE=1) gets no usage exemption",
   "    if [ \"${AT_NO_USAGE:-}\" != 1 ] && [ \"$j\" -eq $((n-1)) ] && [[ \" --help -h --version \" == *\" ${w[j]} \"* ]]; then continue; fi",
   "    SEG_N=$((SEG_N+1))",
@@ -605,6 +795,8 @@ function noJqLines(o: {
   expansion?: string[];
   split?: string;
   powershell?: boolean;
+  /** The first word of every git step the topology declares: refuse a tool run by a program that reads its arguments from stdin. */
+  stdinGitSteps?: string[];
 }): string[] {
   const sq = shellQuote;
   const lists = (o.inOrder ?? []).map((ws) => ws.map(lettersOf).filter(Boolean)).filter((ws) => ws.length > 0);
@@ -698,6 +890,12 @@ function noJqLines(o: {
           "    AT_S=$(printf '%s' \"$AT_S\" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr ';&|()`' '[\\n*]')",
           '    set +u; if at_glob_program "$AT_S"; then set -u; at_nojq_refuse; fi; set -u',
           "  done",
+          ...(o.stdinGitSteps
+            ? [
+                `  AT_STDIN_TOOLS=(${rawTools.map(sq).join(" ")}); AT_STDIN_GIT_STEPS=${sq(` ${o.stdinGitSteps.join(" ")} `)}`,
+                ...STDIN_NOJQ_BLOCK.map((l) => `  ${l}`),
+              ]
+            : []),
         ]
       : []),
     `  echo ${sq(o.pass)} >&2`,
@@ -955,6 +1153,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       ],
       expansion: stepWords.map((s) => s.key),
       powershell: !!p.powershellTool,
+      stdinGitSteps: gitSteps,
     }),
     `DIR="${p.scriptsDir(name)}"`,
     ...(p.powershellTool

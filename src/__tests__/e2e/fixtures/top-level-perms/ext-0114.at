@@ -1,0 +1,34 @@
+topology ext-perms : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "An extension that sets allow and deny"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [intake]
+  }
+
+  action intake {
+    kind: inline
+    description: "Take the request"
+  }
+
+  agent worker {
+    model: sonnet
+    description: "Does the work"
+    tools: [Read]
+  }
+
+  flow {
+    intake -> worker
+  }
+
+  extensions {
+    claude-code {
+      deny: ["Read(./.env)", "Bash(rm -rf *)"]
+      allow: ["Bash(npm test)"]
+    }
+  }
+}

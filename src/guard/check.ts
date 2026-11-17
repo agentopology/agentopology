@@ -29,6 +29,7 @@ import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
+import { topLevelPermissionLines } from "./top-level-permissions.js";
 
 export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
 
@@ -65,6 +66,8 @@ export interface GuardReport {
    */
   unattributed: string[];
   verifiedOn: string;
+  /** allow / deny / ask lists at the top level of a settings file, where Claude Code does not read them: warning lines (warn only). */
+  topLevel?: string[];
   /** The host graded, when it is not Claude Code: its name, the version line, the installed mark, its hook file (E-5). */
   platform?: { label: string; line: string; mark: string | null; config: string };
 }
@@ -460,12 +463,14 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   }
 
   const steps = items.filter((i) => i.kind === "gate" || i.kind === "human");
+  const topLevel = topLevelPermissionLines(root);
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
     missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
+    ...(topLevel.length ? { topLevel } : {}),
   };
 }
 
@@ -499,7 +504,9 @@ export function renderGuardReport(report: GuardReport): string[] {
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
-  return mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
+  const graded = mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
+  // Warn only, after the mark: a rule's own text never draws the installed-version mark.
+  return [...graded, ...(report.topLevel ?? [])];
 }
 
 /** One item of a guard report as page data. */
