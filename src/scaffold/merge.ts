@@ -37,6 +37,11 @@ function managedSpan(content: string): { start: number; end: number } | null {
   return { start: open, end: close + AGENTS_MD_END.length };
 }
 
+/** Both files hold a managed block (AGENTS.md): only the block is scaffold's. */
+export function hasManagedBlock(existing: string, generated: string): boolean {
+  return managedSpan(existing) !== null && managedSpan(generated) !== null;
+}
+
 /**
  * Merge an existing agent file with a freshly generated one.
  *
@@ -182,10 +187,12 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
  *     additionalDirectories, ...); allow, deny and ask arrays are
  *     union-merged; a generated scalar is added only where none exists
  *   - env: shallow-merge (generated wins on key conflict)
- *   - hooks: a hook group is the topology's when one of its commands names a
- *     path in `ownedPaths`; those are replaced by the generated hooks, and
- *     every other group — the user's — is kept. Without `ownedPaths`, nothing
- *     existing is treated as owned, so nothing is removed
+ *   - hooks: per hook entry, never per group (see mergeHooks). The
+ *     topology's entries (generated now, or naming a path in `ownedPaths`
+ *     unless a program of the user's own runs it) are replaced by the
+ *     generated hooks; every other entry, the user's, is kept where it is,
+ *     also inside a group the topology wrote. Without `ownedPaths`, only
+ *     what the .at generates now is the topology's
  *   - All other top-level keys: existing wins (user-only keys preserved)
  *
  * This used to rebuild permissions from allow/deny alone and replace hooks
@@ -287,54 +294,123 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/** A command with the project-dir prefix, quotes and "./" removed, blanks folded. */
+function normalCommand(command: string): string {
+  return command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim();
+}
+
 /**
- * Identity of a hook group for deduplication: matcher plus each command with
- * the project-dir prefix, quotes and "./" removed. An imported hook written
- * as `bash .claude/hooks/x.sh` and the same hook compiled as
+ * Identity of a hook entry: its command, normalized, so an imported hook
+ * written as `bash .claude/hooks/x.sh` and the same hook compiled as
  * `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"` are one hook, not two that
- * both fire.
+ * both fire. Any other entry is itself.
  */
+function hookId(h: unknown): string {
+  return isPlainObject(h) && typeof h.command === "string" ? normalCommand(h.command) : JSON.stringify(h);
+}
+
+/**
+ * Where a hook entry sits: its matcher and identity. Other fields (timeout,
+ * if) are the file's once the entry is there, as in 0.11.x: an entry the
+ * .at generates stays as the file has it.
+ */
+function hookPlace(matcher: unknown, h: unknown): string {
+  return JSON.stringify([matcher ?? "", hookId(h)]);
+}
+
+/** Identity of a hook group for deduplication: matcher plus each entry's identity. */
 function hookGroupKey(group: unknown): string {
   if (!isPlainObject(group) || !Array.isArray(group.hooks)) return JSON.stringify(group);
-  const commands = group.hooks.map((h) =>
-    isPlainObject(h) && typeof h.command === "string"
-      ? h.command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim()
-      : JSON.stringify(h),
-  );
-  return JSON.stringify([group.matcher ?? "", commands]);
+  return JSON.stringify([group.matcher ?? "", group.hooks.map(hookId)]);
+}
+
+/** Whether a hook entry's command runs (or names) a script this topology owns. */
+function namesOwnedScript(h: unknown, scripts: string[]): boolean {
+  if (!isPlainObject(h) || typeof h.command !== "string") return false;
+  const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
+  if (tokens.some((t) => scripts.includes(t))) return true;
+  // R-8: a Codex command names its script after a root expression,
+  // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
+  // whitespace token equals the path. Read every `.codex/scripts/…` path in it.
+  for (const m of h.command.matchAll(/(?:^|[\s"'/])(\.codex\/scripts\/[^\s"'`;|&)]+)/g)) {
+    if (scripts.includes(m[1])) return true;
+  }
+  // F-13: the Claude Code scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`,
+  // which no whitespace token equals either. Only a path right after the variable counts, so a
+  // user's `bash ./mine/.claude/skills/...` is still not claimed.
+  for (const m of h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s"'`;|&)]+)/g)) {
+    if (scripts.includes(m[1].replace(/^\.\//, ""))) return true;
+  }
+  return false;
 }
 
 /** Whether a hook group runs a script this topology owns. */
 function isOwnedHookGroup(group: unknown, scripts: string[]): boolean {
   if (!isPlainObject(group) || !Array.isArray(group.hooks)) return false;
-  return group.hooks.some((h) => {
-    if (!isPlainObject(h) || typeof h.command !== "string") return false;
-    const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
-    if (tokens.some((t) => scripts.includes(t))) return true;
-    // R-8: a Codex command names its script after a root expression,
-    // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
-    // whitespace token equals the path. Read every `.codex/scripts/…` path in it.
-    for (const m of h.command.matchAll(/(?:^|[\s"'/])(\.codex\/scripts\/[^\s"'`;|&)]+)/g)) {
-      if (scripts.includes(m[1])) return true;
-    }
-    // F-13: the Claude Code scaffold writes `bash "$CLAUDE_PROJECT_DIR/.claude/skills/<t>/scripts/x.sh"`,
-    // which no whitespace token equals either. Only a path right after the variable counts, so a
-    // user's `bash ./mine/.claude/skills/...` is still not claimed.
-    for (const m of h.command.matchAll(/\$\{?CLAUDE_PROJECT_DIR\}?\/([^\s"'`;|&)]+)/g)) {
-      if (scripts.includes(m[1].replace(/^\.\//, ""))) return true;
-    }
-    return false;
-  });
+  return group.hooks.some((h) => namesOwnedScript(h, scripts));
+}
+
+/**
+ * Whether a command that names one of the topology's scripts starts with a
+ * program of the user's own that is not a topology script
+ * (`./my-lint.sh <topology script>`): the user's command, never removed.
+ * Any other command naming a topology script is the topology's, edited or
+ * not, as in 0.11.x.
+ */
+function ownProgram(command: string, scripts: string[]): boolean {
+  const first = (command.trim().split(/\s+/)[0] ?? "").replace(/["']/g, "");
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first) || !first.includes("/")) return false;
+  return !scripts.includes(first.replace(/^\$\{?CLAUDE_PROJECT_DIR\}?\//, "").replace(/^\.\//, ""));
+}
+
+/** A hook entry the merge kept although it sits with, or names, what the topology owns. */
+export interface KeptHookCommand {
+  event: string;
+  command: string;
+}
+
+/**
+ * The hook commands in `existingRaw` the merge keeps although their group
+ * holds a hook the topology generates, or they name one of its scripts: one
+ * line each, so a command the .at does not generate is never kept or
+ * removed in silence. Empty when either file is not a JSON object.
+ */
+export function keptHookCommands(
+  existingRaw: string,
+  generatedRaw: string,
+  ownedPaths: string[] = [],
+): KeptHookCommand[] {
+  let existing: unknown;
+  let generated: unknown;
+  try {
+    existing = JSON.parse(existingRaw);
+    generated = JSON.parse(generatedRaw);
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(existing) || !isPlainObject(generated)) return [];
+  const kept: KeptHookCommand[] = [];
+  mergeHooks(existing.hooks, generated.hooks, ownedPaths, kept);
+  return kept;
 }
 
 /**
  * Per event: the user's groups first, then the generated ones, deduplicated.
  * Returns undefined when no event keeps any group.
+ *
+ * Ownership is per hook entry, never per group. An entry is the topology's
+ * when the .at generates it now, or when it names one of the topology's
+ * scripts and does not start with a program of the user's own (see
+ * ownProgram). The topology's entries that changed
+ * are replaced by the generated ones; every other entry stays where it is,
+ * and each one that sits in a group with the topology's hooks, or names one
+ * of its scripts, is reported in `kept`.
  */
 function mergeHooks(
   existingHooks: unknown,
   generatedHooks: unknown,
   ownedPaths: string[],
+  kept: KeptHookCommand[] = [],
 ): Record<string, unknown[]> | undefined {
   // Config files are never hook scripts; matching them would claim a user hook
   // that merely mentions CLAUDE.md.
@@ -346,21 +422,83 @@ function mergeHooks(
   const out: Record<string, unknown[]> = {};
 
   for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
-    // A group generated again stays where it is, so reruns (and two
-    // topologies taking turns) do not reorder the file.
-    const regenerated = new Set((Array.isArray(gen[event]) ? gen[event] : []).map(hookGroupKey));
-    const kept = (Array.isArray(ex[event]) ? ex[event] : []).filter(
-      (g) => regenerated.has(hookGroupKey(g)) || !isOwnedHookGroup(g, scripts),
-    );
-    const seen = new Set<string>();
-    const groups: unknown[] = [];
-    for (const g of [...kept, ...(Array.isArray(gen[event]) ? gen[event] : [])]) {
-      const key = hookGroupKey(g);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      groups.push(g);
+    const genGroups = (Array.isArray(gen[event]) ? gen[event] : []) as unknown[];
+    const genIds = new Set<string>();
+    // Each generated entry, by matcher and command: one already in the file
+    // stays where it is and as it is, so reruns (and two topologies taking
+    // turns) do not reorder the file.
+    const free = new Map<string, number>();
+    for (const g of genGroups) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        genIds.add(hookId(h));
+        const k = hookPlace(g.matcher, h);
+        free.set(k, (free.get(k) ?? 0) + 1);
+      }
     }
-    if (groups.length > 0) out[event] = groups;
+    const placed = new Map<string, number>();
+    // Only an entry naming one of the topology's scripts can be removed (a
+    // hook on a project path the user owns stays, as in 0.11.x).
+    const ours = (h: unknown) =>
+      genIds.has(hookId(h)) ||
+      (namesOwnedScript(h, scripts) && !(isPlainObject(h) && typeof h.command === "string" && ownProgram(h.command, scripts)));
+
+    const groups: unknown[] = [];
+    for (const g of (Array.isArray(ex[event]) ? ex[event] : []) as unknown[]) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
+        groups.push(g);
+        continue;
+      }
+      const owned = g.hooks.some(ours);
+      if (!owned && !isOwnedHookGroup(g, scripts)) {
+        groups.push(g);
+        continue;
+      }
+      const keep: unknown[] = [];
+      for (const h of g.hooks) {
+        if (genIds.has(hookId(h))) {
+          // Generated now: kept in place under the same matcher; under
+          // another matcher, or repeated, it gives way to the generated entry.
+          const k = hookPlace(g.matcher, h);
+          if ((free.get(k) ?? 0) > 0) {
+            free.set(k, free.get(k)! - 1);
+            placed.set(k, (placed.get(k) ?? 0) + 1);
+            keep.push(h);
+          }
+          continue;
+        }
+        if (ours(h)) continue; // the topology's, no longer generated: removed
+        keep.push(h);
+        if (owned || namesOwnedScript(h, scripts)) {
+          const command = isPlainObject(h) && typeof h.command === "string" ? h.command : JSON.stringify(h);
+          kept.push({ event, command });
+        }
+      }
+      if (keep.length === g.hooks.length) groups.push(g);
+      else if (keep.length > 0) groups.push({ ...g, hooks: keep });
+    }
+    for (const g of genGroups) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
+        groups.push(g);
+        continue;
+      }
+      const rest = g.hooks.filter((h) => {
+        const k = hookPlace(g.matcher, h);
+        if ((placed.get(k) ?? 0) === 0) return true;
+        placed.set(k, placed.get(k)! - 1);
+        return false;
+      });
+      if (rest.length === g.hooks.length) groups.push(g);
+      else if (rest.length > 0) groups.push({ ...g, hooks: rest });
+    }
+    const seen = new Set<string>();
+    const unique = groups.filter((g) => {
+      const key = hookGroupKey(g);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (unique.length > 0) out[event] = unique;
   }
 
   return Object.keys(out).length > 0 ? out : undefined;

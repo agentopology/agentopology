@@ -1,0 +1,72 @@
+topology code-in-prompts : [pipeline] {
+  meta {
+    version: "1.2.0"
+    description: "Prompts that hold code samples, JSON and markdown"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake]
+  }
+
+  agent writer {
+    description: "Writes TypeScript"
+    model: sonnet
+    tools: [Read, Write, Edit]
+    prompt {
+      # Role
+      You write small functions. A sample:
+
+      ```ts
+      export function add(a: number, b: number): number {
+        if (a < 0) {
+          return b;
+        }
+        return a + b;
+      }
+      ```
+
+      Reply with JSON like {"ok": true, "files": ["a.ts"]}.
+      Keep "quotes" and 'apostrophes' as they are.
+    }
+    outputs: { verdict: done | retry }
+  }
+
+  agent reviewer {
+    description: "Reviews the diff"
+    model: haiku
+    disallowed-tools: [Write, Edit]
+    prompt {
+      ## Checklist
+      1. Every `{` has its `}`.
+      2. Objects such as { "a": { "b": 1 } } are valid JSON.
+      Report: a list of findings.
+    }
+    hooks {
+      hook lint {
+        on: PostToolUse
+        matcher: "Write"
+        run: "scripts/lint.sh"
+      }
+    }
+  }
+
+  skills {
+    skill format {
+      description: "Format code"
+      prompt {
+        Run the formatter on every file: for (f of files) { fmt(f) }
+      }
+    }
+  }
+
+  flow {
+    intake -> writer
+    writer -> reviewer
+  }
+
+  settings {
+    allow: ["Read", "Bash(npm test:*)"]
+    deny: ["Bash(rm:*)"]
+  }
+}

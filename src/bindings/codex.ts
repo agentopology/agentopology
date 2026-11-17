@@ -14,6 +14,7 @@
  */
 
 import { warnSessionsNotCompiled } from "./lib/session.js";
+import { scanList } from "../parser/lexer.js";
 import type {
   TopologyAST,
   AgentNode,
@@ -130,6 +131,9 @@ function mcpValue(key: string, value: unknown): unknown {
   if (MCP_NUMBER_KEYS.has(key) && /^\d+(\.\d+)?$/.test(value.trim())) return Number(value);
   if (MCP_BOOLEAN_KEYS.has(key) && /^(true|false)$/.test(value.trim())) return value.trim() === "true";
   if (MCP_LIST_KEYS.has(key) && /^\[.*\]$/s.test(value.trim())) {
+    // A quoted argument may hold `,` or `]`: it stays one argument.
+    const scanned = scanList(value.trim(), 0);
+    if (scanned.ok && scanned.end === value.trim().length) return scanned.items.map((x) => x.replace(/^'|'$/g, ""));
     return value.trim().slice(1, -1).split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter((x) => x !== "");
   }
   return value;

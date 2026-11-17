@@ -146,6 +146,8 @@ export interface BlockResult {
   id: string | null;
   /** The content between the outermost `{` and `}`, exclusive. */
   body: string;
+  /** Where the keyword starts in the searched string (extractTopLevelBlocks only). */
+  at?: number;
 }
 
 /**
@@ -167,20 +169,39 @@ export function extractBlock(
     `(?:^|\\n)\\s*${escapeRegex(keyword)}(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
     "m"
   );
-  const m = re.exec(src);
+  const mask = maskProse(src);
+  const m = re.exec(mask);
   if (!m) return null;
 
   const id = m[1] ?? null;
   const startIdx = m.index! + m[0].length;
+  const end = closingBrace(braceText(src), startIdx);
+  if (end < 0) return null;
+  return { id, body: src.slice(startIdx, end) };
+}
+
+/**
+ * The text block depth is counted on. Lookups (where a block or a field is)
+ * read {@link maskProse}; depth (where a block ends) is counted as 0.11.4
+ * counted it, on the source itself: a brace inside a quoted string still
+ * counts. A prompt's content balances its own braces (that is where the
+ * prompt ends), so counting it changes no depth outside it.
+ */
+export function braceText(src: string): string {
+  return src;
+}
+
+/**
+ * The index of the `}` that closes a block whose content starts at `start`,
+ * counted on {@link braceText}, or -1 when the block is not closed.
+ */
+export function closingBrace(text: string, start: number): number {
   let depth = 1;
-  let i = startIdx;
-  while (i < src.length && depth > 0) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") depth--;
-    i++;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return i;
   }
-  if (depth !== 0) return null;
-  return { id, body: src.slice(startIdx, i - 1) };
+  return -1;
 }
 
 /**
@@ -201,19 +222,14 @@ export function extractAllBlocks(
     `(?:^|\\n)\\s*${escapeRegex(keyword)}(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
     "gm"
   );
+  const mask = maskProse(src);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(src)) !== null) {
+  while ((m = re.exec(mask)) !== null) {
     const id = m[1] ?? null;
     const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < src.length && depth > 0) {
-      if (src[i] === "{") depth++;
-      else if (src[i] === "}") depth--;
-      i++;
-    }
-    if (depth === 0) {
-      results.push({ id, body: src.slice(startIdx, i - 1) });
+    const end = closingBrace(braceText(src), startIdx);
+    if (end >= 0) {
+      results.push({ id, body: src.slice(startIdx, end) });
     }
   }
   return results;
@@ -227,12 +243,14 @@ export function extractTopLevelBlocks(
   src: string,
   keyword: string
 ): BlockResult[] {
+  const mask = maskProse(src);
+  const braces = braceText(src);
   const depthAt: number[] = new Array(src.length);
   let depth = 0;
   for (let i = 0; i < src.length; i++) {
     depthAt[i] = depth;
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") depth--;
+    if (braces[i] === "{") depth++;
+    else if (braces[i] === "}") depth--;
   }
   const results: BlockResult[] = [];
   const re = new RegExp(
@@ -240,18 +258,12 @@ export function extractTopLevelBlocks(
     "gm"
   );
   let m: RegExpExecArray | null;
-  while ((m = re.exec(src)) !== null) {
+  while ((m = re.exec(mask)) !== null) {
     const at = m.index! + m[0].indexOf(keyword);
     const startIdx = m.index! + m[0].length;
     if (depthAt[at] !== 0) continue;
-    let d = 1;
-    let i = startIdx;
-    while (i < src.length && d > 0) {
-      if (src[i] === "{") d++;
-      else if (src[i] === "}") d--;
-      i++;
-    }
-    if (d === 0) results.push({ id: m[1] ?? null, body: src.slice(startIdx, i - 1) });
+    const end = closingBrace(braces, startIdx);
+    if (end >= 0) results.push({ id: m[1] ?? null, body: src.slice(startIdx, end), at });
   }
   return results;
 }
@@ -278,12 +290,126 @@ export function parseKV(line: string): [string, string] | null {
  * trimmed input as a single element.
  */
 export function parseList(raw: string): string[] {
-  const m = raw.match(/^\[([^\]]*)\]$/);
-  if (!m) return [raw.trim()];
-  return m[1]
-    .split(",")
-    .map((s) => s.trim().replace(/^"|"$/g, ""))
-    .filter(Boolean);
+  const text = raw.trim();
+  if (text.startsWith("[")) {
+    const scanned = scanList(text, 0);
+    if (scanned.ok && scanned.end === text.length) return scanned.items;
+  }
+  return [raw.trim()];
+}
+
+/** The result of reading one `[ ... ]` list: its items, or why it is not a list. */
+export type ScannedList =
+  | { ok: true; items: string[]; end: number }
+  | { ok: false; reason: string };
+
+/**
+ * Read the list that opens at `src[open]` (a `[`).
+ *
+ * A double-quoted item is one item whatever it holds: `]`, `[` and `,`
+ * inside quotes are text, and `\"` does not close the quote. Outside quotes
+ * brackets nest, so an unquoted `Bash(rm [a-z]*)` is one item too. Items are
+ * split at top-level commas, trimmed, their outer quotes removed, and empty
+ * items dropped. `end` is the index just past the closing `]`.
+ *
+ * Not a list: the closing `]` never comes, a quoted item runs past its line,
+ * or a `{` / `}` appears outside quotes (a block, not a list item).
+ */
+export function scanList(src: string, open: number): ScannedList {
+  const items: string[] = [];
+  const push = (s: string) => {
+    const item = s.trim().replace(/^"|"$/g, "");
+    if (item) items.push(item);
+  };
+  let cur = "";
+  let depth = 1;
+  let inQuote = false;
+  for (let i = open + 1; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuote) {
+      if (ch === "\n") return { ok: false, reason: "a quoted item is not closed on its line" };
+      cur += ch;
+      if (ch === "\\" && i + 1 < src.length && src[i + 1] !== "\n") cur += src[++i];
+      else if (ch === '"') inQuote = false;
+      continue;
+    }
+    if (ch === '"') inQuote = true;
+    else if (ch === "[") depth++;
+    else if (ch === "]" && --depth === 0) {
+      push(cur);
+      return { ok: true, items, end: i + 1 };
+    } else if (ch === "{" || ch === "}") {
+      return { ok: false, reason: "it is not closed with ] before the block ends" };
+    } else if (ch === "," && depth === 1) {
+      push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  return { ok: false, reason: inQuote ? "a quoted item is not closed" : "it is not closed with ]" };
+}
+
+/**
+ * `src` with its prose blanked out: the content of every `prompt { }` block,
+ * of every double-quoted string and of every `#` comment becomes spaces
+ * (newlines stay, so offsets and line numbers are those of `src`).
+ *
+ * Prose is never structure: a block keyword, a field or a brace found only in
+ * prose is text. Every structural lookup (block extraction, field lookup,
+ * depth counting) runs on this mask and slices its result from `src`.
+ *
+ * A prompt block ends where it always did: at the `}` that balances every
+ * brace in its content, quoted or not, so a code sample keeps parsing as
+ * before. A quoted string ends at its closing quote (`\"` does not close it)
+ * or at its line's end. A `#` starts a comment at a line's start or after
+ * whitespace, as in {@link stripComments}.
+ */
+export function maskProse(src: string): string {
+  const out = src.split("");
+  const blank = (a: number, b: number) => {
+    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const n = src.length;
+  const promptHead = /prompt\s*\{/y;
+  let i = 0;
+  while (i < n) {
+    const ch = src[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < n && src[j] !== "\n" && src[j] !== '"') j += src[j] === "\\" && src[j + 1] !== "\n" ? 2 : 1;
+      j = Math.min(j, n);
+      blank(i + 1, j);
+      i = j < n && src[j] === '"' ? j + 1 : j;
+      continue;
+    }
+    if (ch === "#" && (i === 0 || /\s/.test(src[i - 1]))) {
+      const j = src.indexOf("\n", i);
+      blank(i, j < 0 ? n : j);
+      i = j < 0 ? n : j;
+      continue;
+    }
+    if (ch === "p" && (i === 0 || /[\s{;]/.test(src[i - 1]))) {
+      promptHead.lastIndex = i;
+      const m = promptHead.exec(src);
+      if (m) {
+        const start = i + m[0].length;
+        let d = 1;
+        let j = start;
+        while (j < n) {
+          if (src[j] === "{") d++;
+          else if (src[j] === "}" && --d === 0) break;
+          j++;
+        }
+        // The content is prose; the closing brace is structure.
+        blank(start, j);
+        i = j;
+        continue;
+      }
+    }
+    i++;
+  }
+  return out.join("");
 }
 
 /**
@@ -292,19 +418,32 @@ export function parseList(raw: string): string[] {
  * Searches for `key: [ ... ]` in the body (potentially spanning newlines)
  * and returns the items as a string array. Uses a word boundary before the
  * key to avoid partial matches (e.g. searching for "tools" will not match
- * "disallowed-tools").
+ * "disallowed-tools"). Quoted items may hold `]` and `,` (see {@link scanList}).
+ *
+ * @throws Error when the list is not closed, a quoted item is not closed, or
+ *   text follows the closing `]` on its line: part of a list is never kept.
  */
 export function parseMultilineList(body: string, key: string): string[] {
-  const re = new RegExp(
-    `(?:^|(?<=\\s))${escapeRegex(key)}\\s*:\\s*\\[([^\\]]*(?:\\n[^\\]]*)*?)\\]`,
-    "m"
-  );
-  const m = re.exec(body);
+  // A `key: [` in prose (a prompt block, a quoted string, a comment) is
+  // text, not a field: only the mask is searched. The first match is the list.
+  const re = new RegExp(`(?:^|(?<=\\s))${escapeRegex(key)}\\s*:\\s*\\[`, "m");
+  const m = re.exec(maskProse(body));
   if (!m) return [];
-  return m[1]
-    .split(",")
-    .map((s) => s.trim().replace(/^"|"$/g, ""))
-    .filter(Boolean);
+  const open = m.index + m[0].length - 1;
+  const scanned = scanList(body, open);
+  const shown = () => body.slice(m.index).split("\n")[0].trim();
+  if (!scanned.ok) throw new Error(`The list for "${key}" is malformed: ${scanned.reason} (${shown()})`);
+  const nl = body.indexOf("\n", scanned.end);
+  const rest = body.slice(scanned.end, nl < 0 ? undefined : nl).trim();
+  // Another field may share the line (`commands: [x] unit-from: "y"`); any
+  // other text means the list ended early, at a `]` that belonged to an item.
+  if (rest && !/^[}\s]*$/.test(rest) && !/^[a-zA-Z_][a-zA-Z0-9_-]*\s*:/.test(rest)) {
+    throw new Error(
+      `The list for "${key}" is malformed: text follows its closing ] ("${rest}"). ` +
+        `Quote an item that holds [ or ]: ${shown()}`
+    );
+  }
+  return scanned.items;
 }
 
 /**
@@ -324,9 +463,15 @@ export function unquote(s: string): string {
 export function parseFields(body: string): Record<string, string> {
   const fields: Record<string, string> = {};
   let depth = 0;
-  for (const line of body.split("\n")) {
+  // Keys are read from the mask (prose is never a field), depth from
+  // braceText; the value is the line's own text.
+  const lines = body.split("\n");
+  const masked = maskProse(body).split("\n");
+  const braceLines = braceText(body).split("\n");
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
     // Track brace depth so we only parse top-level KV pairs.
-    for (const ch of line) {
+    for (const ch of braceLines[li]) {
       if (ch === "{") depth++;
       else if (ch === "}") depth--;
     }
@@ -337,7 +482,7 @@ export function parseFields(body: string): Record<string, string> {
     // will have depth > 0 after processing — that line is a block header, not
     // a KV pair, so skipping it is correct.
     if (depth === 0) {
-      const kv = parseKV(line);
+      const kv = parseKV(masked[li]) && parseKV(line);
       if (kv) {
         fields[kv[0]] = kv[1];
       }

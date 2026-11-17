@@ -26,9 +26,11 @@ import type {
   CircuitBreakerConfig,
   PromptVariant,
   StoreNode,
+  TriggerDef,
 } from "../parser/ast.js";
 import { deduplicateFiles } from "./types.js";
-import type { BindingTarget, GeneratedFile } from "./types.js";
+import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
+import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import {
@@ -50,6 +52,10 @@ import {
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
+import {
+  AT_OWNED_TOPOLOGY_SKILL_KEYS, assertCcFrontmatter, ccKey, coerceCcValue, isClaudeCodeModelName, resolveSettingsKey, setSettingsPath, unknownSettingsPaths,
+  type CcSurface, type FrontmatterFields,
+} from "./claude-code-schema.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors } from "../parser/ast.js";
@@ -80,9 +86,7 @@ export function convertMcpToolName(tool: string): string {
  * context suffix such as [1m]), inherit, or a full claude-* model id. Any other
  * value (gpt-4o, gemini-2.5-pro) was written to the agent file unchecked.
  */
-function isClaudeCodeModel(model: string): boolean {
-  return /^(?:sonnet|opus|haiku|fable)(?:\[[0-9a-z]+\])?$|^inherit$|^claude-[a-z0-9.-]+(?:\[[0-9a-z]+\])?$/.test(model);
-}
+const isClaudeCodeModel = isClaudeCodeModelName;
 
 /**
  * Claude Code hook events for the language's universal names. A hook on a
@@ -156,8 +160,33 @@ function toTitle(id: string): string {
 /** Characters that require quoting in YAML scalar values. */
 const YAML_SPECIAL = /[:#\[\]{}&*!|>'"%@`]/;
 
-/** Plain scalars YAML reads as something other than a string (yes → true, 1.0 → a number). */
-const YAML_NOT_STRING = /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL|~|[-+]?(?:\d[\d_]*)?\.?\d+(?:[eE][-+]?\d+)?|0x[0-9a-fA-F]+|0o[0-7]+|\.inf|\.nan)$/;
+/** Plain scalars YAML reads as something other than a string (yes → true, 1.0 → a number, 2024-01-01 → a date). */
+const YAML_NOT_STRING = /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL|~|[-+]?(?:\d[\d_]*)?\.?\d+(?:[eE][-+]?\d+)?|[-+]?\d[\d_]*\.|0x[0-9a-fA-F_]+|0o[0-7_]+|0b[01_]+|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)|\d{4}-\d\d?-\d\d?(?:(?:[Tt]|[ \t]+)\d\d?:\d\d:\d\d(?:\.\d*)?(?:[ \t]*(?:Z|[-+]\d\d?(?::\d\d)?))?)?)$/;
+
+/**
+ * Whether a string cannot be written as a YAML plain scalar and read back as
+ * itself: it is empty or padded, starts with an indicator (`- `, `? `, `, `,
+ * `*`, `&`, …), holds `: ` or ` #` or ends with `:`, holds a line break or
+ * another control character, or reads as a boolean, number, null or date.
+ * List items use this rule alone, so a tool such as `Bash(git log:*)` stays
+ * unquoted as before.
+ */
+export function plainScalarUnsafe(str: string): boolean {
+  return (
+    str === "" ||
+    str.trim() !== str ||
+    /^[-?:,[\]{}#&*!|>'"%@`]/.test(str) ||
+    /:(?:[ \t]|$)/.test(str) ||
+    /[ \t]#/.test(str) ||
+    /[\x00-\x1f\x7f\u0085\u2028\u2029\ufeff]/.test(str) ||
+    YAML_NOT_STRING.test(str)
+  );
+}
+
+/** A YAML double-quoted scalar: JSON's escapes, plus the line separators JSON leaves raw. */
+export function yamlQuoted(str: string): string {
+  return JSON.stringify(str).replace(/[\u0085\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
 
 function frontmatter(fields: Record<string, string | number | boolean | string[]>): string {
   const lines = ["---"];
@@ -166,20 +195,42 @@ function frontmatter(fields: Record<string, string | number | boolean | string[]
     if (Array.isArray(value)) {
       if (value.length === 0) continue;
       lines.push(`${key}:`);
+      // An item YAML would not read back as itself (`*.ts` is an alias,
+      // `- x` a nested list) is quoted; every other item is written as before.
       for (const item of value) {
-        lines.push(`  - ${item}`);
+        const str = String(item);
+        lines.push(`  - ${plainScalarUnsafe(str) ? yamlQuoted(str) : str}`);
       }
     } else if (typeof value === "boolean" || typeof value === "number") {
       lines.push(`${key}: ${value}`);
     } else {
       // Auto-quote strings containing YAML-special characters
       const str = String(value);
-      const needsQuotes = YAML_SPECIAL.test(str) || str.trim() !== str || str === "" || YAML_NOT_STRING.test(str);
-      lines.push(`${key}: ${needsQuotes ? `"${str.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : str}`);
+      const needsQuotes = YAML_SPECIAL.test(str) || plainScalarUnsafe(str);
+      lines.push(`${key}: ${needsQuotes ? yamlQuoted(str) : str}`);
     }
   }
   lines.push("---");
   return lines.join("\n");
+}
+
+/**
+ * Write a claude-code extension's keys into frontmatter, each one only when
+ * the schema has it for this surface and its value has the documented type.
+ * Validation (V130) refuses the rest; under --allow-invalid they are skipped
+ * with a warning here, never written as keys Claude Code ignores.
+ */
+function applyFrontmatterExtension(fm: FrontmatterFields, surface: CcSurface, ext: Record<string, unknown> | undefined, what: string): void {
+  if (!ext) return;
+  for (const [k, v] of Object.entries(ext)) {
+    const row = ccKey(surface, k);
+    const value = row ? coerceCcValue(row, v) : undefined;
+    if (!row || !value || !value.ok) {
+      console.warn(`[claude-code] ${what}: extension key "${k}" not written (${!row ? `Claude Code has no ${surface} key "${k}"` : (value as { reason: string }).reason}).`);
+      continue;
+    }
+    fm[k] = value.value;
+  }
 }
 
 /** Permission modes a subagent may ask for but cannot get beyond its session. */
@@ -585,29 +636,16 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
 
     if (agent.isolation) fm.isolation = agent.isolation;
 
-    // Note: sandbox and fallback-chain are not recognized by Claude Code frontmatter
-    // but are included as informational metadata for other tooling.
-    if (agent.sandbox != null) {
-      fm.sandbox = typeof agent.sandbox === "boolean" ? agent.sandbox : agent.sandbox;
-    }
-
-    if (agent.fallbackChain && agent.fallbackChain.length > 0) {
-      fm["fallback-chain"] = agent.fallbackChain.join(", ");
-    }
+    // sandbox and fallback-chain have no per-agent key in Claude Code, so they
+    // are not written; V130 says so. scale is rendered in the body as prompt text.
 
     if (agent.skills && agent.skills.length > 0) fm.skills = agent.skills;
-    // scale is NOT a Claude Code frontmatter field — rendered only in body as prompt text
 
-    // Merge claude-code extension fields into frontmatter
-    if (agent.extensions?.["claude-code"]) {
-      for (const [k, v] of Object.entries(agent.extensions["claude-code"])) {
-        if (typeof v === "string") fm[k] = v;
-        else if (typeof v === "boolean") fm[k] = v;
-        else if (Array.isArray(v)) fm[k] = v as string[];
-      }
-    }
+    // claude-code extension fields, each at its schema type (V130 reports the rest).
+    applyFrontmatterExtension(fm, "agent", agent.extensions?.["claude-code"], `agent "${agent.id}"`);
 
     // Build frontmatter string — may include hooks YAML block
+    assertCcFrontmatter("agent", fm, `.claude/agents/${agent.id}/AGENT.md`);
     let fmStr = frontmatter(fm);
 
     // Per-agent hooks → Claude Code AGENT.md frontmatter hooks
@@ -1187,6 +1225,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     skillFm["user-invocable"] = true;
 
     const skillSections: string[] = [];
+    assertCcFrontmatter("skill", skillFm, `.claude/skills/${group.id}/SKILL.md`);
     skillSections.push(frontmatter(skillFm));
     skillSections.push("");
     skillSections.push(`# ${group.label || toTitle(group.id)}`);
@@ -1205,6 +1244,7 @@ function generateGroupNodes(ast: TopologyAST): GeneratedFile[] {
     if (group.description) agentFm.description = group.description;
 
     const agentSections: string[] = [];
+    assertCcFrontmatter("agent", agentFm, `.claude/agents/${group.id}/AGENT.md`);
     agentSections.push(frontmatter(agentFm));
     agentSections.push("");
     agentSections.push("## Instructions");
@@ -1263,6 +1303,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   }
 
   const sections: string[] = [];
+  assertCcFrontmatter("skill", fm, `.claude/skills/${name}/SKILL.md`, AT_OWNED_TOPOLOGY_SKILL_KEYS);
   sections.push(frontmatter(fm));
   sections.push("");
   sections.push(`# ${toTitle(name)} Topology Skill`);
@@ -1647,6 +1688,9 @@ function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
       fm["disallowed-tools"] = agent.disallowedTools.map(convertMcpToolName).join(", ");
     }
     if (agent.invocation === "manual") fm["disable-model-invocation"] = true;
+    // An agent that runs as a skill takes skill keys from its extension.
+    applyFrontmatterExtension(fm, "skill", agent.extensions?.["claude-code"], `agent "${agent.id}" (runs as a skill)`);
+    assertCcFrontmatter("skill", fm, `.claude/skills/${agent.id}/SKILL.md`);
 
     const sections = [frontmatter(fm), "", `# ${agent.label || toTitle(agent.id)}`, ""];
     sections.push(
@@ -1670,7 +1714,7 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     const sections: string[] = [];
 
     // Build skill frontmatter
-    const sfm: Record<string, string | boolean | string[]> = {};
+    const sfm: FrontmatterFields = {};
     sfm.name = skill.id;
     if (skill.description) sfm.description = skill.description;
     if (skill.disableModelInvocation != null) {
@@ -1694,6 +1738,8 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     if (skill.shell) sfm.shell = skill.shell;
     if (skill.model) sfm.model = skill.model;
     if (skill.thinking && skill.thinking !== "off") sfm.effort = skill.thinking;
+    applyFrontmatterExtension(sfm, "skill", skill.extensions?.["claude-code"], `skill "${skill.id}"`);
+    assertCcFrontmatter("skill", sfm, `.claude/skills/${skill.id}/SKILL.md`);
     // Only emit frontmatter if there are fields beyond just the name
     if (Object.keys(sfm).length > 1) {
       sections.push(frontmatter(sfm));
@@ -2179,6 +2225,9 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
       // A run that names its own path names the user's script: a stub only
       // fills the gap until it exists. --force used to overwrite it.
       ...(isProjectPath(script) ? { createOnly: true } : {}),
+      // At the generated path too, once the user writes it, it is theirs
+      // (the Stop/SubagentStop stub carries no stub marker to say so).
+      userScript: true,
     });
   }
 
@@ -2478,17 +2527,38 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       if (rules && rules.length > 0) permObj[key] = rules.map(convertMcpToolName);
     }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
+
+    // settings { sandbox: true | false } is Claude Code's sandbox switch. Any
+    // other value (a Codex sandbox mode) has no Claude Code key: V130 says so.
+    if (typeof perms.sandbox === "boolean") setSettingsPath(settings, "sandbox.enabled", perms.sandbox);
+
+    // settings { fallback-chain } is Claude Code's fallbackModel, when every
+    // entry is a Claude Code model (else V130 says it is not written).
+    const chain = perms.fallbackChain;
+    if (Array.isArray(chain) && chain.length > 0 && chain.every((m) => typeof m === "string" && isClaudeCodeModel(m))) {
+      settings.fallbackModel = chain;
+    }
   }
 
   // Defaults and observability are documented in the CLAUDE.md context file,
   // not in settings.json (Claude Code doesn't recognize these keys).
 
-  // Top-level extensions for claude-code
-  if (ast.extensions?.["claude-code"]) {
-    for (const [k, v] of Object.entries(ast.extensions["claude-code"])) {
-      settings[k] = v;
+  // Topology extensions for claude-code: each key at its documented path and
+  // type (`defaultMode` lands under permissions). V130 refuses what has no
+  // place; under --allow-invalid it is skipped here with a warning.
+  for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    const where = resolveSettingsKey(k);
+    const value = where && (!where.row || where.row.projectFile) ? coerceCcValue(where.row, v) : undefined;
+    if (!where || !value || !value.ok) {
+      const why = !where ? `Claude Code has no settings key "${k}"` : !value ? `a project's settings.json cannot set ${where.path}` : (value as { reason: string }).reason;
+      console.warn(`[claude-code] extensions: key "${k}" not written to settings.json (${why}).`);
+      continue;
     }
+    setSettingsPath(settings, where.path, value.value);
   }
+
+  const unknown = unknownSettingsPaths(settings);
+  if (unknown.length > 0) throw new Error(`[claude-code] internal: settings.json would get ${unknown.join(", ")}, which Claude Code does not know (no schema row).`);
 
   if (Object.keys(settings).length === 0) return null;
 
@@ -2781,6 +2851,7 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
     if (trigger.argument) {
       fm["argument-hint"] = `[${trigger.argument}]`;
     }
+    assertCcFrontmatter("command", fm, `.claude/commands/${trigger.name}.md`);
     sections.push(frontmatter(fm));
     sections.push("");
 
@@ -3386,12 +3457,123 @@ function normalizeRel(p: string): string {
   return p.replace(/^\.\//, "");
 }
 
-export const claudeCodeBinding: BindingTarget = {
-  name: "claude-code",
-  description:
-    "Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.",
+/**
+ * The structure the .at states for each agent, skill and command file, read
+ * from the files the binding generates (so a patched file and a generated
+ * one carry each key in the same spelling).
+ *
+ * Owned keys are the frontmatter keys the binding emits from what the .at
+ * states, never `name`: an existing file's identity is its own (Claude Code
+ * takes it from `name`, and the file name need not match). Not owned either:
+ * an agent description the binding made up from the id, an agent's
+ * `extensions` keys with a nested value (hooks, an object), and a command's
+ * description (that is the topology's, not the command's).
+ */
+function structureOf(ast: TopologyAST, files: GeneratedFile[]): StructureSpec[] {
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  const specs: StructureSpec[] = [];
+  const add = (
+    generatedPath: string,
+    kind: StructureSpec["kind"],
+    id: string,
+    file: string | undefined,
+    drop: (key: string) => boolean,
+    adjust?: (content: string) => string,
+    defaults?: Record<string, string>,
+  ) => {
+    const gen = byPath.get(generatedPath);
+    if (!gen) return;
+    const authored = !!file;
+    const content = authored && adjust ? adjust(gen.content) : gen.content;
+    const fm = readFrontmatter(content);
+    const owned = fm.ok ? [...fm.fields.keys()].filter((k) => k !== "name" && !drop(k)) : [];
+    specs.push({
+      path: authored ? normalizeRel(file!) : generatedPath,
+      kind,
+      id,
+      content,
+      owned,
+      authored,
+      ...(defaults ? { defaults } : {}),
+    });
+  };
 
-  scaffold(ast: TopologyAST): GeneratedFile[] {
+  for (const node of ast.nodes) {
+    if (node.type !== "agent") continue;
+    const agent = node as AgentNode;
+    if (isWorkflowSeamAgent(agent)) continue;
+    if (runsAsSkill(agent)) {
+      if (!agent.file) add(`.claude/skills/${agent.id}/SKILL.md`, "skill", agent.id, undefined, () => false);
+      continue;
+    }
+    const stated = agent.description ?? ast.roles[agent.role ?? ""] ?? ast.roles[agent.id] ?? agent.role;
+    // A hand-written agent's description is its own text: the manual-use
+    // sentence the binding appends to a generated one is not written into it.
+    const plainDescription = (content: string): string => {
+      if (stated === undefined || agent.invocation !== "manual") return content;
+      const line = frontmatter({ description: stated }).split("\n")[1];
+      const r = patchFrontmatter(content, [{ key: "description", lines: [line] }]);
+      return r.ok ? r.text : content;
+    };
+    // Keys carried under `extensions { claude-code { … } }` are structure the
+    // .at states, patched like first-class keys, when Claude Code's schema
+    // has them for agents as a single value or a list. A nested value (hooks,
+    // an object) is not: import flattens it, so the .at's copy is not a value
+    // it read faithfully, and writing it back would replace the user's.
+    const extension = new Set(
+      Object.keys(agent.extensions?.["claude-code"] ?? {}).filter((k) => {
+        const type = ccKey("agent", k)?.type;
+        return type === undefined || type === "hooks" || type === "object";
+      }),
+    );
+    add(
+      `.claude/agents/${agent.id}/AGENT.md`,
+      "agent",
+      agent.id,
+      agent.file,
+      (k) => extension.has(k) || (k === "description" && stated === undefined),
+      plainDescription,
+      { model: "inherit" },
+    );
+  }
+  for (const skill of ast.skills ?? []) {
+    add(`.claude/skills/${skill.id}/SKILL.md`, "skill", skill.id, skill.file, () => false);
+  }
+  for (const trigger of ast.triggers ?? []) {
+    add(`.claude/commands/${trigger.name}.md`, "command", trigger.name, trigger.file, (k) => k === "description");
+  }
+  return specs;
+}
+
+/**
+ * The file the binding writes for one agent, skill or command on its own
+ * (warnings muted: the real run already gave them). Used to read an existing
+ * file the way the .at would state it.
+ */
+export function generatedFileFor(
+  ast: TopologyAST,
+  node: { kind: "agent"; node: AgentNode } | { kind: "skill"; node: SkillDef } | { kind: "command"; node: TriggerDef },
+): string | null {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    if (node.kind === "agent") {
+      const want = `.claude/agents/${node.node.id}/AGENT.md`;
+      return generateAgents({ ...ast, nodes: [node.node] }).find((f) => f.path === want)?.content ?? null;
+    }
+    if (node.kind === "skill") {
+      const want = `.claude/skills/${node.node.id}/SKILL.md`;
+      return generateSkills({ ...ast, skills: [node.node] }).find((f) => f.path === want)?.content ?? null;
+    }
+    const want = `.claude/commands/${node.node.name}.md`;
+    return generateCommandFiles({ ...ast, triggers: [node.node] }).find((f) => f.path === want)?.content ?? null;
+  } finally {
+    console.warn = warn;
+  }
+}
+
+/** Every file the binding writes for this topology, hand-written nodes' included. */
+function generateAll(ast: TopologyAST): GeneratedFile[] {
     // Fragment check — skip main skill generation for fragments
     if (ast.isFragment) {
       const files: GeneratedFile[] = [];
@@ -3399,7 +3581,7 @@ export const claudeCodeBinding: BindingTarget = {
       files.push(...generateTopologySkill(ast));
       files.push(...generateAgents(ast));
       files.push(...generateSchemas(ast));
-      return withoutAuthored(ast, deduplicateFiles(files));
+      return deduplicateFiles(files);
     }
 
     const files: GeneratedFile[] = [];
@@ -3494,6 +3676,20 @@ export const claudeCodeBinding: BindingTarget = {
     // Context file (.claude/CONTEXT.md or custom — never root CLAUDE.md)
     files.push(generateContextFile(ast));
 
-    return withoutAuthored(ast, deduplicateFiles(files));
+    return deduplicateFiles(files);
+}
+
+export const claudeCodeBinding: BindingTarget = {
+  name: "claude-code",
+  description:
+    "Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.",
+
+  scaffold(ast: TopologyAST): GeneratedFile[] {
+    return withoutAuthored(ast, generateAll(ast));
+  },
+
+  scaffoldStructured(ast: TopologyAST) {
+    const all = generateAll(ast);
+    return { files: withoutAuthored(ast, all), structure: structureOf(ast, all) };
   },
 };

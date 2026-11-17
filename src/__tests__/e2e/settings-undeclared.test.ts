@@ -525,7 +525,14 @@ describe("[0.11.2-h] every example scaffolds as before", () => {
         delete j.generatedAt;
         return j;
       };
-      expect(m(viaCli)).toEqual(m(viaLib));
+      // The one declared addition: `fields`, the frontmatter values scaffold
+      // applied to agent, skill and command files (the three-way base). It
+      // names only those files; every other byte of the manifest is as before.
+      const { fields, ...rest } = m(viaCli);
+      expect(rest).toEqual(m(viaLib));
+      for (const p of Object.keys(fields ?? {})) {
+        expect(p).toMatch(/^\.claude\/(agents\/[^/]+\/AGENT\.md|skills\/[^/]+\/SKILL\.md|commands\/[^/]+\.md)$/);
+      }
       expect(JSON.stringify(m(viaCli))).not.toContain("undeclaredRulesNamed");
     });
   }

@@ -420,6 +420,23 @@ export const GUARD_TEST_COMMANDS = [
   "cat", "echo x >> .codex/state/approvals.jsonl", "cat logs/ep1/trace.jsonl", "echo x > logs/trace.jsonl", "cat logs/trace.jsonl",
 ];
 
+/**
+ * The program-word corpus (after 0.11.4): a program word spelled with a platform suffix, another letter
+ * case, a Windows path or a brace list, and programs that only share letters with git. Run apart from the
+ * main corpus (runCorpus `commands`), on before-action.sh and the Codex if filter only, so the frozen
+ * 0.11.2 pairs stay as they are.
+ */
+export const PROGRAM_WORD_COMMANDS = [
+  "git.exe commit -m x", "git.exe push", "Git.exe commit -m x", "git.EXE push", "GIT.EXE push",
+  "/mnt/c/Program\\ Files/Git/cmd/git.exe commit -m x", "\"/mnt/c/Program Files/Git/cmd/git.exe\" push",
+  "git.cmd commit", "git.bat push", "git.com push", "sudo git.exe push", "cd x && git.exe commit -m y",
+  "{g,x}it commit -m x", "{gi,x}t push", "g{i,x}t.exe commit", "/usr/bin/{git,x} commit", "{f..h}it push", "x{,}git push",
+  "Git.EXE push origin main", "git.cmd push", "{g,x}it push", "./tool.exe publish ep1", "TOOL.CMD publish ep1",
+  "{t,x}ool publish ep1", "./media.exe kit s1", "python3 docs/deliver.py.exe J1",
+  "gitk", "gitk --all", "git-lfs pull", "git-lfs push origin main", "git-lfs push", "legit commit", "git-upload-pack .",
+  "ls git.exe.bak", "cat Git.md", "echo {a,b}", "git status", "git log --oneline -5", "./toolkit publish ep1", "cat tool.exe",
+];
+
 /** Every Bash command of the corpus, once. */
 export const ACTION_COMMANDS = [...new Set([...MUST_NOT_BLOCK, ...MUST_BLOCK, ...ALIAS_CLOSED, ...PLAIN_CONFIG.step,
   ...PLAIN_CONFIG.reads, ...ALIAS_OUT_OF_SCOPE, ...GUARD_TEST_COMMANDS])];
@@ -587,17 +604,21 @@ export function runCommand(command, root, payload, PATH) {
 /**
  * Every pair: { topology, binding, hook, input, jq, exit }. at-if.sh pairs (the `if:` topologies) have
  * hook "at-if.sh" and the same Bash inputs as before-action.sh. `lib` is { parse, bindings: { "claude-code", codex } }.
- * `only` keeps the pairs a filter accepts (for a quick partial run).
+ * `only` keeps the pairs a filter accepts (for a quick partial run). `commands`, when given, replaces the
+ * corpus: these Bash commands only, on before-action.sh and at-if.sh (the program-word corpus).
  */
-export async function runCorpus(lib, { concurrency = Math.max(4, os.cpus().length), only } = {}) {
+export async function runCorpus(lib, { concurrency = Math.max(4, os.cpus().length), only, commands } = {}) {
   const paths = toolPaths();
   if (!paths.hasJq) throw new Error("jq is not installed: the hook corpus needs it");
+  const inputs = (hook, binding) => commands
+    ? (hook === "before-action.sh" ? commands.map((c) => ({ input: c, payload: bashPayload("Bash", c) })) : [])
+    : inputsFor(hook, binding);
   const jobs = [];
   for (const topo of TOPOLOGIES) {
     for (const binding of topo.bindings) {
       const { root, hooks } = scaffoldOne(lib, topo, binding);
       for (const { hook, script } of hooks) {
-        for (const { input, payload } of inputsFor(hook, binding)) {
+        for (const { input, payload } of inputs(hook, binding)) {
           for (const jq of [true, false]) {
             const row = { topology: topo.id, binding, hook, input, jq };
             if (only && !only(row)) continue;
@@ -609,7 +630,7 @@ export async function runCorpus(lib, { concurrency = Math.max(4, os.cpus().lengt
   }
   for (const topo of IF_TOPOLOGIES) {
     const { root, command } = scaffoldIf(lib, topo);
-    for (const { input, payload } of inputsFor("before-action.sh", "codex")) {
+    for (const { input, payload } of inputs("before-action.sh", "codex")) {
       for (const jq of [true, false]) {
         const row = { topology: topo.id, binding: "codex", hook: "at-if.sh", input, jq };
         if (only && !only(row)) continue;

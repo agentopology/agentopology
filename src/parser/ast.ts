@@ -55,7 +55,8 @@ export interface TriggerDef {
   /**
    * The hand-written file that holds this node's internals, project-relative
    * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
-   * file is the author's. Bindings never generate or overwrite it — this is
+   * file is the author's. Bindings never generate it or write its body;
+   * scaffold patches in only the frontmatter keys the .at states. This is
    * how a system built by hand comes into .at without losing what is inside.
    */
   file?: string;
@@ -113,7 +114,8 @@ export interface SkillDef {
   /**
    * The hand-written file that holds this node's internals, project-relative
    * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
-   * file is the author's. Bindings never generate or overwrite it — this is
+   * file is the author's. Bindings never generate it or write its body;
+   * scaffold patches in only the frontmatter keys the .at states. This is
    * how a system built by hand comes into .at without losing what is inside.
    */
   file?: string;
@@ -530,7 +532,8 @@ export interface BaseNode {
   /**
    * The hand-written file that holds this node's internals, project-relative
    * (e.g. ".claude/agents/reviewer.md"). The topology describes the node; the
-   * file is the author's. Bindings never generate or overwrite it — this is
+   * file is the author's. Bindings never generate it or write its body;
+   * scaffold patches in only the frontmatter keys the .at states. This is
    * how a system built by hand comes into .at without losing what is inside.
    */
   file?: string;

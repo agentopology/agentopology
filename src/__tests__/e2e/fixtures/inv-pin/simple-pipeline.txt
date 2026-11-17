@@ -11,7 +11,13 @@ Validating simple-pipeline.at (simple-pipeline v1.0.0)
       skill:story  (.claude/skills/story/SKILL.md)
     not scaffolded (10): scaffold would write these and they are not on disk; rerun scaffold
 
+  Structure drift (3 of 3 owned keys)
+    .claude/agents/writer/AGENT.md  description  at-ahead  .at Draft content based on research, following style guidelines  file Writes the draft from the brief
+    .claude/agents/writer/AGENT.md  model  at-ahead  .at sonnet  file opus
+    .claude/agents/writer/AGENT.md  tools  at-ahead  .at [Read, Write, Glob]  file (absent)
+  scaffold writes at-ahead keys and removes at-removed ones; it keeps file-ahead, conflict and released keys as the file has them (--force takes the .at's value). It never writes a file's text.
+
   All validation rules passed.
 
 <version line>
---- exit 0
+--- exit 3

@@ -2498,19 +2498,22 @@ Extensions can appear at multiple levels:
 ## Example
 
 \`\`\`at
-# Topology-level
+# Topology-level: settings.json keys
 extensions {
   claude-code {
-    project-type: "monorepo"
+    defaultMode: plan                    # lands at permissions.defaultMode
+    additionalDirectories: ["../shared"] # permissions.additionalDirectories
+    sandbox.autoAllowBashIfSandboxed: true
   }
 }
 
-# Agent-level
+# Agent-level: agent frontmatter keys
 agent reviewer {
   model: opus
   extensions {
     claude-code {
-      worktree-base: "reviews/"
+      memory: project
+      autoCompactWindow: 200000
     }
   }
 }
@@ -2518,9 +2521,9 @@ agent reviewer {
 
 ## Notes
 
-- Unknown binding namespaces are silently ignored. This allows a single .at file to target multiple platforms.
-- Extension fields are free-form key-value pairs -- they are not validated by the parser.
-- Each binding defines its own set of recognized extension fields.
+- Unknown binding namespaces are ignored. This allows a single .at file to target multiple platforms.
+- \`claude-code\` keys are checked against the Claude Code key schema (rule V130): on the topology they are settings.json keys (a dotted path, or a \`permissions\` / \`sandbox\` key by its own name), on an agent agent-frontmatter keys, on a skill skill-frontmatter keys. An unknown key, a mistyped value or a key a project settings file cannot set is not written, and validation warns, naming the nearest key: nothing is written that Claude Code would ignore.
+- Other bindings define their own sets of recognized extension fields.
 `,
   },
 
@@ -3286,11 +3289,11 @@ Models in \`fallback-chain\` should exist in a declared provider.
 **Violation:** \`fallback-chain: [nonexistent-model]\`.
 **Fix:** Add the model to a provider.
 
-### V23: Duplicate Sections (warning)
-Singleton sections (meta, memory, flow, etc.) should appear at most once.
+### V23: Duplicate Sections (error/warning)
+Sections such as meta, memory, flow, settings and mcp-servers should appear once. A second copy is a warning: only the first is used. \`hooks {}\` may be written more than once: every block's hooks are used, in file order. A hook name used in two \`hooks {}\` blocks is an error; twice in one block, a warning.
 
-**Violation:** Two \`flow {}\` blocks.
-**Fix:** Merge into a single block.
+**Violation:** Two \`flow {}\` blocks; a hook \`guard\` in two \`hooks {}\` blocks.
+**Fix:** Merge the sections into one block; give each hook its own name.
 
 ### V24: Unknown Memory Sub-Blocks (warning)
 Memory sub-blocks should be known names (workspace, domains, references, external-docs, metrics).
@@ -3367,7 +3370,7 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 | V20 | error | Schedule Job References |
 | V21 | error | Interface Secret Detection |
 | V22 | warning | Fallback Chain Models |
-| V23 | warning | Duplicate Sections |
+| V23 | error/warning | Duplicate Sections |
 | V24 | warning | Unknown Memory Sub-Blocks |
 | V25 | warning | Bounce-Back Advisory |
 | V26 | error | Action Kind Enum |

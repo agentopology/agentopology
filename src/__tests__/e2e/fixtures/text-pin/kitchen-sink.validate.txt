@@ -1,8 +1,12 @@
 Validating kitchen-sink.at (incident-response v2.0.0)
 
   WARN  [V93] line 296: Edge "verifier -> fixer" declares no handoff — "verifier" writes [workspace/verification/] and "fixer" reads [workspace/triage/], which do not overlap. Add a shared path to "fixer" reads, or the receiver runs after the sender with none of its output (fixer)
+  WARN  [V130] line 209: agent "detector" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (detector)
+  WARN  [V130] line 209: agent "detector" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel. (detector)
+  WARN  [V130] line 296: agent "fixer" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (fixer)
+  WARN  [V130] settings sandbox: "docker" is not written for Claude Code, which turns its sandbox on or off (sandbox.enabled): write true or false, or set sandbox.* keys in extensions { claude-code }.
 
-  0 error(s), 1 warning(s)
+  0 error(s), 5 warning(s)
 
   ── how to write it ──────────────────────────────────
 

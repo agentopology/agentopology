@@ -11,9 +11,15 @@ Validating openclaw-assistant.at (personal-assistant v1.0.0)
       skill:story  (.claude/skills/story/SKILL.md)
     not scaffolded (11): scaffold would write these and they are not on disk; rerun scaffold
 
+  Structure drift (3 of 3 owned keys)
+    .claude/agents/writer/AGENT.md  description  at-ahead  .at Writing agent — drafts in user's voice using research output  file Writes the draft from the brief
+    .claude/agents/writer/AGENT.md  model  at-ahead  .at sonnet  file opus
+    .claude/agents/writer/AGENT.md  tools  at-ahead  .at [Read, Write, Edit]  file (absent)
+  scaffold writes at-ahead keys and removes at-removed ones; it keeps file-ahead, conflict and released keys as the file has them (--force takes the .at's value). It never writes a file's text.
+
   WARN  [V99] line 56: Agent "scheduler" uses skill "google-calendar", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill google-calendar { file: ".claude/skills/google-calendar/SKILL.md" }; otherwise check the name (scheduler)
 
   0 error(s), 1 warning(s)
 
 <version line>
---- exit 0
+--- exit 3

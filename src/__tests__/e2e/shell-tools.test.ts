@@ -128,7 +128,6 @@ describe.skipIf(!hasJq)("[0.11.1] a PowerShell payload goes through the same rea
   for (const command of [
     '& ./tool @("publish","ep1")',
     'Start-Process ./tool -ArgumentList "publish","ep1"',
-    ".\\tool.exe publish ep1",
     "./tool.ps1 publish ep1",
   ]) {
     it(`[0.11.1] ${command}: a mention of the tool not read as a declared step is doubt, refused even with an ok record`, () => {
@@ -138,6 +137,14 @@ describe.skipIf(!hasJq)("[0.11.1] a PowerShell payload goes through the same rea
       expect(r.stderr).toContain("a PowerShell form");
     });
   }
+  // Since the program name rule, tool.exe IS the tool: the step itself, whose unit-from does not read
+  // `./tool.exe publish ep1`, so it is refused even with an ok record (it was refused as doubt before).
+  it("[0.11.1] .\\tool.exe publish ep1: the tool by its .exe name, refused even with an ok record", () => {
+    okRecord("ep1");
+    const r = hook(pwsh(".\\tool.exe publish ep1"));
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toContain("no unit could be read");
+  });
   it("[0.11.1] with an ok record the plain PowerShell forms pass, and an ungated step runs", () => {
     okRecord("ep1");
     expect(hook(pwsh("& ./tool publish ep1")).status).toBe(0);

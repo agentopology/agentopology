@@ -19,7 +19,7 @@ Run the live suite before every release, and after any change to a binding.
 
 | Id | Guarantee | Where |
 |---|---|---|
-| G1 | The first scaffold keeps a file it did not create (conflict, kept unless `--force`) | e2e/scaffold-owns.test.ts |
+| G1 | The first scaffold keeps a file it did not create (conflict, kept unless `--force`; an agent, skill or command file gets only the `.at`'s frontmatter keys, its body never, with or without `--force`: e2e/structure-patch.test.ts) | e2e/scaffold-owns.test.ts |
 | G2 | Scaffold never writes or deletes through a symlink, even with `--force` | e2e/scaffold-owns.test.ts |
 | G3 | Re-scaffolding keeps the user's hooks, `ask`, `defaultMode` and other permission keys | e2e/scaffold-owns.test.ts |
 | G4 | A second scaffold with no changes writes nothing | e2e/scaffold-owns.test.ts |

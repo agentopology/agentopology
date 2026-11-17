@@ -9,7 +9,7 @@ import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { codexBinding } from "../../bindings/codex.js";
 // @ts-expect-error plain JavaScript module, shared with freeze.mjs
-import { BLOCKS_0114, as0112 } from "./differential/compile-runs.mjs";
+import { BLOCKS_0114, BLOCKS_WORDS, as0112 } from "./differential/compile-runs.mjs";
 // @ts-expect-error plain JavaScript module, shared with freeze-hooks.mjs
 import { TOPOLOGIES } from "./differential/hook-corpus.mjs";
 
@@ -58,8 +58,15 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
   it("each script holds its no-jq head and tail, and the reader blocks, exactly once", () => {
     for (const s of SCRIPTS()) {
       if (s.hook) {
-        expect(count(s.content, BLOCKS_0114.noJqHead[s.hook]), `${s.path}: no-jq head`).toBe(1);
+        // since the word reading, the no-jq head is its own (0.11.4's letters-only head no longer occurs)
+        expect(count(s.content, BLOCKS_0114.noJqHead[s.hook]), `${s.path}: 0.11.4's no-jq head`).toBe(0);
+        expect(count(s.content, BLOCKS_WORDS.head[s.hook]), `${s.path}: no-jq head`).toBe(1);
         expect(count(s.content, BLOCKS_0114.noJqTail[s.hook]), `${s.path}: no-jq tail`).toBe(1);
+        if (BLOCKS_WORDS.words[s.hook]) expect(count(s.content, BLOCKS_WORDS.words[s.hook]), `${s.path}: no-jq words`).toBe(1);
+        if (s.hook === "before-action.sh") {
+          expect(count(s.content, BLOCKS_WORDS.expansionHead), `${s.path}: no-jq expansion`).toBe(1);
+          for (const k of ["globA", "globB", "globC"]) expect(count(s.content, BLOCKS_WORDS[k]), `${s.path}: no-jq ${k}`).toBe(1);
+        }
       }
       if (s.reader !== null) {
         expect(count(s.content, indent(BLOCKS_0114.atSpecial, s.reader)), `${s.path}: at_special`).toBe(1);
@@ -67,6 +74,7 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
         expect(count(s.content, s.reader + BLOCKS_0114.loop), `${s.path}: at_git_read call`).toBe(1);
         expect(count(s.content, indent(BLOCKS_0114.atGitAlias, s.reader)), `${s.path}: at_git_alias`).toBe(1);
         expect(count(s.content, s.reader + BLOCKS_0114.aliasCall), `${s.path}: at_git_alias call`).toBe(1);
+        expect(count(s.content, indent(BLOCKS_WORDS.atNames, s.reader)), `${s.path}: at_names`).toBe(1);
       }
       if (s.hook === "before-action.sh") expect(s.content.match(/^AT_GIT_STEPS='[^'\n]*'$/gm), s.path).toHaveLength(1);
       // the undo changes the text and leaves none of the blocks behind
@@ -75,6 +83,10 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
       expect(undone).not.toContain("at_git_read");
       expect(undone).not.toContain("at_git_alias");
       expect(undone).not.toContain("# No jq (0.11.4)");
+      expect(undone).not.toContain("# No jq:");
+      expect(undone).not.toContain("at_words_has");
+      expect(undone).not.toContain("at_glob_program");
+      expect(undone).not.toContain("at_brace_names");
       expect(undone).not.toContain("AT_GIT_STEPS=");
     }
   });
@@ -85,6 +97,15 @@ describe("[0.11.4] the 0.11.4 guard scripts hold every block differential-0112 u
     expect(() => as0112(action.path, action.content + "\n" + BLOCKS_0114.atSpecial, true)).toThrow(/at_special occurs 2 times/);
     const edit = file(cc("ship"), "before-edit.sh");
     expect(() => as0112(edit.path, edit.content.replace(BLOCKS_0114.noJqTail["before-edit.sh"], ""), true)).toThrow(/no-jq block occurs 0 times/);
+    // the word reading's block: a piece gone, or the block twice
+    expect(() => as0112(action.path, action.content.replace(BLOCKS_WORDS.globB, "# gone"), true)).toThrow(/no-jq block occurs 0 times/);
+    const agent = file(cc("compile"), "before-agent.sh");
+    const agentBlock = agent.content.slice(agent.content.indexOf(BLOCKS_WORDS.head["before-agent.sh"]), agent.content.indexOf(BLOCKS_0114.noJqTail["before-agent.sh"]) + BLOCKS_0114.noJqTail["before-agent.sh"].length);
+    expect(() => as0112(agent.path, agent.content + "\n" + agentBlock + "\n", true)).toThrow(/no-jq block occurs 2 times/);
+    expect(() => as0112("x/other.sh", "at_words_has 'git'", true)).toThrow(/holds a 0.11.4 guard block/);
+    // the program word reader: changed, it no longer matches its literal
+    // (the step reader's copy at column 0, not the no-jq block's indented one)
+    expect(() => as0112(action.path, action.content.replace("\n  case $b in *.exe|*.cmd|*.bat|*.com) b=${b%.*} ;; esac", "\n  case $b in *.exe) b=${b%.*} ;; esac"), true)).toThrow(/at_names occurs 0 times/);
     expect(() => as0112("x/other.sh", "at_git_read", true)).toThrow(/holds a 0.11.4 guard block/);
   });
 

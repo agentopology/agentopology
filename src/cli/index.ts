@@ -47,10 +47,15 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
+import { nextManifestFields } from "../scaffold/structure.js";
+import { echoFields } from "../scaffold/echo.js";
+import { renderDrift, structureDrift } from "../scaffold/drift.js";
+import { keptSettings } from "../scaffold/settings-kept.js";
+import type { StructureSpec } from "../bindings/types.js";
 import { jsonChanges } from "../scaffold/diff.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
-import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
+import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH, undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
@@ -95,6 +100,11 @@ ${c.bold("Usage:")}
                        inventory { roots: [...] } are listed too. With several .at files
                        the per-file numbers print first, then one union number. --user
                        adds ~/.claude (counted apart) and checks the needs block.
+                       With one .at and a project dir it also lists structure drift: each
+                       frontmatter key where the .at and an agent, skill or command file
+                       disagree (exits 3 when that is all that is wrong). --json prints
+                       that report as JSON instead: { schema, file, errors, missing,
+                       ownedKeys, drift: [{ path, kind, id, key, state, at, file, base }] }.
   agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
@@ -239,6 +249,8 @@ interface ParsedArgs {
   inventory: string | undefined;
   /** `--user`: add the user-level tree (inventory) and check what `needs` declares (validate --inventory). */
   user: boolean;
+  /** `validate --inventory <dir> --json`: the structure drift report as JSON. */
+  json: boolean;
   /** `inventory --at <file.at>` (repeatable): topologies whose `inventory { roots }` are listed. */
   at: string[];
   /** More .at files after the first: `validate --inventory DIR a.at b.at`. */
@@ -274,6 +286,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     printSummary: false,
     inventory: undefined,
     user: false,
+    json: false,
     at: [],
     more: [],
     help: false,
@@ -322,6 +335,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
     if (arg === "--user") { result.user = true; i++; continue; }
+    if (arg === "--json") { result.json = true; i++; continue; }
     if (arg === "--at" && i + 1 < args.length) { result.at.push(args[i + 1]); i += 2; continue; }
     if (arg === "--all") {
       result.all = true;
@@ -407,8 +421,43 @@ function parseArgs(argv: string[]): ParsedArgs {
 // Commands
 // ---------------------------------------------------------------------------
 
-function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string): void {
+/** The project folder structure drift is measured in: the --inventory dir, else --dir. */
+function driftRoot(inventory: string | undefined, dir: string | undefined): string | null {
+  if (inventory) {
+    const p = path.resolve(inventory);
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+  }
+  return inventory && dir ? path.resolve(dir) : null;
+}
+
+/** `validate <file.at> --inventory <dir> --json`: the report as JSON, nothing else on stdout. */
+function cmdValidateJson(filePath: string, inventory: string, dir: string | undefined, user: boolean, target?: string): void {
+  const name = path.basename(filePath);
+  let ast;
+  try {
+    ast = parseAt(readFile(filePath), filePath);
+  } catch (err) {
+    console.log(JSON.stringify({ schema: 1, file: name, error: (err as Error).message }, null, 2));
+    process.exit(1);
+  }
+  const checked = validateResult(ast, path.resolve(filePath), target);
+  const { items, root } = loadInventory(inventory, dir, ast.inventoryRoots ?? [], user);
+  const r = coverageResult(ast, items, root, user);
+  const at = driftRoot(inventory, dir);
+  const drift = at ? structureDrift(ast, at, name) : { ownedKeys: 0, rows: [] };
+  console.log(
+    JSON.stringify(
+      { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows },
+      null,
+      2,
+    ),
+  );
+  process.exit(checked.errors > 0 || r.missing.length > 0 ? 1 : drift.rows.length > 0 ? 3 : 0);
+}
+
+function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string, json = false): void {
   if (more.length) return cmdValidateMany([filePath, ...more], inventory, dir, user, target);
+  if (json && inventory) return cmdValidateJson(filePath, inventory, dir, user, target);
   const source = readFile(filePath);
 
   let ast;
@@ -437,12 +486,25 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   const warningCount = checked.warnings + ccExtra.length;
   if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
   const covered = inventory ? printCoverage(ast, inventory, dir, user) : true;
+  // Structure drift: per frontmatter key, where the .at and a file disagree.
+  // Exit 3 when that is all that is wrong (1 wins).
+  const at = driftRoot(inventory, dir);
+  const drift = at ? structureDrift(ast, at, path.basename(filePath)) : null;
+  const driftLines = drift ? renderDrift(drift) : [];
+  if (driftLines.length > 0) {
+    console.log(`  ${c.yellow(driftLines[0])}`);
+    for (const line of driftLines.slice(1, -1)) console.log(`  ${line}`);
+    console.log(c.dim(`  ${driftLines[driftLines.length - 1]}`));
+    console.log("");
+  }
+  const drifted = !!drift && drift.rows.length > 0;
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
     console.log("");
     printVersionLines(target);
     if (!covered) process.exit(1);
+    if (drifted) process.exit(3);
     return;
   }
 
@@ -452,6 +514,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   if (errorCount > 0 || !covered) {
     process.exit(1);
   }
+  if (drifted) process.exit(3);
 }
 
 function printFindings(results: ReturnType<typeof validateResult>["results"], errorCount: number, warningCount: number): void {
@@ -652,8 +715,13 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   }
 
   let files: ReturnType<typeof binding.scaffold>;
+  let structure: StructureSpec[] = [];
   try {
-    files = binding.scaffold(ast);
+    if (binding.scaffoldStructured) {
+      ({ files, structure } = binding.scaffoldStructured(ast));
+    } else {
+      files = binding.scaffold(ast);
+    }
   } catch (e) {
     if (e instanceof BindingRefusal) {
       console.error(c.red(`  ${e.message}`));
@@ -675,12 +743,27 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   const manifest = readManifest(basePath, targetName, path.basename(filePath));
   let actions: FileAction[];
   try {
-    actions = computeIncrementalPlan(basePath, targetName, files, manifest);
+    actions = computeIncrementalPlan(basePath, targetName, files, manifest, {
+      force: !!force,
+      structure,
+      echo: targetName === "claude-code" ? (spec, text) => echoFields(ast, spec, text) : undefined,
+    });
   } catch (err) {
     exitOnInvalidSettings(err);
     throw err;
   }
   const notice = undeclaredRuleNotice(basePath, files, actions, manifest);
+  // settings.json values the .at states that the union-only merge keeps as
+  // the file has them: one line per key, on a dry run too.
+  const settingsFile = targetName === "claude-code" ? files.find((f) => f.path === SETTINGS_PATH) : undefined;
+  const settingsOnDisk = settingsFile ? path.join(basePath, SETTINGS_PATH) : null;
+  const keptSettingLines =
+    settingsFile && settingsOnDisk && fs.existsSync(settingsOnDisk) && fs.statSync(settingsOnDisk).isFile()
+      ? keptSettings(fs.readFileSync(settingsOnDisk, "utf-8"), settingsFile.content, SETTINGS_PATH).map((k) => k.line)
+      : [];
+  const printKeptSettings = (): void => {
+    for (const line of keptSettingLines) console.log(`  ${c.bold("!")} ${c.yellow(line)}`);
+  };
 
   const unsafe = actions.filter((a) => a.type === "blocked" && a.unsafe);
   if (unsafe.length > 0) {
@@ -709,18 +792,36 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   const printAction = (action: FileAction, preview: boolean): void => {
     switch (action.type) {
       case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
-      case "update": console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`); break;
+      case "update":
+        console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`);
+        for (const note of action.notes ?? []) console.log(`  ${c.bold("!")} ${c.yellow(note)}`);
+        break;
       case "delete":
         if (preview || prune) console.log(`  ${c.red("-")} ${action.path}${prune ? "" : " (needs --prune)"}`);
         break;
-      case "unchanged": if (preview) console.log(`  ${c.dim("=")} ${action.path}`); break;
+      case "unchanged":
+        if (preview) console.log(`  ${c.dim("=")} ${action.path}`);
+        for (const note of action.notes ?? []) console.log(`  ${c.bold("!")} ${c.yellow(note)}`);
+        break;
       case "conflict":
         console.log(`  ${c.bold("!")} ${action.path} (${action.detail} — ${force ? "overwritten (--force)" : "kept"})`);
         break;
       case "blocked": console.log(`  ${c.red("⊘")} ${action.path} (${action.detail})`); break;
+      case "patch":
+        // One line per frontmatter key written, and per key kept as the file has it.
+        for (const change of action.changes) console.log(`  ${c.yellow("~")} ${action.path}: ${change}`);
+        for (const note of action.notes) console.log(`  ${c.bold("!")} ${action.path}: ${note}`);
+        if (action.body) console.log(`  ${c.bold("!")} ${action.path}: ${action.body}`);
+        if (preview && action.content === null && action.notes.length === 0 && !action.body) console.log(`  ${c.dim("=")} ${action.path}`);
+        break;
       case "kept":
+        // A file the user edited (or wrote) whose text scaffold would have
+        // replaced: said on every run, so nothing is skipped silently.
+        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT) console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`);
         // settings.json, kept where a delete used to be: said wherever the delete was.
-        if (preview || (prune && action.detail === SETTINGS_KEPT_DETAIL)) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`);
+        else if (preview || (prune && action.detail === SETTINGS_KEPT_DETAIL)) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`);
+        // A script the user wrote: said on every run, so a kept script is seen.
+        else if (action.detail === "user edited") console.log(`  ${c.dim("=")} ${action.path} (your script — kept, never overwritten)`);
         break;
     }
   };
@@ -736,6 +837,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         for (const line of jsonChanges(onDisk, action.content)) console.log(`      ${c.dim(line)}`);
       }
     }
+    printKeptSettings();
     printRuleNotice(notice);
     console.log("");
     console.log(`  ${files.length} file(s) would be generated.`);
@@ -743,6 +845,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     const result = executeActions(basePath, actions, { prune: !!prune, force: !!force });
 
     for (const action of actions) printAction(action, false);
+    printKeptSettings();
     printRuleNotice(notice);
     console.log("");
     console.log(
@@ -751,8 +854,31 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         `${prune ? `, ${result.removed.length} deleted` : ""}`,
     );
     if (result.conflicts > 0 && !force) {
+      // Never point at --force as the way through: for these files it replaces
+      // the whole file, text included.
       console.log(
-        c.yellow(`  ${result.conflicts} existing file(s) were kept as they are. Review them; --force overwrites them.`),
+        c.yellow(
+          `  ${result.conflicts} existing file(s) were kept as they are (marked !). Merge what you need from the ` +
+            `generated version by hand; --force would replace each one whole.`,
+        ),
+      );
+    }
+    const keptFiles = actions.filter((a) => a.type === "kept" && (a.detail === USER_EDITED_KEPT || a.detail === NOT_OURS_KEPT)).length;
+    if (keptFiles > 0) {
+      console.log(
+        c.yellow(
+          `  ${keptFiles} file(s) kept as they are (marked !): their text is yours, and scaffold never replaces it, ` +
+            `--force included. Merge what you need from the .at's version by hand, or delete a file to have it generated again.`,
+        ),
+      );
+    }
+    const keptKeys = actions.reduce((n, a) => n + (a.type === "patch" ? a.notes.length : 0), 0);
+    if (keptKeys > 0) {
+      console.log(
+        c.yellow(
+          `  ${keptKeys} frontmatter key(s) kept as the file has them (marked !). ` +
+            `Edit the .at or the file to agree; --force takes the .at's value and never touches a file's text.`,
+        ),
       );
     }
 
@@ -765,6 +891,8 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       generatedAt: new Date().toISOString(),
       files: nextManifestFiles(basePath, actions, files, manifest, result),
     };
+    const fields = nextManifestFields(actions, structure, manifest, result.written);
+    if (Object.keys(fields).length > 0) newManifest.fields = fields;
     recordNamedRules(newManifest.files, notice.named);
     writeManifest(basePath, targetName, newManifest);
 
@@ -1677,7 +1805,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target);
+      cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target, args.json);
       break;
 
     case "inventory":

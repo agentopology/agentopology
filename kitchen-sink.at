@@ -787,7 +787,7 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
 
   extensions {
     claude-code {
-      project-type: "monorepo"
+      outputStyle: "Explanatory"
     }
     codex {
       sandbox-mode: "workspace-write"

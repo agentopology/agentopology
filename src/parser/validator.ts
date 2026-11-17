@@ -34,6 +34,7 @@ import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHo
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
+import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
 import type {
   HookDef,
@@ -1019,11 +1020,13 @@ function v22FallbackChainModels(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
- * V23: Duplicate top-level singleton sections.
+ * V23: Duplicate top-level sections and duplicate hook names.
  *
- * Sections like `meta`, `flow`, `memory`, etc. should appear at most once.
- * When duplicates are found, only the first occurrence is used by the parser.
- * This rule surfaces warnings collected during parsing.
+ * Sections like `meta`, `flow`, `memory`, etc. may appear once (the list is in
+ * sections.ts); a second copy is a warning (only the first is used).
+ * `hooks { }` may repeat (merged in file order); a hook name used in two
+ * blocks is an error, twice in one block a warning. This rule surfaces what
+ * was collected during parsing.
  */
 function v23DuplicateSections(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyASTWithParseErrors)._duplicateSectionWarnings ?? [];
@@ -4127,6 +4130,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v127PersonWindows(ast),
     ...v128InventoryRoots(ast),
     ...v129NeedsOutside(ast),
+    ...v130ClaudeCodePlacement(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4387,6 +4391,82 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
     for (const name of list ?? [])
       if (!name || /[\\/]/.test(name) || name === "." || name === "..")
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
+  }
+  return results;
+}
+
+/**
+ * V130: the .at states something Claude Code cannot be given. Claude Code
+ * ignores a key it does not know, silently, so the claude-code binding writes
+ * only keys in its schema (src/bindings/claude-code-schema.ts) and this rule
+ * reports everything else instead of dropping it.
+ *
+ * Every finding is a warning: these .at files validated before, and a patch
+ * release must not turn them invalid. What the rule reports is not written.
+ *
+ * Whatever the target (the `claude-code` extension namespace is Claude
+ * Code's own): an extension key with no Claude Code key on its surface
+ * (naming the nearest), a value of the wrong type or outside the documented
+ * values, a settings key a project's settings.json cannot set, and a
+ * claude-code extension on a hook or gate (Claude Code reads none there).
+ *
+ * When compiling for Claude Code (no target, or claude-code): a first-class
+ * field with no Claude Code key.
+ */
+function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const warn = (message: string, node?: string) => results.push({ rule: "V130", level: "warning", ...(node ? { node, line: lookupLine(ast, node) } : {}), message });
+  const err = warn;
+  const near = (surface: CcSurface, key: string) => { const n = nearestCcKey(surface, key); return n ? ` Did you mean "${n}"?` : ""; };
+
+  const checkFrontmatter = (surface: CcSurface, ext: Record<string, unknown> | undefined, what: string, node?: string) => {
+    for (const [k, v] of Object.entries(ext ?? {})) {
+      const row = ccKey(surface, k);
+      if (!row) { err(`${what}: extensions { claude-code { ${k} } } is not a Claude Code ${surface} frontmatter key, so it is not written.${near(surface, k)}`, node); continue; }
+      const c = coerceCcValue(row, v);
+      if (!c.ok) err(`${what}: extensions { claude-code { ${k} } } ${c.reason}, so it is not written.`, node);
+    }
+  };
+
+  for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    const where = resolveSettingsKey(k);
+    if (!where) { err(`extensions { claude-code { ${k} } } is not a Claude Code settings key, so it is not written to settings.json.${near("settings", k)}`); continue; }
+    if (where.row && where.row.projectFile === false) { err(`extensions { claude-code { ${k} } }: Claude Code reads ${where.path} only from user or managed settings, never from a project's .claude/settings.json, so it is not written.`); continue; }
+    const c = coerceCcValue(where.row, v);
+    if (!c.ok) err(`extensions { claude-code { ${k} } } (${where.path}) ${c.reason}, so it is not written.`);
+  }
+
+  for (const n of ast.nodes) {
+    const ext = (n as { extensions?: Record<string, Record<string, unknown>> }).extensions?.["claude-code"];
+    if (n.type === "agent") {
+      const a = n as AgentNode;
+      const asSkill = a.runs === "inline" || a.runs === "fork";
+      checkFrontmatter(asSkill ? "skill" : "agent", ext, `agent "${a.id}"${asSkill ? ` (runs: ${a.runs}, written as a skill)` : ""}`, a.id);
+    } else if (ext && n.type === "gate") {
+      err(`gate "${n.id}": Claude Code reads no extension on a gate, so extensions { claude-code } there is never written.`, n.id);
+    }
+  }
+  for (const s of ast.skills ?? []) checkFrontmatter("skill", s.extensions?.["claude-code"], `skill "${s.id}"`, s.id);
+  const hooks = [...(ast.hooks ?? []), ...ast.nodes.flatMap((n) => (n.type === "agent" ? (n as AgentNode).hooks ?? [] : []))];
+  for (const h of hooks) {
+    if (h.extensions?.["claude-code"]) err(`hook "${h.name}": Claude Code reads no extension on a hook, so extensions { claude-code } there is never written.`);
+  }
+
+  if (opts.target && opts.target !== "claude-code") return results;
+
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    const a = n as AgentNode;
+    if (a.sandbox != null) warn(`agent "${a.id}" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled).`, a.id);
+    if (a.fallbackChain && a.fallbackChain.length > 0) warn(`agent "${a.id}" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel.`, a.id);
+  }
+  const s = ast.settings ?? {};
+  if (s.sandbox != null && typeof s.sandbox !== "boolean")
+    warn(`settings sandbox: "${String(s.sandbox)}" is not written for Claude Code, which turns its sandbox on or off (sandbox.enabled): write true or false, or set sandbox.* keys in extensions { claude-code }.`);
+  const chain = s.fallbackChain;
+  if (Array.isArray(chain) && chain.length > 0) {
+    const other = chain.filter((m) => typeof m !== "string" || !isClaudeCodeModelName(m));
+    if (other.length > 0) warn(`settings fallback-chain names ${other.map((m) => `"${m}"`).join(", ")}, which Claude Code cannot run, so fallbackModel is not written.`);
   }
   return results;
 }

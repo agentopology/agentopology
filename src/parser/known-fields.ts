@@ -15,6 +15,8 @@
  * @module
  */
 
+import { braceText, closingBrace, maskProse } from "./lexer.js";
+
 /** What a block takes: its fields, and the sub-blocks it may hold. */
 interface BlockSchema {
   /** `key: value` names, as written in the source. */
@@ -171,47 +173,39 @@ interface Item {
 
 /**
  * The fields and sub-blocks written directly in `body` (not inside a nested
- * block or a multi-line list). Quoted strings are skipped when counting
- * braces and brackets.
+ * block or a multi-line list). Everything is read on the prose mask: a brace,
+ * a bracket or a name in a prompt, a quoted string or a comment is text.
  */
 function topLevelItems(body: string): Item[] {
   const items: Item[] = [];
+  const mask = maskProse(body);
   let depth = 0;
   let bracket = 0;
   let i = 0;
-  while (i < body.length) {
+  while (i < mask.length) {
     // At the start of a line, at depth 0, outside a list: read the head.
     if (depth === 0 && bracket === 0) {
-      const rest = body.slice(i);
+      const rest = mask.slice(i);
       const field = /^[ \t]*([A-Za-z_][\w-]*)[ \t]*:/.exec(rest);
       const block = field ? null : /^[ \t]*([A-Za-z_][\w-]*)(?:[ \t]+([A-Za-z_][\w-]*))?[^\n{:"]*\{/.exec(rest);
       if (field) {
         items.push({ kind: "field", name: field[1] });
       } else if (block) {
         const open = i + block[0].length;
-        let d = 1;
-        let j = open;
-        while (j < body.length && d > 0) {
-          if (body[j] === "{") d++;
-          else if (body[j] === "}") d--;
-          j++;
-        }
+        const close = closingBrace(braceText(body), open);
+        const j = close < 0 ? mask.length : close + 1;
         items.push({ kind: "block", name: block[1], id: block[2], body: body.slice(open, j - 1) });
         i = j;
         continue;
       }
     }
     // Walk to the next line, tracking depth.
-    let inStr = false;
-    while (i < body.length && body[i] !== "\n") {
-      const ch = body[i];
-      if (ch === '"' && body[i - 1] !== "\\") inStr = !inStr;
-      else if (!inStr) {
-        if (ch === "{") depth++;
-        else if (ch === "}") depth--;
-        else if (ch === "[") bracket++;
-        else if (ch === "]") bracket--;
-      }
+    while (i < mask.length && mask[i] !== "\n") {
+      const ch = mask[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (ch === "[") bracket++;
+      else if (ch === "]") bracket--;
       i++;
     }
     i++;
@@ -289,3 +283,6 @@ export function findUnknownNames(topBody: string): UnknownNameResult[] {
 /** The source names each checked block takes (for docs and tests). */
 export const KNOWN_FIELDS: Readonly<Record<keyof typeof NODE_SCHEMAS, readonly string[]>> =
   Object.fromEntries(Object.entries(NODE_SCHEMAS).map(([k, s]) => [k, s.fields])) as never;
+
+/** Every block keyword the topology level takes (for the section-count guard). */
+export const TOPOLOGY_BLOCKS: readonly string[] = Object.keys(TOPOLOGY.blocks ?? {});

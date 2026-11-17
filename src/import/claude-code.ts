@@ -534,6 +534,21 @@ interface SkillMdResult {
   durable?: boolean;
 }
 
+/** The skill a (non-topology) SKILL.md imports as. */
+export function skillFromMd(id: string, content: string, file?: string): SkillDef {
+  const { fields } = parseFrontmatter(content);
+  return {
+    id,
+    ...(file ? { file } : {}),
+    description: (fields.description as string) ?? "",
+    disableModelInvocation: fields["disable-model-invocation"] as boolean | undefined,
+    userInvocable: fields["user-invocable"] as boolean | undefined,
+    context: fields.context as string | undefined,
+    agent: fields.agent as string | undefined,
+    allowedTools: asList(fields["allowed-tools"]),
+  };
+}
+
 export function parseSkillMd(content: string): SkillMdResult {
   const { fields, body } = parseFrontmatter(content);
 
@@ -967,18 +982,7 @@ export function importClaudeCode(
       }
     } else {
       // Non-topology skill
-      const { fields } = parseFrontmatter(file.content);
-      const skillFile = authored(file.path);
-      additionalSkills.push({
-        id: match[1],
-        ...(skillFile ? { file: skillFile } : {}),
-        description: (fields.description as string) ?? "",
-        disableModelInvocation: fields["disable-model-invocation"] as boolean | undefined,
-        userInvocable: fields["user-invocable"] as boolean | undefined,
-        context: fields.context as string | undefined,
-        agent: fields.agent as string | undefined,
-        allowedTools: asList(fields["allowed-tools"]),
-      });
+      additionalSkills.push(skillFromMd(match[1], file.content, authored(file.path)));
     }
   }
 
