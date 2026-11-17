@@ -123,6 +123,44 @@ const noJqBlock = (hook) => new RegExp(
   "g",
 );
 
+/**
+ * After 0.11.4: the no-jq block of the word reading, as literal pieces (as0112-blocks-words.json, written
+ * once by freeze-nojq-blocks.mjs), and between them only the lines that name the gated words.
+ */
+export const BLOCKS_WORDS = JSON.parse(fs.readFileSync(new URL("./as0112-blocks-words.json", import.meta.url), "utf8"));
+const QW = "'[^'\\s]+'";
+const WORDS_HAS = `at_words_has ${QW}(?: ${QW})*`;
+const noJqWordsBlock = (hook) => new RegExp(
+  reEsc(BLOCKS_WORDS.head[hook]) + "\\n" +
+  `(?:  if ${HAS}(?: \\|\\| ${HAS})*; then at_nojq_refuse; fi\\n)?` +
+  (BLOCKS_WORDS.words[hook]
+    ? `(?:${reEsc(BLOCKS_WORDS.words[hook])}\\n)?` + `(?:  if ${WORDS_HAS}(?: \\|\\| ${WORDS_HAS})*; then at_nojq_refuse; fi\\n)?`
+    : "") +
+  `(?:${reEsc(BLOCKS_WORDS.powershell)}${HAS}(?: \\|\\| ${HAS})*; \\}; then at_nojq_refuse; fi\\n)?` +
+  `(?:${reEsc(BLOCKS_WORDS.expansionHead)}${HAS}(?: \\|\\| ${HAS})*; \\}; then at_nojq_refuse; fi\\n` +
+  `${reEsc(BLOCKS_WORDS.globA)}${QW}(?: ${QW})*${reEsc(BLOCKS_WORDS.globB)}${QW}(?: ${QW})*${reEsc(BLOCKS_WORDS.globC)}\\n)?` +
+  reEsc(BLOCKS_0114.noJqTail[hook]) + "\\n",
+  "g",
+);
+/** at_names as 0.11.2 to 0.11.4 wrote it: the program word reader before the suffix, case and brace rule. */
+const OLD_AT_NAMES = [
+  "# at_names WORD KEY: WORD runs the tool KEY: its name at any path, or a glob or brace list that could be it.",
+  "at_names() {",
+  "  local w=$1 key=$2 b=${1##*/} part lit",
+  "  [ \"$b\" = \"$key\" ] && return 0",
+  "  if [[ $w == *'{'*','* ]]; then",
+  "    for part in ${w//[\\{\\},]/ }; do [ \"${part##*/}\" = \"$key\" ] && return 0; done",
+  "  fi",
+  "  if [[ $b == *[\\*\\?\\[]* ]]; then",
+  "    lit=$(letters \"$b\")",
+  "    if [ \"${#lit}\" -ge 2 ] && [[ $key == $b ]]; then return 0; fi",
+  "  fi",
+  "  return 1",
+  "}",
+].join("\n");
+/** Either no-jq block, 0.11.4's (letters) or the word reading's: exactly one of them must occur. */
+const anyNoJqBlock = (hook) => new RegExp(`(?:${noJqBlock(hook).source})|(?:${noJqWordsBlock(hook).source})`, "g");
+
 /** Replace `find` (a string or a /g regex) by `repl`; it must occur EXACTLY ONCE, or the digest fails. */
 function once(text, find, repl, what, path) {
   const n = typeof find === "string" ? text.split(find).length - 1 : (text.match(find) ?? []).length;
@@ -147,12 +185,12 @@ export function as0112(path, content, on) {
   const hook = /^(before-action|before-edit|before-agent)\.sh$/.test(base) ? base : null;
   const reader = base === "before-action.sh" ? "" : base === "at-if.sh" ? "  " : null;
   if (!hook && reader === null) {
-    if (text.includes("at_git_read") || text.includes("# No jq (0.11.4)")) throw new Error(`as0112: ${path} holds a 0.11.4 guard block`);
+    if (text.includes("at_git_read") || text.includes("# No jq (0.11.4)") || text.includes("at_words_has") || text.includes("at_brace_names")) throw new Error(`as0112: ${path} holds a 0.11.4 guard block`);
     return text;
   }
   let t = text;
   if (hook) {
-    t = once(t, noJqBlock(hook), "", "the no-jq block", path);
+    t = once(t, anyNoJqBlock(hook), "", "the no-jq block", path);
     if (OLD_JQ_LINE[hook]) t = once(t, TRAP, (m) => `${m}\n${OLD_JQ_LINE[hook]}`, "the trap line", path);
   }
   if (reader !== null) {
@@ -162,6 +200,8 @@ export function as0112(path, content, on) {
     // the inline git alias check (0.11.4, its own commit)
     t = once(t, indent(BLOCKS_0114.atGitAlias, reader) + "\n", "", "at_git_alias", path);
     t = once(t, reader + BLOCKS_0114.aliasCall + "\n", "", "the at_git_alias call", path);
+    // the program word reader (after 0.11.4): a suffix, a letter case or a brace list names the tool
+    if (t.includes("at_brace_names")) t = once(t, indent(BLOCKS_WORDS.atNames, reader), indent(OLD_AT_NAMES, reader), "at_names", path);
   }
   if (base === "before-action.sh") t = once(t, /^AT_GIT_STEPS='[^'\n]*'\n/gm, "", "AT_GIT_STEPS", path);
   return t;

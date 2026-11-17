@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -182,6 +182,78 @@ describe("file: is checked, and scaffold's two overrides are separate", () => {
     expect(out).not.toContain("guard.sh (exists");
     const manifest = JSON.parse(fs.readFileSync(join(project, ".claude/.scaffold-manifest.json"), "utf-8"));
     expect(manifest.files[".claude/hooks/guard.sh"]).toBeUndefined();
+  });
+
+  // The same promise where the script is not a hand path: `run: "scripts/x.sh"`
+  // is stubbed in the topology's skill folder, and the user then writes it there.
+  const KEEP_AT = [
+    "topology keep : [pipeline] {",
+    '  meta { version: "1.0.0"',
+    '    description: "A hook and a gate whose scripts the user writes" }',
+    "  orchestrator { model: sonnet }",
+    "  agent writer { model: sonnet",
+    "    prompt { Write the file. } }",
+    "  agent reviewer { model: sonnet",
+    "    prompt { Review the file. } }",
+    "  flow { writer -> reviewer }",
+    "  gates {",
+    "    gate check {",
+    "      after: writer",
+    '      run: "scripts/check.sh"',
+    "    }",
+    "  }",
+    "  hooks {",
+    "    hook block-push {",
+    "      on: PreToolUse",
+    '      matcher: "Bash"',
+    '      run: "scripts/block-push.sh"',
+    "    }",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  const SCRIPTS = ".claude/skills/keep/scripts";
+  const USER_HOOK = "#!/usr/bin/env bash\n# my push guard\necho 'no push' >&2\nexit 2\n";
+  const USER_GATE = "#!/usr/bin/env bash\n# my gate\nexit 0\n";
+  // The stub list goes to stderr, which cli() drops on success.
+  const scaffoldAll = (args: string[]): { out: string; code: number } => {
+    const r = spawnSync(process.execPath, [CLI, "scaffold", ...args], { encoding: "utf8" });
+    return { out: `${r.stdout}${r.stderr}`, code: r.status ?? 1 };
+  };
+
+  it("[C5] a hook or gate script the user wrote at the generated path is never overwritten, even with --force", () => {
+    const keepAt = join(tmp, "keep.at");
+    fs.writeFileSync(keepAt, KEEP_AT);
+    const out = join(tmp, "keep");
+    const first = scaffoldAll([keepAt, "--target", "claude-code", "--output", out]);
+    expect(first.code).toBe(0);
+    expect(first.out).toMatch(/2 stub\(s\) need implementation/);
+    expect(fs.readFileSync(join(out, SCRIPTS, "block-push.sh"), "utf-8")).toContain("AGENTOPOLOGY_STUB");
+    fs.writeFileSync(join(out, SCRIPTS, "block-push.sh"), USER_HOOK);
+    fs.writeFileSync(join(out, SCRIPTS, "check.sh"), USER_GATE);
+    for (const flags of [[], ["--force"]]) {
+      const r = scaffoldAll([keepAt, "--target", "claude-code", "--output", out, ...flags]);
+      expect(r.code).toBe(0);
+      expect(fs.readFileSync(join(out, SCRIPTS, "block-push.sh"), "utf-8")).toBe(USER_HOOK);
+      expect(fs.readFileSync(join(out, SCRIPTS, "check.sh"), "utf-8")).toBe(USER_GATE);
+    }
+  });
+
+  it("[C5] a script the user wrote before the first scaffold is kept, and not taken into the manifest", () => {
+    const keepAt = join(tmp, "keep.at");
+    fs.writeFileSync(keepAt, KEEP_AT);
+    const out = join(tmp, "keep");
+    fs.mkdirSync(join(out, SCRIPTS), { recursive: true });
+    fs.writeFileSync(join(out, SCRIPTS, "block-push.sh"), USER_HOOK);
+    for (const flags of [[], ["--force"]]) {
+      const r = scaffoldAll([keepAt, "--target", "claude-code", "--output", out, ...flags]);
+      expect(r.code).toBe(0);
+      expect(fs.readFileSync(join(out, SCRIPTS, "block-push.sh"), "utf-8")).toBe(USER_HOOK);
+      // The gate's script was missing, so its stub is written and still listed.
+      expect(r.out).toMatch(/·\s+\.claude\/skills\/keep\/scripts\/check\.sh/);
+    }
+    const manifest = JSON.parse(fs.readFileSync(join(out, ".claude/.scaffold-manifest.json"), "utf-8"));
+    expect(manifest.files[`${SCRIPTS}/block-push.sh`]).toBeUndefined();
   });
 
   it("[G16] scaffold names a hand-written file the project lacks", () => {

@@ -44,14 +44,14 @@ const manifestOf = (files: ScaffoldManifest["files"]): ScaffoldManifest => ({
 });
 
 describe("first scaffold never overwrites a file it did not create", () => {
-  it("plans an existing hand-written skill as a conflict and keeps it", () => {
+  it("plans an existing hand-written skill as kept and keeps it", () => {
     put(".claude/skills/story/SKILL.md", "REAL SKILL");
     const files: GeneratedFile[] = [
       { path: ".claude/skills/story/SKILL.md", content: "stub", category: "machine" },
       { path: ".claude/agents/a/AGENT.md", content: "agent", category: "agent" },
     ];
     const actions = computeIncrementalPlan(dir, "claude-code", files, null);
-    expect(actions.map((a) => a.type)).toEqual(["conflict", "create"]);
+    expect(actions.map((a) => a.type)).toEqual(["kept", "create"]);
 
     const result = executeActions(dir, actions, { prune: false, force: false });
     expect(read(".claude/skills/story/SKILL.md")).toBe("REAL SKILL");
@@ -62,12 +62,12 @@ describe("first scaffold never overwrites a file it did not create", () => {
     expect(Object.keys(owned)).toEqual([".claude/agents/a/AGENT.md"]);
   });
 
-  it("overwrites it only with --force", () => {
+  it("keeps it with --force too: its text is the user's", () => {
     put("CLAUDE.md", "mine");
     const files: GeneratedFile[] = [{ path: "CLAUDE.md", content: "generated", category: "machine" }];
-    const actions = computeIncrementalPlan(dir, "claude-code", files, null);
+    const actions = computeIncrementalPlan(dir, "claude-code", files, null, { force: true });
     executeActions(dir, actions, { prune: false, force: true });
-    expect(read("CLAUDE.md")).toBe("generated");
+    expect(read("CLAUDE.md")).toBe("mine");
   });
 });
 
@@ -114,12 +114,12 @@ describe("an unsafe path aborts the run before anything is written", () => {
 });
 
 describe("re-scaffold keeps edits to files scaffold owns", () => {
-  it("treats an edited CLAUDE.md as a conflict, not an update", () => {
+  it("keeps an edited CLAUDE.md, never updates it", () => {
     put(".claude/CLAUDE.md", "generated\nmy own note\n");
     const manifest = manifestOf({ ".claude/CLAUDE.md": { hash: hashContent("generated\n"), category: "machine" } });
     const files: GeneratedFile[] = [{ path: ".claude/CLAUDE.md", content: "generated v2\n", category: "machine" }];
     const actions = computeIncrementalPlan(dir, "claude-code", files, manifest);
-    expect(actions[0]).toMatchObject({ type: "conflict", detail: "user edited" });
+    expect(actions[0]).toMatchObject({ type: "kept", detail: "user edited — kept" });
   });
 
   it("updates an untouched owned file", () => {
@@ -207,7 +207,7 @@ describe("two topologies in one project keep separate manifests", () => {
     expect(mine).toBeNull();
     const files: GeneratedFile[] = [{ path: "crontab.fragment", content: "0 6 * * * mine\n", category: "machine" }];
     const actions = computeIncrementalPlan(dir, "claude-code", files, mine);
-    expect(actions[0]).toMatchObject({ type: "conflict", detail: "exists, not created by scaffold" });
+    expect(actions[0]).toMatchObject({ type: "kept", detail: "exists, not created by scaffold — kept" });
 
     // Writing this topology's manifest leaves the other one in place.
     writeManifest(dir, "claude-code", { ...manifestOf({}), source: "content-harness.at" });

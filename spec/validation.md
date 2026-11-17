@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 129 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 130 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -696,7 +696,7 @@ through the validator like any other rule.
 | V20 | error/warning | Every schedule job must reference a declared agent or action; cron and every are mutually exclusive |
 | V21 | error/warning | Interface webhook/auth values containing literal secrets (not `${ENV_VAR}`) should error |
 | V22 | error/warning | Every model in a fallback-chain should exist in at least one provider's models list |
-| V23 | error/warning | Duplicate top-level singleton sections |
+| V23 | error/warning | Duplicate top-level sections (a section other than `hooks` written twice: warning, the first is used); a hook name used in two `hooks` blocks (error) or twice in one (warning) |
 | V24 | error/warning | Unknown sub-blocks in the `memory` section |
 | V25 | error/warning | `on-fail: bounce-back` enforcement depends on the gate's `after` target (a gate before an action with `commands:` is compiled to before-action.sh and does not warn) |
 | V26 | error/warning | `action.kind` must be one of the allowed values |
@@ -803,6 +803,7 @@ through the validator like any other rule.
 | V127 | error | A human's `who:` is no `person` block, or a person's `away:` or a human's `valid:` is not a real `YYYY-MM-DD..YYYY-MM-DD` window |
 | V128 | error | An `inventory { roots }` entry is an absolute path, a home path (`~`) or holds `..`; a root must be a folder inside the project |
 | V129 | error | `needs memory:` is not a `~/<path>` under the user's home (an absolute path or `..` is refused), or a `user-skills` or `connectors` entry is a path instead of a bare name |
+| V130 | warning | The `.at` states something Claude Code cannot be given, so it is not written: an `extensions { claude-code }` key Claude Code does not have on that surface (topology = settings.json, agent = agent frontmatter, skill or `runs: inline/fork` agent = skill frontmatter; the message names the nearest key), a value of the wrong type or outside the documented values, a settings key a project's settings.json cannot set, or a claude-code extension on a hook or gate; and, for target claude-code or none, an agent's `sandbox` or `fallback-chain`, a `settings { sandbox }` that is not true/false, or a `settings { fallback-chain }` naming a model Claude Code cannot run. The keys are in `src/bindings/claude-code-schema.ts` |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

@@ -78,25 +78,6 @@
       "grade": "check"
     },
     {
-      "id": "cc.agents.file.fm.fallback-chain",
-      "area": "agents.file",
-      "tokens": [
-        "frontmatter:fallback-chain"
-      ],
-      "contract": {
-        "doc": "https://code.claude.com/docs/en/sub-agents.md"
-      },
-      "usedBy": [
-        "src/bindings/claude-code.ts"
-      ],
-      "language": [
-        "agent"
-      ],
-      "proof": "src/__tests__/e2e/compile.test.ts",
-      "ifBroken": "an agent file is not loaded or loses a setting",
-      "grade": "check"
-    },
-    {
       "id": "cc.agents.file.fm.hooks",
       "area": "agents.file",
       "tokens": [
@@ -215,25 +196,6 @@
       "area": "agents.file",
       "tokens": [
         "frontmatter:permissionMode"
-      ],
-      "contract": {
-        "doc": "https://code.claude.com/docs/en/sub-agents.md"
-      },
-      "usedBy": [
-        "src/bindings/claude-code.ts"
-      ],
-      "language": [
-        "agent"
-      ],
-      "proof": "src/__tests__/e2e/compile.test.ts",
-      "ifBroken": "an agent file is not loaded or loses a setting",
-      "grade": "check"
-    },
-    {
-      "id": "cc.agents.file.fm.sandbox",
-      "area": "agents.file",
-      "tokens": [
-        "frontmatter:sandbox"
       ],
       "contract": {
         "doc": "https://code.claude.com/docs/en/sub-agents.md"
@@ -1550,6 +1512,44 @@
       "grade": "check"
     },
     {
+      "id": "cc.permissions.rules.additionalDirectories",
+      "area": "permissions.rules",
+      "tokens": [
+        "additionalDirectories"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "extensions"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-schema-placement.test.ts",
+      "ifBroken": "an extra working directory the .at grants is not added",
+      "grade": "check"
+    },
+    {
+      "id": "cc.permissions.rules.defaultMode",
+      "area": "permissions.rules",
+      "tokens": [
+        "defaultMode"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "extensions"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-schema-placement.test.ts",
+      "ifBroken": "the session starts in a different permission mode than the .at sets",
+      "grade": "check"
+    },
+    {
       "id": "cc.permissions.rules.allow",
       "area": "permissions.rules",
       "tokens": [
@@ -1774,24 +1774,60 @@
       "grade": "check"
     },
     {
-      "id": "cc.settings.project-type",
+      "id": "cc.settings.fallbackModel",
       "area": "settings",
       "tokens": [
-        "project-type"
+        "fallbackModel"
       ],
       "contract": {
-        "doc": "https://code.claude.com/docs/en/settings.md"
+        "doc": "https://code.claude.com/docs/en/settings-reference.md"
       },
       "usedBy": [
         "src/bindings/claude-code.ts"
       ],
       "language": [
-        "hook",
-        "permission",
-        "env"
+        "settings"
       ],
-      "proof": "src/__tests__/e2e/compile.test.ts",
-      "ifBroken": "generated settings are ignored or rejected",
+      "proof": "src/bindings/__tests__/claude-code-schema-placement.test.ts",
+      "ifBroken": "a model fallback chain the .at declares is not used",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.outputStyle",
+      "area": "settings",
+      "tokens": [
+        "outputStyle"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "extensions"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-schema-placement.test.ts",
+      "ifBroken": "the output style the .at selects is not used",
+      "grade": "check"
+    },
+    {
+      "id": "cc.settings.sandbox",
+      "area": "settings",
+      "tokens": [
+        "sandbox"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/settings-reference.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "settings"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-schema-placement.test.ts",
+      "ifBroken": "the sandbox the .at turns on stays off",
       "grade": "check"
     },
     {

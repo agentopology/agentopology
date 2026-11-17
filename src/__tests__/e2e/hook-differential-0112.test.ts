@@ -17,6 +17,10 @@
  * must-not-block commands 0.11.2 refused; with no jq, the payloads that could
  * not hold anything the hook guards. The flipped pairs must equal that list.
  * No other pair may change, in either direction.
+ *
+ * After 0.11.4 (the no-jq word reading): differential/hooks-0114.json is the same corpus frozen with a
+ * v0.11.4 build, and differential/hooks-0114-words-flips.json the declared no-jq pairs it frees
+ * (declare-flips-words.mjs). The same one run of this build is held to both.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -36,6 +40,17 @@ const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 interface Pair { topology: string; binding: string; hook: string; input: string; jq: boolean; exit: number | null }
 const frozen = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0112.json"), "utf8")) as { version: string; count: number; rows: Pair[] };
 const declared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-flips.json"), "utf8")) as { count: number; flips: Array<Omit<Pair, "exit"> & { why: string }> };
+/**
+ * After 0.11.4, the declared no-jq pairs the word reading frees (declare-flips-words.mjs, against the frozen
+ * 0.11.4 run; the "against the frozen 0.11.4 run" tests below hold them exactly). 0.11.2 refused each,
+ * as 0.11.4 did.
+ */
+const wordsDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-words-flips.json"), "utf8")) as { count: number; flips: Array<Omit<Pair, "exit"> & { why: string }> };
+/**
+ * Frozen from a v0.11.4 build on the same corpus (freeze-hooks.mjs). Against it, the no-jq word reading:
+ * with jq no pair changes; with no jq only the declared 2 -> 0 list above (wordsDeclared) changes.
+ */
+const frozen0114 = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114.json"), "utf8")) as { version: string; count: number; rows: Pair[] };
 /** The declared 0->2 list, kept apart: an inline git alias that ran a gated step under another name. */
 const closedDeclared = JSON.parse(fs.readFileSync(join(here, "differential/hooks-0114-closed.json"), "utf8")) as { count: number; closed: Array<Omit<Pair, "exit"> & { why: string }> };
 
@@ -59,7 +74,8 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
 
   it("every pair equals 0.11.2's exit, except the two declared lists: 2 -> 0, and the inline git alias 0 -> 2", () => {
     const was = new Map(frozen.rows.map((r) => [pairKey(r), r.exit]));
-    const flipsDeclared = new Set<string>(declared.flips.map((f) => pairKey(f) as string));
+    const flipsDeclared = new Set<string>([...declared.flips, ...wordsDeclared.flips].map((f) => pairKey(f) as string));
+    expect(flipsDeclared.size, "the two declared 2->0 lists share no pair").toBe(declared.count + wordsDeclared.count);
     const closedSet = new Set<string>(closedDeclared.closed.map((f) => pairKey(f) as string));
     const flipped: string[] = [];
     const closed: string[] = [];
@@ -77,7 +93,7 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     expect(wrong, `${wrong.length} pairs changed outside the declared lists:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
     expect(missing, `${missing.length} declared 2->0 flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
     expect(missingClosed, `${missingClosed.length} declared 0->2 (inline alias) did not happen:\n${missingClosed.join("\n")}`).toEqual([]);
-    expect(flipped.length).toBe(declared.count);
+    expect(flipped.length).toBe(declared.count + wordsDeclared.count);
     expect(closed.length).toBe(closedDeclared.count);
   });
 
@@ -102,6 +118,38 @@ describe.skipIf(!hasJq)("[0.11.4] the guard hooks exit as 0.11.2's did, but for 
     } finally {
       console.warn = warn;
     }
+  });
+
+  it("against the frozen 0.11.4 run: the same pairs, and the declared word flips are no-jq only", () => {
+    expect(frozen0114.version).toBe("0.11.4");
+    expect(frozen0114.rows.length).toBe(frozen0114.count);
+    expect(frozen0114.rows.map(pairKey).sort()).toEqual(now.map(pairKey).sort());
+    expect(wordsDeclared.flips.length).toBe(wordsDeclared.count);
+    expect(wordsDeclared.flips.filter((f) => f.jq)).toEqual([]);
+  });
+
+  it("against the frozen 0.11.4 run: with jq, every pair exits as 0.11.4's did", () => {
+    const was = new Map(frozen0114.rows.map((r) => [pairKey(r), r.exit]));
+    const changed = now.filter((r) => r.jq && was.get(pairKey(r)) !== r.exit).map((r) => `${pairKey(r)}: ${was.get(pairKey(r))} -> ${r.exit}`);
+    expect(changed, changed.join("\n")).toEqual([]);
+  });
+
+  it("against the frozen 0.11.4 run: with no jq, every pair exits as 0.11.4's did, except the declared word flips (2 -> 0), exactly", () => {
+    const was = new Map(frozen0114.rows.map((r) => [pairKey(r), r.exit]));
+    const flipsDeclared = new Set<string>(wordsDeclared.flips.map((f) => pairKey(f) as string));
+    const flipped: string[] = [];
+    const wrong: string[] = [];
+    for (const r of now.filter((x) => !x.jq)) {
+      const k = pairKey(r);
+      const before = was.get(k);
+      if (before === r.exit) continue;
+      if (before === 2 && r.exit === 0 && flipsDeclared.has(k)) flipped.push(k);
+      else wrong.push(`${k}: ${before} -> ${r.exit}${flipsDeclared.has(k) ? "" : " (not declared)"}`);
+    }
+    const missing = [...flipsDeclared].filter((k) => !flipped.includes(k));
+    expect(wrong, `${wrong.length} pairs changed outside the declared list:\n${wrong.slice(0, 60).join("\n")}`).toEqual([]);
+    expect(missing, `${missing.length} declared 2->0 flips did not happen:\n${missing.slice(0, 60).join("\n")}`).toEqual([]);
+    expect(flipped.length).toBe(wordsDeclared.count);
   });
 
   it("with no jq, a hook never lets through what it refuses with jq", () => {

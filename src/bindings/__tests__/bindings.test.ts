@@ -817,8 +817,9 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(researcher.content).toContain("background: true");
     });
 
-    it("includes sandbox in frontmatter", () => {
-      expect(researcher.content).toContain("sandbox:");
+    // Claude Code has no per-agent sandbox key: writing one looked configured and did nothing (V130 warns instead).
+    it("does not write sandbox as frontmatter", () => {
+      expect(researcher.content).not.toMatch(/^sandbox:/m);
     });
 
     it("includes tools in frontmatter", () => {
@@ -827,9 +828,9 @@ topology debate-test : [fan-out, debate, pipeline] {
       expect(researcher.content).toContain("Grep");
     });
 
-    it("includes fallback-chain in frontmatter", () => {
-      expect(researcher.content).toContain("fallback-chain");
-      expect(researcher.content).toContain("haiku");
+    // Same for fallback-chain: no per-agent key in Claude Code (settings { fallback-chain } is fallbackModel).
+    it("does not write fallback-chain as frontmatter", () => {
+      expect(researcher.content).not.toMatch(/^fallback-chain:/m);
     });
 
     it("includes scale config in body", () => {

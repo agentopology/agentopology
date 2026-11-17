@@ -1,0 +1,6899 @@
+{
+ ".claude/topologies/memory-test.at": {
+  "topology": {
+   "name": "memory-integration-test",
+   "version": "1.0.0",
+   "description": "Integration test for Agent Memory system — exercises all store types, backends, and retrieval features",
+   "patterns": [
+    "supervisor"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "process"
+    ]
+   },
+   {
+    "id": "process",
+    "type": "action",
+    "label": "Process",
+    "kind": "inline",
+    "description": "Process a query through the memory pipeline"
+   },
+   {
+    "id": "indexer",
+    "type": "agent",
+    "label": "Indexer",
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "tools": [
+     "Read",
+     "Glob"
+    ],
+    "memory": [
+     "docs-store",
+     "entity-graph"
+    ],
+    "retrieval": "main-retrieval",
+    "description": "Indexes documents into semantic and graph stores"
+   },
+   {
+    "id": "searcher",
+    "type": "agent",
+    "label": "Searcher",
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "tools": [
+     "Read"
+    ],
+    "memory": [
+     "docs-store",
+     "entity-graph",
+     "chat-history"
+    ],
+    "retrieval": "main-retrieval",
+    "description": "Searches across all memory stores"
+   },
+   {
+    "id": "responder",
+    "type": "agent",
+    "label": "Responder",
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "memory": [
+     "docs-store",
+     "chat-history",
+     "user-settings"
+    ],
+    "retrieval": "main-retrieval",
+    "description": "Generates responses using retrieved context"
+   }
+  ],
+  "edges": [
+   {
+    "from": "process",
+    "to": "indexer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "indexer",
+    "to": "searcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "searcher",
+    "to": "responder",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "domains": {
+    "path": "domains/"
+   },
+   "workspace": {
+    "path": ".workspace/"
+   }
+  },
+  "stores": [
+   {
+    "id": "docs-store",
+    "type": "semantic",
+    "backend": "lancedb",
+    "description": "Document knowledge base with hybrid search",
+    "scope": "org",
+    "isolation": "soft",
+    "path": ".memory/docs/",
+    "embedding": {
+     "provider": "ollama",
+     "model": "nomic-embed-text",
+     "dimensions": 768
+    },
+    "index": {
+     "collection": "documents",
+     "metric": "cosine"
+    },
+    "ingestion": {
+     "sources": [
+      "docs/",
+      "wiki/"
+     ],
+     "chunking": "recursive",
+     "chunkSize": 512,
+     "overlap": 50
+    },
+    "search": {
+     "strategy": "hybrid",
+     "rerank": true,
+     "topK": 10
+    },
+    "lifecycle": {
+     "retention": "365d",
+     "consolidation": 0.85,
+     "contradiction": "overwrite",
+     "auditLog": false
+    }
+   },
+   {
+    "id": "entity-graph",
+    "type": "graph",
+    "backend": "kuzu",
+    "description": "Entity relationship tracking",
+    "scope": "org",
+    "isolation": "soft",
+    "path": ".memory/graph/",
+    "extraction": "hybrid",
+    "lifecycle": {
+     "retention": "365d",
+     "contradiction": "preserve"
+    }
+   },
+   {
+    "id": "chat-history",
+    "type": "episodic",
+    "backend": "sqlite",
+    "description": "Conversation history with temporal reasoning",
+    "scope": "user",
+    "isolation": "strict",
+    "path": ".memory/episodes.db",
+    "embedding": {
+     "provider": "ollama",
+     "model": "nomic-embed-text",
+     "dimensions": 768
+    },
+    "lifecycle": {
+     "retention": "90d",
+     "decayHalfLife": "30d",
+     "consolidation": 0.9,
+     "contradiction": "bi-temporal",
+     "auditLog": true
+    }
+   },
+   {
+    "id": "user-settings",
+    "type": "user",
+    "backend": "sqlite",
+    "description": "Per-user preferences and context",
+    "scope": "user",
+    "isolation": "strict",
+    "path": ".memory/user.db",
+    "lifecycle": {
+     "contradiction": "overwrite"
+    }
+   },
+   {
+    "id": "procedures",
+    "type": "procedural",
+    "backend": "sqlite-vec",
+    "description": "Learned workflows and patterns",
+    "scope": "agent",
+    "isolation": "soft",
+    "path": ".memory/procedures/",
+    "embedding": {
+     "provider": "local",
+     "model": "gguf-nomic",
+     "dimensions": 768
+    },
+    "search": {
+     "strategy": "vector",
+     "topK": 5
+    },
+    "lifecycle": {
+     "retention": "180d",
+     "contradiction": "preserve"
+    }
+   }
+  ],
+  "retrievals": [
+   {
+    "id": "main-retrieval",
+    "sources": [
+     "docs-store",
+     "entity-graph",
+     "chat-history",
+     "procedures"
+    ],
+    "paths": [
+     "semantic",
+     "episodic",
+     "graph",
+     "hybrid"
+    ],
+    "budget": 4096,
+    "rerank": true,
+    "diversity": true,
+    "cacheHitThreshold": 0.92,
+    "cacheHitAction": "short-circuit",
+    "scoring": {
+     "recencyWeight": 0.3,
+     "semanticWeight": 0.5,
+     "importanceWeight": 0.2
+    }
+   }
+  ],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "query",
+    "pattern": "/query <question>"
+   }
+  ],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 8,
+   "indexer": 13,
+   "searcher": 22,
+   "responder": 31,
+   "process": 40,
+   "docs-store": 67,
+   "entity-graph": 107,
+   "chat-history": 122,
+   "user-settings": 145,
+   "procedures": 158,
+   "main-retrieval": 183
+  }
+ },
+ ".claude/topologies/parser-dev.at": {
+  "topology": {
+   "name": "parser-dev",
+   "version": "1.0.0",
+   "description": "Parser development — grammar, bindings, tests, CLI, and docs",
+   "patterns": [
+    "pipeline",
+    "fan-out"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "develop-grammar",
+     "develop-binding",
+     "develop-tests",
+     "develop-cli",
+     "develop-docs",
+     "validate-all"
+    ],
+    "generates": "commands/parser-dev.md",
+    "outputs": {
+     "route": [
+      "grammar",
+      "binding",
+      "tests",
+      "cli",
+      "docs",
+      "validate"
+     ]
+    }
+   },
+   {
+    "id": "develop-grammar",
+    "type": "action",
+    "label": "Develop Grammar",
+    "kind": "inline",
+    "description": "Route to grammar-engineer for language feature development"
+   },
+   {
+    "id": "develop-binding",
+    "type": "action",
+    "label": "Develop Binding",
+    "kind": "inline",
+    "description": "Route to binding-engineer for binding updates"
+   },
+   {
+    "id": "develop-tests",
+    "type": "action",
+    "label": "Develop Tests",
+    "kind": "inline",
+    "description": "Route to test-engineer for test development"
+   },
+   {
+    "id": "develop-cli",
+    "type": "action",
+    "label": "Develop Cli",
+    "kind": "inline",
+    "description": "Route to cli-engineer for CLI and visualizer development"
+   },
+   {
+    "id": "develop-docs",
+    "type": "action",
+    "label": "Develop Docs",
+    "kind": "inline",
+    "description": "Route to doc-writer for documentation updates"
+   },
+   {
+    "id": "validate-all",
+    "type": "action",
+    "label": "Validate All",
+    "kind": "inline",
+    "description": "Run full validation — type-check, tests, example validation"
+   },
+   {
+    "id": "grammar-engineer",
+    "type": "agent",
+    "label": "Grammar Engineer",
+    "phase": 1,
+    "model": "opus",
+    "permissions": "autonomous",
+    "prompt": "You are a language engineer for the AgentTopology .at parser.\n\n## Your Files\n- spec/grammar.md — Language specification\n- spec/reserved-keywords.md — Reserved keyword list\n- spec/validation.md — Validation rules\n- src/parser/ast.ts — AST type definitions\n- src/parser/index.ts — Parser implementation\n- src/parser/validator.ts — Validation logic\n- src/parser/lexer.ts — Lexer/tokenizer\n\n## Rules\n- Every new feature needs ALL of: AST type, parser function, dispatch call, validator rule, reserved keyword entry, spec update\n- Change these files as a cohesive unit — never update one without the others\n- Keep the grammar LL(2) — no ambiguity, no backtracking\n- Never include sophisticated wiring patterns in examples\n- Run `npx tsc --noEmit` after changes to verify types",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Grep",
+     "Glob",
+     "Bash"
+    ],
+    "writes": [
+     "src/parser/",
+     "spec/"
+    ],
+    "outputs": {
+     "status": [
+      "done",
+      "needs-tests"
+     ]
+    },
+    "role": "Language engineer — evolves the .at grammar, AST types, parser, validator, and reserved keywords as a cohesive unit"
+   },
+   {
+    "id": "binding-engineer",
+    "type": "agent",
+    "label": "Binding Engineer",
+    "phase": 1,
+    "model": "opus",
+    "permissions": "autonomous",
+    "prompt": "You are a binding specialist for the AgentTopology parser.\n\n## Your Files\n- src/bindings/claude-code.ts — Claude Code binding\n- src/bindings/codex.ts — OpenAI Codex binding\n- src/bindings/gemini-cli.ts — Google Gemini CLI binding\n- src/bindings/copilot-cli.ts — GitHub Copilot CLI binding\n- src/bindings/openclaw.ts — OpenClaw binding\n\n## Rules\n- When a new AST field is added, update ALL 5 bindings to consume it\n- Maintain extension fallbacks for backward compatibility\n- Each binding transforms the shared AST into platform-specific config\n- Run `npx tsc --noEmit` after changes to verify types",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Grep",
+     "Glob",
+     "Bash"
+    ],
+    "reads": [
+     "src/parser/ast.ts"
+    ],
+    "writes": [
+     "src/bindings/"
+    ],
+    "outputs": {
+     "status": [
+      "done",
+      "needs-tests"
+     ]
+    },
+    "role": "Binding specialist — maintains all 5 platform bindings (Claude Code, Codex, Gemini CLI, Copilot CLI, OpenClaw) and ensures backward compatibility"
+   },
+   {
+    "id": "test-engineer",
+    "type": "agent",
+    "label": "Test Engineer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a test specialist for the AgentTopology parser.\n\n## Your Files\n- src/parser/__tests__/parser.test.ts — Main parser test suite\n\n## How to Run\n- Tests: `npx vitest run`\n- Validate a single .at file: `node --import tsx src/cli/index.ts validate <file>`\n- Validate all examples: run validate on each file in examples/\n\n## Rules\n- Write tests that cover edge cases and error conditions\n- Every new grammar feature needs parser tests and validator tests\n- Test both valid and invalid .at syntax\n- Validate all example .at files after changes",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Bash",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "src/parser/",
+     "src/bindings/"
+    ],
+    "writes": [
+     "src/parser/__tests__/"
+    ],
+    "outputs": {
+     "status": [
+      "pass",
+      "fail"
+     ]
+    },
+    "role": "Test specialist — writes comprehensive parser tests, runs vitest, validates all example .at files"
+   },
+   {
+    "id": "cli-engineer",
+    "type": "agent",
+    "label": "Cli Engineer",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a CLI and tooling specialist for the AgentTopology parser.\n\n## Your Files\n- src/cli/index.ts — CLI entry point and commands\n- src/visualizer/index.ts — Interactive HTML topology viewer\n\n## Rules\n- CLI commands: validate, visualize, scaffold, parse\n- The visualizer generates standalone HTML with embedded CSS and JS\n- Keep the CLI interface simple and consistent\n- Run `npx tsc --noEmit` after changes to verify types",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Bash",
+     "Grep",
+     "Glob"
+    ],
+    "writes": [
+     "src/cli/",
+     "src/visualizer/"
+    ],
+    "outputs": {
+     "status": [
+      "done",
+      "needs-tests"
+     ]
+    },
+    "role": "CLI and tooling specialist — develops the agentopology CLI commands and the interactive HTML visualizer"
+   },
+   {
+    "id": "doc-writer",
+    "type": "agent",
+    "label": "Doc Writer",
+    "phase": 3,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a documentation specialist for the AgentTopology parser.\n\n## Your Files\n- examples/*.at — Example topology files\n- docs/ — Documentation directory\n- README.md — Package README\n\n## Rules\n- Examples must be MINIMAL — show the feature, nothing more\n- Never include sophisticated wiring patterns in examples\n- Keep documentation accurate with the current grammar spec\n- Update examples when grammar changes",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Grep",
+     "Glob"
+    ],
+    "writes": [
+     "examples/",
+     "docs/"
+    ],
+    "outputs": {
+     "status": [
+      "done",
+      "needs-tests"
+     ]
+    },
+    "role": "Documentation specialist — maintains examples, README, and docs for the open-source package"
+   },
+   {
+    "id": "type-check",
+    "type": "gate",
+    "label": "Type Check",
+    "after": "grammar-engineer",
+    "before": "test-engineer",
+    "run": "npx tsc --noEmit",
+    "onFail": "bounce-back"
+   },
+   {
+    "id": "example-validation",
+    "type": "gate",
+    "label": "Example Validation",
+    "after": "test-engineer",
+    "run": "scripts/validate-examples.sh",
+    "onFail": "halt"
+   }
+  ],
+  "edges": [
+   {
+    "from": "develop-grammar",
+    "to": "grammar-engineer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "grammar-engineer",
+    "to": "test-engineer",
+    "condition": "grammar-engineer.status == needs-tests",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "grammar-engineer",
+    "to": "doc-writer",
+    "condition": "grammar-engineer.status == done",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "develop-binding",
+    "to": "binding-engineer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "binding-engineer",
+    "to": "test-engineer",
+    "condition": "binding-engineer.status == needs-tests",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "binding-engineer",
+    "to": "doc-writer",
+    "condition": "binding-engineer.status == done",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "develop-tests",
+    "to": "test-engineer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "develop-cli",
+    "to": "cli-engineer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "cli-engineer",
+    "to": "test-engineer",
+    "condition": "cli-engineer.status == needs-tests",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "cli-engineer",
+    "to": "doc-writer",
+    "condition": "cli-engineer.status == done",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "develop-docs",
+    "to": "doc-writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "validate-all",
+    "to": "test-engineer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": ".claude/workspace/parser-dev/",
+    "structure": [
+     "grammar-changes",
+     "binding-changes",
+     "test-results",
+     "cli-changes",
+     "docs"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "grammar",
+    "pattern": "/parser grammar"
+   },
+   {
+    "name": "binding",
+    "pattern": "/parser binding"
+   },
+   {
+    "name": "test",
+    "pattern": "/parser test"
+   },
+   {
+    "name": "cli",
+    "pattern": "/parser cli"
+   },
+   {
+    "name": "docs",
+    "pattern": "/parser docs"
+   },
+   {
+    "name": "validate",
+    "pattern": "/parser validate"
+   }
+  ],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "Agent"
+   ],
+   "deny": [
+    "WebFetch"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "grammar-engineer": "Language engineer — evolves the .at grammar, AST types, parser, validator, and reserved keywords as a cohesive unit",
+   "binding-engineer": "Binding specialist — maintains all 5 platform bindings (Claude Code, Codex, Gemini CLI, Copilot CLI, OpenClaw) and ensures backward compatibility",
+   "test-engineer": "Test specialist — writes comprehensive parser tests, runs vitest, validates all example .at files",
+   "cli-engineer": "CLI and tooling specialist — develops the agentopology CLI commands and the interactive HTML visualizer",
+   "doc-writer": "Documentation specialist — maintains examples, README, and docs for the open-source package"
+  },
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 13,
+   "develop-grammar": 32,
+   "develop-binding": 37,
+   "develop-tests": 42,
+   "develop-cli": 47,
+   "develop-docs": 52,
+   "validate-all": 57,
+   "grammar-engineer": 64,
+   "binding-engineer": 96,
+   "test-engineer": 126,
+   "cli-engineer": 157,
+   "doc-writer": 183,
+   "type-check": 235,
+   "example-validation": 242
+  }
+ },
+ "examples/code-review.at": {
+  "topology": {
+   "name": "code-review",
+   "version": "1.0.0",
+   "description": "Automated code review — analyze, scan, review, and approve",
+   "patterns": [
+    "pipeline",
+    "fan-out",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "intake",
+     "create-report"
+    ],
+    "generates": "commands/review.md"
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "external",
+    "source": "github-pr",
+    "description": "Fetch PR diff and metadata from GitHub"
+   },
+   {
+    "id": "create-report",
+    "type": "action",
+    "label": "Create Report",
+    "kind": "report",
+    "description": "Compile all findings into final review report"
+   },
+   {
+    "id": "analyzer",
+    "type": "agent",
+    "label": "Analyzer",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Read the diff at workspace/pr-diff.md.\n\nReport structural risk only — complexity, dependency changes, and blast\nradius. Do not comment on security; a separate agent covers that.\n\nWrite your findings to workspace/analysis.md and set risk-level.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/pr-diff.md"
+    ],
+    "writes": [
+     "workspace/analysis.md"
+    ],
+    "outputs": {
+     "risk-level": [
+      "low",
+      "medium",
+      "high",
+      "critical"
+     ]
+    },
+    "role": "Static analysis — complexity, dependencies, blast radius"
+   },
+   {
+    "id": "security-scanner",
+    "type": "agent",
+    "label": "Security Scanner",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Read the diff at workspace/pr-diff.md.\n\nLook for injection, auth or authorization changes, secret handling, and\nunsafe deserialization. Do not comment on style or complexity.\n\nWrite your findings to workspace/security.md and set has-vulnerabilities.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/pr-diff.md"
+    ],
+    "writes": [
+     "workspace/security.md"
+    ],
+    "behavior": "advisory",
+    "outputs": {
+     "has-vulnerabilities": [
+      "yes",
+      "no"
+     ]
+    },
+    "role": "Security vulnerability scanning and OWASP checks"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 2,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "Read the diff, workspace/analysis.md and workspace/security.md.\n\nThe two reports were produced independently. Where they disagree, say so\nrather than silently picking one.\n\nWrite your review to workspace/review.md and set a verdict.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/pr-diff.md",
+     "workspace/analysis.md",
+     "workspace/security.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "request-changes",
+      "reject"
+     ]
+    },
+    "role": "Holistic code review — logic, style, test coverage"
+   },
+   {
+    "id": "reporter",
+    "type": "agent",
+    "label": "Reporter",
+    "phase": 3,
+    "model": "haiku",
+    "permissions": "autonomous",
+    "prompt": "Read workspace/analysis.md, workspace/security.md and workspace/review.md.\n\nProduce one report a human can act on: the verdict, the reasons behind it,\nand the specific changes required. No new analysis.\n\nWrite it to workspace/final-report.md.",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/analysis.md",
+     "workspace/security.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/final-report.md"
+    ],
+    "role": "Compile findings into a structured review report"
+   },
+   {
+    "id": "human-approval",
+    "type": "gate",
+    "label": "Human Approval",
+    "after": "reviewer",
+    "before": "reporter",
+    "run": "scripts/human-approve.sh",
+    "onFail": "halt"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "analyzer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "intake",
+    "to": "security-scanner",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "analyzer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "security-scanner",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "reporter",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "reporter",
+    "condition": "reviewer.verdict == request-changes",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "create-report",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reporter",
+    "to": "create-report",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "pr-diff",
+     "analysis",
+     "security",
+     "review",
+     "reports"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "review",
+    "pattern": "/review <PR_URL>",
+    "argument": "PR_URL"
+   },
+   {
+    "name": "audit",
+    "pattern": "/audit"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "log-findings",
+    "on": "AgentStop",
+    "matcher": "",
+    "run": "scripts/log-findings.sh",
+    "type": "command"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob"
+   ],
+   "deny": [
+    "Write",
+    "Edit",
+    "Bash"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "analyzer": "Static analysis — complexity, dependencies, blast radius",
+   "security": "Security vulnerability scanning and OWASP checks",
+   "reviewer": "Holistic code review — logic, style, test coverage",
+   "reporter": "Compile findings into a structured review report"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 21,
+   "intake": 36,
+   "create-report": 42,
+   "analyzer": 49,
+   "security-scanner": 70,
+   "reviewer": 92,
+   "reporter": 113,
+   "human-approval": 149
+  }
+ },
+ "examples/company-brain-team.at": {
+  "topology": {
+   "name": "company-brain-team",
+   "version": "0.1.0",
+   "description": "A team of agents that ingest, wire, and maintain a company brain",
+   "patterns": [
+    "brain",
+    "event-driven",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "wire-in",
+    "type": "action",
+    "label": "Wire In",
+    "kind": "inline",
+    "description": "Fold a dropped or freshly-ingested note into the brain"
+   },
+   {
+    "id": "audit",
+    "type": "action",
+    "label": "Audit",
+    "kind": "report",
+    "description": "Report the brain's health: ghosts, orphans, broken links, dupes"
+   },
+   {
+    "id": "query",
+    "type": "action",
+    "label": "Query",
+    "kind": "inline",
+    "description": "Ask the brain a question"
+   },
+   {
+    "id": "gmail-ingester",
+    "type": "agent",
+    "label": "Gmail Ingester",
+    "model": "sonnet",
+    "prompt": "You ingest email into the brain. On each run:\n- Pull recent notable threads (decisions, deals, intros, commitments).\n- For each, write ONE raw markdown note into `brain/` with a clear title\n  and YAML frontmatter (date, source: gmail, participants).\n- Do NOT wire links or tags — that is the librarian's job. Just capture\n  the content faithfully. Skip noise (newsletters, automated mail).",
+    "tools": [
+     "Read",
+     "Write",
+     "Grep",
+     "Glob"
+    ],
+    "writes": [
+     "brain/"
+    ],
+    "mcpServers": [
+     "gmail"
+    ],
+    "description": "Pulls notable emails and writes them as raw notes into the brain"
+   },
+   {
+    "id": "slack-ingester",
+    "type": "agent",
+    "label": "Slack Ingester",
+    "model": "sonnet",
+    "prompt": "You ingest Slack into the brain. On each run, capture threads where a\ndecision was made, a commitment given, or knowledge shared. Write each\nas ONE raw markdown note in `brain/` with frontmatter (date, source:\nslack, channel). Leave linking and tagging to the librarian.",
+    "tools": [
+     "Read",
+     "Write",
+     "Grep",
+     "Glob"
+    ],
+    "writes": [
+     "brain/"
+    ],
+    "mcpServers": [
+     "slack"
+    ],
+    "description": "Captures key Slack decisions and threads as raw notes"
+   },
+   {
+    "id": "calendar-ingester",
+    "type": "agent",
+    "label": "Calendar Ingester",
+    "model": "sonnet",
+    "prompt": "You ingest calendar events into the brain. For meetings that mattered,\nwrite ONE raw markdown note in `brain/` with frontmatter (date, source:\ncalendar, attendees) and any outcomes/notes you can infer. No linking —\nthat is the librarian's job.",
+    "tools": [
+     "Read",
+     "Write",
+     "Grep",
+     "Glob"
+    ],
+    "writes": [
+     "brain/"
+    ],
+    "mcpServers": [
+     "calendar"
+    ],
+    "description": "Turns meetings into raw notes (attendees, outcomes)"
+   },
+   {
+    "id": "librarian",
+    "type": "agent",
+    "label": "Librarian",
+    "model": "sonnet",
+    "prompt": "You are the brain's librarian. Raw notes arrive from the ingesters and\nfrom humans. You never invent content — you wire what is dropped in.\nResolve mentions into [[wikilinks]], assign #nested/tags, keep the hub\nnotes current, and flag duplicates. Leave ghost links to mark gaps.",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Grep",
+     "Glob"
+    ],
+    "custodianOf": [
+     "brain"
+    ],
+    "custodianDoes": [
+     "link",
+     "tag",
+     "index",
+     "dedupe"
+    ],
+    "description": "Wires raw notes into the brain graph — links, tags, hubs"
+   },
+   {
+    "id": "auditor",
+    "type": "agent",
+    "label": "Auditor",
+    "model": "opus",
+    "prompt": "You audit the brain's health. Find and repair broken [[links]] after\nrenames, surface ghost nodes (links to notes that don't exist), flag\norphan notes (nothing links to them), and propose merges for duplicates.\nConservative: repair links and report issues — never delete a human's note.",
+    "tools": [
+     "Read",
+     "Edit",
+     "Grep",
+     "Glob"
+    ],
+    "custodianOf": [
+     "brain"
+    ],
+    "custodianDoes": [
+     "heal",
+     "dedupe",
+     "index"
+    ],
+    "description": "Heals the brain — broken links, ghost nodes, orphans, dupes"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "model": "sonnet",
+    "prompt": "Answer questions using only the brain in `brain/`. Grep for relevant\nnotes, follow their [[wikilinks]] and #tags, and cite notes by filename.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "memory": [
+     "brain"
+    ],
+    "description": "Answers questions by traversing the brain"
+   }
+  ],
+  "edges": [
+   {
+    "from": "gmail-ingester",
+    "to": "wire-in",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "slack-ingester",
+    "to": "wire-in",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "calendar-ingester",
+    "to": "wire-in",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "wire-in",
+    "to": "librarian",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "librarian",
+    "to": "auditor",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "auditor",
+    "to": "audit",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "query",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [
+   {
+    "id": "brain",
+    "type": "brain",
+    "backend": "files",
+    "description": "The company brain — fed by ingesters, wired by the librarian",
+    "scope": "org",
+    "path": "brain/",
+    "format": "obsidian",
+    "sources": {
+     "gmail": {
+      "color": "#EA4335",
+      "icon": "./logos/gmail.svg"
+     },
+     "slack": {
+      "color": "#4A154B",
+      "icon": "./logos/slack.svg"
+     },
+     "calendar": {
+      "color": "#4285F4"
+     }
+    }
+   }
+  ],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "wire-in",
+    "pattern": "/wire-in <FILE>",
+    "argument": "FILE"
+   },
+   {
+    "name": "query",
+    "pattern": "/ask <QUESTION>",
+    "argument": "QUESTION"
+   }
+  ],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {
+   "gmail": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+     "-y",
+     "gmail-mcp-server"
+    ]
+   },
+   "slack": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+     "-y",
+     "slack-mcp-server"
+    ]
+   },
+   "calendar": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+     "-y",
+     "calendar-mcp-server"
+    ]
+   }
+  },
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [
+   {
+    "id": "pull-email",
+    "enabled": true,
+    "cron": "0 */2 * * *",
+    "agent": "gmail-ingester"
+   },
+   {
+    "id": "pull-slack",
+    "enabled": true,
+    "cron": "0 */2 * * *",
+    "agent": "slack-ingester"
+   },
+   {
+    "id": "pull-calendar",
+    "enabled": true,
+    "cron": "0 8 * * *",
+    "agent": "calendar-ingester"
+   },
+   {
+    "id": "nightly-audit",
+    "enabled": true,
+    "cron": "0 3 * * *",
+    "agent": "auditor"
+   }
+  ],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "brain": 30,
+   "gmail-ingester": 58,
+   "slack-ingester": 75,
+   "calendar-ingester": 90,
+   "librarian": 107,
+   "auditor": 126,
+   "researcher": 145,
+   "wire-in": 159,
+   "audit": 164,
+   "query": 169
+  }
+ },
+ "examples/company-brain.at": {
+  "topology": {
+   "name": "company-brain",
+   "version": "0.1.0",
+   "description": "An agent-maintained, Obsidian-portable company brain",
+   "patterns": [
+    "brain",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "wire-in",
+    "type": "action",
+    "label": "Wire In",
+    "kind": "inline",
+    "description": "Fold a dropped markdown file into the brain"
+   },
+   {
+    "id": "query",
+    "type": "action",
+    "label": "Query",
+    "kind": "inline",
+    "description": "Ask the brain a question"
+   },
+   {
+    "id": "librarian",
+    "type": "agent",
+    "label": "Librarian",
+    "model": "sonnet",
+    "prompt": "You are the brain's librarian. The brain lives in `brain/` as Obsidian\nmarkdown. You never invent content — you wire what's dropped in.\n\nWhen a note is added or changed:\n- link:   find mentions of existing notes and turn them into [[wikilinks]]\n- tag:    add #nested/tags consistent with the existing tag hierarchy\n- index:  update the relevant hub note (a Map-of-Content that [[links]]\n          the cluster) so the new note is reachable\n- dedupe: flag near-duplicate notes for human review; never auto-delete\n\nBacklinks are computed from the [[links]] you write — never author them\nby hand. If a note links to something that doesn't exist yet, leave the\nghost link; it marks a gap to fill later.",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit",
+     "Grep",
+     "Glob"
+    ],
+    "custodianOf": [
+     "brain"
+    ],
+    "custodianDoes": [
+     "link",
+     "tag",
+     "index",
+     "dedupe"
+    ],
+    "description": "Maintains the brain — wires new notes into the graph"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "model": "sonnet",
+    "prompt": "Answer questions using only the brain in `brain/`. Start by grepping for\nrelevant notes, then follow their [[wikilinks]] and #tags to gather the\nfull picture. Cite the notes you used by filename.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "memory": [
+     "brain"
+    ],
+    "description": "Answers questions by traversing the brain"
+   }
+  ],
+  "edges": [
+   {
+    "from": "wire-in",
+    "to": "librarian",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "query",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [
+   {
+    "id": "brain",
+    "type": "brain",
+    "backend": "files",
+    "description": "The company brain — a folder of linked markdown",
+    "scope": "org",
+    "path": "brain/",
+    "format": "obsidian"
+   }
+  ],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "wire-in",
+    "pattern": "/wire-in <FILE>",
+    "argument": "FILE"
+   },
+   {
+    "name": "query",
+    "pattern": "/ask <QUESTION>",
+    "argument": "QUESTION"
+   }
+  ],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "brain": 21,
+   "librarian": 32,
+   "researcher": 60,
+   "wire-in": 75,
+   "query": 80
+  }
+ },
+ "examples/data-processing.at": {
+  "topology": {
+   "name": "data-processing",
+   "version": "1.0.0",
+   "description": "Batch data processing — ingest, extract, classify, and generate reports",
+   "patterns": [
+    "pipeline",
+    "fan-out"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "ingest",
+     "validate-batch",
+     "deliver"
+    ],
+    "generates": "commands/process.md",
+    "outputs": {
+     "batch-mode": [
+      "streaming",
+      "bulk"
+     ]
+    }
+   },
+   {
+    "id": "ingest",
+    "type": "action",
+    "label": "Ingest",
+    "kind": "external",
+    "source": "s3-bucket",
+    "description": "Pull raw documents from the input bucket"
+   },
+   {
+    "id": "validate-batch",
+    "type": "action",
+    "label": "Validate Batch",
+    "kind": "inline",
+    "description": "Validate batch completeness before synthesis"
+   },
+   {
+    "id": "deliver",
+    "type": "action",
+    "label": "Deliver",
+    "kind": "report",
+    "description": "Deliver final reports to output bucket"
+   },
+   {
+    "id": "extractor",
+    "type": "agent",
+    "label": "Extractor",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "Read source documents from workspace/raw/.\n\nExtract their text and structure using the extract-pdf and extract-doc\ntools. Preserve tables and headings — downstream classification depends\non them.\n\nWrite one extracted file per source into workspace/extracted/.",
+    "tools": [
+     "Read",
+     "Write",
+     "extract-pdf",
+     "extract-doc"
+    ],
+    "skills": [
+     "extraction"
+    ],
+    "reads": [
+     "workspace/raw/"
+    ],
+    "writes": [
+     "workspace/extracted/"
+    ],
+    "background": true,
+    "scale": {
+     "mode": "auto",
+     "by": "doc-count",
+     "min": 2,
+     "max": 8,
+     "batchSize": 50
+    },
+    "role": "Multi-format text extraction from raw documents"
+   },
+   {
+    "id": "classifier",
+    "type": "agent",
+    "label": "Classifier",
+    "phase": 2,
+    "model": "haiku",
+    "permissions": "autonomous",
+    "prompt": "Read extracted documents from workspace/extracted/.\n\nAssign each one a category and confidence. Run validate-output on your\nresult before writing it.\n\nWrite classified records into workspace/classified/.",
+    "tools": [
+     "Read",
+     "Write",
+     "validate-output"
+    ],
+    "skills": [
+     "classification"
+    ],
+    "reads": [
+     "workspace/extracted/"
+    ],
+    "writes": [
+     "workspace/classified/"
+    ],
+    "background": true,
+    "scale": {
+     "mode": "auto",
+     "by": "batch-count",
+     "min": 2,
+     "max": 12,
+     "batchSize": 25
+    },
+    "role": "Score and categorize extracted documents"
+   },
+   {
+    "id": "synthesizer",
+    "type": "agent",
+    "label": "Synthesizer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "autonomous",
+    "prompt": "Read all classified records from workspace/classified/.\n\nMerge them with merge-results into a single structured view. Where records\nconflict, keep both and mark the conflict rather than choosing.\n\nWrite the result to workspace/synthesis.json.",
+    "tools": [
+     "Read",
+     "Write",
+     "merge-results"
+    ],
+    "reads": [
+     "workspace/classified/",
+     "workspace/report.md"
+    ],
+    "writes": [
+     "workspace/synthesis.json"
+    ],
+    "role": "Merge classified results into structured output"
+   },
+   {
+    "id": "reporter",
+    "type": "agent",
+    "label": "Reporter",
+    "phase": 4,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "Read workspace/synthesis.json.\n\nProduce a report for a human reader: what was processed, what was found,\nand what remains unresolved. No new analysis.\n\nWrite workspace/report.md and workspace/report.pdf, then set quality.",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "workspace/synthesis.json"
+    ],
+    "writes": [
+     "workspace/report.md",
+     "workspace/report.pdf"
+    ],
+    "outputs": {
+     "quality": [
+      "complete",
+      "partial",
+      "failed"
+     ]
+    },
+    "role": "Generate human-readable reports from synthesis"
+   },
+   {
+    "id": "schema-validation",
+    "type": "gate",
+    "label": "Schema Validation",
+    "after": "synthesizer",
+    "before": "reporter",
+    "run": "scripts/validate-schema.sh",
+    "checks": [
+     "schema",
+     "completeness",
+     "consistency"
+    ],
+    "retry": 2,
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "ingest",
+    "to": "extractor",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "extractor",
+    "to": "classifier",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "classifier",
+    "to": "validate-batch",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "validate-batch",
+    "to": "synthesizer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "synthesizer",
+    "to": "reporter",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reporter",
+    "to": "deliver",
+    "condition": "reporter.quality == complete",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reporter",
+    "to": "deliver",
+    "condition": "reporter.quality == partial",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reporter",
+    "to": "synthesizer",
+    "condition": "reporter.quality == failed",
+    "maxIterations": 2,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "metrics": {
+    "path": "metrics/processing.jsonl",
+    "mode": "append-only"
+   },
+   "workspace": {
+    "path": "workspace/",
+    "protocol": "workspace-protocol.md",
+    "structure": [
+     "raw",
+     "extracted",
+     "classified",
+     "synthesis",
+     "reports"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {
+   "parallel": true,
+   "per": "ticket",
+   "workspace": "runs/_batch/{BATCH_ID}/",
+   "conflicts": {
+    "detect": [
+     "workspace/synthesis.json"
+    ],
+    "resolve": "sequential-rebase"
+   }
+  },
+  "environments": {
+   "development": {
+    "bucket": "dev-input-bucket",
+    "output-bucket": "dev-output-bucket"
+   },
+   "production": {
+    "bucket": "prod-input-bucket",
+    "output-bucket": "prod-output-bucket"
+   }
+  },
+  "triggers": [
+   {
+    "name": "process",
+    "pattern": "/process <BATCH_ID>",
+    "argument": "BATCH_ID"
+   },
+   {
+    "name": "status",
+    "pattern": "/status"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "track-progress",
+    "on": "AgentStop",
+    "matcher": "",
+    "run": "scripts/track-progress.sh",
+    "type": "command"
+   },
+   {
+    "name": "security-check",
+    "on": "ToolUse",
+    "matcher": "Bash",
+    "run": "scripts/security-check.sh",
+    "type": "command"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Glob",
+    "Grep"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": [
+    "Bash(aws s3 *)"
+   ]
+  },
+  "mcpServers": {
+   "storage": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+     "-y",
+     "storage-mcp-server"
+    ]
+   },
+   "monitoring": {
+    "type": "http",
+    "url": "https://mcp.monitoring.example.com"
+   }
+  },
+  "metering": {
+   "track": [
+    "tokens-in",
+    "tokens-out",
+    "cost",
+    "wall-time",
+    "agent-count"
+   ],
+   "per": [
+    "phase",
+    "agent",
+    "run"
+   ],
+   "output": "metrics/",
+   "format": "jsonl",
+   "pricing": "none"
+  },
+  "skills": [
+   {
+    "id": "extraction",
+    "description": "Document extraction -- PDF, DOC, images",
+    "scripts": [
+     "extract-pdf",
+     "extract-doc"
+    ]
+   },
+   {
+    "id": "classification",
+    "description": "Document scoring and categorization",
+    "scripts": [
+     "validate-output"
+    ],
+    "domains": [
+     "domains/scoring-rubric.md"
+    ]
+   }
+  ],
+  "toolDefs": [
+   {
+    "id": "extract-pdf",
+    "script": "scripts/extract-pdf.py",
+    "description": "Extract text from PDF documents",
+    "args": [
+     "input-path",
+     "output-path"
+    ],
+    "lang": "python"
+   },
+   {
+    "id": "extract-doc",
+    "script": "scripts/extract-doc.py",
+    "description": "Extract text from DOC/DOCX files",
+    "args": [
+     "input-path",
+     "output-path"
+    ],
+    "lang": "python"
+   },
+   {
+    "id": "merge-results",
+    "script": "scripts/merge-results.sh",
+    "description": "Merge classified results into a single output",
+    "args": [
+     "input-dir",
+     "output-file"
+    ],
+    "lang": "bash"
+   },
+   {
+    "id": "validate-output",
+    "script": "scripts/validate-output.py",
+    "description": "Validate output against expected schema",
+    "args": [
+     "output-file",
+     "schema-path"
+    ],
+    "lang": "python"
+   }
+  ],
+  "roles": {
+   "extractor": "Multi-format text extraction from raw documents",
+   "classifier": "Score and categorize extracted documents",
+   "synthesizer": "Merge classified results into structured output",
+   "reporter": "Generate human-readable reports from synthesis"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 21,
+   "ingest": 84,
+   "validate-batch": 90,
+   "deliver": 95,
+   "extractor": 102,
+   "classifier": 130,
+   "synthesizer": 157,
+   "reporter": 175,
+   "schema-validation": 212
+  }
+ },
+ "examples/hybrid-release.at": {
+  "topology": {
+   "name": "hybrid-release",
+   "version": "1.0.0",
+   "description": "Release a package: survey the changes on the host, build the artifacts in a workflow, test them on the host, then a person approves.",
+   "patterns": [
+    "pipeline",
+    "fan-out",
+    "blackboard",
+    "human-gate"
+   ],
+   "domain": "devops"
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "collect-changes",
+     "release-notes"
+    ]
+   },
+   {
+    "id": "collect-changes",
+    "type": "action",
+    "label": "Collect Changes",
+    "kind": "git",
+    "description": "Read the commits since the last release tag into workspace/commits.md"
+   },
+   {
+    "id": "release-notes",
+    "type": "action",
+    "label": "Release Notes",
+    "kind": "report",
+    "description": "Write the release notes from the workspace files"
+   },
+   {
+    "id": "change-lister",
+    "type": "agent",
+    "label": "Change Lister",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Group the commits into features, fixes and breaking changes.",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "workspace/commits.md"
+    ],
+    "writes": [
+     "workspace/changes.md"
+    ],
+    "role": "List the merged changes since the last release"
+   },
+   {
+    "id": "dependency-auditor",
+    "type": "agent",
+    "label": "Dependency Auditor",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Compare the lockfile with the one at the last release tag.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Write"
+    ],
+    "reads": [
+     "workspace/commits.md"
+    ],
+    "writes": [
+     "workspace/dependencies.md"
+    ],
+    "role": "List dependency updates since the last release"
+   },
+   {
+    "id": "packager",
+    "type": "agent",
+    "label": "Packager",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "Build the artifact for your target and record its path and checksum.",
+    "tools": [
+     "Read",
+     "Write",
+     "Bash"
+    ],
+    "reads": [
+     "workspace/changes.md",
+     "workspace/dependencies.md"
+    ],
+    "writes": [
+     "workspace/artifacts.md"
+    ],
+    "isolation": "worktree",
+    "scale": {
+     "mode": "auto",
+     "by": "batch-count",
+     "min": 1,
+     "max": 4,
+     "batchSize": null
+    },
+    "extensions": {
+     "claude-workflow": {
+      "execution": "workflow"
+     }
+    },
+    "role": "Build the release package for one target"
+   },
+   {
+    "id": "smoke-tester",
+    "type": "agent",
+    "label": "Smoke Tester",
+    "phase": 3,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Install each artifact in a clean directory and run the smoke tests.",
+    "tools": [
+     "Read",
+     "Bash",
+     "Write"
+    ],
+    "reads": [
+     "workspace/artifacts.md"
+    ],
+    "writes": [
+     "workspace/smoke.md"
+    ],
+    "outputs": {
+     "result": [
+      "pass",
+      "fail"
+     ]
+    },
+    "role": "Run the smoke tests against the built artifacts"
+   },
+   {
+    "id": "license-checker",
+    "type": "agent",
+    "label": "License Checker",
+    "phase": 3,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "Flag any dependency bundled in the artifacts whose license is not on\nthe allow list.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Write"
+    ],
+    "reads": [
+     "workspace/artifacts.md",
+     "workspace/dependencies.md"
+    ],
+    "writes": [
+     "workspace/licenses.md"
+    ],
+    "outputs": {
+     "result": [
+      "pass",
+      "fail"
+     ]
+    },
+    "role": "Check the licenses of bundled dependencies"
+   },
+   {
+    "id": "release-check",
+    "type": "gate",
+    "label": "Release Check",
+    "after": "license-checker",
+    "before": "release-notes",
+    "run": "scripts/release-check.sh",
+    "checks": [
+     "smoke",
+     "licenses"
+    ],
+    "retry": 1,
+    "onFail": "bounce-back",
+    "behavior": "blocking"
+   },
+   {
+    "id": "approve-release",
+    "type": "human",
+    "label": "Approve Release",
+    "description": "A maintainer reads the release notes and publishes the release."
+   }
+  ],
+  "edges": [
+   {
+    "from": "collect-changes",
+    "to": "change-lister",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "collect-changes",
+    "to": "dependency-auditor",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "change-lister",
+    "to": "packager",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "dependency-auditor",
+    "to": "packager",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "packager",
+    "to": "smoke-tester",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "packager",
+    "to": "license-checker",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "smoke-tester",
+    "to": "release-notes",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "license-checker",
+    "to": "release-notes",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "release-notes",
+    "to": "approve-release",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "commits",
+     "changes",
+     "dependencies",
+     "artifacts",
+     "smoke",
+     "licenses"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "change-lister": "List the merged changes since the last release",
+   "dependency-auditor": "List dependency updates since the last release",
+   "packager": "Build the release package for one target",
+   "smoke-tester": "Run the smoke tests against the built artifacts",
+   "license-checker": "Check the licenses of bundled dependencies"
+  },
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 17,
+   "collect-changes": 30,
+   "release-notes": 35,
+   "change-lister": 42,
+   "dependency-auditor": 55,
+   "packager": 70,
+   "smoke-tester": 97,
+   "license-checker": 113,
+   "approve-release": 130,
+   "release-check": 145
+  }
+ },
+ "examples/memory-system.at": {
+  "topology": {
+   "name": "knowledge-assistant",
+   "version": "1.0.0",
+   "description": "A knowledge-powered research assistant with semantic search, entity tracking, and episodic memory",
+   "patterns": [
+    "supervisor",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "research",
+     "answer"
+    ]
+   },
+   {
+    "id": "research",
+    "type": "action",
+    "label": "Research",
+    "kind": "inline",
+    "description": "Research a topic using knowledge stores and web"
+   },
+   {
+    "id": "answer",
+    "type": "action",
+    "label": "Answer",
+    "kind": "inline",
+    "description": "Write a comprehensive answer from research"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "tools": [
+     "Read",
+     "WebSearch",
+     "WebFetch"
+    ],
+    "memory": [
+     "knowledge-base",
+     "entities"
+    ],
+    "retrieval": "smart-retrieval",
+    "description": "Searches knowledge bases and web for information"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "memory": [
+     "knowledge-base",
+     "conversation-log"
+    ],
+    "retrieval": "smart-retrieval",
+    "description": "Synthesizes research into clear answers"
+   }
+  ],
+  "edges": [
+   {
+    "from": "research",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "answer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [
+   {
+    "id": "knowledge-base",
+    "type": "semantic",
+    "backend": "lancedb",
+    "description": "Project knowledge base with semantic search over documentation",
+    "scope": "org",
+    "isolation": "soft",
+    "path": ".memory/semantic/",
+    "embedding": {
+     "provider": "ollama",
+     "model": "nomic-embed-text",
+     "dimensions": 768
+    },
+    "index": {
+     "collection": "docs",
+     "metric": "cosine"
+    },
+    "ingestion": {
+     "sources": [
+      "docs/",
+      "references/",
+      "wiki/"
+     ],
+     "chunking": "recursive",
+     "chunkSize": 512,
+     "overlap": 50
+    },
+    "search": {
+     "strategy": "hybrid",
+     "rerank": true,
+     "topK": 10
+    },
+    "lifecycle": {
+     "retention": "365d",
+     "consolidation": 0.85,
+     "contradiction": "overwrite",
+     "auditLog": false
+    }
+   },
+   {
+    "id": "entities",
+    "type": "graph",
+    "backend": "kuzu",
+    "description": "Entity and relationship tracking across conversations",
+    "scope": "org",
+    "isolation": "soft",
+    "path": ".memory/graph/",
+    "extraction": "hybrid",
+    "lifecycle": {
+     "retention": "365d",
+     "contradiction": "preserve"
+    }
+   },
+   {
+    "id": "conversation-log",
+    "type": "episodic",
+    "backend": "sqlite",
+    "description": "Conversation history with temporal search",
+    "scope": "user",
+    "isolation": "strict",
+    "path": ".memory/episodes.db",
+    "lifecycle": {
+     "retention": "90d",
+     "decayHalfLife": "30d",
+     "consolidation": 0.9,
+     "contradiction": "bi-temporal",
+     "auditLog": true
+    }
+   },
+   {
+    "id": "user-prefs",
+    "type": "user",
+    "backend": "sqlite",
+    "description": "User preferences and settings",
+    "scope": "user",
+    "isolation": "strict",
+    "path": ".memory/user.db",
+    "lifecycle": {
+     "contradiction": "overwrite"
+    }
+   }
+  ],
+  "retrievals": [
+   {
+    "id": "smart-retrieval",
+    "sources": [
+     "knowledge-base",
+     "conversation-log",
+     "entities"
+    ],
+    "paths": [
+     "semantic",
+     "episodic",
+     "graph",
+     "hybrid"
+    ],
+    "budget": 4096,
+    "rerank": true,
+    "diversity": true,
+    "cacheHitThreshold": 0.92,
+    "cacheHitAction": "short-circuit",
+    "scoring": {
+     "recencyWeight": 0.3,
+     "semanticWeight": 0.5,
+     "importanceWeight": 0.2
+    }
+   }
+  ],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "research",
+    "pattern": "/research <topic>"
+   }
+  ],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 8,
+   "researcher": 13,
+   "writer": 22,
+   "research": 31,
+   "answer": 36,
+   "knowledge-base": 59,
+   "entities": 99,
+   "conversation-log": 114,
+   "user-prefs": 131,
+   "smart-retrieval": 144
+  }
+ },
+ "examples/openclaw-assistant.at": {
+  "topology": {
+   "name": "personal-assistant",
+   "version": "1.0.0",
+   "description": "Multi-channel personal assistant with research, writing, and scheduling capabilities",
+   "patterns": [
+    "supervisor",
+    "fan-out"
+   ],
+   "domain": "\"productivity\""
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "intake",
+     "route"
+    ],
+    "outputs": {
+     "task-type": [
+      "research",
+      "write",
+      "schedule",
+      "general"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract task type"
+   },
+   {
+    "id": "route",
+    "type": "action",
+    "label": "Route",
+    "kind": "inline",
+    "description": "Route to appropriate specialist agent based on task-type"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Write",
+     "Bash",
+     "Glob",
+     "Grep",
+     "WebSearch",
+     "WebFetch"
+    ],
+    "reads": [
+     "workspace/queries/"
+    ],
+    "writes": [
+     "workspace/research/"
+    ],
+    "description": "Research agent — searches web, reads docs, produces summaries",
+    "maxTurns": 15,
+    "role": "Deep research using web search and document analysis"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 1,
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit"
+    ],
+    "writes": [
+     "workspace/drafts/"
+    ],
+    "description": "Writing agent — drafts in user's voice using research output",
+    "role": "Draft emails, messages, and documents in user's voice"
+   },
+   {
+    "id": "scheduler",
+    "type": "agent",
+    "label": "Scheduler",
+    "phase": 1,
+    "model": "haiku",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "skills": [
+     "google-calendar"
+    ],
+    "reads": [
+     "workspace/requests/"
+    ],
+    "writes": [
+     "workspace/scheduled/"
+    ],
+    "description": "Calendar agent — checks availability, proposes meeting times",
+    "extensions": {
+     "openclaw": {
+      "calendar-integration": true
+     }
+    },
+    "role": "Manage calendar and schedule meetings"
+   },
+   {
+    "id": "responder",
+    "type": "agent",
+    "label": "Responder",
+    "phase": 1,
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "domains/"
+    ],
+    "writes": [
+     "workspace/responses/"
+    ],
+    "description": "General responder for conversation and simple questions",
+    "role": "Handle general questions and conversation"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "route",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "route",
+    "to": "researcher",
+    "condition": "orchestrator.task-type == research",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "route",
+    "to": "writer",
+    "condition": "orchestrator.task-type == write",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "route",
+    "to": "scheduler",
+    "condition": "orchestrator.task-type == schedule",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "route",
+    "to": "responder",
+    "condition": "orchestrator.task-type == general",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "domains": {
+    "path": "domains/",
+    "routing": "FILE_MAP.md"
+   },
+   "metrics": {
+    "path": "metrics.jsonl",
+    "mode": "append-only"
+   },
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "queries",
+     "research",
+     "drafts",
+     "requests",
+     "scheduled",
+     "responses"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep"
+   ],
+   "deny": [],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": {
+   "track": [
+    "tokens-in",
+    "tokens-out",
+    "cost",
+    "wall-time"
+   ],
+   "per": [
+    "agent",
+    "run"
+   ],
+   "output": "metrics/",
+   "format": "jsonl",
+   "pricing": "anthropic-current"
+  },
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Deep research using web search and document analysis",
+   "writer": "Draft emails, messages, and documents in user's voice",
+   "scheduler": "Manage calendar and schedule meetings",
+   "responder": "Handle general questions and conversation"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "extensions": {
+   "openclaw": {
+    "gateway-port": 18789,
+    "auth-tokens": "[\"${OPENCLAW_AUTH_TOKEN}\"]",
+    "channels": "[telegram, slack]",
+    "model-fallback-chain": "[\"opus\", \"sonnet\", \"haiku\"]"
+   }
+  },
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 11,
+   "intake": 26,
+   "route": 31,
+   "researcher": 36,
+   "writer": 47,
+   "scheduler": 56,
+   "responder": 72
+  }
+ },
+ "examples/scheduled-monitor.at": {
+  "topology": {
+   "name": "scheduled-monitor",
+   "version": "1.0",
+   "description": "Automated monitoring pipeline with scheduled jobs, external interfaces, sandboxing, and model fallback",
+   "patterns": [
+    "pipeline",
+    "fan-out"
+   ],
+   "domain": "devops"
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "monitor",
+     "gen-report",
+     "alert"
+    ],
+    "outputs": {
+     "severity": [
+      "critical",
+      "warning",
+      "info"
+     ]
+    }
+   },
+   {
+    "id": "monitor",
+    "type": "action",
+    "label": "Monitor",
+    "kind": "inline",
+    "description": "Collect and analyze system health"
+   },
+   {
+    "id": "gen-report",
+    "type": "action",
+    "label": "Gen Report",
+    "kind": "report",
+    "description": "Generate monitoring report"
+   },
+   {
+    "id": "alert",
+    "type": "action",
+    "label": "Alert",
+    "kind": "external",
+    "source": "scripts/send-alert.sh",
+    "description": "Dispatch alert to configured channels"
+   },
+   {
+    "id": "collector",
+    "type": "agent",
+    "label": "Collector",
+    "phase": 1,
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Bash",
+     "WebFetch"
+    ],
+    "writes": [
+     "workspace/metrics/"
+    ],
+    "outputs": {
+     "status": [
+      "healthy",
+      "degraded",
+      "critical"
+     ]
+    },
+    "sandbox": "docker",
+    "description": "Collects metrics from configured endpoints",
+    "role": "Gather metrics and health data from monitored systems"
+   },
+   {
+    "id": "analyzer",
+    "type": "agent",
+    "label": "Analyzer",
+    "phase": 2,
+    "model": "opus",
+    "tools": [
+     "Read",
+     "Grep"
+    ],
+    "reads": [
+     "workspace/metrics/"
+    ],
+    "writes": [
+     "workspace/analysis/"
+    ],
+    "outputs": {
+     "severity": [
+      "critical",
+      "warning",
+      "info"
+     ]
+    },
+    "sandbox": "network-only",
+    "fallbackChain": [
+     "sonnet",
+     "haiku"
+    ],
+    "description": "Analyzes collected metrics for anomalies",
+    "role": "Analyze collected data for anomalies and trends"
+   },
+   {
+    "id": "reporter",
+    "type": "agent",
+    "label": "Reporter",
+    "phase": 3,
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "workspace/analysis/"
+    ],
+    "writes": [
+     "workspace/reports/"
+    ],
+    "sandbox": true,
+    "description": "Generates summary reports from analysis",
+    "role": "Generate human-readable reports and summaries"
+   },
+   {
+    "id": "alerter",
+    "type": "agent",
+    "label": "Alerter",
+    "phase": 3,
+    "model": "haiku",
+    "tools": [
+     "Read",
+     "WebFetch"
+    ],
+    "reads": [
+     "workspace/analysis/"
+    ],
+    "writes": [
+     "workspace/alerts/"
+    ],
+    "description": "Sends alerts to configured interfaces",
+    "role": "Send alerts to external channels when thresholds are breached"
+   },
+   {
+    "id": "metric-validation",
+    "type": "gate",
+    "label": "Metric Validation",
+    "after": "collector",
+    "before": "analyzer",
+    "run": "scripts/validate-metrics.sh",
+    "checks": [
+     "format",
+     "completeness"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "collector",
+    "to": "analyzer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "analyzer",
+    "to": "reporter",
+    "condition": "analyzer.severity == info",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "analyzer",
+    "to": "reporter",
+    "condition": "analyzer.severity == warning",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "analyzer",
+    "to": "reporter",
+    "condition": "analyzer.severity == critical",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "analyzer",
+    "to": "alerter",
+    "condition": "analyzer.severity == critical",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": ".monitor/workspace/",
+    "structure": [
+     "metrics",
+     "analysis",
+     "reports",
+     "alerts"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "monitor",
+    "pattern": "/monitor"
+   },
+   {
+    "name": "report",
+    "pattern": "/report <TICKET>",
+    "argument": "TICKET"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "alert-on-error",
+    "on": "Error",
+    "matcher": "",
+    "run": "scripts/alert-on-error.sh",
+    "type": "command"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Bash",
+    "WebFetch",
+    "Grep"
+   ],
+   "deny": [
+    "Edit"
+   ],
+   "ask": [],
+   "sandbox": "docker",
+   "fallbackChain": [
+    "opus",
+    "sonnet",
+    "haiku"
+   ]
+  },
+  "mcpServers": {},
+  "metering": {
+   "track": [
+    "tokens-in",
+    "tokens-out",
+    "cost",
+    "wall-time"
+   ],
+   "per": [
+    "agent",
+    "topology"
+   ],
+   "output": "metrics.jsonl",
+   "format": "jsonl",
+   "pricing": "anthropic-current"
+  },
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "collector": "Gather metrics and health data from monitored systems",
+   "analyzer": "Analyze collected data for anomalies and trends",
+   "reporter": "Generate human-readable reports and summaries",
+   "alerter": "Send alerts to external channels when thresholds are breached"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [
+   {
+    "id": "health-check",
+    "enabled": true,
+    "cron": "*/15 * * * *",
+    "agent": "collector"
+   },
+   {
+    "id": "daily-report",
+    "enabled": true,
+    "cron": "0 9 * * *",
+    "agent": "reporter"
+   },
+   {
+    "id": "weekly-deep-scan",
+    "enabled": true,
+    "every": "monday 3:00",
+    "agent": "analyzer"
+   }
+  ],
+  "interfaces": [
+   {
+    "id": "slack",
+    "config": {
+     "webhook": "${SLACK_MONITORING_WEBHOOK}",
+     "channel": "ops-alerts"
+    },
+    "type": "webhook"
+   },
+   {
+    "id": "pagerduty",
+    "config": {
+     "webhook": "${PAGERDUTY_WEBHOOK_URL}",
+     "auth": "${PAGERDUTY_API_KEY}"
+    },
+    "type": "http"
+   },
+   {
+    "id": "dashboard",
+    "config": {
+     "port": 3000
+    },
+    "type": "http"
+   }
+  ],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 12,
+   "monitor": 27,
+   "gen-report": 32,
+   "alert": 37,
+   "collector": 43,
+   "analyzer": 56,
+   "reporter": 71,
+   "alerter": 82,
+   "metric-validation": 100
+  }
+ },
+ "examples/script-agent-pipeline.at": {
+  "topology": {
+   "name": "script-agent-demo",
+   "version": "1.0.0",
+   "description": "Demo: agent pipeline with DuckDB storage",
+   "patterns": [
+    "pipeline"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "start"
+    ]
+   },
+   {
+    "id": "start",
+    "type": "action",
+    "label": "Start",
+    "kind": "decision",
+    "description": "Begin pipeline"
+   },
+   {
+    "id": "data-processor",
+    "type": "agent",
+    "label": "Data Processor",
+    "model": "haiku",
+    "tools": [
+     "Bash",
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "workspace/raw/"
+    ],
+    "writes": [
+     "workspace/processed/"
+    ],
+    "description": "Extract and transform data"
+   },
+   {
+    "id": "analyzer",
+    "type": "agent",
+    "label": "Analyzer",
+    "model": "sonnet",
+    "tools": [
+     "Read",
+     "Write",
+     "Grep"
+    ],
+    "reads": [
+     "workspace/processed/"
+    ],
+    "writes": [
+     "workspace/analysis/"
+    ],
+    "memory": [
+     "data-index"
+    ],
+    "description": "Analyze processed data using AI"
+   }
+  ],
+  "edges": [
+   {
+    "from": "start",
+    "to": "data-processor",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "data-processor",
+    "to": "analyzer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [
+   {
+    "id": "data-index",
+    "type": "entity",
+    "backend": "duckdb",
+    "scope": "run",
+    "path": "workspace/index.duckdb",
+    "search": {
+     "strategy": "hybrid",
+     "topK": 100
+    }
+   }
+  ],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [
+   {
+    "id": "process-data",
+    "script": "scripts/process.py",
+    "description": "Transform raw data into structured format",
+    "args": [
+     "input-dir",
+     "output-dir"
+    ],
+    "lang": "python"
+   }
+  ],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 11,
+   "start": 16,
+   "data-processor": 21,
+   "analyzer": 29,
+   "data-index": 39
+  }
+ },
+ "examples/simple-pipeline.at": {
+  "topology": {
+   "name": "simple-pipeline",
+   "version": "1.0.0",
+   "description": "Research, write, and review — a minimal content pipeline",
+   "patterns": [
+    "pipeline",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "done"
+    ],
+    "generates": "commands/create.md",
+    "outputs": {
+     "topic-type": [
+      "technical",
+      "creative"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract topic and requirements"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "report",
+    "description": "Deliver final content to the user"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are a research specialist focused on gathering comprehensive information.\n\n## Guidelines\n- Search broadly for relevant sources\n- Compile findings into structured research notes\n- Include citations and source URLs\n- Prioritize recent and authoritative sources",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch"
+    ],
+    "writes": [
+     "workspace/research.md"
+    ],
+    "role": "Gather information, find sources, and compile research notes"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a content writer who transforms research into polished drafts.\n\n## Guidelines\n- Follow the style guide and tone requirements\n- Structure content with clear headings and sections\n- Incorporate all key findings from the research\n- Write for the target audience specified in the brief",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/research.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/draft.md"
+    ],
+    "outputs": {
+     "confidence": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    "role": "Draft content based on research, following style guidelines"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are a content reviewer ensuring quality and accuracy.\n\n## Guidelines\n- Verify all claims against the research sources\n- Check for clarity, grammar, and logical flow\n- Assess completeness against the original requirements\n- Provide actionable feedback for revisions if needed",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/draft.md",
+     "workspace/research.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "revise",
+      "reject"
+     ]
+    },
+    "role": "Review drafts for accuracy, clarity, and completeness"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "reviewer",
+    "run": "scripts/check-quality.sh",
+    "checks": [
+     "grammar",
+     "formatting"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "writer",
+    "condition": "reviewer.verdict == revise",
+    "maxIterations": 2,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "researcher",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": 1,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "done",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "research",
+     "drafts",
+     "reviews"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "create",
+    "pattern": "/create <TOPIC>",
+    "argument": "TOPIC"
+   }
+  ],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Gather information, find sources, and compile research notes",
+   "writer": "Draft content based on research, following style guidelines",
+   "reviewer": "Review drafts for accuracy, clarity, and completeness"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 20,
+   "intake": 37,
+   "researcher": 44,
+   "writer": 63,
+   "reviewer": 86,
+   "quality-check": 123,
+   "done": 134
+  }
+ },
+ "kitchen-sink.at": {
+  "topology": {
+   "name": "incident-response",
+   "version": "2.0.0",
+   "description": "Production incident response system with detection, triage, fix, verification, and reporting",
+   "patterns": [
+    "pipeline",
+    "fan-out",
+    "human-gate",
+    "orchestrator-worker",
+    "debate"
+   ],
+   "domain": "devops",
+   "timeout": "4h",
+   "errorHandler": "reporter",
+   "durable": true
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "intake",
+     "deploy-rollback",
+     "wrap-up"
+    ],
+    "generates": "commands/incident-plan.md",
+    "outputs": {
+     "priority": [
+      "immediate",
+      "deferred"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "external",
+    "source": "pagerduty-webhook",
+    "description": "Receive incident alert from PagerDuty",
+    "timeout": "2m",
+    "onFail": "halt"
+   },
+   {
+    "id": "deploy-rollback",
+    "type": "action",
+    "label": "Deploy Rollback",
+    "kind": "git",
+    "source": "deployment-repo",
+    "description": "Execute deployment rollback via git revert",
+    "commands": [
+     "git revert HEAD --no-edit",
+     "git push origin main"
+    ],
+    "timeout": "10m",
+    "onFail": "retry"
+   },
+   {
+    "id": "wrap-up",
+    "type": "action",
+    "label": "Wrap Up",
+    "kind": "report",
+    "description": "Compile and distribute post-mortem report",
+    "join": "all"
+   },
+   {
+    "id": "detector",
+    "type": "agent",
+    "label": "Detector",
+    "phase": 1,
+    "model": "haiku",
+    "permissions": "autonomous",
+    "prompt": "You are an incident detector. Monitor all configured services\nand identify anomalies. Classify severity as critical, major,\nor minor based on impact scope and duration.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "check-health",
+     "query-metrics"
+    ],
+    "skills": [
+     "incident-detection"
+    ],
+    "writes": [
+     "workspace/alerts/"
+    ],
+    "retry": {
+     "max": 3,
+     "backoff": "exponential",
+     "interval": "2s",
+     "maxInterval": "30s",
+     "jitter": true,
+     "nonRetryable": [
+      "AuthError",
+      "NotFound"
+     ]
+    },
+    "temperature": 0.1,
+    "maxTokens": 4096,
+    "thinking": "low",
+    "logLevel": "debug",
+    "circuitBreaker": {
+     "threshold": 5,
+     "window": "1m",
+     "cooldown": "5m"
+    },
+    "background": true,
+    "mcpServers": [
+     "pagerduty",
+     "observability-platform"
+    ],
+    "outputs": {
+     "severity": [
+      "critical",
+      "major",
+      "minor"
+     ]
+    },
+    "scale": {
+     "mode": "auto",
+     "by": "source-count",
+     "min": 1,
+     "max": 4,
+     "batchSize": 10
+    },
+    "sandbox": "docker",
+    "fallbackChain": [
+     "sonnet",
+     "haiku"
+    ],
+    "rateLimit": "100/min",
+    "description": "Detects and classifies system incidents from monitoring data"
+   },
+   {
+    "id": "triager",
+    "type": "agent",
+    "label": "Triager",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are the incident triager. Assess the detection report,\ncross-reference with runbooks, and determine:\n1. Severity (P0-P3)\n2. Affected services and blast radius\n3. Recommended action (rollback, scale, hotfix, or manual)\n\nBe thorough but fast -- every minute counts in an incident.",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "query-metrics"
+    ],
+    "reads": [
+     "workspace/alerts/"
+    ],
+    "writes": [
+     "workspace/triage/"
+    ],
+    "behavior": "blocking",
+    "timeout": "10m",
+    "onFail": "continue",
+    "seed": 42,
+    "thinking": "high",
+    "thinkingBudget": 8192,
+    "outputFormat": "json",
+    "join": "all",
+    "isolation": "worktree",
+    "mcpServers": [
+     "log-search"
+    ],
+    "outputs": {
+     "route": [
+      "fix-now",
+      "investigate",
+      "defer"
+     ]
+    },
+    "outputSchema": [
+     {
+      "name": "priority",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "affected",
+      "type": {
+       "kind": "array",
+       "itemType": {
+        "kind": "primitive",
+        "value": "string"
+       }
+      },
+      "optional": false
+     },
+     {
+      "name": "summary",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     }
+    ],
+    "description": "Triages incidents and routes to appropriate response",
+    "maxTurns": 10,
+    "role": "Classify incident severity, identify affected services, and assign priority"
+   },
+   {
+    "id": "fixer",
+    "type": "agent",
+    "label": "Fixer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are the incident fixer. Apply the remediation plan:\nrollback if needed, apply hotfixes, and verify basic health.\nDocument every action taken.",
+    "tools": [
+     "Read",
+     "Write",
+     "Bash",
+     "rollback-deploy",
+     "run-smoke-tests"
+    ],
+    "skills": [
+     "deployment-ops"
+    ],
+    "reads": [
+     "workspace/triage/"
+    ],
+    "writes": [
+     "workspace/fixes/"
+    ],
+    "timeout": "30m",
+    "onFail": "fallback verifier",
+    "maxTokens": 16384,
+    "topP": 0.9,
+    "topK": 40,
+    "stop": [
+     "DONE",
+     "ABORT"
+    ],
+    "thinking": "high",
+    "thinkingBudget": 10000,
+    "compensates": "deploy-rollback",
+    "outputs": {
+     "result": [
+      "success",
+      "partial",
+      "failed"
+     ]
+    },
+    "hooks": [
+     {
+      "name": "pre-fix-safety",
+      "on": "PreToolUse",
+      "matcher": "Bash",
+      "run": "scripts/safety-check.sh",
+      "type": "command"
+     }
+    ],
+    "sandbox": "network-only",
+    "variants": [
+     {
+      "id": "conservative",
+      "weight": 0.7,
+      "temperature": 0.1,
+      "model": "sonnet"
+     },
+     {
+      "id": "aggressive",
+      "weight": 0.3,
+      "temperature": 0.5
+     }
+    ],
+    "description": "Applies fixes and rollbacks to resolve incidents",
+    "maxTurns": 20,
+    "extensions": {
+     "codex": {
+      "sandbox-mode": "workspace-write"
+     }
+    }
+   },
+   {
+    "id": "verifier",
+    "type": "agent",
+    "label": "Verifier",
+    "phase": 4,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are the incident verifier. Run comprehensive smoke tests\nand health checks to confirm the fix resolved the incident.\nCheck for any regressions in related services.",
+    "tools": [
+     "Read",
+     "Grep",
+     "run-smoke-tests",
+     "check-health"
+    ],
+    "reads": [
+     "workspace/fixes/"
+    ],
+    "writes": [
+     "workspace/verification/"
+    ],
+    "retry": 2,
+    "timeout": "20m",
+    "onFail": "retry",
+    "seed": 42,
+    "mcpServers": [
+     "observability-platform"
+    ],
+    "outputs": {
+     "status": [
+      "verified",
+      "failed",
+      "inconclusive"
+     ]
+    },
+    "inputSchema": [
+     {
+      "name": "fix-id",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "service-name",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     }
+    ],
+    "rateLimit": "30/min",
+    "description": "Verifies fixes via smoke tests and health checks"
+   },
+   {
+    "id": "reporter",
+    "type": "agent",
+    "label": "Reporter",
+    "phase": 5,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are the incident reporter. Compile a comprehensive\npost-mortem report including timeline, root cause analysis,\nactions taken, and follow-up recommendations.",
+    "tools": [
+     "Read",
+     "Write"
+    ],
+    "reads": [
+     "workspace/verification/",
+     "workspace/fixes/",
+     "workspace/triage/",
+     "workspace/alerts/"
+    ],
+    "writes": [
+     "workspace/reports/"
+    ],
+    "skip": "\"not verifier\"",
+    "invocation": "auto",
+    "variants": [
+     {
+      "id": "detailed",
+      "weight": 0.7,
+      "temperature": 0.4
+     },
+     {
+      "id": "concise",
+      "weight": 0.3,
+      "temperature": 0.2,
+      "model": "haiku"
+     }
+    ],
+    "description": "Generates post-mortem reports for resolved incidents"
+   },
+   {
+    "id": "triage-validation",
+    "type": "gate",
+    "label": "Triage Validation",
+    "after": "triager",
+    "before": "fixer",
+    "run": "scripts/validate-triage.sh",
+    "checks": [
+     "severity",
+     "affected-services",
+     "priority"
+    ],
+    "retry": 2,
+    "onFail": "bounce-back",
+    "behavior": "blocking",
+    "timeout": "3m"
+   },
+   {
+    "id": "fix-verification",
+    "type": "gate",
+    "label": "Fix Verification",
+    "after": "fixer",
+    "before": "verifier",
+    "run": "scripts/verify-fix-safe.sh",
+    "checks": [
+     "no-regressions",
+     "rollback-ready"
+    ],
+    "retry": 1,
+    "onFail": "halt",
+    "behavior": "blocking",
+    "timeout": "5m"
+   },
+   {
+    "id": "ops-approval",
+    "type": "human",
+    "label": "Ops Approval",
+    "description": "On-call engineer reviews and approves critical remediation actions before execution",
+    "timeout": "30m",
+    "onTimeout": "fallback fixer"
+   },
+   {
+    "id": "war-room",
+    "type": "group",
+    "label": "War Room",
+    "members": [
+     "detector",
+     "triager",
+     "fixer"
+    ],
+    "speakerSelection": "round-robin",
+    "maxRounds": 5,
+    "termination": "All members agree on root cause and remediation plan",
+    "description": "War room discussion for critical incidents",
+    "timeout": "45m"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "detector",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "detector",
+    "to": "triager",
+    "condition": "detector.severity == minor",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "detector",
+    "to": "triager",
+    "condition": "detector.severity == major",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "detector",
+    "to": "triager",
+    "condition": "detector.severity == critical",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "detector",
+    "to": "war-room",
+    "condition": "detector.severity == critical",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "triager",
+    "to": "fixer",
+    "condition": "triager.route == fix-now",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "triager",
+    "to": "fixer",
+    "condition": "triager.route == investigate",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "triager",
+    "to": "wrap-up",
+    "condition": "triager.route == defer",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "fixer",
+    "to": "ops-approval",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "ops-approval",
+    "to": "verifier",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "verifier",
+    "to": "reporter",
+    "condition": "verifier.status == verified",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "verifier",
+    "to": "fixer",
+    "condition": "verifier.status == failed",
+    "maxIterations": 3,
+    "per": null
+   },
+   {
+    "from": "verifier",
+    "to": "reporter",
+    "condition": "verifier.status == inconclusive",
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reporter",
+    "to": "wrap-up",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "detector",
+    "to": "reporter",
+    "condition": null,
+    "maxIterations": null,
+    "per": null,
+    "isError": true
+   },
+   {
+    "from": "fixer",
+    "to": "reporter",
+    "condition": null,
+    "maxIterations": null,
+    "per": null,
+    "isError": true,
+    "errorType": "TimeoutError"
+   },
+   {
+    "from": "war-room",
+    "to": "triager",
+    "condition": null,
+    "maxIterations": 2,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [
+    "severity",
+    "blast-radius"
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "label": "quick-triage",
+     "omit": [
+      "verifier",
+      "reporter"
+     ]
+    },
+    {
+     "level": 2,
+     "label": "standard",
+     "omit": [
+      "reporter"
+     ]
+    },
+    {
+     "level": 3,
+     "label": "full-response",
+     "omit": []
+    }
+   ]
+  },
+  "memory": {
+   "domains": {
+    "path": "domains/",
+    "routing": "domains/routing.md"
+   },
+   "references": {
+    "path": "references/"
+   },
+   "external-docs": {
+    "path": "docs/"
+   },
+   "metrics": {
+    "path": "metrics/incidents.jsonl",
+    "mode": "append-only"
+   },
+   "workspace": {
+    "path": "workspace/",
+    "protocol": "protocols/incident-workspace.md",
+    "structure": [
+     "alerts",
+     "triage",
+     "fixes",
+     "verification",
+     "reports"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {
+   "parallel": true,
+   "per": "ticket",
+   "workspace": "runs/_incidents/{BATCH_ID}/",
+   "conflicts": {
+    "detect": [
+     "workspace/reports/"
+    ],
+    "resolve": "sequential-rebase"
+   }
+  },
+  "environments": {
+   "development": {
+    "api-url": "http://localhost:3000",
+    "log-level": "debug",
+    "pager-enabled": "false"
+   },
+   "staging": {
+    "api-url": "https://staging.incident-api.example.com",
+    "log-level": "info",
+    "pager-enabled": "true"
+   },
+   "production": {
+    "api-url": "https://incident-api.example.com",
+    "log-level": "warn",
+    "pager-enabled": "true",
+    "replicas": "3"
+   }
+  },
+  "triggers": [
+   {
+    "name": "respond",
+    "pattern": "/respond <INCIDENT_ID>",
+    "argument": "INCIDENT_ID"
+   },
+   {
+    "name": "check-status",
+    "pattern": "/status"
+   },
+   {
+    "name": "do-rollback",
+    "pattern": "/rollback <SERVICE> <VERSION>",
+    "argument": "SERVICE"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "notify-on-start",
+    "on": "AgentStart",
+    "matcher": "",
+    "run": "scripts/notify-start.sh",
+    "type": "command",
+    "timeout": 5000
+   },
+   {
+    "name": "log-completions",
+    "on": "AgentStop",
+    "matcher": "",
+    "run": "scripts/log-completion.sh",
+    "type": "command"
+   },
+   {
+    "name": "block-dangerous-commands",
+    "on": "PreToolUse",
+    "matcher": "Bash",
+    "run": "exit 2",
+    "if": "Bash(rm -rf *)",
+    "type": "command"
+   },
+   {
+    "name": "audit-tool-use",
+    "on": "ToolUse",
+    "matcher": "",
+    "run": "scripts/audit-tool.sh",
+    "type": "command"
+   },
+   {
+    "name": "on-error-alert",
+    "on": "Error",
+    "matcher": "",
+    "run": "scripts/alert-on-error.sh",
+    "type": "command",
+    "timeout": 10000
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Grep",
+    "Glob",
+    "Bash",
+    "WebFetch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": [
+    "Bash(git push --force *)"
+   ],
+   "sandbox": "docker",
+   "fallbackChain": [
+    "opus",
+    "sonnet",
+    "haiku"
+   ]
+  },
+  "mcpServers": {
+   "pagerduty": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+     "-y",
+     "pagerduty-mcp-server"
+    ],
+    "env": {
+     "PAGER_TOKEN": "${PAGER_TOKEN}"
+    }
+   },
+   "observability-platform": {
+    "type": "http",
+    "url": "https://mcp.observability.example.com"
+   },
+   "log-search": {
+    "type": "sse",
+    "url": "https://mcp.logs.example.com/sse"
+   }
+  },
+  "metering": {
+   "track": [
+    "tokens-in",
+    "tokens-out",
+    "cost",
+    "wall-time",
+    "agent-count"
+   ],
+   "per": [
+    "agent",
+    "run",
+    "phase"
+   ],
+   "output": "metrics/metering.jsonl",
+   "format": "jsonl",
+   "pricing": "anthropic-current"
+  },
+  "skills": [
+   {
+    "id": "incident-detection",
+    "description": "Anomaly detection and alerting from system metrics",
+    "scripts": [
+     "check-health",
+     "query-metrics"
+    ],
+    "domains": [
+     "domains/runbooks.md"
+    ],
+    "userInvocable": true
+   },
+   {
+    "id": "deployment-ops",
+    "description": "Deployment rollback and smoke testing",
+    "scripts": [
+     "rollback-deploy",
+     "run-smoke-tests"
+    ],
+    "references": [
+     "references/deploy-guide.md"
+    ],
+    "context": "fork",
+    "agent": "fixer",
+    "allowedTools": [
+     "Bash",
+     "Read"
+    ]
+   }
+  ],
+  "toolDefs": [
+   {
+    "id": "check-health",
+    "script": "scripts/check-health.sh",
+    "description": "Check the health of a given service endpoint",
+    "args": [
+     "service-name"
+    ],
+    "lang": "bash"
+   },
+   {
+    "id": "rollback-deploy",
+    "script": "scripts/rollback-deploy.py",
+    "description": "Rollback a service deployment to a previous version",
+    "args": [
+     "service-name",
+     "target-version"
+    ],
+    "lang": "python"
+   },
+   {
+    "id": "run-smoke-tests",
+    "script": "scripts/run-smoke-tests.sh",
+    "description": "Run smoke tests against a deployed service",
+    "args": [
+     "service-name",
+     "environment"
+    ],
+    "lang": "bash"
+   },
+   {
+    "id": "query-metrics",
+    "script": "scripts/query-metrics.py",
+    "description": "Query Prometheus metrics for a service over a time range",
+    "args": [
+     "service-name",
+     "time-range"
+    ],
+    "lang": "python"
+   }
+  ],
+  "roles": {
+   "detection": "Monitor systems and detect anomalies, outages, and performance degradation",
+   "triage": "Classify incident severity, identify affected services, and assign priority",
+   "remediation": "Apply fixes, rollbacks, and patches to resolve the incident",
+   "verification": "Verify that the fix resolved the incident and no regressions exist",
+   "reporting": "Compile incident timeline, root cause analysis, and post-mortem report"
+  },
+  "context": {},
+  "env": {
+   "PAGER_TOKEN": {
+    "value": "vault://secret/data/prod#pager-token",
+    "sensitive": true,
+    "secretRef": {
+     "scheme": "vault",
+     "uri": "vault://secret/data/prod#pager-token"
+    }
+   },
+   "DEPLOY_REGION": "us-east-1",
+   "LOG_LEVEL": "${LOG_LEVEL}",
+   "REDIS_URL": "${REDIS_URL}",
+   "SLACK_WEBHOOK": "${SLACK_WEBHOOK_URL}"
+  },
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true,
+    "auth": {
+     "type": "api-key"
+    }
+   },
+   {
+    "name": "openai",
+    "models": [
+     "gpt-4o",
+     "gpt-4o-mini"
+    ],
+    "extra": {},
+    "apiKey": "${OPENAI_API_KEY}",
+    "baseUrl": "https://api.openai.com/v1"
+   }
+  ],
+  "schedules": [
+   {
+    "id": "health-sweep",
+    "enabled": true,
+    "cron": "*/5 * * * *",
+    "agent": "detector"
+   },
+   {
+    "id": "daily-report",
+    "enabled": true,
+    "cron": "0 9 * * 1-5",
+    "agent": "reporter"
+   },
+   {
+    "id": "weekly-deep-scan",
+    "enabled": true,
+    "every": "monday 2:00",
+    "agent": "detector"
+   }
+  ],
+  "interfaces": [
+   {
+    "id": "slack-alerts",
+    "config": {
+     "webhook": "${SLACK_WEBHOOK}",
+     "channel": "incidents"
+    },
+    "type": "webhook"
+   },
+   {
+    "id": "pagerduty-inbound",
+    "config": {
+     "webhook": "${PAGER_TOKEN}"
+    },
+    "type": "http"
+   },
+   {
+    "id": "status-page",
+    "config": {
+     "port": "8080",
+     "path": "/status"
+    },
+    "type": "http"
+   }
+  ],
+  "defaults": {
+   "temperature": 0.3,
+   "maxTokens": 8192,
+   "topP": 0.95,
+   "thinking": "medium",
+   "thinkingBudget": 5000,
+   "outputFormat": "text",
+   "timeout": "15m",
+   "logLevel": "info"
+  },
+  "schemas": [
+   {
+    "id": "incident-info",
+    "fields": [
+     {
+      "name": "incident-id",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "title",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "severity",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "affected-services",
+      "type": {
+       "kind": "array",
+       "itemType": {
+        "kind": "primitive",
+        "value": "string"
+       }
+      },
+      "optional": false
+     },
+     {
+      "name": "detected-at",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     }
+    ]
+   },
+   {
+    "id": "fix-result",
+    "fields": [
+     {
+      "name": "success",
+      "type": {
+       "kind": "primitive",
+       "value": "boolean"
+      },
+      "optional": false
+     },
+     {
+      "name": "actions-taken",
+      "type": {
+       "kind": "array",
+       "itemType": {
+        "kind": "primitive",
+        "value": "string"
+       }
+      },
+      "optional": false
+     }
+    ]
+   },
+   {
+    "id": "post-mortem",
+    "fields": [
+     {
+      "name": "incident",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "timeline",
+      "type": {
+       "kind": "array",
+       "itemType": {
+        "kind": "primitive",
+        "value": "string"
+       }
+      },
+      "optional": false
+     },
+     {
+      "name": "root-cause",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     },
+     {
+      "name": "resolution",
+      "type": {
+       "kind": "primitive",
+       "value": "string"
+      },
+      "optional": false
+     }
+    ]
+   }
+  ],
+  "extensions": {
+   "claude-code": {
+    "outputStyle": "Explanatory"
+   },
+   "codex": {
+    "sandbox-mode": "workspace-write"
+   }
+  },
+  "observability": {
+   "enabled": true,
+   "level": "info",
+   "exporter": "otlp",
+   "sampleRate": 1,
+   "capture": {
+    "prompts": false,
+    "completions": false,
+    "toolArgs": false,
+    "toolResults": false
+   },
+   "spans": {
+    "agents": true,
+    "tools": true,
+    "gates": true,
+    "memory": false
+   }
+  },
+  "params": [
+   {
+    "name": "type",
+    "type": "string",
+    "required": true
+   },
+   {
+    "name": "type",
+    "type": "number",
+    "required": true
+   },
+   {
+    "name": "type",
+    "type": "boolean",
+    "required": true
+   }
+  ],
+  "interfaceEndpoints": {
+   "entry": "detector",
+   "exit": "reporter"
+  },
+  "imports": [],
+  "includes": [],
+  "checkpoint": {
+   "backend": "redis",
+   "strategy": "every-node",
+   "connection": "${REDIS_URL}",
+   "ttl": "14d",
+   "replay": {
+    "enabled": true,
+    "maxHistory": 100,
+    "branch": true
+   }
+  },
+  "artifacts": [
+   {
+    "id": "detection-report",
+    "type": "\"json\"",
+    "path": "workspace/alerts/",
+    "retention": "\"30d\""
+   },
+   {
+    "id": "triage-report",
+    "type": "\"json\"",
+    "path": "workspace/triage/",
+    "retention": "\"90d\"",
+    "dependsOn": [
+     "detection-report"
+    ]
+   },
+   {
+    "id": "fix-log",
+    "type": "\"markdown\"",
+    "path": "workspace/fixes/",
+    "retention": "\"90d\"",
+    "dependsOn": [
+     "triage-report"
+    ]
+   },
+   {
+    "id": "post-mortem-doc",
+    "type": "\"markdown\"",
+    "path": "workspace/reports/",
+    "retention": "\"1y\"",
+    "dependsOn": [
+     "fix-log",
+     "triage-report"
+    ]
+   }
+  ],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 173,
+   "intake": 184,
+   "deploy-rollback": 192,
+   "wrap-up": 201,
+   "detector": 209,
+   "triager": 257,
+   "fixer": 296,
+   "verifier": 351,
+   "reporter": 381,
+   "ops-approval": 412,
+   "war-room": 420,
+   "triage-validation": 432,
+   "fix-verification": 443
+  }
+ },
+ "openclaw-battle-test.at": {
+  "topology": {
+   "name": "openclaw-battle-test",
+   "version": "1.0.0",
+   "description": "Battle test topology for OpenClaw binding validation",
+   "patterns": [
+    "supervisor",
+    "fan-out"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse incoming request"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "inline",
+    "description": "Deliver final output"
+   },
+   {
+    "id": "coordinator",
+    "type": "agent",
+    "label": "Coordinator",
+    "phase": 1,
+    "model": "openrouter/google/gemini-2.5-flash",
+    "permissions": "autonomous",
+    "tools": [
+     "Read",
+     "WebSearch",
+     "WebFetch"
+    ],
+    "description": "Central coordinator — routes requests, synthesizes results",
+    "maxTurns": 20,
+    "role": "Central coordinator — routes requests, synthesizes results"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 2,
+    "model": "openrouter/google/gemini-2.5-flash",
+    "permissions": "supervised",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch",
+     "WebFetch"
+    ],
+    "reads": [
+     "workspace/queries/"
+    ],
+    "writes": [
+     "workspace/research/"
+    ],
+    "description": "Research agent — searches web, reads docs, produces summaries",
+    "role": "Deep research using web search and document analysis"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "openrouter/anthropic/claude-sonnet-4-6",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit"
+    ],
+    "writes": [
+     "workspace/drafts/"
+    ],
+    "description": "Writing agent — drafts responses and documents",
+    "role": "Draft responses and documents"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "review-panel",
+    "run": "scripts/quality-check.sh",
+    "checks": [
+     "formatting",
+     "accuracy"
+    ],
+    "onFail": "bounce-back"
+   },
+   {
+    "id": "review-panel",
+    "type": "group",
+    "label": "Review Panel",
+    "members": [
+     "coordinator",
+     "researcher"
+    ],
+    "maxRounds": 3,
+    "termination": "consensus on quality",
+    "description": "Quality review discussion"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "coordinator",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "coordinator",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "coordinator",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "review-panel",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "review-panel",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "review-panel",
+    "to": "done",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [
+    "complexity",
+    "urgency"
+   ],
+   "levels": [
+    {
+     "level": 1,
+     "label": "quick",
+     "omit": [
+      "review-panel"
+     ]
+    },
+    {
+     "level": 2,
+     "label": "thorough",
+     "omit": []
+    }
+   ]
+  },
+  "memory": {
+   "domains": {
+    "path": "domains/"
+   },
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "queries",
+     "research",
+     "drafts",
+     "responses"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "ask",
+    "pattern": "/ask <QUERY>",
+    "argument": "QUERY"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "log-tools",
+    "on": "PreToolUse",
+    "matcher": "",
+    "run": "scripts/log-tool-use.sh",
+    "type": "command"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "WebSearch",
+    "WebFetch"
+   ],
+   "deny": [],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": {
+   "track": [
+    "tokens-in",
+    "tokens-out",
+    "cost"
+   ],
+   "per": [
+    "agent",
+    "run"
+   ],
+   "output": "metrics.jsonl",
+   "format": "jsonl",
+   "pricing": "anthropic-current"
+  },
+  "skills": [
+   {
+    "id": "web-research",
+    "description": "Web research and summarization",
+    "scripts": [
+     "search-web"
+    ],
+    "domains": [
+     "domains/research-guide.md"
+    ]
+   }
+  ],
+  "toolDefs": [],
+  "roles": {
+   "coordinator": "Central coordinator — routes requests, synthesizes results",
+   "researcher": "Deep research using web search and document analysis",
+   "writer": "Draft responses and documents"
+  },
+  "context": {},
+  "env": {
+   "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+   "TELEGRAM_BOT_TOKEN": "${TELEGRAM_BOT_TOKEN}"
+  },
+  "providers": [
+   {
+    "name": "openrouter",
+    "models": [
+     "openrouter/google/gemini-2.5-flash",
+     "openrouter/anthropic/claude-sonnet-4-6"
+    ],
+    "extra": {},
+    "apiKey": "${OPENROUTER_API_KEY}",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "default": true
+   }
+  ],
+  "schedules": [
+   {
+    "id": "daily-digest",
+    "enabled": true,
+    "cron": "0 8 * * 0-4",
+    "agent": "coordinator"
+   }
+  ],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "extensions": {
+   "openclaw": {
+    "gateway-port": 18789,
+    "channels": "[telegram]"
+   }
+  },
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "intake": 16,
+   "done": 21,
+   "coordinator": 26,
+   "researcher": 36,
+   "writer": 47,
+   "review-panel": 56,
+   "quality-check": 72
+  }
+ },
+ "src/__tests__/e2e/differential/simple-pipeline.at": {
+  "topology": {
+   "name": "simple-pipeline",
+   "version": "1.0.0",
+   "description": "Research, write, and review — a minimal content pipeline",
+   "patterns": [
+    "pipeline",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "done"
+    ],
+    "generates": "commands/create.md",
+    "outputs": {
+     "topic-type": [
+      "technical",
+      "creative"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract topic and requirements"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "report",
+    "description": "Deliver final content to the user"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are a research specialist focused on gathering comprehensive information.\n\n## Guidelines\n- Search broadly for relevant sources\n- Compile findings into structured research notes\n- Include citations and source URLs\n- Prioritize recent and authoritative sources",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch"
+    ],
+    "writes": [
+     "workspace/research.md"
+    ],
+    "role": "Gather information, find sources, and compile research notes"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a content writer who transforms research into polished drafts.\n\n## Guidelines\n- Follow the style guide and tone requirements\n- Structure content with clear headings and sections\n- Incorporate all key findings from the research\n- Write for the target audience specified in the brief",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/research.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/draft.md"
+    ],
+    "outputs": {
+     "confidence": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    "role": "Draft content based on research, following style guidelines"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are a content reviewer ensuring quality and accuracy.\n\n## Guidelines\n- Verify all claims against the research sources\n- Check for clarity, grammar, and logical flow\n- Assess completeness against the original requirements\n- Provide actionable feedback for revisions if needed",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/draft.md",
+     "workspace/research.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "revise",
+      "reject"
+     ]
+    },
+    "role": "Review drafts for accuracy, clarity, and completeness"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "reviewer",
+    "run": "scripts/check-quality.sh",
+    "checks": [
+     "grammar",
+     "formatting"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "writer",
+    "condition": "reviewer.verdict == revise",
+    "maxIterations": 2,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "researcher",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": 1,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "done",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "research",
+     "drafts",
+     "reviews"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "create",
+    "pattern": "/create <TOPIC>",
+    "argument": "TOPIC"
+   }
+  ],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Gather information, find sources, and compile research notes",
+   "writer": "Draft content based on research, following style guidelines",
+   "reviewer": "Review drafts for accuracy, clarity, and completeness"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 20,
+   "intake": 37,
+   "researcher": 44,
+   "writer": 63,
+   "reviewer": 86,
+   "quality-check": 123,
+   "done": 134
+  }
+ },
+ "src/__tests__/e2e/fixtures/codex-gates.at": {
+  "topology": {
+   "name": "ship",
+   "version": "1.0.0",
+   "description": "Render, approve, then publish",
+   "patterns": [
+    "pipeline"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "gpt-5.2",
+    "handles": [
+     "render",
+     "publish",
+     "editor"
+    ]
+   },
+   {
+    "id": "render",
+    "type": "action",
+    "label": "Render",
+    "kind": "external",
+    "commands": [
+     "./tool render"
+    ]
+   },
+   {
+    "id": "publish",
+    "type": "action",
+    "label": "Publish",
+    "kind": "external",
+    "commands": [
+     "./tool publish",
+     "./tool republish"
+    ],
+    "unitFrom": "./tool (?:re)?publish (\\S+)"
+   },
+   {
+    "id": "editor",
+    "type": "agent",
+    "label": "Editor",
+    "model": "gpt-5.2",
+    "description": "Edits the rendered piece"
+   },
+   {
+    "id": "publish-ready",
+    "type": "gate",
+    "label": "Publish Ready",
+    "after": "render",
+    "before": "publish",
+    "onFail": "halt",
+    "ledger": "trace"
+   },
+   {
+    "id": "render-check",
+    "type": "gate",
+    "label": "Render Check",
+    "after": "render",
+    "before": "editor",
+    "run": "scripts/render-check.sh",
+    "onFail": "halt"
+   },
+   {
+    "id": "approve",
+    "type": "human",
+    "label": "Approve",
+    "description": "The editor approves before editing"
+   }
+  ],
+  "edges": [
+   {
+    "from": "render",
+    "to": "approve",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "approve",
+    "to": "editor",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "editor",
+    "to": "publish",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [
+   {
+    "id": "trace",
+    "path": "logs/{unit}/trace.jsonl"
+   }
+  ],
+  "_sourceMap": {
+   "orchestrator": 11,
+   "render": 15,
+   "publish": 19,
+   "approve": 24,
+   "editor": 27,
+   "publish-ready": 35,
+   "render-check": 41
+  }
+ },
+ "src/__tests__/e2e/fixtures/compile.at": {
+  "topology": {
+   "name": "compile",
+   "version": "1.0.0",
+   "description": "Constructs that once compiled wrong",
+   "patterns": [
+    "pipeline"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "fetch",
+     "digest"
+    ]
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Take the request"
+   },
+   {
+    "id": "fetch",
+    "type": "action",
+    "label": "Fetch",
+    "kind": "external",
+    "source": "https://feeds.example.com/brief",
+    "commands": [
+     "curl -fsS https://feeds.example.com/brief -o brief.json"
+    ]
+   },
+   {
+    "id": "digest",
+    "type": "action",
+    "label": "Digest",
+    "kind": "report",
+    "description": "Summarise the week"
+   },
+   {
+    "id": "drafter",
+    "type": "agent",
+    "label": "Drafter",
+    "model": "sonnet",
+    "permissions": "confirm",
+    "tools": [
+     "Read",
+     "mcp.notes",
+     "mcp.search.*",
+     "mcp.search.find.all"
+    ],
+    "hooks": [
+     {
+      "name": "lint",
+      "on": "PostToolUse",
+      "matcher": "Edit|Write\\.md$",
+      "run": "scripts/lint.sh"
+     },
+     {
+      "name": "judge",
+      "on": "AgentStop",
+      "matcher": "",
+      "run": "Did the draft cite a source? Answer ok: false if not.",
+      "type": "prompt"
+     }
+    ],
+    "description": "yes"
+   },
+   {
+    "id": "critic",
+    "type": "agent",
+    "label": "Critic",
+    "model": "sonnet",
+    "prompt": "Score the draft against the rubric. Report the three weakest lines.",
+    "tools": [
+     "Read",
+     "Grep"
+    ],
+    "runs": "fork",
+    "independent": true,
+    "thinking": "high",
+    "description": "Scores a draft against the rubric"
+   },
+   {
+    "id": "tidy",
+    "type": "agent",
+    "label": "Tidy",
+    "model": "haiku",
+    "invocation": "manual",
+    "runs": "inline",
+    "description": "Tidies whitespace in the draft"
+   },
+   {
+    "id": "auditor",
+    "type": "agent",
+    "label": "Auditor",
+    "model": "sonnet",
+    "permissions": "bypass",
+    "invocation": "manual",
+    "color": "orange",
+    "initialPrompt": "Start with the newest draft.",
+    "omitClaudeMd": true,
+    "thinking": "max",
+    "description": "Audits a draft on request"
+   },
+   {
+    "id": "brief-check",
+    "type": "gate",
+    "label": "Brief Check",
+    "after": "intake",
+    "before": "drafter",
+    "run": "scripts/brief-check.sh",
+    "onFail": "halt"
+   },
+   {
+    "id": "copy-check",
+    "type": "gate",
+    "label": "Copy Check",
+    "after": "drafter",
+    "run": "python3 docs/tools/check.py check-dir docs/show/SLUG --out OUT/frames-critic.json",
+    "onFail": "halt"
+   },
+   {
+    "id": "approve",
+    "type": "human",
+    "label": "Approve",
+    "description": "The editor approves the brief before drafting"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "approve",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "approve",
+    "to": "drafter",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "drafter",
+    "to": "critic",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [
+   {
+    "name": "finished",
+    "on": "AgentStop",
+    "matcher": "drafter",
+    "run": "scripts/finished.sh"
+   },
+   {
+    "name": "notify",
+    "on": "Notification",
+    "matcher": "",
+    "run": "",
+    "type": "http",
+    "url": "https://hooks.example.com/claude"
+   },
+   {
+    "name": "record",
+    "on": "PostToolUse",
+    "matcher": "Write",
+    "run": "",
+    "type": "mcp_tool",
+    "server": "notes",
+    "tool": "append"
+   },
+   {
+    "name": "second-look",
+    "on": "SubagentStop",
+    "matcher": "",
+    "run": "Check the subagent's answer cites a source; reply ok false if not.",
+    "type": "agent"
+   },
+   {
+    "name": "bg-log",
+    "on": "PostToolUse",
+    "matcher": "",
+    "run": "scripts/bg-log.sh",
+    "async": true
+   },
+   {
+    "name": "review",
+    "on": "Stop",
+    "matcher": "",
+    "run": "Check the session ended with a summary: reply ok true or false.",
+    "type": "prompt"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "mcp.search"
+   ],
+   "deny": [
+    "mcp.notes.delete"
+   ],
+   "ask": [
+    "Bash(git push:*)"
+   ]
+  },
+  "mcpServers": {
+   "search": {
+    "url": "https://search.example.com/mcp"
+   }
+  },
+  "metering": null,
+  "skills": [
+   {
+    "id": "brief",
+    "description": "Write a brief",
+    "prompt": "prompts/brief.md"
+   },
+   {
+    "id": "tone",
+    "description": "Keep the house tone",
+    "prompt": "## Tone\nShort sentences. No jargon.",
+    "whenToUse": "Before any draft is shown to a reader",
+    "argumentHint": "<draft path>",
+    "shell": "bash",
+    "model": "haiku",
+    "thinking": "low",
+    "arguments": [
+     "draft"
+    ],
+    "paths": [
+     "drafts/**/*.md"
+    ],
+    "disallowedTools": [
+     "Bash"
+    ]
+   }
+  ],
+  "toolDefs": [
+   {
+    "id": "render",
+    "script": "tools/render.py",
+    "description": "Render a draft",
+    "lang": "python"
+   },
+   {
+    "id": "count",
+    "script": "scripts/count.sh",
+    "description": "Count words"
+   }
+  ],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [
+   {
+    "id": "nightly",
+    "enabled": true,
+    "every": "15m",
+    "agent": "drafter"
+   },
+   {
+    "id": "weekly-digest",
+    "enabled": true,
+    "every": "1w",
+    "action": "digest"
+   },
+   {
+    "id": "odd",
+    "enabled": true,
+    "every": "7m",
+    "action": "fetch"
+   }
+  ],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 12,
+   "intake": 17,
+   "fetch": 22,
+   "digest": 28,
+   "approve": 33,
+   "drafter": 37,
+   "critic": 56,
+   "tidy": 68,
+   "auditor": 75,
+   "brief-check": 135,
+   "copy-check": 141
+  }
+ },
+ "src/__tests__/e2e/fixtures/hazards.at": {
+  "topology": {
+   "name": "hazards",
+   "version": "1.0.0",
+   "description": "Research, write, and review — a minimal content pipeline",
+   "patterns": [
+    "pipeline",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "done"
+    ],
+    "generates": "commands/create.md",
+    "outputs": {
+     "topic-type": [
+      "technical",
+      "creative"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract topic and requirements"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "report",
+    "description": "Deliver final content to the user"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are a research specialist focused on gathering comprehensive information.\n\n## Guidelines\n- Search broadly for relevant sources\n- Compile findings into structured research notes\n- Include citations and source URLs\n- Prioritize recent and authoritative sources",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch"
+    ],
+    "writes": [
+     "workspace/research.md"
+    ],
+    "role": "Gather information, find sources, and compile research notes"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a content writer who transforms research into polished drafts.\n\n## Guidelines\n- Follow the style guide and tone requirements\n- Structure content with clear headings and sections\n- Incorporate all key findings from the research\n- Write for the target audience specified in the brief",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/research.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/draft.md"
+    ],
+    "outputs": {
+     "confidence": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    "role": "Draft content based on research, following style guidelines"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are a content reviewer ensuring quality and accuracy.\n\n## Guidelines\n- Verify all claims against the research sources\n- Check for clarity, grammar, and logical flow\n- Assess completeness against the original requirements\n- Provide actionable feedback for revisions if needed",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/draft.md",
+     "workspace/research.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "revise",
+      "reject"
+     ]
+    },
+    "role": "Review drafts for accuracy, clarity, and completeness"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "reviewer",
+    "run": "scripts/check-quality.sh",
+    "checks": [
+     "grammar",
+     "formatting"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "writer",
+    "condition": "reviewer.verdict == revise",
+    "maxIterations": 2,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "researcher",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": 1,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "done",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "research",
+     "drafts",
+     "reviews"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "create",
+    "pattern": "/create <TOPIC>",
+    "argument": "TOPIC"
+   }
+  ],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [
+   {
+    "id": "story",
+    "description": "Hand-written in the project; scaffold must keep it",
+    "userInvocable": true
+   },
+   {
+    "id": "the-book",
+    "description": "A symlink into another repository; scaffold must never write through it"
+   }
+  ],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Gather information, find sources, and compile research notes",
+   "writer": "Draft content based on research, following style guidelines",
+   "reviewer": "Review drafts for accuracy, clarity, and completeness"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 23,
+   "intake": 40,
+   "researcher": 47,
+   "writer": 66,
+   "reviewer": 89,
+   "quality-check": 126,
+   "done": 137
+  }
+ },
+ "src/__tests__/e2e/fixtures/session-ops.at": {
+  "topology": {
+   "name": "session-ops",
+   "version": "1.0.0",
+   "description": "Session agents that message each other through a manager",
+   "patterns": [
+    "hub"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "lane-manager"
+    ]
+   },
+   {
+    "id": "lane-manager",
+    "type": "agent",
+    "label": "Lane Manager",
+    "model": "sonnet",
+    "runs": "session",
+    "place": "ops",
+    "decides": [
+     "package-yes"
+    ],
+    "description": "Hands tickets to the lanes and decides what ships"
+   },
+   {
+    "id": "lane-build",
+    "type": "agent",
+    "label": "Lane Build",
+    "model": "sonnet",
+    "runs": "session",
+    "place": "ops",
+    "description": "Builds what a ticket asks for"
+   },
+   {
+    "id": "lane-video",
+    "type": "agent",
+    "label": "Lane Video",
+    "model": "sonnet",
+    "runs": "session",
+    "place": "makers",
+    "description": "Makes the video cut"
+   },
+   {
+    "id": "lane-text",
+    "type": "agent",
+    "label": "Lane Text",
+    "model": "sonnet",
+    "runs": "session",
+    "place": "makers",
+    "description": "Writes the copy"
+   },
+   {
+    "id": "helper",
+    "type": "agent",
+    "label": "Helper",
+    "model": "sonnet",
+    "description": "A short-lived subagent that lane-build spawns"
+   },
+   {
+    "id": "owner",
+    "type": "human",
+    "label": "Owner",
+    "description": "The owner reads the final package"
+   }
+  ],
+  "edges": [
+   {
+    "from": "lane-manager",
+    "to": "lane-build",
+    "condition": null,
+    "maxIterations": null,
+    "per": null,
+    "message": "ticket"
+   },
+   {
+    "from": "lane-build",
+    "to": "helper",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-manager",
+    "to": "owner",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-build",
+    "to": "lane-manager",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-manager",
+    "to": "lane-video",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-video",
+    "to": "lane-manager",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-manager",
+    "to": "lane-text",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "lane-text",
+    "to": "lane-manager",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {},
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "decisions": [
+   "package-yes"
+  ],
+  "_sourceMap": {
+   "orchestrator": 13,
+   "lane-manager": 18,
+   "lane-build": 26,
+   "lane-video": 33,
+   "lane-text": 40,
+   "helper": 47,
+   "owner": 52
+  }
+ },
+ "src/__tests__/e2e/fixtures/upgrade-0112/gate/t.at": {
+  "topology": {
+   "name": "simple-pipeline",
+   "version": "1.0.0",
+   "description": "Research, write, and review — a minimal content pipeline",
+   "patterns": [
+    "pipeline",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "done"
+    ],
+    "generates": "commands/create.md",
+    "outputs": {
+     "topic-type": [
+      "technical",
+      "creative"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract topic and requirements"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "report",
+    "description": "Deliver final content to the user"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are a research specialist focused on gathering comprehensive information.\n\n## Guidelines\n- Search broadly for relevant sources\n- Compile findings into structured research notes\n- Include citations and source URLs\n- Prioritize recent and authoritative sources",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch"
+    ],
+    "writes": [
+     "workspace/research.md"
+    ],
+    "role": "Gather information, find sources, and compile research notes"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a content writer who transforms research into polished drafts.\n\n## Guidelines\n- Follow the style guide and tone requirements\n- Structure content with clear headings and sections\n- Incorporate all key findings from the research\n- Write for the target audience specified in the brief",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/research.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/draft.md"
+    ],
+    "outputs": {
+     "confidence": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    "role": "Draft content based on research, following style guidelines"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are a content reviewer ensuring quality and accuracy.\n\n## Guidelines\n- Verify all claims against the research sources\n- Check for clarity, grammar, and logical flow\n- Assess completeness against the original requirements\n- Provide actionable feedback for revisions if needed",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/draft.md",
+     "workspace/research.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "revise",
+      "reject"
+     ]
+    },
+    "role": "Review drafts for accuracy, clarity, and completeness"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "reviewer",
+    "run": "scripts/check-quality.sh > /dev/null",
+    "checks": [
+     "grammar",
+     "formatting"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "writer",
+    "condition": "reviewer.verdict == revise",
+    "maxIterations": 2,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "researcher",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": 1,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "done",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "research",
+     "drafts",
+     "reviews"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "create",
+    "pattern": "/create <TOPIC>",
+    "argument": "TOPIC"
+   }
+  ],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Gather information, find sources, and compile research notes",
+   "writer": "Draft content based on research, following style guidelines",
+   "reviewer": "Review drafts for accuracy, clarity, and completeness"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 20,
+   "intake": 37,
+   "researcher": 44,
+   "writer": 63,
+   "reviewer": 86,
+   "quality-check": 123,
+   "done": 134
+  }
+ },
+ "src/__tests__/e2e/fixtures/upgrade-0112/hook/t.at": {
+  "topology": {
+   "name": "simple-pipeline",
+   "version": "1.0.0",
+   "description": "Research, write, and review — a minimal content pipeline",
+   "patterns": [
+    "pipeline",
+    "human-gate"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "sonnet",
+    "handles": [
+     "intake",
+     "done"
+    ],
+    "generates": "commands/create.md",
+    "outputs": {
+     "topic-type": [
+      "technical",
+      "creative"
+     ]
+    }
+   },
+   {
+    "id": "intake",
+    "type": "action",
+    "label": "Intake",
+    "kind": "inline",
+    "description": "Parse user request — extract topic and requirements"
+   },
+   {
+    "id": "done",
+    "type": "action",
+    "label": "Done",
+    "kind": "report",
+    "description": "Deliver final content to the user"
+   },
+   {
+    "id": "researcher",
+    "type": "agent",
+    "label": "Researcher",
+    "phase": 1,
+    "model": "sonnet",
+    "permissions": "supervised",
+    "prompt": "You are a research specialist focused on gathering comprehensive information.\n\n## Guidelines\n- Search broadly for relevant sources\n- Compile findings into structured research notes\n- Include citations and source URLs\n- Prioritize recent and authoritative sources",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob",
+     "WebSearch"
+    ],
+    "writes": [
+     "workspace/research.md"
+    ],
+    "role": "Gather information, find sources, and compile research notes"
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "phase": 2,
+    "model": "sonnet",
+    "permissions": "autonomous",
+    "prompt": "You are a content writer who transforms research into polished drafts.\n\n## Guidelines\n- Follow the style guide and tone requirements\n- Structure content with clear headings and sections\n- Incorporate all key findings from the research\n- Write for the target audience specified in the brief",
+    "tools": [
+     "Read",
+     "Write",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/research.md",
+     "workspace/review.md"
+    ],
+    "writes": [
+     "workspace/draft.md"
+    ],
+    "outputs": {
+     "confidence": [
+      "high",
+      "medium",
+      "low"
+     ]
+    },
+    "role": "Draft content based on research, following style guidelines"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "phase": 3,
+    "model": "opus",
+    "permissions": "supervised",
+    "prompt": "You are a content reviewer ensuring quality and accuracy.\n\n## Guidelines\n- Verify all claims against the research sources\n- Check for clarity, grammar, and logical flow\n- Assess completeness against the original requirements\n- Provide actionable feedback for revisions if needed",
+    "tools": [
+     "Read",
+     "Grep",
+     "Glob"
+    ],
+    "reads": [
+     "workspace/draft.md",
+     "workspace/research.md"
+    ],
+    "writes": [
+     "workspace/review.md"
+    ],
+    "outputs": {
+     "verdict": [
+      "approve",
+      "revise",
+      "reject"
+     ]
+    },
+    "role": "Review drafts for accuracy, clarity, and completeness"
+   },
+   {
+    "id": "quality-check",
+    "type": "gate",
+    "label": "Quality Check",
+    "after": "writer",
+    "before": "reviewer",
+    "run": "scripts/check-quality.sh",
+    "checks": [
+     "grammar",
+     "formatting"
+    ],
+    "onFail": "bounce-back"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "researcher",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "researcher",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "writer",
+    "condition": "reviewer.verdict == revise",
+    "maxIterations": 2,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "researcher",
+    "condition": "reviewer.verdict == reject",
+    "maxIterations": 1,
+    "per": null
+   },
+   {
+    "from": "reviewer",
+    "to": "done",
+    "condition": "reviewer.verdict == approve",
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {
+   "workspace": {
+    "path": "workspace/",
+    "structure": [
+     "research",
+     "drafts",
+     "reviews"
+    ]
+   }
+  },
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [
+   {
+    "name": "create",
+    "pattern": "/create <TOPIC>",
+    "argument": "TOPIC"
+   }
+  ],
+  "hooks": [
+   {
+    "name": "g",
+    "on": "PreToolUse",
+    "matcher": "Bash",
+    "run": "scripts/guard.sh 2>/dev/null",
+    "type": "command"
+   }
+  ],
+  "settings": {
+   "allow": [
+    "Read",
+    "Grep",
+    "Glob",
+    "WebSearch"
+   ],
+   "deny": [
+    "Bash(rm -rf *)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [],
+  "toolDefs": [],
+  "roles": {
+   "researcher": "Gather information, find sources, and compile research notes",
+   "writer": "Draft content based on research, following style guidelines",
+   "reviewer": "Review drafts for accuracy, clarity, and completeness"
+  },
+  "context": {},
+  "env": {},
+  "providers": [
+   {
+    "name": "anthropic",
+    "models": [
+     "opus",
+     "sonnet",
+     "haiku"
+    ],
+    "extra": {},
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "default": true
+   }
+  ],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 20,
+   "intake": 37,
+   "researcher": 44,
+   "writer": 63,
+   "reviewer": 86,
+   "quality-check": 123,
+   "done": 134
+  }
+ },
+ "src/parser/__tests__/fixtures/prose-freeze/code-in-prompts.at": {
+  "topology": {
+   "name": "code-in-prompts",
+   "version": "1.2.0",
+   "description": "Prompts that hold code samples, JSON and markdown",
+   "patterns": [
+    "pipeline"
+   ]
+  },
+  "nodes": [
+   {
+    "id": "orchestrator",
+    "type": "orchestrator",
+    "label": "Orchestrator",
+    "model": "opus",
+    "handles": [
+     "intake"
+    ]
+   },
+   {
+    "id": "writer",
+    "type": "agent",
+    "label": "Writer",
+    "model": "sonnet",
+    "prompt": "# Role\nYou write small functions. A sample:\n\n```ts\nexport function add(a: number, b: number): number {\n  if (a < 0) {\n    return b;\n  }\n  return a + b;\n}\n```\n\nReply with JSON like {\"ok\": true, \"files\": [\"a.ts\"]}.\nKeep \"quotes\" and 'apostrophes' as they are.",
+    "tools": [
+     "Read",
+     "Write",
+     "Edit"
+    ],
+    "outputs": {
+     "verdict": [
+      "done",
+      "retry"
+     ]
+    },
+    "description": "Writes TypeScript"
+   },
+   {
+    "id": "reviewer",
+    "type": "agent",
+    "label": "Reviewer",
+    "model": "haiku",
+    "prompt": "## Checklist\n1. Every `{` has its `}`.\n2. Objects such as { \"a\": { \"b\": 1 } } are valid JSON.\nReport: a list of findings.",
+    "disallowedTools": [
+     "Write",
+     "Edit"
+    ],
+    "hooks": [
+     {
+      "name": "lint",
+      "on": "PostToolUse",
+      "matcher": "Write",
+      "run": "scripts/lint.sh"
+     }
+    ],
+    "description": "Reviews the diff"
+   }
+  ],
+  "edges": [
+   {
+    "from": "intake",
+    "to": "writer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   },
+   {
+    "from": "writer",
+    "to": "reviewer",
+    "condition": null,
+    "maxIterations": null,
+    "per": null
+   }
+  ],
+  "depth": {
+   "factors": [],
+   "levels": []
+  },
+  "memory": {},
+  "stores": [],
+  "retrievals": [],
+  "batch": {},
+  "environments": {},
+  "triggers": [],
+  "hooks": [],
+  "settings": {
+   "allow": [
+    "Read",
+    "Bash(npm test:*)"
+   ],
+   "deny": [
+    "Bash(rm:*)"
+   ],
+   "ask": []
+  },
+  "mcpServers": {},
+  "metering": null,
+  "skills": [
+   {
+    "id": "format",
+    "description": "Format code",
+    "prompt": "Run the formatter on every file: for (f of files) { fmt(f) }"
+   }
+  ],
+  "toolDefs": [],
+  "roles": {},
+  "context": {},
+  "env": {},
+  "providers": [],
+  "schedules": [],
+  "interfaces": [],
+  "defaults": null,
+  "schemas": [],
+  "observability": null,
+  "params": [],
+  "interfaceEndpoints": null,
+  "imports": [],
+  "includes": [],
+  "checkpoint": null,
+  "artifacts": [],
+  "records": [],
+  "_sourceMap": {
+   "orchestrator": 7,
+   "writer": 12,
+   "reviewer": 35
+  }
+ }
+}

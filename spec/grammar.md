@@ -90,6 +90,15 @@ import-path     = './' [a-zA-Z0-9._/-]+ '.at'
 
 `ticket` in a `path-list` is a reserved keyword referring to the input ticket data. It appears unquoted.
 
+A quoted list item is one item whatever it holds: `[`, `]` and `,` inside
+quotes are text (`deny: ["Bash(rm [a-z]*)", "Read(./.env)"]`). Outside quotes,
+brackets nest, so `[Bash(rm [a-z]*), Read]` is two items. A list may span
+lines. A list whose `]` never comes, a quoted item not closed on its line, or
+text after the closing `]` that is not another `key:` field is a parse error:
+part of a list is never kept. Text inside a `prompt { }` block or a quoted
+string is prose and is never checked as a list; when a field and prose both
+hold a key, the field is read.
+
 ### Template Variables
 ```
 {IDENTIFIER}            # uppercase letters, underscores, hyphens
@@ -179,7 +188,7 @@ topology-section = meta | orchestrator | roles | action | agent | skill-decl | u
                  | schedule | interfaces | inventory | needs
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `hooks`, `settings`, `mcp-servers`, `metering`, `tools`, `schedule`, `interfaces`, `inventory`, and `needs` may appear **at most once** (parser error on duplicates). `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, and `needs` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -369,7 +378,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | string | no | -- | Project-relative path of the hand-written file holding this node's internals. Bindings reference it and never generate or overwrite it (V97). `import` sets it on every file it did not generate, so a hand-built system comes in without losing anything. |
+| `file` | string | no | -- | Project-relative path of the hand-written file holding this node's internals. Bindings reference it and never generate it or write its body; scaffold patches in only the frontmatter keys the `.at` states (V97, §4.20a). `import` sets it on every file it did not generate, so a hand-built system comes in without losing anything. |
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
@@ -402,7 +411,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `description` | string | no | -- | Human-readable purpose of this agent |
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
-| `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime) |
+| `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime). May be written more than once: the first block's hooks belong to the agent; a second and later block's hooks are project hooks (settings.json), as in 0.11.4. A hook name in two of its blocks is a V23 error |
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
 | `fallback-chain` | name-list | no | `[]` | Ordered model fallback list |
 | `extensions` | agent-extensions | no | -- | Platform-specific extension fields (see below) |
@@ -1431,7 +1440,20 @@ agent processor {
 
 ### 4.20a `file:` — hand-written internals
 
-Any node (`agent`, `group`, `human`, ...), any `skill` and any trigger `command` may carry `file: "<project-relative path>"`. It says: the structure is described here, the internals live in that file, and they are the author's. A binding never generates or overwrites a file so marked; for a skill it leaves the whole skill folder alone, for a group its skill and runtime folder too. Gates and hooks still wire to the node by name. `agentopology import` sets `file:` on every file it finds that no scaffold manifest lists as generated, which is what makes import followed by scaffold lossless.
+Any node (`agent`, `group`, `human`, ...), any `skill` and any trigger `command` may carry `file: "<project-relative path>"`. It says: the structure is described here, the internals live in that file, and they are the author's. A binding never generates a file so marked and never writes its body; for a skill it leaves the rest of the skill folder alone, for a group its skill and runtime folder too. Gates and hooks still wire to the node by name. `agentopology import` sets `file:` on every file it finds that no scaffold manifest lists as generated, which is what makes import followed by scaffold lossless.
+
+The `.at` owns structure, the file owns content. For an agent, skill or command file that already exists (one marked `file:`, a hand-written one at a generated path, or a scaffolded one the user edited), `scaffold` writes into its frontmatter exactly the keys the `.at` states for that node (for an agent: `description`, `model`, `tools`, `disallowedTools`, `skills`, `permissionMode` and the other keys the binding emits; never `name`, which is the file's identity, and never keys held under `extensions`). Every other key, comment, key order, quoting, line ending and the whole body stay byte for byte. The scaffold manifest records, per file, the value each key had when scaffold last applied it (`fields`), and each key follows a three-way rule:
+
+| The `.at` vs the file | What `scaffold` does |
+|---|---|
+| equal | nothing |
+| no recorded value yet | writes the `.at` value and prints `~ <path>: <key> <old> → <new>` |
+| only the `.at` changed | writes the `.at` value, printed the same way |
+| only the file changed | keeps the file's value, prints `! <path>: <key> is <file> in the file, <at> in the .at` |
+| both changed | keeps the file's value, prints `! <path>: <key> changed on both sides: .at …, file …, last applied …` |
+| the `.at` stopped stating a recorded key | removes it when the file still holds the recorded value; otherwise keeps it and says so |
+
+`--force` takes the `.at` value for a kept key and never touches the body. A file whose frontmatter cannot be edited safely (text with no frontmatter, anchors or aliases, a second YAML document, a duplicate key, a value whose end cannot be found) is left as it is and reported with the reason. A scaffolded file nobody edited is regenerated whole, as before.
 
 ### 4.21 `skill` (declarations)
 
@@ -1613,7 +1635,7 @@ agent explorer {
   extensions {
     claude-code {
       memory: project
-      custom-field: "value"
+      autoCompactWindow: 200000
     }
     codex {
       sandbox: true
@@ -1625,6 +1647,8 @@ agent explorer {
 **Scope:** `extensions` can appear inside `agent`, `skill`, `gate`, and `hook` blocks.
 
 **Semantics:** Each named sub-block inside `extensions` corresponds to a binding name. The binding reads only its own namespace and ignores all others. Fields inside a binding namespace are opaque to the core parser -- they are stored as `Record<string, unknown>` and passed through to the binding.
+
+**The `claude-code` namespace is checked (V130).** Its keys are Claude Code's own, held in `src/bindings/claude-code-schema.ts`: on the topology, settings.json keys (a dotted path such as `permissions.defaultMode`, or a `permissions` / `sandbox` key by its own name, which lands under that object); on an agent, agent frontmatter keys; on a skill or a `runs: inline/fork` agent, skill frontmatter keys. A key may hold dots and digits. Each value is written in its documented type (a list as a list, a number as a number). An unknown key, a mistyped value, a settings key a project file cannot set, or a `claude-code` extension on a hook or gate is not written, and validation warns, naming the nearest known key.
 
 **Why extensions:** The core `.at` language defines universal constructs that work across all platforms. Extensions allow bindings to expose platform-specific features (e.g., Claude Code's `memory: project`, Codex's `sandbox: true`) without adding fields to the core spec that only one platform uses. This keeps the language clean while remaining fully extensible.
 
@@ -1783,7 +1807,7 @@ agent analyzer {
 
 **Valid values:** `true`, `false`, `docker`, `none`, `network-only`
 
-**Binding behavior:** Codex maps to `[sandbox] type` in `codex.toml`. OpenClaw maps to `sandboxDefaults` in `openclaw.json`. Gemini CLI maps to the `sandbox` field in `.gemini/settings.json`. Other bindings include it in agent frontmatter or documentation.
+**Binding behavior:** Claude Code maps `settings { sandbox: true | false }` to `sandbox.enabled` in `.claude/settings.json`; another value, and an agent's `sandbox` (Claude Code has no per-agent sandbox), is not written there (V130 warning). Finer sandbox keys go in `extensions { claude-code { sandbox.<key>: value } }`. Codex maps to `[sandbox] type` in `codex.toml`. OpenClaw maps to `sandboxDefaults` in `openclaw.json`. Gemini CLI maps to the `sandbox` field in `.gemini/settings.json`. Other bindings include it in agent frontmatter or documentation.
 
 **Agent override:** When `sandbox` appears on an agent, it overrides the topology-level default for that agent only.
 
@@ -1808,7 +1832,7 @@ agent expensive-thinker {
 
 **Validation:** When providers are declared, every model in a fallback chain should exist in at least one provider's `models` list (V22, warning level).
 
-**Binding behavior:** OpenClaw maps to `modelFallbackChain` in `openclaw.json`. Other bindings document the chain in their instructions or agent files.
+**Binding behavior:** Claude Code maps the `settings` chain to `fallbackModel` in `.claude/settings.json` when every entry is a Claude Code model (Claude Code uses the first three). Claude Code has no per-agent chain, so an agent's `fallback-chain` is not written there (V130 warning). OpenClaw maps to `modelFallbackChain` in `openclaw.json`. Other bindings document the chain in their instructions or agent files.
 
 ### 4.30 `inventory`
 

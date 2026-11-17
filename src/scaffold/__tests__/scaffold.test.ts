@@ -251,7 +251,7 @@ describe("computeIncrementalPlan", () => {
     expect(actions[0].type).toBe("update");
   });
 
-  it("marks user-edited script as CONFLICT", () => {
+  it("keeps a user-edited script (never a conflict --force could overwrite)", () => {
     const originalScript = "#!/bin/bash\necho v1\n";
     const editedScript = "#!/bin/bash\necho custom\n";
     fs.writeFileSync(path.join(tmpDir, "gate.sh"), editedScript, "utf-8");
@@ -270,7 +270,7 @@ describe("computeIncrementalPlan", () => {
 
     const actions = computeIncrementalPlan(tmpDir, "claude-code", files, manifest);
     expect(actions).toHaveLength(1);
-    expect(actions[0].type).toBe("conflict");
+    expect(actions[0].type).toBe("kept");
   });
 
   it("marks file in manifest but not generated as DELETE", () => {

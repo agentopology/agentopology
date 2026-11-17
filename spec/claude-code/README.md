@@ -18,4 +18,9 @@ The docs are the source of truth. SchemaStore's settings schema
   - the minimum's contract is the derived one;
   - every event and handler field the binding writes exists at the minimum version.
 
+The key schema `src/bindings/claude-code-schema.ts` holds one row per agent, skill and command frontmatter key, settings key and `.mcp.json` server field Claude Code documents; the binding writes no key without a row (see `docs/claude-code-schema.md`). Its settings rows are generated from https://code.claude.com/docs/en/settings-reference.md:
+
+- `node scripts/claude-code-schema-drift.mjs` (after `npm run build`) diffs the settings, sub-agents and skills pages with the rows and exits 1 on drift; `--from-dir <dir>` reads saved copies.
+- `--write` regenerates `src/bindings/claude-code-settings-keys.ts`; frontmatter rows are edited by hand.
+
 The surface map `spec/surface/claude-code.surface.json` lists everything the binding writes or relies on, one entry per item, each with its contract page. `src/__tests__/e2e/surface-map.test.ts` fails on any generated hook event, handler field, payload field, frontmatter key, settings key, path or CLI flag that has no entry.

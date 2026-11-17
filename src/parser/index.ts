@@ -81,8 +81,31 @@ import {
   parseFields,
   parseOutputsBlock,
   dedentBlock,
+  maskProse,
+  closingBrace,
+  braceText,
 } from "./lexer.js";
+
+/**
+ * Every `name {` block header directly in `body` (prose is never a block),
+ * with its content. `skipNested` resumes the search after each block, so a
+ * block inside one is not listed.
+ */
+function namedSubBlocks(body: string, skipNested = false): Array<{ name: string; body: string }> {
+  const mask = maskProse(body);
+  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
+  const out: Array<{ name: string; body: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(mask)) !== null) {
+    const startIdx = m.index! + m[0].length;
+    const end = closingBrace(braceText(body), startIdx);
+    if (skipNested) re.lastIndex = end < 0 ? mask.length : end + 1;
+    if (end >= 0) out.push({ name: m[1], body: body.slice(startIdx, end) });
+  }
+  return out;
+}
 import { findUnknownNames } from "./known-fields.js";
+import { SINGLE_SECTIONS } from "./sections.js";
 
 // Re-export AST types for convenience
 export type * from "./ast.js";
@@ -178,9 +201,14 @@ function toLabel(id: string): string {
  * top-level one, at the same position as in `src`.
  */
 function depthZeroText(src: string): string {
+  // Depth is counted on braceText; a brace it does not count shows as a
+  // space, so no later search can take it for a block.
+  const braces = braceText(src);
   let depth = 0;
   let out = "";
-  for (const ch of src) {
+  for (let i = 0; i < src.length; i++) {
+    const brace = braces[i] === "{" || braces[i] === "}";
+    const ch = brace || (src[i] !== "{" && src[i] !== "}") ? src[i] : " ";
     if (ch === "{") {
       depth++;
       out += depth === 1 ? ch : " ";
@@ -192,6 +220,26 @@ function depthZeroText(src: string): string {
     }
   }
   return out;
+}
+
+/** `key: value` lines at the top level of an extension namespace; a key may hold dots, digits and `@`. */
+function parseExtensionFields(body: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  let depth = 0;
+  const lines = body.split("\n");
+  const masked = maskProse(body).split("\n");
+  const braceLines = braceText(body).split("\n");
+  const kv = /^\s*([A-Za-z_][A-Za-z0-9_.@-]*)\s*:\s*(.+?)\s*$/;
+  for (let li = 0; li < lines.length; li++) {
+    for (const ch of braceLines[li]) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    if (depth !== 0 || !kv.test(masked[li])) continue;
+    const m = lines[li].match(kv);
+    if (m) fields[m[1]] = m[2];
+  }
+  return fields;
 }
 
 /**
@@ -207,31 +255,19 @@ function parseExtensionsBlock(block: string): Record<string, Record<string, unkn
   const result: Record<string, Record<string, unknown>> = {};
 
   // Extract each named sub-block inside extensions
-  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(extBlock.body)) !== null) {
-    const name = m[1];
-    const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < extBlock.body.length && depth > 0) {
-      if (extBlock.body[i] === "{") depth++;
-      else if (extBlock.body[i] === "}") depth--;
-      i++;
+  for (const { name, body: innerBody } of namedSubBlocks(extBlock.body)) {
+    // A binding's own key may be a dotted path (`permissions.defaultMode`)
+    // or hold digits; parseFields reads only plain words and would drop it.
+    const fields = parseExtensionFields(innerBody);
+    const entry: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      // Try to parse booleans and numbers
+      if (v === "true") entry[k] = true;
+      else if (v === "false") entry[k] = false;
+      else if (/^\d+$/.test(v)) entry[k] = parseInt(v, 10);
+      else entry[k] = unquote(v);
     }
-    if (depth === 0) {
-      const innerBody = extBlock.body.slice(startIdx, i - 1);
-      const fields = parseFields(innerBody);
-      const entry: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(fields)) {
-        // Try to parse booleans and numbers
-        if (v === "true") entry[k] = true;
-        else if (v === "false") entry[k] = false;
-        else if (/^\d+$/.test(v)) entry[k] = parseInt(v, 10);
-        else entry[k] = unquote(v);
-      }
-      result[name] = entry;
-    }
+    result[name] = entry;
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
@@ -347,9 +383,10 @@ export function parseTopologyHeader(src: string): {
   name: string;
   patterns: string[];
 } {
-  const m = src.match(
-    /topology\s+(\S+)\s*:\s*\[([^\]]*)\]\s*\{/
-  );
+  const header = /topology\s+(\S+)\s*:\s*\[([^\]]*)\]\s*\{/;
+  // The header in a comment (or any prose) above the real one is text.
+  const at = maskProse(src).search(header);
+  const m = at < 0 ? null : src.slice(at).match(header);
   if (!m) throw new Error("Could not find topology header");
   return {
     name: m[1],
@@ -462,6 +499,46 @@ export function parseAction(
   if (fields.join) node.join = fields.join;
   if (fields["unit-from"]) node.unitFrom = unquote(fields["unit-from"]);
   return node;
+}
+
+/**
+ * The `hooks { }` blocks an agent writes at its own level, in file order.
+ * When none sits at that level, the first one found anywhere in the body (how
+ * 0.11.4 read an agent's hooks) so no existing topology loses a hook.
+ */
+function agentHookBlocks(body: string): Array<{ body: string; at?: number }> {
+  const top = extractTopLevelBlocks(body, "hooks");
+  if (top.length) return top;
+  const first = extractBlock(body, "hooks");
+  return first ? [first] : [];
+}
+
+/**
+ * V23 for an agent's hooks: a hook name used in two of the agent's blocks is
+ * an error, twice in one block a warning (both are kept), as at the top level.
+ */
+function agentHookDuplicates(
+  agentId: string,
+  body: string
+): Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> {
+  const blocksOf = new Map<string, number[]>();
+  agentHookBlocks(body).forEach((b, i) => {
+    for (const h of extractAllBlocks(b.body, "hook")) {
+      if (h.id) blocksOf.set(h.id, [...(blocksOf.get(h.id) ?? []), i]);
+    }
+  });
+  const out: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  for (const [name, at] of blocksOf) {
+    if (at.length < 2) continue;
+    const oneBlock = new Set(at).size === 1;
+    out.push({
+      rule: "V23",
+      level: oneBlock ? "warning" : "error",
+      node: `${agentId}.${name}`,
+      message: `Hook "${name}" is declared ${oneBlock ? "twice in one hooks block" : "in two hooks blocks"} of agent "${agentId}": a hook name must be unique — rename or remove one`,
+    });
+  }
+  return out;
 }
 
 /**
@@ -620,7 +697,8 @@ export function parseAgent(
   // Custody: `custodian-of: [store, ...]` with optional `{ does: [verb, ...] }`.
   // The store-list appears before an optional brace block. Match the list first,
   // then look inside the block (if any) for `does`.
-  const custodyMatch = /custodian-of\s*:\s*\[([^\]]*)\]/.exec(body);
+  const custodyAt = maskProse(body).search(/custodian-of\s*:\s*\[/);
+  const custodyMatch = custodyAt < 0 ? null : /custodian-of\s*:\s*\[([^\]]*)\]/.exec(body.slice(custodyAt));
   if (custodyMatch) {
     const stores = parseList(custodyMatch[1]);
     if (stores.length) node.custodianOf = stores;
@@ -651,8 +729,10 @@ export function parseAgent(
     node.scale = scale;
   }
 
-  // Parse per-agent hooks block
-  const agentHooksBlock = extractBlock(body, "hooks");
+  // Per-agent hooks: the agent's FIRST `hooks { }` block, as in 0.11.4. A
+  // second and later block's hooks are project hooks (see parse()), where
+  // 0.11.4 put them.
+  const agentHooksBlock = agentHookBlocks(body)[0];
   if (agentHooksBlock) {
     const agentHooks: HookDef[] = [];
     const hookBlocks = extractAllBlocks(agentHooksBlock.body, "hook");
@@ -1300,24 +1380,12 @@ export function parseStore(id: string, body: string): StoreNode {
   const sourcesBlock = extractBlock(body, "sources");
   if (sourcesBlock) {
     const sources: Record<string, { color?: string; icon?: string }> = {};
-    const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-    let sm: RegExpExecArray | null;
-    while ((sm = re.exec(sourcesBlock.body)) !== null) {
-      const name = sm[1];
-      const startIdx = sm.index! + sm[0].length;
-      let depth = 1, i = startIdx;
-      while (i < sourcesBlock.body.length && depth > 0) {
-        if (sourcesBlock.body[i] === "{") depth++;
-        else if (sourcesBlock.body[i] === "}") depth--;
-        i++;
-      }
-      if (depth === 0) {
-        const inner = parseFields(sourcesBlock.body.slice(startIdx, i - 1));
-        const style: { color?: string; icon?: string } = {};
-        if (inner.color) style.color = unquote(inner.color);
-        if (inner.icon) style.icon = unquote(inner.icon);
-        if (style.color || style.icon) sources[name] = style;
-      }
+    for (const sub of namedSubBlocks(sourcesBlock.body)) {
+      const inner = parseFields(sub.body);
+      const style: { color?: string; icon?: string } = {};
+      if (inner.color) style.color = unquote(inner.color);
+      if (inner.icon) style.icon = unquote(inner.icon);
+      if (style.color || style.icon) sources[sub.name] = style;
     }
     if (Object.keys(sources).length > 0) store.sources = sources;
   }
@@ -1431,10 +1499,12 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
   // store's `sources { gmail {} }`) are that block's own concern, not memory
   // sub-blocks. Walk the body tracking brace depth so we only flag depth-0 names.
   if (_unknownSubBlockWarnings) {
+    const mask = maskProse(body);
     let depth = 0;
     let i = 0;
-    while (i < body.length) {
-      const ch = body[i];
+    const braces = braceText(body);
+    while (i < mask.length) {
+      const ch = braces[i] === "{" || braces[i] === "}" ? braces[i] : mask[i];
       if (ch === "}") {
         depth = Math.max(0, depth - 1);
         i++;
@@ -1449,9 +1519,9 @@ export function parseMemory(body: string, _unknownSubBlockWarnings?: Array<{ rul
       // form (`workspace {`) and the typed-block form (`store brain {`,
       // `retrieval smart {`) — in the latter the FIRST token is the keyword.
       if (depth === 0) {
-        const rest = body.slice(i);
+        const rest = mask.slice(i);
         const m = /^([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+[a-zA-Z][a-zA-Z0-9_-]*)?\s*\{/.exec(rest);
-        if (m && (i === 0 || /\s/.test(body[i - 1]))) {
+        if (m && (i === 0 || /\s/.test(mask[i - 1]))) {
           const name = m[1]; // the leading keyword (store / retrieval / workspace / …)
           if (!knownSubsSet.has(name)) {
             _unknownSubBlockWarnings.push({
@@ -1510,27 +1580,13 @@ export function parseEnvironments(
   const envs: Record<string, Record<string, unknown>> = {};
 
   // Extract all named sub-blocks generically
-  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    const envName = m[1];
-    const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < body.length && depth > 0) {
-      if (body[i] === "{") depth++;
-      else if (body[i] === "}") depth--;
-      i++;
+  for (const { name: envName, body: innerBody } of namedSubBlocks(body)) {
+    const fields = parseFields(innerBody);
+    const env: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      env[k] = unquote(v);
     }
-    if (depth === 0) {
-      const innerBody = body.slice(startIdx, i - 1);
-      const fields = parseFields(innerBody);
-      const env: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(fields)) {
-        env[k] = unquote(v);
-      }
-      envs[envName] = env;
-    }
+    envs[envName] = env;
   }
 
   return envs;
@@ -1663,20 +1719,8 @@ export function parseMcpServers(
 ): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {};
 
-  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    const name = m[1];
-    const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < body.length && depth > 0) {
-      if (body[i] === "{") depth++;
-      else if (body[i] === "}") depth--;
-      i++;
-    }
-    if (depth === 0) {
-      const innerBody = body.slice(startIdx, i - 1);
+  for (const { name, body: innerBody } of namedSubBlocks(body)) {
+    {
       const fields = parseFields(innerBody);
       const server: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) {
@@ -1846,23 +1890,9 @@ export function parseProviders(body: string): ProviderDef[] {
   const providers: ProviderDef[] = [];
 
   // Extract each named sub-block inside providers
-  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    const name = m[1];
-    const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < body.length && depth > 0) {
-      if (body[i] === "{") depth++;
-      else if (body[i] === "}") depth--;
-      i++;
-    }
-    // Advance regex past the closing brace so we don't match sub-blocks
-    re.lastIndex = i;
-
-    if (depth === 0) {
-      const innerBody = body.slice(startIdx, i - 1);
+  // (past each closing brace, so a provider's sub-blocks are not providers)
+  for (const { name, body: innerBody } of namedSubBlocks(body, true)) {
+    {
       const fields = parseFields(innerBody);
 
       // Parse models list
@@ -1950,20 +1980,8 @@ export function parseSchedule(body: string): ScheduleJobDef[] {
 export function parseInterfaces(body: string): InterfaceDef[] {
   const interfaces: InterfaceDef[] = [];
 
-  const re = /(?:^|\n)\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*\{/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    const name = m[1];
-    const startIdx = m.index! + m[0].length;
-    let depth = 1;
-    let i = startIdx;
-    while (i < body.length && depth > 0) {
-      if (body[i] === "{") depth++;
-      else if (body[i] === "}") depth--;
-      i++;
-    }
-    if (depth === 0) {
-      const innerBody = body.slice(startIdx, i - 1);
+  for (const { name, body: innerBody } of namedSubBlocks(body)) {
+    {
       const fields = parseFields(innerBody);
       const config: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(fields)) {
@@ -2231,7 +2249,8 @@ export function parseRecords(topBody: string): RecordDef[] {
  */
 function buildSourceMap(rawSource: string): Record<string, number> {
   const sourceMap: Record<string, number> = {};
-  const lines = rawSource.split("\n");
+  // A block header written in prose (a prompt, a string, a comment) is text.
+  const lines = maskProse(rawSource).split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Match: agent <id> {, action <id> {, gate <id> {, human <id> {, store <id> {, retrieval <id> {
@@ -2313,7 +2332,8 @@ export function parseInterfaceEndpoints(body: string): InterfaceEndpoints | null
 function parseInterfaceBlock(topBody: string): InterfaceEndpoints | null {
   // Match "interface" followed by whitespace+"{" but NOT "interfaces"
   const re = /(?:^|\n)\s*interface\s*\{/m;
-  const m = re.exec(topBody);
+  const mask = maskProse(topBody);
+  const m = re.exec(mask);
   if (!m) return null;
 
   // Make sure we did not match "interfaces" — check what precedes the `{`
@@ -2322,16 +2342,10 @@ function parseInterfaceBlock(topBody: string): InterfaceEndpoints | null {
 
   // Find the opening brace and count braces to extract the body
   const braceIdx = m.index! + m[0].length;
-  let depth = 1;
-  let i = braceIdx;
-  while (i < topBody.length && depth > 0) {
-    if (topBody[i] === "{") depth++;
-    else if (topBody[i] === "}") depth--;
-    i++;
-  }
-  if (depth !== 0) return null;
+  const end = closingBrace(braceText(topBody), braceIdx);
+  if (end < 0) return null;
 
-  const body = topBody.slice(braceIdx, i - 1);
+  const body = topBody.slice(braceIdx, end);
   return parseInterfaceEndpoints(body);
 }
 
@@ -2467,13 +2481,28 @@ export function parseImports(body: string): ImportDef[] {
 export function parseIncludes(body: string): IncludeDef[] {
   const includes: IncludeDef[] = [];
   const re = /(?:^|\n)\s*include\s+"([^"]+)"/g;
+  // An `include` line inside a prompt or a comment is text.
+  const mask = maskProse(body);
   let m: RegExpExecArray | null;
 
   while ((m = re.exec(body)) !== null) {
+    const at = m.index + m[0].indexOf("include");
+    if (mask[at] !== "i") continue;
     includes.push({ source: m[1] });
   }
 
   return includes;
+}
+
+/**
+ * Line numbers for offsets in the comment-stripped topology body. The body is
+ * a slice of the source and stripComments keeps every line, so a line count
+ * from the body's start in the source is exact.
+ */
+function topBodyLineFinder(source: string, rawBody: string, topBody: string): (at: number) => number {
+  const start = source.indexOf(rawBody);
+  const first = start < 0 ? 1 : source.slice(0, start).split("\n").length;
+  return (at) => first + (topBody.slice(0, at).match(/\n/g)?.length ?? 0);
 }
 
 export function parse(source: string): TopologyAST {
@@ -2483,13 +2512,15 @@ export function parse(source: string): TopologyAST {
   const sourceMap = buildSourceMap(source);
 
   // --- Detect fragment vs topology root ---
-  const isFragment = /(?:^|\n)\s*fragment\s+\S+\s*\{/.test(source);
+  // A `fragment x {` line in a prompt, a string or a comment is text.
+  const sourceMask = maskProse(source);
+  const isFragment = /(?:^|\n)\s*fragment\s+\S+\s*\{/.test(sourceMask);
 
   // --- Topology header ---
   let header: { name: string; patterns: string[] };
   if (isFragment) {
     // Fragment header: fragment <name> { ... }
-    const fm = source.match(/fragment\s+(\S+)\s*\{/);
+    const fm = sourceMask.match(/fragment\s+(\S+)\s*\{/);
     if (!fm) throw new Error("Could not find fragment header");
     header = { name: fm[1], patterns: [] };
   } else {
@@ -2598,8 +2629,11 @@ export function parse(source: string): TopologyAST {
     : [];
 
   // --- Decisions (topology-level `decisions: [...]`) ---
-  const decisionsField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*decisions[ \t]*:[ \t]*(\[[^\]]*\]|[^\n]*)/);
-  const decisions = decisionsField ? parseList(decisionsField[1]) : undefined;
+  // A list may span lines and its quoted items may hold `]` (parseMultilineList).
+  const topText = depthZeroText(topBody);
+  const decisionsList = parseMultilineList(topText, "decisions");
+  const decisionsField = decisionsList.length ? null : topText.match(/(?:^|\n)[ \t]*decisions[ \t]*:[ \t]*([^\n]*)/);
+  const decisions = decisionsList.length ? decisionsList : decisionsField ? parseList(decisionsField[1]) : undefined;
 
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
@@ -2672,38 +2706,59 @@ export function parse(source: string): TopologyAST {
     : [];
 
   // --- Hooks (global) ---
-  // Collect per-agent hook names to avoid double-counting them as global.
-  const perAgentHookNames = new Set<string>();
-  for (const n of nodes) {
-    if (n.type === "agent" && n.hooks) {
-      for (const h of n.hooks) {
-        perAgentHookNames.add(h.name);
-      }
+  // Every top-level `hooks { }` block, merged in file order. Only the first
+  // block holding a global hook used to be read: a second block validated and
+  // never reached settings.json. A hook name used twice is an error (V23).
+  // An agent's first `hooks { }` block is the agent's own (parseAgent). Its
+  // second and later blocks are project hooks, merged here in file order:
+  // 0.11.4 wrote them to settings.json, and a settings.json hook refuses even
+  // before the folder is trusted, where an agent's frontmatter hook does not.
+  const lineInTopBody = topBodyLineFinder(source, topoBlock.body, topBody);
+  const hookSources: Array<{ at: number; body: string; owner?: string }> = extractTopLevelBlocks(topBody, "hooks").map(
+    (hb) => ({ at: hb.at ?? 0, body: hb.body })
+  );
+  let agentCursor = 0;
+  for (const block of agentBlocks) {
+    const bodyAt = topBody.indexOf(block.body, agentCursor);
+    if (bodyAt < 0) continue;
+    agentCursor = bodyAt + block.body.length;
+    if (!block.id) continue;
+    for (const hb of agentHookBlocks(block.body).slice(1)) {
+      hookSources.push({ at: bodyAt + (hb.at ?? 0), body: hb.body, owner: block.id });
     }
   }
-  const allHooksBlocks = extractAllBlocks(topBody, "hooks");
-  let hooks: HookDef[] = [];
-  let hooksBody: string | undefined;
-  for (const hb of allHooksBlocks) {
-    const parsed = parseHooks(hb.body);
-    const globalOnly = parsed.filter((h) => !perAgentHookNames.has(h.name));
-    if (globalOnly.length > 0) {
-      hooks = globalOnly;
-      hooksBody = hb.body;
-      break;
+  hookSources.sort((a, b) => a.at - b.at);
+  const hooks: HookDef[] = [];
+  const hookLines = new Map<string, Array<{ line: number; owner?: string }>>();
+  for (const hb of hookSources) {
+    const blockLine = lineInTopBody(hb.at);
+    for (const h of parseHooks(hb.body, blockFieldMisuseWarnings)) {
+      hooks.push(h);
+      hookLines.set(h.name, [...(hookLines.get(h.name) ?? []), { line: blockLine, owner: hb.owner }]);
     }
   }
-  if (hooks.length === 0 && allHooksBlocks.length > 1) {
-    const lastBlock = allHooksBlocks[allHooksBlocks.length - 1];
-    hooks = parseHooks(lastBlock.body);
-    hooksBody = lastBlock.body;
+  const duplicateHookErrors: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
+  for (const [name, seen] of hookLines) {
+    if (seen.length < 2) continue;
+    // Every copy inside one agent's blocks: agentHookDuplicates names the agent.
+    if (seen[0].owner && seen.every((s) => s.owner === seen[0].owner)) continue;
+    const lines = seen.map((s) => s.line);
+    // Across blocks it is an error: the second block used to vanish, so no
+    // reading of the file is safe. Twice in one block validated in 0.11.4 and
+    // both hooks were kept, so it stays a warning there.
+    const oneBlock = new Set(lines).size === 1;
+    const where = oneBlock
+      ? `twice in the hooks block on line ${lines[0]}`
+      : `in the hooks blocks on lines ${[...new Set(lines)].join(" and ")}`;
+    duplicateHookErrors.push({
+      rule: "V23",
+      level: oneBlock ? "warning" : "error",
+      node: name,
+      message: `Hook "${name}" is declared ${where}: a hook name must be unique — rename or remove one`,
+    });
   }
-  // V90 on the chosen global block, once (the loop above may parse several).
-  if (hooksBody !== undefined) {
-    const globalNames = new Set(hooks.map((h) => h.name));
-    const swallowed: typeof blockFieldMisuseWarnings = [];
-    parseHooks(hooksBody, swallowed);
-    blockFieldMisuseWarnings.push(...swallowed.filter((w) => w.node && globalNames.has(w.node)));
+  for (const block of agentBlocks) {
+    if (block.id) duplicateHookErrors.push(...agentHookDuplicates(block.id, block.body));
   }
 
   // --- Settings ---
@@ -2795,17 +2850,13 @@ export function parse(source: string): TopologyAST {
   const includes = parseIncludes(topBody);
 
   // --- Duplicate section detection ---
-  const singletonKeywords = [
-    "meta", "orchestrator", "flow", "memory", "batch", "environments",
-    "triggers", "settings", "mcp-servers", "metering", "context", "env",
-    "providers", "schedule", "interfaces", "depth", "gates", "roles", "tools",
-    "defaults", "schemas", "observability", "params", "interface",
-    "checkpoint", "artifacts", "records",
-  ];
+  // A section that may appear once (see sections.ts): a second copy is a
+  // warning that names it. Machines, extensions, inventory and needs used to
+  // say nothing at all.
   const duplicateSectionWarnings: Array<{ rule: string; level: "error" | "warning"; message: string; node?: string }> = [];
-  for (const keyword of singletonKeywords) {
+  for (const keyword of SINGLE_SECTIONS) {
     // A block of the same name nested in another section (an MCP server's
-    // env) is not a second top-level one (S-13).
+    // env) is not a second top-level one.
     const allBlocks = extractTopLevelBlocks(topBody, keyword);
     if (allBlocks.length > 1) {
       duplicateSectionWarnings.push({
@@ -2815,6 +2866,7 @@ export function parse(source: string): TopologyAST {
       });
     }
   }
+  duplicateSectionWarnings.push(...duplicateHookErrors);
 
   // --- Blocks outside their container ---
   // `gate x { }` written beside `gates { }` instead of inside it was dropped

@@ -182,6 +182,8 @@ export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: st
     target,
     generatedAt: new Date().toISOString(),
     files: { ...(previous?.files ?? {}), ...nextManifestFiles(root, plan.actions, plan.files, previous, result) },
+    // guard writes no agent, skill or command file: scaffold's per-key base stays as it was.
+    ...(previous?.fields ? { fields: previous.fields } : {}),
   };
   recordNamedRules(manifest.files, plan.notice?.named ?? null);
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.

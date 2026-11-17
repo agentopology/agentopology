@@ -6,9 +6,11 @@
  * what was previously tracked in the scaffold manifest.
  *
  * The rule the plan enforces: scaffold only changes what it owns. A file is
- * owned when the manifest records it. Anything else on disk — a hand-written
- * skill, a settings file, a symlink into another repo — is a conflict (kept
- * unless --force) or blocked (never touched). The first scaffold used to skip
+ * owned when the manifest records it and is still exactly as scaffold wrote
+ * it. Anything else on disk — a hand-written skill, an edited rules file, a
+ * symlink into another repo — gets its frontmatter patched (agent, skill and
+ * command files), is merged (config files), or is kept whole, --force
+ * included; a symlink is blocked (never touched). The first scaffold used to skip
  * this plan and write everything; it overwrote real files and, following a
  * symlink, files in a second repository.
  *
@@ -27,20 +29,31 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { isStubContent } from "../bindings/lib/stub.js";
 
-import type { GeneratedFile } from "../bindings/types.js";
+import type { GeneratedFile, StructureSpec } from "../bindings/types.js";
 import type { FileAction, ManifestEntry, ScaffoldManifest } from "./types.js";
+import { planStructurePatch } from "./structure.js";
+import type { FieldValue } from "./frontmatter-patch.js";
 import { hashContent } from "./manifest.js";
+import { editedRegions, markersIntact, regionHashes, regionsOf, staleBodyNotice } from "./regions.js";
 import {
+  hasManagedBlock,
   mergeAgentFile,
   shouldOverwriteScript,
   deepMergeJson,
   deepMergeSettingsJson,
+  keptHookCommands,
 } from "./merge.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
+
+/** A file scaffold wrote and the user edited since, with nothing to patch: never replaced. */
+export const USER_EDITED_KEPT = "user edited — kept";
+/** A file at a generated path that scaffold did not write: never replaced. */
+export const NOT_OURS_KEPT = "exists, not created by scaffold — kept";
 
 /**
  * The first symlink between `basePath` and the file, or null. Scaffold never
@@ -86,8 +99,21 @@ export function computeIncrementalPlan(
   target: string,
   generatedFiles: GeneratedFile[],
   manifest: ScaffoldManifest | null,
+  options: {
+    force?: boolean;
+    structure?: StructureSpec[];
+    /** A file's frontmatter as the .at would state it (see echo.ts). */
+    echo?: (spec: StructureSpec, text: string) => Record<string, FieldValue> | null;
+  } = {},
 ): FileAction[] {
   const actions: FileAction[] = [];
+  const force = !!options.force;
+  const structure = options.structure ?? [];
+  // Agent, skill and command files the user wrote or edited get the .at's
+  // frontmatter keys patched in; their body is never written.
+  const structureAt = new Map(structure.filter((s) => !s.authored).map((s) => [s.path, s]));
+  const patch = (spec: StructureSpec, existing: string) =>
+    planStructurePatch(spec, existing, manifest?.fields?.[spec.path], force, options.echo?.(spec, existing) ?? null);
 
   // Build map of generated files by path
   const generatedMap = new Map<string, GeneratedFile>();
@@ -132,23 +158,70 @@ export function computeIncrementalPlan(
       continue;
     }
 
-    if (file.createOnly) {
-      actions.push({ type: "kept", path: file.path, detail: "the user's own file; created only when missing" });
-      continue;
-    }
-
     const existingContent = readFileSync(absPath, "utf-8");
     const manifestEntry = manifest?.files[file.path] ?? null;
+
+    // A script the user fills in (a hook's or gate's stub), at a path they
+    // named or at the generated one: once the user has written it, it is
+    // theirs, and neither a plain run nor --force puts the stub back. The
+    // stub at the generated path used to be overwritten by --force, and the
+    // stub's exit 1 does not block on PreToolUse, so a guard the user built
+    // was switched off. Only a file still exactly as scaffold wrote it is
+    // regenerated.
+    if (file.createOnly || isUserScriptStub(file)) {
+      const untouched = manifestEntry !== null && shouldOverwriteScript(existingContent, manifestEntry.hash);
+      if (!untouched) {
+        actions.push({
+          type: "kept",
+          path: file.path,
+          detail: manifestEntry ? "user edited" : "the user's own file; created only when missing",
+        });
+        continue;
+      }
+    }
 
     if (existingContent === file.content) {
       actions.push({ type: "unchanged", path: file.path });
       continue;
     }
 
+    // A structured file scaffold wrote and nobody edited is regenerated as
+    // before; one the user wrote or edited gets a frontmatter patch.
+    const untouched = manifestEntry !== null && shouldOverwriteScript(existingContent, manifestEntry.hash);
+    const spec = structureAt.get(file.path);
+    // Which regions of a scaffolded agent file the edit touched (regions.ts).
+    const edit = !untouched && manifestEntry ? editedRegions(existingContent, file.content, manifestEntry) : null;
+    if (spec && !untouched) {
+      const action = patch(spec, existingContent);
+      if (action.type === "blocked") {
+        const whose = manifestEntry ? "user edited" : "exists, not created by scaffold";
+        action.detail = `${whose} — kept; ${action.detail}`;
+      } else if (action.type === "patch" && edit && !edit.outside && markersIntact(existingContent)) {
+        // Only the prompt (and maybe frontmatter) was edited: the generated
+        // sections are scaffold's, so they are regenerated around the
+        // user's prompt, as 0.11.4 did; the frontmatter is the patch's.
+        const front = action.content ?? existingContent;
+        const merged = mergeAgentFile(existingContent, file.content, target);
+        const next = headOf(front) + merged.slice(headOf(merged).length);
+        if (next !== front) {
+          action.content = next;
+          action.changes.push("sections outside the prompt markers regenerated, prompt kept");
+        }
+      } else if (action.type === "patch" && manifestEntry) {
+        // The body is the user's (its text outside the prompt was edited, or
+        // the markers are missing or altered, so where the prompt is is not
+        // guessed): say what the .at changed that cannot reach it.
+        const notice = staleBodyNotice(existingContent, file.content, manifestEntry);
+        if (notice) action.body = notice;
+      }
+      actions.push(action);
+      continue;
+    }
+
     // Config files merge whether or not scaffold made them: the merge keeps
     // every key, hook and rule the user wrote.
     if (category === "shared-config") {
-      const isSettings = /(^|\/)settings\.json$/.test(file.path) || file.path === ".codex/hooks.json";
+      const isSettings = isSettingsPath(file.path);
       // An invalid file, or one whose root is not an object, stops the run
       // before anything is written, with the file's name and what is wrong
       // (it used to be a stack trace, or a silent overwrite).
@@ -167,6 +240,64 @@ export function computeIncrementalPlan(
       const merged = isSettings
         ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
         : deepMergeJson(existingContent, file.content);
+      // A hook command the .at does not generate is never removed; one that
+      // sits with the topology's hooks or names its script is said.
+      const notes = isSettings && existingContent.trim() !== ""
+        ? keptHookCommands(existingContent, file.content, ownedPaths).map(
+            (k) => `${file.path} hooks.${k.event}: kept a command the .at does not generate: ${k.command}`,
+          )
+        : [];
+      const said = notes.length > 0 ? { notes } : {};
+      if (merged === existingContent) {
+        actions.push({ type: "unchanged", path: file.path, ...said });
+      } else {
+        actions.push({
+          type: "update",
+          path: file.path,
+          content: merged,
+          detail: "config merged",
+          ...said,
+        });
+      }
+      continue;
+    }
+
+    // A file the user wrote or edited, with no frontmatter for the .at to
+    // patch: its text is theirs, so it is kept whole, with or without
+    // --force, exactly like a user's script. The topology's own SKILL.md, a
+    // group's skill and transcript, the rules file: these used to be
+    // rewritten whole on a plain run (said as "prompt preserved") or by
+    // --force. Only a managed block (AGENTS.md) is replaced inside a file
+    // the user edited around it.
+    if (!untouched) {
+      // Only the text between the prompt markers was edited: the rest is
+      // scaffold's, regenerated around the user's prompt.
+      if (edit && !edit.outside && !edit.head && markersIntact(existingContent)) {
+        const merged = mergeAgentFile(existingContent, file.content, target);
+        actions.push(merged === existingContent
+          ? { type: "unchanged", path: file.path }
+          : { type: "update", path: file.path, content: merged, detail: "prompt preserved" });
+        continue;
+      }
+      if (manifestEntry && category === "agent" && hasManagedBlock(existingContent, file.content)) {
+        const merged = mergeAgentFile(existingContent, file.content, target);
+        actions.push(merged === existingContent
+          ? { type: "unchanged", path: file.path }
+          : { type: "update", path: file.path, content: merged, detail: "managed block updated" });
+        continue;
+      }
+      actions.push({
+        type: "kept",
+        path: file.path,
+        detail: manifestEntry ? USER_EDITED_KEPT : NOT_OURS_KEPT,
+      });
+      continue;
+    }
+
+    // Still exactly as scaffold wrote it: regenerated (an agent file keeps
+    // the text between its prompt markers, as it always did).
+    if (category === "agent") {
+      const merged = mergeAgentFile(existingContent, file.content, target);
       if (merged === existingContent) {
         actions.push({ type: "unchanged", path: file.path });
       } else {
@@ -174,64 +305,34 @@ export function computeIncrementalPlan(
           type: "update",
           path: file.path,
           content: merged,
-          detail: "config merged",
+          // Nothing of the user's was in it to lose; the label is the one 0.11.x printed.
+          detail: "prompt preserved",
         });
       }
       continue;
     }
+    actions.push({
+      type: "update",
+      path: file.path,
+      content: file.content,
+      detail: category === "script" ? "script regenerated" : "config updated",
+      ...(file.executable ? { executable: true } : {}),
+    });
+  }
 
-    // Not in the manifest: a file scaffold did not create. Never overwrite it.
-    if (!manifestEntry) {
-      actions.push({
-        type: "conflict",
-        path: file.path,
-        content: file.content,
-        detail: "exists, not created by scaffold",
-      });
+  // Hand-written nodes (`file:`): never generated, only patched. A missing
+  // one is not created (the CLI names it).
+  for (const spec of structure) {
+    if (!spec.authored || generatedMap.has(spec.path)) continue;
+    if (unsafePathReason(spec.path)) continue;
+    const absPath = join(basePath, spec.path);
+    if (!existsSync(absPath) || isDirectory(absPath)) continue;
+    const link = symlinkOnPath(basePath, spec.path);
+    if (link) {
+      actions.push({ type: "blocked", path: spec.path, detail: `symlink at ${link} — never written through` });
       continue;
     }
-
-    switch (category) {
-      case "agent": {
-        const merged = mergeAgentFile(existingContent, file.content, target);
-        if (merged === existingContent) {
-          actions.push({ type: "unchanged", path: file.path });
-        } else {
-          actions.push({
-            type: "update",
-            path: file.path,
-            content: merged,
-            detail: "prompt preserved",
-          });
-        }
-        break;
-      }
-
-      case "script":
-      case "machine":
-      default: {
-        // Overwrite only what is still exactly as scaffold left it. CLAUDE.md,
-        // commands and crontab.fragment used to be overwritten on every run,
-        // edits and all.
-        if (shouldOverwriteScript(existingContent, manifestEntry.hash)) {
-          actions.push({
-            type: "update",
-            path: file.path,
-            content: file.content,
-            detail: category === "script" ? "script regenerated" : "config updated",
-            ...(file.executable ? { executable: true } : {}),
-          });
-        } else {
-          actions.push({
-            type: "conflict",
-            path: file.path,
-            content: file.content,
-            detail: "user edited",
-          });
-        }
-        break;
-      }
-    }
+    actions.push(patch(spec, readFileSync(absPath, "utf-8")));
   }
 
   // Files in the manifest that are no longer generated
@@ -260,6 +361,36 @@ export function computeIncrementalPlan(
   }
 
   return actions;
+}
+
+/**
+ * A manifest entry with the region hashes of a file with prompt markers: a
+ * region is recorded when the file holds it as the .at generates it now (so
+ * it is scaffold's), and keeps its earlier hash otherwise.
+ */
+function withRegions(entry: ManifestEntry, onDisk: string | null, generated: string | undefined): ManifestEntry {
+  if (onDisk === null || generated === undefined) return entry;
+  const mine = regionsOf(onDisk);
+  const theirs = regionsOf(generated);
+  if (!mine || !theirs) return entry;
+  const hashes = regionHashes(onDisk)!;
+  const next: ManifestEntry = { ...entry };
+  if (mine.head === theirs.head) next.head = hashes.head;
+  if (mine.outside === theirs.outside) next.outside = hashes.outside;
+  return next;
+}
+
+/** A config file whose hooks are merged by owner. */
+function isSettingsPath(path: string): boolean {
+  return /(^|\/)settings\.json$/.test(path) || path === ".codex/hooks.json";
+}
+
+function readText(absPath: string): string | null {
+  try {
+    return readFileSync(absPath, "utf-8");
+  } catch {
+    return null;
+  }
 }
 
 /** Remove now-empty directories from `absDir` up to (not including) `basePath`. */
@@ -355,6 +486,14 @@ export function executeActions(
         break;
       }
 
+      case "patch": {
+        // Frontmatter only; --force was already applied when the patch was planned.
+        // A file left as it is stays out of the counts, as a hand-written
+        // node's file always was.
+        if (action.content !== null && write(action.path, action.content)) result.updated++;
+        break;
+      }
+
       case "delete": {
         const absPath = join(basePath, action.path);
         // A delete of settings.json from any plan is refused, as in computeIncrementalPlan.
@@ -414,6 +553,7 @@ export function nextManifestFiles(
   result: ExecuteResult,
 ): Record<string, ManifestEntry> {
   const categoryOf = new Map(generatedFiles.map((f) => [f.path, f.category ?? "machine"] as const));
+  const generatedOf = new Map(generatedFiles.map((f) => [f.path, f.content] as const));
   const files: Record<string, ManifestEntry> = {};
   const removed = new Set(result.removed);
 
@@ -422,15 +562,32 @@ export function nextManifestFiles(
     const category = categoryOf.get(action.path) ?? prev?.category ?? "machine";
     const written = result.written.get(action.path);
 
+    // A patched file stays the user's: never claimed, and an earlier entry
+    // keeps its old hash (so the file still counts as edited).
+    if (action.type === "patch") {
+      if (prev) files[action.path] = withRegions(prev, written ?? readText(join(basePath, action.path)), generatedOf.get(action.path));
+      continue;
+    }
+
     if (written !== undefined) {
-      files[action.path] = { hash: hashContent(written), category };
+      files[action.path] = withRegions({ hash: hashContent(written), category }, written, generatedOf.get(action.path));
     } else if (action.type === "unchanged") {
       const onDisk = readFileSync(join(basePath, action.path), "utf-8");
-      files[action.path] = { hash: hashContent(onDisk), category };
+      files[action.path] = withRegions({ hash: hashContent(onDisk), category }, onDisk, generatedOf.get(action.path));
     } else if (prev && !removed.has(action.path)) {
       files[action.path] = prev;
     }
   }
 
   return files;
+}
+
+/** The frontmatter block of a file, fences included ("" when there is none). */
+function headOf(content: string): string {
+  return regionsOf(content)?.head ?? /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(content)?.[0] ?? "";
+}
+
+/** A generated stub for a script the user writes (see GeneratedFile.userScript). */
+export function isUserScriptStub(file: GeneratedFile): boolean {
+  return !!file.createOnly || !!file.userScript || ((file.category ?? "machine") === "script" && isStubContent(file.content));
 }
