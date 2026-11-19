@@ -285,9 +285,9 @@ describe("guard --check credits what the file cites", () => {
     expect(validate(cast).filter((r) => r.level === "error")).toEqual([]);
   });
 
-  it("[N33] a by: code citation whose match text is within 5 lines: refuse by code, cited not proven, bypass named", () => {
+  it("[N33] a by: code citation whose match text is within 5 lines, nothing runs it: cited by code (0.12.4), cited not proven, bypass named", () => {
     const g = find("doctrine");
-    expect(g).toMatchObject({ kind: "gate", strength: "refuse", by: "code" });
+    expect(g).toMatchObject({ kind: "gate", strength: "cited", by: "code", citation: "cited" });
     expect(g.where).toContain("tools/px.py:5");
     expect(g.notes.join(" ")).toMatch(/cited, not proven/);
     expect(g.notes.join(" ")).toMatch(/bypass.*PX_ALLOW_NO_DOCTRINE/);
@@ -339,7 +339,13 @@ describe("guard --check credits what the file cites", () => {
     expect(checkGuards(cast, proj).missing).toBe(0);
   });
 
-  it("[N33] the count reads the credit: 2 of 4 steps refuse (doctrine by code, lock-release by its cited hook)", () => {
-    expect(checkGuards(cast, proj).enforcement).toEqual({ refuse: 2, of: 4 });
+  it("[N33] the count reads the credit: 1 of 4 steps refuse (lock-release by its cited hook; doctrine is cited, nothing runs it)", () => {
+    expect(checkGuards(cast, proj).enforcement).toEqual({ refuse: 1, of: 4 });
+  });
+
+  it("[N33] a hand hook in settings.json that names doctrine's code (PostToolUse, cannot block): still cited, the count stays 1 of 4", () => {
+    handBuilt({ ...LOCK, PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: 'python3 "$CLAUDE_PROJECT_DIR/tools/px.py"' }] }] });
+    expect(find("doctrine")).toMatchObject({ strength: "cited", by: "code", citation: "cited" });
+    expect(checkGuards(cast, proj).enforcement).toEqual({ refuse: 1, of: 4 });
   });
 });

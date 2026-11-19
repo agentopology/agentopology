@@ -14,6 +14,10 @@
  * - `hope`: the binding has no hook for it (an advisory gate, inline
  *   delegation, or a gate with no agent on either side); only the playbook's
  *   prose asks for it.
+ * - `cited`: the gate cites the code that refuses it (at:) and the code is
+ *   there, but the gate has no generated hook of its own on disk. A citation
+ *   is the file's claim: only the hook guard --target writes from the gate's
+ *   run: makes a cited gate refuse. Never counted as refusing.
  *
  * @module
  */
@@ -31,10 +35,25 @@ import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 import { topLevelPermissionLines } from "./top-level-permissions.js";
 
-export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified";
+export type Strength = "refuse" | "detect" | "hope" | "none" | "unverified" | "cited";
 
 /** Every strength word, so the report can pad its column to the longest. */
-const STRENGTH_WORDS: Strength[] = ["refuse", "detect", "hope", "none", "unverified"];
+const STRENGTH_WORDS: Strength[] = ["refuse", "detect", "hope", "none", "unverified", "cited"];
+
+/** The note on every gate graded by the code it cites. */
+export const CITED_NOTE = "cited, not proven: the code is there, this check cannot run it";
+/** How a cited gate comes to count (0.12.4): only through its own generated hook. */
+export const CITED_HOW = "give the gate a run: and let guard --target write its hook";
+
+/**
+ * The grade a holding code citation earns on its own (0.12.4): a weaker strength the file declares
+ * (detect, hope, none) as written; otherwise `cited`, never refuse. Only the gate's own generated
+ * hook makes a cited gate refuse.
+ */
+export function citedGrade(gate: GateNode): Strength {
+  const declared = (gate.strength ?? "refuse") as Strength;
+  return declared === "refuse" ? "cited" : declared;
+}
 const STRENGTH_WIDTH = Math.max(...STRENGTH_WORDS.map((w) => w.length));
 
 export interface GuardItem {
@@ -51,6 +70,8 @@ export interface GuardItem {
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
+  /** A gate that cites code (at:): "wired" when its own generated hook refuses it, else "cited" (0.12.4). */
+  citation?: "cited" | "wired";
 }
 
 export interface GuardReport {
@@ -381,11 +402,14 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if (gate.at) {
       const bad = citationProblem(root, gate.at, gate.match);
       const by = (gate.by ?? "code") as GuardItem["by"];
-      const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
+      const notes = bad ? [bad] : [CITED_NOTE, ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
       if (item.strength !== "refuse" || bad) {
-        Object.assign(item, { strength: bad ? "none" : (gate.strength ?? "refuse"), by, where: `${by} at ${gate.at}`, notes });
+        // 0.12.4: a citation alone is the file's claim: cited, never refuse.
+        Object.assign(item, { strength: bad ? "none" : citedGrade(gate), by, where: `${by} at ${gate.at}`, notes, ...(bad ? {} : { citation: "cited" }) });
       } else {
+        // Its own generated hook refuses it: the citation is wired.
         item.notes.push(...notes.map((n) => `also ${n}`));
+        item.citation = "wired";
       }
     }
   }
@@ -394,6 +418,8 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     const gate = node as GateNode;
     const item = gateItem(gate.id)!;
     if (item.strength === "refuse" || item.strength === "none") continue;
+    // 0.12.4: no edge credit for a cited gate: only its own generated hook makes it refuse.
+    if (item.citation === "cited") continue;
     const afters = gateAnchors(gate, "after");
     const befores = gateAnchors(gate, "before");
     const edges = ast.edges.filter((e) => e.guard?.length && afters.includes(e.from) && befores.includes(e.to));
@@ -490,9 +516,14 @@ export function renderGuardReport(report: GuardReport): string[] {
   lines.push("");
   // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
   const ledgered = report.items.filter((i) => (i.kind === "gate" || i.kind === "human") && i.strength === "refuse" && !!i.gradeNote?.includes(LEDGER_WRITABLE_NOTE)).length;
-  const ledgerSuffix = ledgered ? ` (${ledgered} with an agent-writable ledger)` : "";
+  // 0.12.4: steps that cite code, counted apart: cited (no generated hook of its own), wired (its
+  // generated hook refuses it), proven (this check never runs cited code, so none).
+  const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");
+  const cited = steps.filter((i) => i.strength === "cited").length;
+  const wired = steps.filter((i) => i.citation === "wired" && i.strength === "refuse").length;
+  const parts = [...(ledgered ? [`${ledgered} with an agent-writable ledger`] : []), ...(cited + wired ? [`${cited} cited, ${wired} wired, 0 proven`] : [])];
+  const ledgerSuffix = parts.length ? ` (${parts.join("; ")})` : "";
   if (report.platform) {
-    const steps = report.items.filter((i) => i.kind === "gate" || i.kind === "human");
     const unverified = steps.filter((i) => i.strength === "unverified").length;
     lines.push(`enforcement: ${report.enforcement.refuse} of ${report.enforcement.of} steps refuse${ledgerSuffix}, ${unverified} unverified · ${report.platform.line}`);
   } else {
@@ -505,8 +536,10 @@ export function renderGuardReport(report: GuardReport): string[] {
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
   const graded = mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
+  // How a cited gate comes to count, on Claude Code (Codex grades its own hooks unverified): after the mark.
+  const how = cited && !report.platform ? [`${cited} gate(s) cite code that no hook of their own runs; to count one, ${CITED_HOW}`] : [];
   // Warn only, after the mark: a rule's own text never draws the installed-version mark.
-  return [...graded, ...(report.topLevel ?? [])];
+  return [...graded, ...how, ...(report.topLevel ?? [])];
 }
 
 /** One item of a guard report as page data. */

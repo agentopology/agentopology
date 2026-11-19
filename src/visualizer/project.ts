@@ -101,7 +101,7 @@ export const NODE_RULES: Readonly<Record<string, NodeRule>> = {
  * grade reads without color. `unverified` is the refuse shape with a "?".
  */
 export interface GuardGrade {
-  id: "refuse" | "detect" | "hope" | "none" | "unverified";
+  id: "refuse" | "detect" | "hope" | "none" | "unverified" | "cited";
   word: string;
   shape: "square-solid" | "diamond-solid" | "circle-hollow" | "outline-dashed";
   color: "green" | "cyan" | "gold" | "red" | "gray";
@@ -114,6 +114,7 @@ export interface GuardGrade {
 export const GUARD_GRADES: readonly GuardGrade[] = [
   { id: "none", word: "none", shape: "outline-dashed", color: "red", rank: 0, meaning: "compiled to a hook or rule the project lacks: nothing stops the step" },
   { id: "hope", word: "hope", shape: "circle-hollow", color: "gold", rank: 1, meaning: "only the playbook's prose asks for it" },
+  { id: "cited", word: "cited", shape: "circle-hollow", color: "gray", rank: 1, meaning: "cites the code that refuses it, but has no generated hook of its own that runs that code: not counted as refusing" },
   { id: "detect", word: "detect", shape: "diamond-solid", color: "cyan", rank: 2, meaning: "noticed after the fact, not refused" },
   { id: "unverified", word: "unverified", shape: "square-solid", color: "gray", mark: "?", rank: 3, meaning: "would refuse, but the installed Claude Code is not the verified one" },
   { id: "refuse", word: "refuse", shape: "square-solid", color: "green", rank: 4, meaning: "a hook or settings rule stops the step, and it is on disk" },

@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.12.4] - 2026-11-19
+
+### Changed behaviour
+
+- `guard --check` no longer counts a gate as refusing because it cites code. A gate that cites the code refusing it (`at:`) grades `refuse` only through its own generated hook: the hook `guard --target` or `scaffold` writes from the gate's `run:`. Otherwise it grades `cited`, a new grade, and is not counted as refusing. No other hook counts for a cited gate: not a hand-written hook in `.claude/settings.json`, not a CI workflow, not a hook declared in `hooks { }` and cited on the gate's edge with `[guard: name]`, and not another gate cited there. The enforcement line counts citations apart: a project whose eight gates all cite code with no generated hook now reads `enforcement: 0 of 8 steps refuse (8 cited, 0 wired, 0 proven)`, where it read `8 of 8 steps refuse`, and a line after it says how to make a cited gate count: give the gate a `run:` and let `guard --target` write its hook. `wired` counts cited gates their generated hook makes refuse; `guard --check` never runs cited code, so `proven` is 0.
+- An advisory gate (`behavior: advisory`) that cites code is no longer graded `refuse` by its citation: it grades `cited`.
+- A gate credited through another gate (`[guard: <gate>]`, "as strong as gate …") follows that gate's grade as before, so a gate credited only through a cited gate is no longer `refuse` either.
+- On Codex, `guard --check --target codex` grades a holding citation with no hook of its own `cited`, as on Claude Code; it read `unverified`.
+- The guard facts the visualizer page reads can carry the grade `cited`, drawn as a gray hollow circle, and the page's headline counts it.
+
 ## [0.12.3] - 2026-11-17
 
 ### Changed behaviour

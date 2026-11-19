@@ -574,16 +574,26 @@ const CITED_CODEX = `topology strong : [pipeline] {
 `;
 
 describe("[D-9] Codex: a gate held by cited code grades unverified, never refuse", () => {
-  it("[D-9] the citation holds: unverified, with the citation and bypass in the notes", async () => {
+  it("[D-9] the citation holds but nothing runs it: cited (0.12.4), with the citation and bypass in the notes", async () => {
     const { checkCodexGuards } = await import("../../guard/check-codex.js");
     const { ast } = scaffold("codex", CITED_CODEX);
     fs.mkdirSync(at("harness"), { recursive: true });
     fs.writeFileSync(at("harness/lock.py"), "import sys\nsys.exit(2)\n");
     const item = checkCodexGuards(ast, root).items.find((i) => i.id === "doctrine")!;
-    expect(item.strength).toBe("unverified");
+    expect(item.strength).toBe("cited");
     expect(item.where).toContain("harness/lock.py:2");
     expect(item.notes.join(" ")).toMatch(/cited, not proven/);
     expect(item.notes.join(" ")).toContain("bypass: an admin flag");
+  });
+  it("[D-9] a hand hook in .codex/hooks.json that names the cited code: still cited, a name is not a proof (0.12.4)", async () => {
+    const { checkCodexGuards } = await import("../../guard/check-codex.js");
+    const { ast } = scaffold("codex", CITED_CODEX);
+    fs.mkdirSync(at("harness"), { recursive: true });
+    fs.writeFileSync(at("harness/lock.py"), "import sys\nsys.exit(2)\n");
+    fs.mkdirSync(at(".codex"), { recursive: true });
+    fs.writeFileSync(at(".codex/hooks.json"), JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "python3 harness/lock.py" }] }] } }));
+    const item = checkCodexGuards(ast, root).items.find((i) => i.id === "doctrine")!;
+    expect(item.strength).toBe("cited");
   });
   it("[D-9] a broken citation is still none", async () => {
     const { checkCodexGuards } = await import("../../guard/check-codex.js");
