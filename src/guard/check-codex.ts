@@ -24,7 +24,7 @@ import { buildCodexHooks, codexGateHold } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { VERIFIED_ON, installedMark as codexInstalledMark, verifiedOnLine as codexVerifiedOnLine } from "../conformance/codex.js";
 import type { GuardItem, GuardReport } from "./check.js";
-import { citationProblem } from "./check.js";
+import { CITED_NOTE, citationProblem, citedGrade } from "./check.js";
 
 interface Handler { type?: string; command?: string }
 interface Entry { matcher?: string; hooks?: Handler[] }
@@ -109,14 +109,15 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     const item = items.find((i) => i.kind === "gate" && i.id === gate.id)!;
     const bad = citationProblem(root, gate.at, gate.match);
     const by = (gate.by ?? "code") as GuardItem["by"];
-    const notes = bad ? [bad] : ["cited, not proven: the code is there, this check cannot run it", ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
+    const notes = bad ? [bad] : [CITED_NOTE, ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
     if (bad || item.strength === "hope" || item.strength === "none") {
-      // D-9: release 1 grades every Codex guard unverified or none; a cited refusal is unverified too.
-      const declared = gate.strength ?? "refuse";
-      const strength = bad ? "none" : declared === "refuse" ? "unverified" : declared;
-      Object.assign(item, { strength, by, where: `${by} at ${gate.at}`, notes: strength === "unverified" ? [UNVERIFIED, ...notes] : notes, structural: false, gradeNote: undefined });
+      // 0.12.4: a citation alone is the file's claim: cited, as on Claude Code (it read unverified).
+      const strength = bad ? "none" : citedGrade(gate);
+      Object.assign(item, { strength, by, where: `${by} at ${gate.at}`, notes, structural: false, gradeNote: undefined, ...(bad ? {} : { citation: "cited" }) });
     } else {
+      // Its own generated hook holds it: the citation is wired.
       item.notes.push(...notes.map((n) => `also ${n}`));
+      item.citation = "wired";
     }
   }
 

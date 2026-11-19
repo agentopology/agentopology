@@ -132,7 +132,7 @@ ${c.bold("Usage:")}
                        implemented checks, reports each. Then runs --check.
   agentopology guard <file.at> --check [--dir <project-dir>]
                        Report which gates, approval steps and permission rules the
-                       project enforces today (refuse / none / hope). Writes nothing;
+                       project enforces today (refuse / cited / none / hope). Writes nothing;
                        exits 1 when something the binding generates is missing.
   agentopology step check <file.at> <step-id> [--unit U] [--dir D]
                        Exit 0 when every gate before <step-id> holds (its ledger shows the

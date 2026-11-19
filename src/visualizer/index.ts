@@ -2511,7 +2511,7 @@ function headlineFacts() {
   var nodes = data.nodes || [];
   var NC = 'not checked';
   var counts = guardCounts();
-  var grades = ['refuse', 'hope', 'none'].concat(['detect', 'unverified'].filter(function(g) { return counts[g]; }));
+  var grades = ['refuse', 'hope', 'none'].concat(['cited', 'detect', 'unverified'].filter(function(g) { return counts[g]; }));
   var guards = factsChecked() ? grades.map(function(g) { return gradeCountWord(g, counts[g] || 0); }).join(' · ') : NC;
   var cov = f && f.inventory && f.inventory !== NC ? f.inventory.mapped + ' of ' + f.inventory.total + ' mapped' : NC;
   var val = f && f.validate && f.validate !== NC ? f.validate.errors + ' errors, ' + f.validate.warnings + ' warnings' : NC;
