@@ -662,6 +662,12 @@ agentopology docs [topic]                 Language reference (43 topics)
 
 ---
 
+## Known issues in 0.12.4
+
+- In a gate's or a hook's `run:`, write `python3 tools/x.py` (or a script path), not `python3 -I tools/x.py`, `env …` or `command …`. `scaffold` and `guard --target` can read the first word as a script name and write a stub with that name that blocks every step, while `guard --check` still reports the gate as refusing (with a note that its check script is still a stub). Fixed in a later release.
+
+---
+
 ## Contributing
 
 We welcome contributions. The easiest ways to start:
