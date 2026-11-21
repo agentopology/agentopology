@@ -1,5 +1,7 @@
 Validating company-brain-team.at (company-brain-team v0.1.0)
 
+  stubs (claude-code): 1 of 20 generated files are stubs: 1 action script
+
   All validation rules passed.
 
 checked against Claude Code 2.1.323 (supports 2.1.295 and later)

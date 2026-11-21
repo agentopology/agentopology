@@ -306,6 +306,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
       path: rel,
       content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
+      stub: "hook",
       executable: true,
       createOnly: true,
     };
@@ -320,6 +321,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
     path: `.codex/scripts/${name}`,
     content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
     category: "script",
+    stub: "hook",
     executable: true,
   };
   return { kind: "script", interp, rel: `.codex/scripts/${name}`, args, file };
@@ -485,8 +487,13 @@ export function codexGateCommand(run: string, _topology: string): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter, script, args } = runParts(run);
   const interp = interpreterFor(script, interpreter);
-  const where = script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
-  return [interp, where, ...args].join(" ");
+  return [interp, codexGateScript(run), ...args].join(" ");
+}
+
+/** The file a gate's `run:` script is on Codex: absolute as written, a project path as written, else under .codex/scripts/. */
+export function codexGateScript(run: string): string {
+  const { script } = runParts(run);
+  return script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
 }
 
 /**

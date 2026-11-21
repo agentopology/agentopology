@@ -12,6 +12,8 @@ Validating scheduled-monitor.at (scheduled-monitor v1.0)
       skill:story  (.claude/skills/story/SKILL.md)
     not scaffolded (20): scaffold would write these and they are not on disk; rerun scaffold
 
+  stubs (claude-code): 5 of 21 generated files are stubs: 1 gate check script, 1 hook script, 2 action scripts, 1 metering script
+
   WARN  [V130] line 43: agent "collector" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (collector)
   WARN  [V130] line 56: agent "analyzer" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (analyzer)
   WARN  [V130] line 56: agent "analyzer" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel. (analyzer)

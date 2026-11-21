@@ -1175,6 +1175,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       // F-25: in the language of the interpreter codexGateCommand runs it with.
       content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
+      stub: "gate",
       executable: true,
       ...(project ? { createOnly: true } : {}),
     });
@@ -1206,6 +1207,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       path: project ? script.replace(/^\.\//, "") : `.codex/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
+      stub: "tool",
       executable: true,
       ...(project ? { createOnly: true } : {}),
     });

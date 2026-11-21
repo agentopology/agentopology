@@ -1,6 +1,6 @@
 /**
  * Stubs are counted, per kind, wherever a person looks before running the
- * topology (fixtures/stubs.at: one action, gate, hook and tool stub, and one
+ * topology (fixtures/stub-count/stubs.at: one action, gate, hook and tool stub, and one
  * action that points at its real commands).
  *
  * - validate prints how many of the files scaffold would write are stubs, by
@@ -29,7 +29,7 @@ import { checkCodexGuards } from "../../guard/check-codex.js";
 import type { GeneratedFile } from "../../bindings/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FIXTURE = resolve(here, "fixtures/stubs.at");
+const FIXTURE = resolve(here, "fixtures/stub-count/stubs.at");
 const CLI = resolve(here, "../../../dist/cli/index.js");
 const SOURCE = fs.readFileSync(FIXTURE, "utf-8");
 /** Codex runs no Claude model: the same topology with a Codex model. */
@@ -190,28 +190,33 @@ describe("an action's commands: is the call, not a stub", () => {
 });
 
 describe("guard --check grades a stubbed gate none", () => {
-  it("claude-code: none while its check script is a stub, counted missing (exit 1); refuse once written", () => {
+  // A stub blocks every run (it lets nothing through), so it is not counted
+  // missing: the exit code is unchanged, the grade and its own line say it.
+  it("claude-code: none while its check script is a stub, said on its own line, not missing (exit 0); refuse once written", () => {
     write(tmp, quiet(() => claudeCodeBinding.scaffold(ast)));
     let g = checkGuards(ast, tmp).items.find((i) => i.id === "check")!;
     expect(g.strength).toBe("none");
-    expect(g.notes.join(" ")).toMatch(/still a stub/);
-    expect(checkGuards(ast, tmp).missing).toBe(1);
+    expect(g.notes.join(" ")).toMatch(/still a stub: it checks nothing/);
+    expect(checkGuards(ast, tmp).missing).toBe(0);
+    expect(checkGuards(ast, tmp).enforcement.refuse).toBe(0);
     const r = cli(["guard", FIXTURE, "--check", "--dir", tmp]);
-    expect(r.code).toBe(1);
-    expect(r.stdout).toMatch(/1 item\(s\) are missing.*1 a stub/);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/gate check\s+none\s+by: hook/);
+    expect(r.stdout).toContain("1 gate(s) graded none because their check script is still a stub");
+    expect(r.stdout).not.toContain("item(s) are missing");
     fs.writeFileSync(join(tmp, ".claude/skills/stubs/scripts/check.sh"), "#!/usr/bin/env bash\ntest -s draft.md\n");
     g = checkGuards(ast, tmp).items.find((i) => i.id === "check")!;
     expect(g.strength).toBe("refuse");
-    expect(checkGuards(ast, tmp).missing).toBe(0);
-    expect(cli(["guard", FIXTURE, "--check", "--dir", tmp]).code).toBe(0);
+    expect(checkGuards(ast, tmp).enforcement.refuse).toBe(1);
+    expect(cli(["guard", FIXTURE, "--check", "--dir", tmp]).stdout).not.toContain("still a stub");
   });
 
-  it("codex: none while its check script is a stub, counted missing; unverified once written", () => {
+  it("codex: none while its check script is a stub, not missing; unverified once written", () => {
     write(tmp, quiet(() => codexBinding.scaffold(codexAst)));
     let g = checkCodexGuards(codexAst, tmp).items.find((i) => i.id === "check")!;
     expect(g.strength).toBe("none");
     expect(g.notes.join(" ")).toMatch(/still a stub/);
-    expect(checkCodexGuards(codexAst, tmp).missing).toBe(1);
+    expect(checkCodexGuards(codexAst, tmp).missing).toBe(0);
     fs.writeFileSync(join(tmp, ".codex/scripts/check.sh"), "#!/usr/bin/env bash\ntest -s draft.md\n");
     g = checkCodexGuards(codexAst, tmp).items.find((i) => i.id === "check")!;
     expect(g.strength).toBe("unverified");

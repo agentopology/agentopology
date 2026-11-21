@@ -372,7 +372,7 @@ action NAME {
 | kind | string | yes (V26) | -- | "external", "git", "decision", "inline", "report" |
 | source | string | no | -- | Source reference (file path or URL) |
 | description | string | no | -- | Human-readable description |
-| commands | string[] | no | -- | Shell commands to execute. A gate before this action guards them in Claude Code sessions |
+| commands | string[] | no | -- | Shell commands to execute. The action's script runs each one as written (an interpreter flag, \`npx\` or \`env\` included). With none, any kind but inline scaffolds a stub, counted by validate and scaffold. A gate before this action guards them in Claude Code sessions |
 | unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\\\S+)"\`. Needs a capture group (V111) |
 | timeout | string | no | -- | Duration string (e.g. "5m", "2h") |
 | on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |

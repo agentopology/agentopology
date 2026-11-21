@@ -12,7 +12,9 @@
  * run changes; added and removed hooks; a user hook on the same script; user
  * edits between scaffolds; two hooks on one script with different if; prune
  * and dry-run. After every step, the exit code, the scaffold output and
- * settings.json must be byte-identical.
+ * settings.json must be byte-identical, except for the stub rulings
+ * (differential/stub-rulings.mjs): the stub summary is compared out, and a
+ * gate whose check script is a stub is graded none.
  */
 
 import { describe, it, expect } from "vitest";
@@ -23,6 +25,8 @@ import { fileURLToPath } from "node:url";
 import { runSequence } from "./differential/merge-sequences.mjs";
 // @ts-expect-error plain JavaScript module, shared with freeze-merge.mjs
 import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
+// @ts-expect-error plain JavaScript module
+import { ruledSides } from "./differential/stub-rulings.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -84,7 +88,9 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         }
         if (w.code !== step.code) diffs.push(`${at}: exit ${w.code} -> ${step.code}`);
         if (w.settings !== step.settings) diffs.push(`${at}: settings.json differs\n--- 0.11.2\n${w.settings}\n--- now\n${step.settings}`);
-        if (hostless(w.output) !== hostless(step.output)) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
+        // The stub rulings (differential/stub-rulings.mjs): the stub summary and a stubbed gate's grade.
+        const [wasOut, nowOut] = ruledSides(hostless(w.output), hostless(step.output));
+        if (wasOut !== nowOut) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
       });
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);

@@ -649,6 +649,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
       path: `.claude/skills/${name}/scripts/action-${action.id}.sh`,
       content: lines.join("\n"),
       category: "script",
+      stub: "action",
     });
   }
 
@@ -2100,6 +2101,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       // F-25: in the language of the interpreter hookCommand runs it with.
       content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
+      stub: "gate",
       ...(project ? { createOnly: true } : {}),
     });
   }
@@ -2314,6 +2316,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""))
         : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
+      stub: "hook",
       executable: true,
       // A run that names its own path names the user's script: a stub only
       // fills the gap until it exists. --force used to overwrite it.
@@ -2356,6 +2359,7 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
           "",
         ].join("\n"),
         category: "script",
+        stub: "hook",
       });
     }
   }
@@ -2825,6 +2829,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
     category: "script",
+    stub: "metering",
   };
 }
 
@@ -2849,6 +2854,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
         : `.claude/skills/${name}/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
+      stub: "tool",
       ...(project ? { createOnly: true } : {}),
     });
   }
@@ -3323,6 +3329,7 @@ function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
       path: `.claude/skills/${name}/scripts/launch-${label}-workflow.sh`,
       content: body,
       category: "script",
+      stub: "workflow",
       executable: true,
     });
   }
@@ -3462,6 +3469,7 @@ function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null
     path: hook.scriptPath,
     content: body,
     category: "script",
+    stub: "hook",
     executable: true,
   };
 }

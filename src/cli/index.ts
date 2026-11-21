@@ -27,6 +27,7 @@ import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { BindingRefusal } from "../bindings/types.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
+import { plannedStubs, stubKindCounts, stubKindLine, stubPlanLines, stubsOf } from "../scaffold/stubs.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
@@ -457,9 +458,12 @@ function cmdValidateJson(filePath: string, inventory: string, dir: string | unde
     console.log(JSON.stringify({ schema: 1, file: name, error: err.message + "." }, null, 2));
     process.exit(1);
   }
+  const stubTarget = target ?? "claude-code";
+  const plan = plannedStubs(ast, stubTarget, dir ? path.resolve(dir) : undefined);
+  const stubs = plan ? { target: stubTarget, files: plan.files, total: plan.stubs.length, byKind: stubKindCounts(plan.stubs) } : null;
   console.log(
     JSON.stringify(
-      { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows },
+      { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows, stubs },
       null,
       2,
     ),
@@ -516,6 +520,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     console.log("");
   }
   const drifted = !!drift && drift.rows.length > 0;
+  printStubPlan(ast, target, dir);
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -533,6 +538,20 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     process.exit(1);
   }
   if (drifted) process.exit(3);
+}
+
+/**
+ * How many of the files scaffold would write are stubs, by kind, for the
+ * target given (claude-code when none is): the binding's own output, so
+ * validate and scaffold cannot disagree. Changes no exit code.
+ */
+function printStubPlan(ast: TopologyAST, target: string | undefined, dir: string | undefined): void {
+  const t = target ?? "claude-code";
+  const plan = plannedStubs(ast, t, dir ? path.resolve(dir) : undefined);
+  const lines = plan ? stubPlanLines(plan, t) : [];
+  if (lines.length === 0) return;
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+  console.log("");
 }
 
 function printFindings(results: ReturnType<typeof validateResult>["results"], errorCount: number, warningCount: number): void {
@@ -578,6 +597,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     const results = [...checked.results, ...ccExtra];
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
+    printStubPlan(ast, target, dir);
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;
@@ -971,8 +991,10 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // Stub summary: count and list any generated files that are unimplemented
   // stubs. We detect them by the AGENTOPOLOGY_STUB marker (see
   // src/bindings/lib/stub.ts). The summary goes to stderr so CI scripts can
-  // capture it without polluting stdout.
-  const stubFiles = files.filter((f) => isStubContent(f.content) && !skipped.includes(f.path));
+  // capture it without polluting stdout. A stub path that holds the user's own
+  // file (kept, never written over) is not a stub; the count is by kind, as
+  // validate prints it (src/scaffold/stubs.ts).
+  const { stubs: stubFiles } = stubsOf(files.filter((f) => !skipped.includes(f.path)), basePath);
   if (stubFiles.length > 0) {
     console.error("");
     console.error(
@@ -980,6 +1002,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         `  ${c.bold(`${stubFiles.length}`)} stub(s) need implementation before this topology can run:`,
       ),
     );
+    console.error(`    by kind: ${stubKindLine(stubFiles)}`);
     for (const f of stubFiles) {
       console.error(`    ${c.yellow("·")} ${f.path}`);
     }

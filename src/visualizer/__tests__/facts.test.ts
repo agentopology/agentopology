@@ -20,7 +20,8 @@ function scaffolded(source: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "at-vz3-"));
   for (const f of claudeCodeBinding.scaffold(parse(source))) {
     fs.mkdirSync(path.dirname(path.join(dir, f.path)), { recursive: true });
-    fs.writeFileSync(path.join(dir, f.path), f.content, { mode: 0o755 });
+    // A gate's check script stub grades none (it checks nothing): write it, as a user would.
+    fs.writeFileSync(path.join(dir, f.path), f.stub === "gate" ? "#!/usr/bin/env bash\nexit 0\n" : f.content, { mode: 0o755 });
   }
   return dir;
 }

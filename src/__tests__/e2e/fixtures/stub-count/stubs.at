@@ -1,5 +1,6 @@
 # stubs.at: one of each script scaffold cannot write for the user, and one
-# action that points at its real commands. Used by stub-count.test.ts.
+# action that points at its real commands. Used by stub-count.test.ts (in its
+# own folder, so the scaffold golden, which reads fixtures/*.at, is unchanged).
 
 topology stubs : [pipeline] {
 
