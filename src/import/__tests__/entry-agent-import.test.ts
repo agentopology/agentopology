@@ -5,8 +5,11 @@
  * not invented.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parse } from "../../parser/index.js";
+import { validate } from "../../parser/validator.js";
+import { claudeCodeBinding } from "../../bindings/claude-code.js";
+import type { AgentNode } from "../../parser/ast.js";
 import { serializeAST } from "../serializer.js";
 import { importClaudeCode, parseSettingsJson } from "../claude-code.js";
 import type { PlatformFile } from "../../sync/index.js";
@@ -49,6 +52,52 @@ describe("import: settings.json agent becomes meta { entry }", () => {
     const ast = importClaudeCode(files, "t", (r) => { warnings = r.warnings ?? []; });
     expect(entryOf(ast)).toBeUndefined();
     expect(warnings.some((w) => w.includes("my-plugin:reviewer"))).toBe(true);
+  });
+
+  it("matches settings agent against an agent file's frontmatter name, sets entry to the node id, and keeps the name", () => {
+    const files: PlatformFile[] = [
+      { path: ".claude/agents/review.md", content: `---\nname: code-reviewer\ndescription: Reviews\nmodel: sonnet\n---\nReview.\n` },
+      agentFile("worker"),
+      { path: ".claude/settings.json", content: JSON.stringify({ agent: "code-reviewer" }) },
+    ];
+    const ast = importClaudeCode(files, "t");
+    expect(entryOf(ast)).toBe("review");
+    const text = serializeAST(ast);
+    const back = parse(text);
+    expect(entryOf(back)).toBe("review");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const settings = JSON.parse(claudeCodeBinding.scaffold(back).find((f) => f.path === ".claude/settings.json")!.content);
+      expect(settings.agent).toBe("code-reviewer");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("the entry agent is not stamped invocation: manual, and the imported .at validates clean", () => {
+    const files: PlatformFile[] = [
+      agentFile("lead"),
+      agentFile("worker"),
+      { path: ".claude/settings.json", content: JSON.stringify({ agent: "lead" }) },
+    ];
+    const ast = importClaudeCode(files, "t");
+    const lead = ast.nodes.find((n) => n.id === "lead") as AgentNode;
+    expect(lead.invocation).toBeUndefined();
+    const back = parse(serializeAST(ast));
+    expect(validate(back).filter((r) => r.level === "error")).toEqual([]);
+    expect((back.nodes.find((n) => n.id === "lead") as AgentNode).invocation).toBeUndefined();
+  });
+
+  it("the no-match warning says what it checked, without guessing", () => {
+    let warnings: string[] = [];
+    const files: PlatformFile[] = [
+      agentFile("worker"),
+      { path: ".claude/settings.json", content: JSON.stringify({ agent: "ghost" }) },
+    ];
+    importClaudeCode(files, "t", (r) => { warnings = r.warnings ?? []; });
+    const w = warnings.find((x) => x.includes("ghost"))!;
+    expect(w).toMatch(/no imported agent has that name or id/);
+    expect(w).not.toMatch(/plugin/);
   });
 
   it("no agent key, no entry", () => {

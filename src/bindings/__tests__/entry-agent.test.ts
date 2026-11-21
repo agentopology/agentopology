@@ -28,6 +28,10 @@ import { codexSource } from "./codex-models.js";
 import { keptSettings } from "../../scaffold/settings-kept.js";
 import { deepMergeSettingsJson } from "../../scaffold/merge.js";
 import type { GeneratedFile } from "../types.js";
+import { checkGuards } from "../../guard/check.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { dirname, join } from "node:path";
 
 const topo = (entry: string, ext = "") => `topology t : [pipeline] {
   meta {
@@ -187,5 +191,118 @@ describe("claude-workflow: entry is a host concern", () => {
     const { out } = quiet(() => claudeWorkflowBinding.scaffold(parse(topo(""))));
     const report = out.find((f) => /LOSSY/i.test(f.path))!;
     expect(report.content).not.toMatch(/^### entry/m);
+  });
+});
+
+/**
+ * A gate after the entry agent. MEASURED on 19 Nov (live Claude Code, haiku,
+ * `claude --agent manager`): Stop fired with agent_type "manager" and
+ * SubagentStop did not; in the control run SubagentStop fired for a spawned
+ * helper. The settings.json `agent` key is the same mechanism as --agent
+ * (the sub-agents doc: the flag overrides the setting): INFERRED.
+ */
+describe("claude-code: a gate after the entry agent", () => {
+  const gates = (body: string) => `gates {
+    gate check {
+      ${body}
+      run: "scripts/check.sh"
+    }
+  }`;
+  const withGate = (entry: string, body: string) =>
+    topo(entry).replace("  flow {", `  ${gates(body)}\n  flow {`);
+  const stopMatchers = (files: GeneratedFile[]) =>
+    ((settingsOf(files).hooks?.SubagentStop ?? []) as Array<{ matcher: string }>).map((e) => e.matcher);
+
+  it("writes no SubagentStop entry for the entry agent, and warns", () => {
+    const { out, said } = quiet(() => claudeCodeBinding.scaffold(parse(withGate("entry: lead", "after: lead"))));
+    expect(stopMatchers(out)).not.toContain("lead");
+    expect(said.some((m) => /check/.test(m) && /entry agent/.test(m))).toBe(true);
+  });
+
+  it("still wires a gate after another agent", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(withGate("entry: lead", "after: worker"))));
+    expect(stopMatchers(out)).toEqual(["worker"]);
+  });
+
+  it("without an entry, a gate after lead is wired on SubagentStop as before", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(withGate("", "after: lead"))));
+    expect(stopMatchers(out)).toEqual(["lead"]);
+  });
+
+  it("with before: an agent, the gate runs before that agent launches instead", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(withGate("entry: lead", "after: lead\n      before: worker"))));
+    expect(stopMatchers(out)).not.toContain("lead");
+    const pre = (settingsOf(out).hooks?.PreToolUse ?? []) as Array<{ matcher: string; hooks: Array<{ command: string }> }>;
+    expect(pre.some((e) => e.matcher === "Agent|Task" && e.hooks.some((h) => h.command.includes("before-agent.sh")))).toBe(true);
+  });
+
+  it("codex has no entry agent, so its SubagentStop entry for lead stays", () => {
+    const { out } = quiet(() => codexBinding.scaffold(parse(codexSource(withGate("entry: lead", "after: lead")))));
+    const hooks = JSON.parse(out.find((f) => f.path === ".codex/hooks.json")!.content);
+    expect((hooks.hooks?.SubagentStop ?? []).map((e: { matcher: string }) => e.matcher)).toContain("lead");
+  });
+
+  it("guard --check grades it hope, saying why, instead of refuse", () => {
+    const src = withGate("entry: lead", "after: lead");
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-gate-"));
+    try {
+      for (const f of out) {
+        fs.mkdirSync(dirname(join(root, f.path)), { recursive: true });
+        fs.writeFileSync(join(root, f.path), f.content);
+      }
+      const item = checkGuards(parse(src), root).items.find((i) => i.kind === "gate" && i.id === "check")!;
+      expect(item.strength).toBe("hope");
+      expect(item.where).toMatch(/entry agent/);
+      expect(item.where).toMatch(/SubagentStop never fires/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("claude-code: the settings agent value is the agent file's name", () => {
+  it("writes the claude-code name extension when the entry agent carries one", () => {
+    const src = topo("entry: lead").replace(`description: "Leads the session"`, `description: "Leads the session"
+    extensions {
+      claude-code {
+        name: boss
+      }
+    }`);
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    expect(settingsOf(out).agent).toBe("boss");
+    expect(out.find((f) => f.path === ".claude/agents/lead/AGENT.md")!.content).toMatch(/^name: boss$/m);
+  });
+
+  it("does not write an extension agent that names an agent Claude Code cannot start, and warns", () => {
+    const src = topo("", `extensions {
+    claude-code {
+      agent: helper
+    }
+  }`).replace("  flow {", `  agent helper {
+    model: sonnet
+    description: "Helps"
+    runs: inline
+    invocation: manual
+    prompt { Help. }
+  }
+  flow {`);
+    const { out, said } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    expect(settingsOf(out).agent).toBeUndefined();
+    expect(said.some((m) => /helper/.test(m) && /agent/.test(m))).toBe(true);
+  });
+});
+
+describe("claude-code: entry changed between two scaffolds", () => {
+  it("the file keeps the earlier value and the run names it; deleting the key lets the new value in", () => {
+    const first = quiet(() => claudeCodeBinding.scaffold(parse(topo("entry: lead")))).out;
+    const second = quiet(() => claudeCodeBinding.scaffold(parse(topo("entry: worker")))).out;
+    const onDisk = first.find((f) => f.path === ".claude/settings.json")!.content;
+    const next = second.find((f) => f.path === ".claude/settings.json")!.content;
+    expect(JSON.parse(deepMergeSettingsJson(onDisk, next)).agent).toBe("lead");
+    expect(keptSettings(onDisk, next, ".claude/settings.json").find((k) => k.key === "agent")!.line)
+      .toMatch(/file has "lead", the \.at states "worker"/);
+    const withoutKey = JSON.stringify({ ...JSON.parse(onDisk), agent: undefined }, null, 2);
+    expect(JSON.parse(deepMergeSettingsJson(withoutKey, next)).agent).toBe("worker");
   });
 });
