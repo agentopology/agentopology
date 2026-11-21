@@ -88,6 +88,17 @@ describe("import: settings.json agent becomes meta { entry }", () => {
     expect((back.nodes.find((n) => n.id === "lead") as AgentNode).invocation).toBeUndefined();
   });
 
+  it("the flow report does not list the entry agent as imported manual", () => {
+    let unwired: string[] = [];
+    const files: PlatformFile[] = [
+      agentFile("lead"),
+      agentFile("worker"),
+      { path: ".claude/settings.json", content: JSON.stringify({ agent: "lead" }) },
+    ];
+    importClaudeCode(files, "t", (r) => { unwired = r.unwired; });
+    expect(unwired).toEqual(["worker"]);
+  });
+
   it("the no-match warning says what it checked, without guessing", () => {
     let warnings: string[] = [];
     const files: PlatformFile[] = [

@@ -306,3 +306,184 @@ describe("claude-code: entry changed between two scaffolds", () => {
     expect(JSON.parse(deepMergeSettingsJson(withoutKey, next)).agent).toBe("worker");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 2: the file on disk decides which agent the session runs as.
+// ---------------------------------------------------------------------------
+
+const GATE_AFTER_LEAD = `gates {
+    gate check {
+      after: lead
+      run: "scripts/check.sh"
+    }
+  }`;
+const withGates = (src: string, gates: string) => src.replace("  flow {", `  ${gates}\n  flow {`);
+
+/** Write generated files into a fresh temp root, settings.json merged into what is there. */
+function writeInto(root: string, files: GeneratedFile[]): void {
+  for (const f of files) {
+    const abs = join(root, f.path);
+    fs.mkdirSync(dirname(abs), { recursive: true });
+    if (f.path === ".claude/settings.json" && fs.existsSync(abs)) {
+      fs.writeFileSync(abs, deepMergeSettingsJson(fs.readFileSync(abs, "utf-8"), f.content));
+    } else {
+      fs.writeFileSync(abs, f.content);
+    }
+  }
+}
+
+describe("entry removed between two scaffolds", () => {
+  const withEntry = withGates(topo("entry: lead"), GATE_AFTER_LEAD);
+  const without = withGates(topo(""), GATE_AFTER_LEAD);
+
+  it("scaffold says the file keeps agent when the .at states none", () => {
+    const first = quiet(() => claudeCodeBinding.scaffold(parse(withEntry))).out.find((f) => f.path === ".claude/settings.json")!.content;
+    const second = quiet(() => claudeCodeBinding.scaffold(parse(without))).out.find((f) => f.path === ".claude/settings.json")!.content;
+    const kept = keptSettings(first, second, ".claude/settings.json").find((k) => k.key === "agent");
+    expect(kept).toBeDefined();
+    expect(kept!.line).toMatch(/file has "lead", the \.at states none/);
+  });
+
+  it("the binding, which cannot see the file, writes SubagentStop[lead] again; guard --check reads the file and grades the gate hope", () => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-removed-"));
+    try {
+      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(withEntry))).out);
+      const second = quiet(() => claudeCodeBinding.scaffold(parse(without))).out;
+      expect(((settingsOf(second).hooks?.SubagentStop ?? []) as Array<{ matcher: string }>).map((e) => e.matcher)).toEqual(["lead"]);
+      writeInto(root, second);
+      const onDisk = JSON.parse(fs.readFileSync(join(root, ".claude/settings.json"), "utf-8"));
+      expect(onDisk.agent).toBe("lead");
+      const item = checkGuards(parse(without), root).items.find((i) => i.kind === "gate" && i.id === "check")!;
+      expect(item.strength).toBe("hope");
+      expect(item.where).toMatch(/settings\.json agent/);
+      expect(item.where).toMatch(/lead/);
+      expect(item.where).toMatch(/SubagentStop never fires/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the extension names an agent Claude Code cannot start, beside an entry", () => {
+  const src = withGates(topo("entry: lead", `extensions {
+    claude-code {
+      agent: sk
+    }
+  }`), GATE_AFTER_LEAD).replace("  gates {", `  agent sk {
+    model: sonnet
+    description: "Skill"
+    runs: inline
+    invocation: manual
+    prompt { Skill. }
+  }
+  gates {`);
+
+  it("the entry is written, and the session is lead everywhere (no SubagentStop for it)", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    expect(settingsOf(out).agent).toBe("lead");
+    expect(((settingsOf(out).hooks?.SubagentStop ?? []) as Array<{ matcher: string }>).map((e) => e.matcher)).not.toContain("lead");
+  });
+
+  it("V134 gives one true message about the extension, and no differ warning", () => {
+    const v = validate(parse(src)).filter((r) => r.rule === "V134" && /extensions/.test(r.message));
+    expect(v).toHaveLength(1);
+    expect(v[0].message).toMatch(/not written/);
+    expect(v[0].message).toMatch(/settings\.json gets the entry "lead"/);
+    expect(validate(parse(src)).some((r) => r.rule === "V134" && /settings\.json gets agent: "sk"/.test(r.message))).toBe(false);
+  });
+});
+
+describe("a gate after both the entry agent and a subagent", () => {
+  const src = withGates(topo("entry: lead"), `gates {
+    gate check {
+      after: [worker, lead]
+      run: "scripts/check.sh"
+    }
+  }`);
+
+  it("wires SubagentStop for worker only, and warns only about lead", () => {
+    const { out, said } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    expect(((settingsOf(out).hooks?.SubagentStop ?? []) as Array<{ matcher: string }>).map((e) => e.matcher)).toEqual(["worker"]);
+    const gateWarn = said.filter((m) => /Gate "check"/.test(m));
+    expect(gateWarn).toHaveLength(1);
+    expect(gateWarn[0]).toMatch(/"lead", the entry agent/);
+    expect(gateWarn[0]).not.toMatch(/"worker"/);
+    const v = validate(parse(src)).filter((r) => r.rule === "V134" && r.node === "check");
+    expect(v).toHaveLength(1);
+    expect(v[0].message).toMatch(/after "lead"/);
+  });
+
+  it("the gate script header says SubagentStop on worker, and names lead as the entry agent", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(src)));
+    const script = out.find((f) => f.path.endsWith("gate-check.sh"))!.content;
+    expect(script).toMatch(/SubagentStop hook on agent "worker"/);
+    expect(script).toMatch(/lead is the entry agent/);
+    expect(script).not.toMatch(/is not an agent/);
+  });
+
+  it("a gate after the entry agent alone: the header says why, not 'is not an agent'", () => {
+    const { out } = quiet(() => claudeCodeBinding.scaffold(parse(withGates(topo("entry: lead"), GATE_AFTER_LEAD))));
+    const script = out.find((f) => f.path.endsWith("gate-check.sh"))!.content;
+    expect(script).toMatch(/lead is the entry agent/);
+    expect(script).not.toMatch(/is not an agent/);
+  });
+
+  it("guard --check grades it refuse on worker, with a note naming lead", () => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-mixed-"));
+    try {
+      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(src))).out);
+      const item = checkGuards(parse(src), root).items.find((i) => i.kind === "gate" && i.id === "check")!;
+      expect(item.strength).toBe("refuse");
+      expect(item.where).toMatch(/SubagentStop on worker/);
+      expect(item.notes.join(" ")).toMatch(/lead.*entry agent/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a gate before, and a human step before, the entry agent", () => {
+  const gateBefore = withGates(topo("entry: lead"), `gates {
+    gate check {
+      after: intake
+      before: lead
+      run: "scripts/check.sh"
+    }
+  }`);
+  const humanBefore = topo("entry: lead")
+    .replace("  flow {", `  human approver {
+    description: "Approves"
+  }
+  flow {`)
+    .replace("intake -> lead", "intake -> approver\n    approver -> lead");
+
+  it("V134 warns on the gate: the entry agent is never launched", () => {
+    const v = validate(parse(gateBefore)).filter((r) => r.rule === "V134" && r.node === "check");
+    expect(v).toHaveLength(1);
+    expect(v[0].level).toBe("warning");
+    expect(v[0].message).toMatch(/before "lead", the entry agent/);
+    expect(v[0].message).toMatch(/never launched/);
+  });
+
+  it("V134 warns on the human step: its approval is never asked", () => {
+    const v = validate(parse(humanBefore)).filter((r) => r.rule === "V134" && r.node === "approver");
+    expect(v).toHaveLength(1);
+    expect(v[0].level).toBe("warning");
+    expect(v[0].message).toMatch(/approval is never asked/);
+  });
+
+  it("guard --check gives both the true reason", () => {
+    for (const [src, kind, id] of [[gateBefore, "gate", "check"], [humanBefore, "human", "approver"]] as const) {
+      const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-before-"));
+      try {
+        writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(src))).out);
+        const item = checkGuards(parse(src), root).items.find((i) => i.kind === kind && i.id === id)!;
+        expect(item.strength).toBe("hope");
+        expect(item.where).toMatch(/lead, the entry agent/);
+        expect(item.where).not.toMatch(/no agent follows it/);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+});
