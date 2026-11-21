@@ -34,7 +34,7 @@ import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
-import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, toolsCanStartAgents } from "../bindings/lib/entry.js";
+import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { gateWiring, getDelegationMode, isRegisteredSubagentType } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
@@ -4488,9 +4488,11 @@ function v134EntryAgent(ast: TopologyAST, opts: ValidateOptions): ValidationResu
   const extNode = ext !== undefined ? nodeForAgentName(ast, ext) : undefined;
   const extProblem = extNode ? agentProblem(extNode) : null;
   if (ext !== undefined && extNode && extProblem) {
-    warn(`extensions { claude-code { agent: ${ext} } } names "${extNode.id}", which ${extProblem}; it is not written to settings.json.`, extNode.id);
+    const written = settingsAgent(ast);
+    const instead = written ? `; settings.json gets the entry "${written.value}" instead.` : ", so settings.json gets no agent.";
+    warn(`extensions { claude-code { agent: ${ext} } } names "${extNode.id}", which ${extProblem}; it is not written${instead}`, extNode.id);
   }
-  if (entry !== undefined && ext !== undefined) {
+  if (entry !== undefined && ext !== undefined && !extProblem) {
     const entryNode = ast.nodes.find((n) => n.id === entry) as AgentNode;
     if (ext !== entry && ext !== agentFileName(entryNode)) {
       warn(`meta entry is "${entry}" but extensions { claude-code { agent: ${ext} } } names "${ext}"; settings.json gets agent: "${ext}" (the extension is the more specific). Remove one so they agree.`, entry);
@@ -4505,10 +4507,22 @@ function v134EntryAgent(ast: TopologyAST, opts: ValidateOptions): ValidationResu
     for (const n of ast.nodes) {
       if (n.type !== "gate") continue;
       const gate = n as GateNode;
-      if (!gateAnchors(gate, "after").includes(session)) continue;
       const wiring = gateWiring(ast, gate);
-      const instead = wiring.kind === "before-agent" ? ` It runs before ${wiring.agents.join(", ")} launches instead.` : "";
-      warn(`gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, so SubagentStop never fires for it; anchor the gate on a subagent or a script step.${instead}`, gate.id);
+      if (gateAnchors(gate, "after").includes(session)) {
+        const instead = wiring.kind === "before-agent" ? ` It runs before ${wiring.agents.join(", ")} launches instead.`
+          : wiring.kind === "subagent-stop" ? ` Its other anchors (${wiring.anchors.join(", ")}) keep their SubagentStop hook.` : "";
+        warn(`gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, so SubagentStop never fires for it; anchor the gate on a subagent or a script step.${instead}`, gate.id);
+      } else if (wiring.kind !== "subagent-stop" && gateAnchors(gate, "before").includes(session)) {
+        warn(`gate "${gate.id}" is before "${session}", the entry agent: the entry agent is the session and is never launched, so no hook runs the gate before it; anchor the gate on a subagent or a script step.`, gate.id);
+      }
+    }
+    // A human step before the session's agent: there is no launch to ask before.
+    for (const n of ast.nodes) {
+      if (n.type !== "human") continue;
+      const next = ast.edges.filter((e) => e.from === n.id && !e.isError).map((e) => e.to);
+      if (next.includes(session)) {
+        warn(`human step "${n.id}" is before "${session}", the entry agent: the entry agent is the session and is never launched, so its approval is never asked; put the step before a subagent, or have the session's prompt ask.`, n.id);
+      }
     }
   }
 

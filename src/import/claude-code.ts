@@ -1165,7 +1165,13 @@ export function importClaudeCode(
     durable: topologyMeta?.durable,
   };
 
-  onFlowReport?.({ ...buildFlowReport(nodes, edges, skillEdges, recovered), ...(warnings.length ? { warnings } : {}) });
+  // The entry agent is the session, not an agent imported as manual.
+  const flowReport = buildFlowReport(nodes, edges, skillEdges, recovered);
+  if (entry && flowReport.unwired.includes(entry)) {
+    flowReport.unwired = flowReport.unwired.filter((id) => id !== entry);
+    flowReport.entry = entry;
+  }
+  onFlowReport?.({ ...flowReport, ...(warnings.length ? { warnings } : {}) });
 
   const ast: TopologyAST = {
     topology: meta,

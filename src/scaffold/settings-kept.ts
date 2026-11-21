@@ -87,5 +87,11 @@ export function keptSettings(existingRaw: string, generatedRaw: string, fileName
     if (k === "hooks" || k === "env") continue;
     walk(v, [k]);
   }
+  // `agent` (meta { entry }) decides which agent every session starts as, so
+  // a value the file holds while the .at states none (an entry removed, or
+  // one the user set) is said too: the session still starts as it.
+  if (existing.agent !== undefined && generated.agent === undefined) {
+    out.push({ key: "agent", at: null, file: existing.agent, line: `${fileName} agent: file has ${show(existing.agent)}, the .at states none — not changed (every session still starts as it; delete the key to stop that)` });
+  }
   return out;
 }

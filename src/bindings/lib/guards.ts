@@ -206,15 +206,21 @@ export function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
  *   agent on either side); the playbook runs the gate script.
  */
 export type GateWiring =
-  | { kind: "subagent-stop"; anchors: string[] }
+  /** `skipped`: `after:` anchors left out because they are the entry agent (the session). */
+  | { kind: "subagent-stop"; anchors: string[]; skipped?: string[] }
   | { kind: "before-agent"; agents: string[] }
   | { kind: "none" };
 
 export function gateWiring(ast: TopologyAST, gate: GateNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): GateWiring {
   if (getDelegationMode(ast) === "inline") return { kind: "none" };
   const afters = gateAnchors(gate, "after");
-  if (afters.length > 0 && afters.every((a) => isRegisteredSubagentType(ast, a, p))) {
-    return { kind: "subagent-stop", anchors: afters };
+  // The entry agent (Claude Code) is the session: it is left out of the
+  // anchors, and the others that are subagents are still wired.
+  const session = p.id === "claude-code" ? sessionAgentId(ast) : undefined;
+  const live = afters.filter((a) => a !== session);
+  const skipped = afters.filter((a) => a === session);
+  if (live.length > 0 && live.every((a) => isRegisteredSubagentType(ast, a, p))) {
+    return { kind: "subagent-stop", anchors: live, ...(skipped.length > 0 ? { skipped } : {}) };
   }
   const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b, p));
   return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
@@ -1359,8 +1365,15 @@ export function generateGateWrapperScripts(
         ? `#              The SubagentStop hook on "${gateAnchors(gate, "after").join('", "')}" only reports: ${p.label} cannot block a stop.`
         : `#              Invoke this script from your orchestrator playbook before the next step.`;
     } else if (wiredAsHook) {
-      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gateAnchors(gate, "after").join('", "')}". Exit 2 blocks the subagent`;
+      enforcementNote = `# Enforcement: SubagentStop hook on agent "${wiring.anchors.join('", "')}". Exit 2 blocks the subagent`;
       enforcementNote2 = `#              from stopping (${p.label} prevents stop and surfaces stderr to ${p.modelName}).`;
+      if (wiring.skipped) {
+        enforcementNote2 += `\n#              Not after ${wiring.skipped.join(", ")}: ${wiring.skipped.join(", ")} is the entry agent, the session itself, so SubagentStop never fires for it.`;
+      }
+    } else if (p.id === "claude-code" && sessionAgentId(ast) !== undefined && gateAnchors(gate, "after").includes(sessionAgentId(ast)!)) {
+      const session = sessionAgentId(ast)!;
+      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${session} is the entry agent, the session itself, so SubagentStop never fires for it).`;
+      enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
     } else {
       enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gateAnchors(gate, "after").join(", ") || "<unset>"} is not an agent).`;
       enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;

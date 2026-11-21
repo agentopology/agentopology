@@ -82,20 +82,50 @@ export function extensionAgent(ast: TopologyAST): string | undefined {
 }
 
 /**
- * The node id of the agent the Claude Code session runs as, given what the
- * claude-code binding writes to settings.json `agent`: the extension's value
- * when it names a declared agent Claude Code can start, else the entry when
- * it is one. Undefined when neither is (an unknown extension value names an
- * agent the topology does not declare, such as a plugin's).
+ * What the claude-code binding writes to settings.json `agent`, and the
+ * declared agent it names. The one rule the binding, V134, the gate wiring
+ * and guard --check all read:
+ *
+ * - `extensions { claude-code { agent } }` (a string) is the more specific:
+ *   written as is when it names no declared node (a plugin's agent, say: no
+ *   node id), or when it names a declared agent Claude Code can start.
+ * - When it names a declared node Claude Code cannot start, it is not
+ *   written, and the entry is (if valid).
+ * - Else the entry, when V134 accepts it, under the name its agent file
+ *   carries.
  */
-export function sessionAgentId(ast: TopologyAST): string | undefined {
+export function settingsAgent(ast: TopologyAST): { value: string; nodeId?: string } | undefined {
   const ext = extensionAgent(ast);
   if (ext !== undefined) {
     const node = nodeForAgentName(ast, ext);
-    return node && !agentProblem(node) ? node.id : undefined;
+    if (!node) return { value: ext };
+    if (!agentProblem(node)) return { value: ext, nodeId: node.id };
   }
-  if (ast.topology.entry !== undefined && !entryProblem(ast)) return ast.topology.entry;
+  const entry = ast.topology.entry;
+  if (entry !== undefined && !entryProblem(ast)) {
+    const node = ast.nodes.find((n) => n.id === entry) as AgentNode;
+    return { value: agentFileName(node), nodeId: entry };
+  }
   return undefined;
+}
+
+/**
+ * The node id of the agent the Claude Code session runs as, from what the
+ * binding writes (settingsAgent). Undefined when nothing is written or the
+ * value names no declared agent.
+ */
+export function sessionAgentId(ast: TopologyAST): string | undefined {
+  return settingsAgent(ast)?.nodeId;
+}
+
+/**
+ * The declared agent a settings.json `agent` value on disk names, when
+ * Claude Code can start it as the session; else undefined.
+ */
+export function sessionAgentFromFile(ast: TopologyAST, value: unknown): string | undefined {
+  if (typeof value !== "string" || value === "") return undefined;
+  const node = nodeForAgentName(ast, value);
+  return node && !agentProblem(node) ? node.id : undefined;
 }
 
 /** True when a tools list lets the agent start other agents (Agent, Agent(...), or the older Task). */
