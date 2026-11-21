@@ -29,6 +29,7 @@ import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
@@ -280,6 +281,11 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     }
     const wiring = gateWiring(ast, gate);
     if (wiring.kind === "none") {
+      const session = sessionAgentId(ast);
+      if (session && gateAnchors(gate, "after").includes(session)) {
+        items.push({ ...base, strength: "hope", by: "prose", where: `after ${session}, the entry agent: the entry agent is the session, so SubagentStop never fires for it; the playbook runs it`, notes: [] });
+        continue;
+      }
       const anchors = [...gateAnchors(gate, "after"), ...gateAnchors(gate, "before")].join(", ") || "nothing";
       items.push({ ...base, strength: "hope", by: "prose", where: `no Claude Code event marks its moment (between ${anchors}); the playbook runs it`, notes: [] });
       continue;

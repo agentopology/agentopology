@@ -34,7 +34,8 @@ import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
-import { entryProblem } from "../bindings/lib/entry.js";
+import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, toolsCanStartAgents } from "../bindings/lib/entry.js";
+import { gateWiring, getDelegationMode, isRegisteredSubagentType } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
@@ -426,7 +427,8 @@ function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
     if (node.invocation === "manual") continue;
     if (gMembers.has(node.id)) continue;
     // The entry agent is the session itself (V134); it needs no flow edge.
-    if (node.id === ast.topology.entry) continue;
+    // An entry V134 refuses is not the session, so it is not exempt.
+    if (node.id === ast.topology.entry && !entryProblem(ast)) continue;
     if (!flowNodes.has(node.id)) {
       results.push({
         rule: "V4",
@@ -4447,35 +4449,79 @@ function v133McpServerFrom(ast: TopologyAST): ValidationResult[] {
  * error when the entry is not a declared node, is not an agent (an action,
  * gate, human, group or orchestrator), or is an agent the claude-code binding
  * does not write as a subagent (`runs: inline` / `fork` become skills; an
- * `execution: workflow` agent belongs to the workflow script). A warning,
- * when compiling for Claude Code, when `extensions { claude-code { agent } }`
- * names a different agent: the extension is the more specific and is written.
+ * `execution: workflow` agent belongs to the workflow script), and when the
+ * value is not one agent id (empty, or a list).
+ *
+ * Warnings, when compiling for Claude Code (no target, or claude-code):
+ * - `extensions { claude-code { agent } }` names a different agent: the
+ *   extension is the more specific and is written.
+ * - that extension value names a declared node Claude Code cannot start: it
+ *   is not written. A name the topology does not declare is left alone.
+ * - a gate after the session's agent: SubagentStop never fires for the
+ *   session's own agent (MEASURED 19 Nov with `claude --agent`; the settings
+ *   key is the same mechanism, INFERRED from the sub-agents doc), so the
+ *   SubagentStop entry is not written.
+ * - the session's agent has a tools list without Agent (or Task) while the
+ *   topology has other agents for it to start: its tools are the session's.
  */
 function v134EntryAgent(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
   const results: ValidationResult[] = [];
   const entry = ast.topology.entry;
-  if (!entry) return results;
-  const problem = entryProblem(ast);
-  if (problem) {
-    const declared = ast.nodes.some((n) => n.id === entry);
-    results.push({
-      rule: "V134",
-      level: "error",
-      message: `meta entry "${entry}" ${problem}.`,
-      ...(declared ? { node: entry, line: lookupLine(ast, entry) } : {}),
-    });
-    return results;
+  const at = (node: string) => ({ node, line: lookupLine(ast, node) });
+  if (entry !== undefined) {
+    const problem = entryProblem(ast);
+    if (problem) {
+      const declared = ast.nodes.some((n) => n.id === entry);
+      results.push({
+        rule: "V134",
+        level: "error",
+        message: `meta entry "${entry}" ${problem}.`,
+        ...(declared ? at(entry) : {}),
+      });
+      return results;
+    }
   }
   if (opts.target && opts.target !== "claude-code") return results;
-  const ext = ast.extensions?.["claude-code"]?.agent;
-  if (ext !== undefined && String(ext) !== entry) {
-    results.push({
-      rule: "V134",
-      level: "warning",
-      node: entry,
-      line: lookupLine(ast, entry),
-      message: `meta entry is "${entry}" but extensions { claude-code { agent: ${String(ext)} } } names "${String(ext)}"; settings.json gets agent: "${String(ext)}" (the extension is the more specific). Remove one so they agree.`,
-    });
+  const warn = (message: string, node?: string) => results.push({ rule: "V134", level: "warning", ...(node ? at(node) : {}), message });
+
+  const ext = extensionAgent(ast);
+  const extNode = ext !== undefined ? nodeForAgentName(ast, ext) : undefined;
+  const extProblem = extNode ? agentProblem(extNode) : null;
+  if (ext !== undefined && extNode && extProblem) {
+    warn(`extensions { claude-code { agent: ${ext} } } names "${extNode.id}", which ${extProblem}; it is not written to settings.json.`, extNode.id);
+  }
+  if (entry !== undefined && ext !== undefined) {
+    const entryNode = ast.nodes.find((n) => n.id === entry) as AgentNode;
+    if (ext !== entry && ext !== agentFileName(entryNode)) {
+      warn(`meta entry is "${entry}" but extensions { claude-code { agent: ${ext} } } names "${ext}"; settings.json gets agent: "${ext}" (the extension is the more specific). Remove one so they agree.`, entry);
+    }
+  }
+
+  const session = sessionAgentId(ast);
+  if (!session) return results;
+
+  // A gate after the session's agent: the session is not a subagent.
+  if (getDelegationMode(ast) !== "inline") {
+    for (const n of ast.nodes) {
+      if (n.type !== "gate") continue;
+      const gate = n as GateNode;
+      if (!gateAnchors(gate, "after").includes(session)) continue;
+      const wiring = gateWiring(ast, gate);
+      const instead = wiring.kind === "before-agent" ? ` It runs before ${wiring.agents.join(", ")} launches instead.` : "";
+      warn(`gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, so SubagentStop never fires for it; anchor the gate on a subagent or a script step.${instead}`, gate.id);
+    }
+  }
+
+  // The session's agent's tools are the session's tools.
+  const lead = ast.nodes.find((n) => n.id === session) as AgentNode;
+  if (lead.tools && lead.tools.length > 0 && !toolsCanStartAgents(lead.tools)) {
+    const startable = (id: string) => id !== session && isRegisteredSubagentType(ast, id);
+    const flowTargets = [...new Set(ast.edges.filter((e) => e.from === session).map((e) => e.to))].filter(startable);
+    const others = ast.nodes.map((n) => n.id).filter(startable);
+    const targets = flowTargets.length > 0 ? flowTargets : others;
+    if (targets.length > 0) {
+      warn(`agent "${session}" is the entry agent, so its tools are the whole session's tools, and they have no Agent: the session cannot start ${targets.join(", ")}. Add Agent to its tools, or Agent(${targets.join(", ")}) to allow only those.`, session);
+    }
   }
   return results;
 }

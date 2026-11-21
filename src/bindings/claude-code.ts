@@ -33,7 +33,7 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
-import { entryProblem } from "./lib/entry.js";
+import { agentFileName, agentProblem, entryProblem, nodeForAgentName, sessionAgentId } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
@@ -2512,6 +2512,16 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (wiring.kind === "before-agent") continue;
     if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
     if (wiring.kind !== "subagent-stop") {
+      const session = sessionAgentId(ast);
+      if (session && anchors.includes(session)) {
+        // The entry agent is the session, not a subagent (V134).
+        console.warn(
+          `[claude-code] Gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, ` +
+            `so SubagentStop never fires for it. SubagentStop hook not emitted; the gate wrapper script is still ` +
+            `generated. Anchor the gate on a subagent or a script step.`,
+        );
+        continue;
+      }
       const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
       const targetDesc = anchors.length
         ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
@@ -2638,12 +2648,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // An extensions { claude-code { agent } } below is more specific and wins
   // (V134 warns when they differ). An entry Claude Code cannot start (V134
   // error) is not written under --allow-invalid.
-  if (ast.topology.entry) {
+  // Claude Code resolves the key by the agent file's `name`, so the value is
+  // the name the binding writes there (the claude-code name extension, or
+  // the id).
+  if (ast.topology.entry !== undefined) {
     const problem = entryProblem(ast);
     if (problem) {
       console.warn(`[claude-code] meta entry "${ast.topology.entry}" ${problem}; agent not written to settings.json.`);
     } else {
-      settings.agent = ast.topology.entry;
+      settings.agent = agentFileName(ast.nodes.find((n) => n.id === ast.topology.entry) as AgentNode);
     }
   }
 
@@ -2651,6 +2664,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // type (`defaultMode` lands under permissions). V130 refuses what has no
   // place; under --allow-invalid it is skipped here with a warning.
   for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    // agent naming a declared node Claude Code cannot start (V134): not written.
+    if (k === "agent" && typeof v === "string") {
+      const node = nodeForAgentName(ast, v);
+      const problem = node ? agentProblem(node) : null;
+      if (node && problem) {
+        console.warn(`[claude-code] extensions: agent "${v}" names "${node.id}", which ${problem}; not written to settings.json.`);
+        continue;
+      }
+    }
     const where = resolveSettingsKey(k);
     const value = where && (!where.row || (where.row.projectFile && !where.row.removed)) ? coerceCcValue(where.row, v) : undefined;
     if (!where || !value || !value.ok) {

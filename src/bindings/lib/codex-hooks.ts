@@ -506,7 +506,7 @@ export function codexGateHold(ast: TopologyAST, gate: GateNode): CodexGateHold {
   if (gate.behavior === "advisory") return { kind: "advisory" };
   if (checkableActionGate(ast, gate)) return { kind: "action" };
   if (!gate.run || !scriptNameFromRun(gate.run)) return { kind: "prose" };
-  const wiring = gateWiring(ast, gate);
+  const wiring = gateWiring(ast, gate, CODEX_GUARDS);
   const agents = spawnHeldAgents(ast, gate, CODEX_GUARDS);
   if (agents.length > 0) return { kind: "spawn", agents };
   if (wiring.kind === "subagent-stop") return { kind: "none", anchors: wiring.anchors };
@@ -544,7 +544,7 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
       if (node.type !== "gate") continue;
       const gate = node as GateNode;
       if (!scriptNameFromRun(gate.run) || gate.behavior === "advisory") continue;
-      if (checkableActionGate(ast, gate) || gateWiring(ast, gate).kind !== "subagent-stop") continue;
+      if (checkableActionGate(ast, gate) || gateWiring(ast, gate, CODEX_GUARDS).kind !== "subagent-stop") continue;
       for (const anchor of gateAnchors(gate, "after")) {
         entries.push({ event: "SubagentStop", entry: { matcher: anchor, hooks: [guardHandler(ast, `gate-${gate.id}.sh`, [gate])] } });
       }

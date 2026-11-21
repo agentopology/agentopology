@@ -86,7 +86,7 @@ topology content-pipeline : [pipeline, human-gate] {
 - Every .at file must have exactly one \`topology\` block (or one \`fragment\` block).
 - The topology name must be globally unique and follow identifier rules (lowercase, hyphens allowed).
 - Pattern tags are informational metadata -- they don't enforce behavior but document intent.
-- \`entry: <agent-id>\` names the agent every session starts as. claude-code writes it as \`"agent": "<id>"\` in .claude/settings.json (an \`extensions { claude-code { agent } }\` value is more specific and wins; V134 warns when they differ). Codex and Cursor have no such setting and write nothing (\`validate --target codex\`: CX5-entry; Cursor: a scaffold warning). claude-workflow lists it in its LOSSY report. V134 errors when the entry is not an agent Claude Code can start as a subagent.
+- \`entry: <agent-id>\` names the agent every session starts as. claude-code writes it as \`"agent": "<name>"\` in .claude/settings.json (the agent file's name: its \`extensions { claude-code { name } }\`, else its id). A settings.json that already sets \`agent\` keeps it, an earlier scaffold's value included: after changing \`entry\`, delete the \`agent\` key and scaffold again. The entry agent is the session, so a gate after it is not a SubagentStop hook, and its \`tools\` are the session's tools (include \`Agent\`). An \`extensions { claude-code { agent } }\` value is more specific and wins; V134 warns when they differ. Codex and Cursor have no such setting and write nothing (\`validate --target codex\`: CX5-entry; Cursor: a scaffold warning). claude-workflow lists it in its LOSSY report. V134 errors when the entry is not an agent Claude Code can start as a subagent.
 `,
   },
 
@@ -3371,8 +3371,11 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 \`meta { entry }\` names the agent every session starts as; Claude Code reads it from the settings.json \`agent\` key, which names a subagent. It must be a declared agent that claude-code writes as a subagent.
 
 **Violation (error):** \`entry: ghost\` (no such node); \`entry: intake\` where intake is an action, gate, human, group or orchestrator; an agent with \`runs: inline\` or \`runs: fork\` (written as a skill); an agent marked \`execution: workflow\` (run by the workflow script).
-**Violation (warning):** \`extensions { claude-code { agent: other } }\` names a different agent. The extension value is written.
-**Fix:** Point \`entry\` at a subagent, and remove the extension's \`agent\` or make it agree.
+**Violation (error):** \`entry:\` with no value, or a list (\`entry: [a, b]\`).
+**Violation (warning):** \`extensions { claude-code { agent: other } }\` names a different agent. The extension value is written. If it names a declared node Claude Code cannot start, it is not written.
+**Violation (warning):** a gate \`after:\` the entry agent. The entry agent is the session, so SubagentStop never fires for it; the hook is not written, and guard --check grades the gate hope.
+**Violation (warning):** the entry agent has a \`tools\` list without \`Agent\` (or \`Task\`) while other agents exist: its tools are the session's, so the session cannot start them.
+**Fix:** Point \`entry\` at a subagent, and remove the extension's \`agent\` or make it agree. Anchor a gate on a subagent or a script step. Add \`Agent\`, or \`Agent(worker, reviewer)\`, to the entry agent's tools.
 
 ## Summary
 

@@ -921,6 +921,8 @@ export function importClaudeCode(
   const nodes: NodeDef[] = [];
   const roles: Record<string, string> = {};
   const warnings: string[] = [];
+  /** Each imported agent's frontmatter `name`, by node id. */
+  const agentNames = new Map<string, string>();
 
   // Files an earlier scaffold generated are listed in its manifest(s). Every
   // other file was written by hand: it is imported with `file:`, so the
@@ -950,6 +952,8 @@ export function importClaudeCode(
     if (!match) continue;
     const agentId = match[1];
     if (nodes.some((n) => n.id === agentId)) continue;
+    const fmName = parseFrontmatter(file.content).fields.name;
+    if (typeof fmName === "string" && fmName.trim() !== "") agentNames.set(agentId, fmName.trim());
     const node = parseAgentMd(agentId, file.content, (w) => warnings.push(w));
     if (node) {
       const file_ = authored(file.path);
@@ -1115,21 +1119,34 @@ export function importClaudeCode(
   // 11. An agent no flow mentions is invoked on demand, which is how a
   // hand-built Claude Code subagent runs. Import used to invent a linear chain
   // through every agent in file order, a flow the author never wrote.
-  const inFlow = new Set(edges.flatMap((e) => [e.from, e.to]));
-  for (const node of nodes) {
-    if (node.type === "agent" && !inFlow.has(node.id) && !(node as AgentNode).invocation) {
-      (node as AgentNode).invocation = "manual";
+  // settings.json `agent` is the subagent every session starts as: meta
+  // { entry } when an agent file was imported for it. Claude Code resolves it
+  // by the file's frontmatter name, which need not be the file name, so both
+  // are matched; entry is the node id, and a name that differs from it is
+  // kept as the claude-code name extension so scaffold writes it back. A name
+  // no imported agent has is reported, not invented.
+  let entry: string | undefined;
+  if (settingsAgent) {
+    const node = nodes.find((n) => n.type === "agent" && agentNames.get(n.id) === settingsAgent)
+      ?? nodes.find((n) => n.type === "agent" && n.id === settingsAgent);
+    if (node) {
+      entry = node.id;
+      const name = agentNames.get(node.id);
+      if (name && name !== node.id) {
+        const agent = node as AgentNode;
+        agent.extensions = { ...(agent.extensions ?? {}), "claude-code": { ...(agent.extensions?.["claude-code"] ?? {}), name } };
+      }
+    } else {
+      warnings.push(`.claude/settings.json agent "${settingsAgent}": no imported agent has that name or id, so it is not imported as meta entry.`);
     }
   }
 
-  // settings.json `agent` is the subagent every session starts as: meta
-  // { entry } when an agent file was imported for it. A plugin's or a
-  // built-in agent has no node here, so it is reported, not invented.
-  let entry: string | undefined;
-  if (settingsAgent) {
-    const node = nodes.find((n) => n.id === settingsAgent);
-    if (node && node.type === "agent") entry = settingsAgent;
-    else warnings.push(`.claude/settings.json agent "${settingsAgent}" names no imported agent (a plugin's or built-in agent?), so it is not imported as meta entry.`);
+  // The entry agent is the session itself, so it is not stamped manual.
+  const inFlow = new Set(edges.flatMap((e) => [e.from, e.to]));
+  for (const node of nodes) {
+    if (node.type === "agent" && node.id !== entry && !inFlow.has(node.id) && !(node as AgentNode).invocation) {
+      (node as AgentNode).invocation = "manual";
+    }
   }
 
   // Build topology meta
