@@ -32,7 +32,7 @@ import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { BLOCKING_EVENTS, installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 import { topLevelPermissionLines } from "./top-level-permissions.js";
 
@@ -171,9 +171,6 @@ function noteGrade(item: GuardItem, note: string, first = false): void {
   if (item.gradeNote?.includes(note)) return;
   item.gradeNote = item.gradeNote ? (first ? `${note}, ${item.gradeNote}` : `${item.gradeNote}, ${note}`) : note;
 }
-
-/** Claude Code events whose hook can stop the call it runs before (exit 2). */
-const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
 
 /**
  * D-3: why a cited hook that declares strength: refuse cannot refuse, or null when it can: a

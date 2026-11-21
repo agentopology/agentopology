@@ -23,6 +23,7 @@ import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
+import { isWorkflowSeamAgent } from "./seam.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -173,8 +174,11 @@ export function isRegisteredSubagentType(ast: TopologyAST, name: string | undefi
   // settings key is the same mechanism as --agent (the sub-agents doc: the
   // flag overrides the setting): INFERRED. Codex has no entry agent.
   if (p.id === "claude-code" && name === sessionAgentId(ast)) return false;
+  // An `execution: workflow` agent runs inside the workflow script: the
+  // claude-code binding writes no agent file for it, so it is no subagent_type
+  // there. Codex writes it as an agent.
   return ast.nodes.some(
-    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode))) && n.id === name,
+    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode) && !(p.id === "claude-code" && isWorkflowSeamAgent(n as AgentNode)))) && n.id === name,
   );
 }
 
@@ -233,6 +237,8 @@ function anchorKind(ast: TopologyAST, id: string, p: GuardPlatform): string {
     ? "not a declared node"
     : node.type === "agent" && p.id === "claude-code" && id === sessionAgentId(ast)
       ? "the entry agent: it is the session, so SubagentStop never fires for it"
+    : node.type === "agent" && p.id === "claude-code" && isWorkflowSeamAgent(node as AgentNode)
+      ? "an execution: workflow agent: it runs in the workflow script, not as a subagent"
     : node.type === "agent"
       ? `an agent with runs: ${(node as AgentNode).runs}, so not a subagent`
       : node.type === "action"

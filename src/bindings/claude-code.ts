@@ -51,6 +51,7 @@ import {
   shellQuote,
   stepMatchWords,
 } from "./lib/guards.js";
+import { sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -1557,6 +1558,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // Read back by import, so a gate written strength: hope (V135) stays one.
+      if (gate.strength) sections.push(`Strength: ${gate.strength}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
         sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
@@ -2503,6 +2506,14 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     const hookless = hooklessGateReason(ast, gate);
     if (hookless) {
       const inline = getDelegationMode(ast) === "inline";
+      const same = sameCommandHook(ast, gate, "claude-code");
+      if (same) {
+        console.warn(
+          `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook of its own runs it; ` +
+            `hook "${same.name}" (${same.on}) runs the same command, so the check runs there.`,
+        );
+        continue;
+      }
       console.warn(
         `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook runs it — SubagentStop hook not emitted ` +
           (inline ? "" : "(matcher must be an agent node id). ") +

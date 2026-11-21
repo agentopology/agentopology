@@ -720,9 +720,10 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // vanish silently in the output. --allow-invalid compiles the nodes the
   // errors do not touch, never the files the whole topology shares, and exits
   // 1 while errors remain. It used to be --force, which also overwrites kept
-  // files: one flag, two risks. A rule about another target's hooks (V135 on
-  // cursor) does not stop this one.
-  const errors = validate(ast).filter((r) => r.level === "error" && ruleAppliesTo(r.rule, targetName));
+  // files: one flag, two risks. Validated for this target, as `validate
+  // --target` is: a rule about another target's hooks (V135 on cursor, or
+  // after the entry agent on codex) does not stop this one.
+  const errors = validate(ast, { target: targetName }).filter((r) => r.level === "error");
   let scope: InvalidScope | null = null;
   if (errors.length > 0) {
     const say = allowInvalid ? console.log : console.error;
@@ -1345,7 +1346,7 @@ function cmdPlan(
 
   // Interpreted mode: the executing agent places each gate and runs it, so a
   // rule about generated hooks (V135) does not hold the plan back.
-  const results = validate(ast).filter((r) => ruleAppliesTo(r.rule, "interpreted"));
+  const results = validate(ast).filter((r) => ruleAppliesTo(r, "interpreted"));
   const errors = results.filter((r) => r.level === "error");
 
   // Record the source-tree revision so mid-run drift is detectable. Best
@@ -1736,7 +1737,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
-  const errors = validate(ast).filter((r) => r.level === "error");
+  const errors = validate(ast, { target: targetName }).filter((r) => r.level === "error");
   if (errors.length > 0) {
     console.error(c.red(`  ${errors.length} validation error(s). Nothing was written.`));
     for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);

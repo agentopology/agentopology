@@ -25,7 +25,7 @@ export const briefExporter: Exporter = {
   export(ast: TopologyAST): GeneratedFile[] {
     // Interpreted mode: a rule about generated hooks (V135) does not apply.
     const errors = validate(ast)
-      .filter((r) => r.level === "error" && ruleAppliesTo(r.rule, "interpreted"))
+      .filter((r) => r.level === "error" && ruleAppliesTo(r, "interpreted"))
       .map((r) => ({ rule: r.rule, message: r.message, node: r.node }));
 
     const brief = buildExecutionBrief(ast, {

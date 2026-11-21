@@ -633,6 +633,7 @@ export function parseSkillMd(content: string): SkillMdResult {
         if (trimmed.startsWith("On fail:")) gate.onFail = trimmed.slice(8).trim();
         if (trimmed.startsWith("Retry:")) gate.retry = parseInt(trimmed.slice(6).trim(), 10);
         if (trimmed.startsWith("Timeout:")) gate.timeout = trimmed.slice(8).trim();
+        if (trimmed.startsWith("Strength:")) gate.strength = trimmed.slice(9).trim();
       }
 
       result.gates.push(gate);
