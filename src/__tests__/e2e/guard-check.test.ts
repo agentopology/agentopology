@@ -183,7 +183,9 @@ describe("guard --check from the CLI", () => {
  */
 // release and voice carry no commands: the binding compiles no hook for a gate
 // before them, so only the cited guard can credit it. (With commands, such a
-// gate is guarded by before-action.sh: see action-guard.test.ts.)
+// gate is guarded by before-action.sh: see action-guard.test.ts.) lock-voice's
+// edge cites a hook with no strength, so nothing refuses it and it says
+// strength: hope (V135 refuses a gate meant to refuse that no hook runs).
 const CITED = `topology cited : [pipeline] {
   meta {
     version: "1.0.0"
@@ -244,6 +246,7 @@ const CITED = `topology cited : [pipeline] {
       before: voice
       run: "scripts/lock-voice.sh"
       on-fail: halt
+      strength: hope
     }
     gate doctrine {
       after: owner-yes

@@ -503,6 +503,7 @@ gates {
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
+- **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
 
 ## Example
 
@@ -3362,7 +3363,7 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 \`orchestrator.delegation\` must be one of:
 
 - \`subagent\` (default) — orchestrator spawns each agent via the platform's subagent / Task-tool mechanism.
-- \`inline\` — orchestrator drives every agent step in its own session context; no subagent is ever spawned. The claude-code binding suppresses \`SubagentStop\` hooks in this mode and emits a "Gates to invoke" cheat sheet in the trigger playbook.
+- \`inline\` — orchestrator drives every agent step in its own session context; no subagent is ever spawned. The claude-code binding suppresses \`SubagentStop\` hooks in this mode and emits a "Gates to invoke" cheat sheet in the trigger playbook. A gate the playbook runs is \`strength: hope\`; one left to refuse is a V135 error unless a script step is in its \`before:\`.
 
 **Violation:** \`delegation: hybrid\`.
 **Fix:** Use \`subagent\` or \`inline\`.
@@ -3376,6 +3377,12 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 **Violation (warning):** a gate \`after:\` the entry agent. The entry agent is the session, so SubagentStop never fires for it; the hook is not written, and guard --check grades the gate hope.
 **Violation (warning):** the entry agent has a \`tools\` list without \`Agent\` (or \`Task\`) while other agents exist: its tools are the session's, so the session cannot start them.
 **Fix:** Point \`entry\` at a subagent, and remove the extension's \`agent\` or make it agree. Anchor a gate on a subagent or a script step. Add \`Agent\`, or \`Agent(worker, reviewer)\`, to the entry agent's tools.
+
+### V135: Refusing Gate No Hook Runs (error)
+A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` refuse or not written) must have a moment Claude Code or Codex can hook: every \`after:\` a subagent (SubagentStop), a subagent in \`before:\` (before-agent.sh), or a script step, an action with \`commands:\`, in \`before:\` (before-action.sh). Under \`delegation: inline\` only the script step wires. Anything else got a wrapper script nothing calls, a scaffold warning, and a passing validate. An edge between its anchors that cites (\`guard:\`) a declared blocking hook with \`strength: refuse\` credits it; a cited \`at:\` does not. Applies with no target, claude-code and codex; not cursor (a hook for every gate) or claude-workflow, and \`plan\` does not stop on it.
+
+**Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
+**Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`.
 
 ## Summary
 
@@ -3412,6 +3419,7 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 | V29 | warning | Metering Pricing Enum |
 | V87 | error | Orchestrator Delegation Enum |
 | V134 | error/warning | Entry Agent |
+| V135 | error | Refusing Gate No Hook Runs |
 `,
   },
 

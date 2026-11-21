@@ -140,6 +140,26 @@ describe("V135: a gate meant to refuse that no hook runs", () => {
     });
   }
 
+  describe("an edge guard that cites a refusing hook credits the gate (as guard --check does)", () => {
+    const withEdgeGuard = (hook: string, gateExtra = "") => topo(`      after: h\n      before: report\n${RUN}${gateExtra}`)
+      .replace("    deploy -> report\n", "    deploy -> report\n    h -> report [guard: lock]\n")
+      .replace("  gates {", `  hooks {\n    hook lock {\n${hook}\n    }\n  }\n  gates {`);
+    const PRE = `      on: PreToolUse\n      matcher: "Bash"\n      run: "python3 harness/lock.py"\n      strength: refuse`;
+
+    it("passes: the edge cites a PreToolUse hook with strength: refuse", () => {
+      expect(v135(withEdgeGuard(PRE))).toEqual([]);
+    });
+    it("errors: the cited hook declares no strength", () => {
+      expect(v135(withEdgeGuard(`      on: PreToolUse\n      matcher: "Bash"\n      run: "python3 harness/lock.py"`))).toHaveLength(1);
+    });
+    it("errors: the cited hook is PostToolUse (it cannot block)", () => {
+      expect(v135(withEdgeGuard(`      on: PostToolUse\n      matcher: "Bash"\n      run: "python3 harness/lock.py"\n      strength: refuse`))).toHaveLength(1);
+    });
+    it("errors: a cited gate (at:) takes no edge credit (0.12.4)", () => {
+      expect(v135(withEdgeGuard(PRE, `\n      at: "tools/checks.py"`))).toHaveLength(1);
+    });
+  });
+
   it("names the fix: an anchor that wires, or strength: hope", () => {
     const [hit] = v135(topo(`      before: report\n${RUN}`));
     expect(hit.message).toContain("Give it a subagent in after: or before:, or a script step (an action with commands:) in before:");
@@ -149,6 +169,28 @@ describe("V135: a gate meant to refuse that no hook runs", () => {
   it("under inline delegation names the one anchor that still wires", () => {
     const [hit] = v135(topo(`      after: a\n      before: b\n${RUN}`, "inline"));
     expect(hit.message).toContain("only a script step (an action with commands:) in before: gets a hook");
+  });
+
+  describe("a gate after the entry agent (meta { entry }): the entry agent is the session, not a subagent", () => {
+    const withEntry = (gate: string) =>
+      topo(gate).replace('    description: "gate anchors"\n', '    description: "gate anchors"\n    entry: a\n');
+
+    it("errors: after: the entry agent, no before: (SubagentStop never fires for the session)", () => {
+      const hits = v135(withEntry(`      after: a\n${RUN}`));
+      expect(hits).toHaveLength(1);
+      expect(hits[0].message).toContain(
+        'after: "a" (the entry agent: it is the session, so SubagentStop never fires for it), not a subagent and no before: target',
+      );
+    });
+    it("passes: after: the entry agent, before: a subagent (before-agent.sh runs it before that agent launches)", () => {
+      expect(v135(withEntry(`      after: a\n      before: b\n${RUN}`))).toEqual([]);
+    });
+    it("passes: after: another agent while the entry is set", () => {
+      expect(v135(withEntry(`      after: b\n${RUN}`))).toEqual([]);
+    });
+    it("codex has no entry agent: after: a stays wired there (no V135)", () => {
+      expect(v135(withEntry(`      after: a\n${RUN}`), "codex")).toEqual([]);
+    });
   });
 
   it("says a citation does not make it refuse", () => {

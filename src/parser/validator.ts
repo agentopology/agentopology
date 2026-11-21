@@ -33,9 +33,9 @@ import { isClaudeModelName } from "../conformance/codex.js";
 import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
-import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
+import { checkableActionGate, hooklessGateReason, stepMatchWords } from "../bindings/lib/guards.js";
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
-import { gateWiring, getDelegationMode, isRegisteredSubagentType } from "../bindings/lib/guards.js";
+import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
@@ -4144,6 +4144,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v132PermissionWords(ast, opts),
     ...v133McpServerFrom(ast),
     ...v134EntryAgent(ast, opts),
+    ...v135HooklessRefuseGate(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4438,6 +4439,90 @@ function v133McpServerFrom(ast: TopologyAST): ValidationResult[] {
       rule: "V133",
       level: "error",
       message: `mcp-servers ${key}: from: ${String(config.from)} is not an accepted form; write from: plugin "<plugin-name>" (a server a Claude Code plugin provides), or remove from: for a project server.`,
+    });
+  }
+  return results;
+}
+
+/** The targets whose generated hooks V135 is about: both wire gates the same way (gateWiring, before-action.sh). */
+export const V135_TARGETS: readonly string[] = ["claude-code", "codex"];
+
+/**
+ * Whether a validation rule applies to a command's output. V135 is about the
+ * hooks claude-code and codex generate, so it does not hold back a scaffold
+ * for another target, nor `plan` and the brief (target "interpreted"), where
+ * the executing agent places a gate by its anchors and runs it itself.
+ */
+export function ruleAppliesTo(rule: string, target: string): boolean {
+  return rule !== "V135" || V135_TARGETS.includes(target);
+}
+
+/**
+ * Whether a hook the topology declares refuses for a gate with none of its
+ * own (N33, as guard --check credits it): an edge from one of its `after:` to
+ * one of its `before:` cites, in `guard:`, a hook with `strength: refuse` that
+ * can block (a command hook on a blocking event, not async; V104 warns on the
+ * rest), or another gate a generated hook runs. A cited gate (`at:`) takes no
+ * edge credit since 0.12.4.
+ */
+function edgeGuardRefuses(ast: TopologyAST, gate: GateNode, p: GuardPlatform): boolean {
+  if (gate.at) return false;
+  const afters = gateAnchors(gate, "after");
+  const befores = gateAnchors(gate, "before");
+  const hooks = new Map((ast.hooks ?? []).map((h) => [h.name, h]));
+  const gates = new Map(ast.nodes.filter((n) => n.type === "gate").map((n) => [n.id, n as GateNode]));
+  return ast.edges.some((e) => afters.includes(e.from) && befores.includes(e.to) && (e.guard ?? []).some((g) => {
+    const hook = hooks.get(g);
+    if (hook) {
+      const event = HOOK_EVENT_ALIASES[hook.on] ?? hook.on;
+      return hook.strength === "refuse" && (hook.type ?? "command") === "command" && !NON_BLOCKING_EVENTS.has(event) && !hook.async;
+    }
+    const other = gates.get(g);
+    return !!other && other !== gate && other.behavior !== "advisory" && !!scriptNameFromRun(other.run) && hooklessGateReason(ast, other, p) === null;
+  }));
+}
+
+/**
+ * V135: a gate meant to refuse that no generated hook runs. A gate whose
+ * `run:` names a script, not advisory, with strength refuse or none written,
+ * is meant to refuse. Claude Code and Codex run it from a hook only when its
+ * moment is marked (hooklessGateReason): every `after:` a subagent
+ * (SubagentStop), a subagent in `before:` (before-agent.sh), or a script step
+ * in `before:` (before-action.sh); inline delegation leaves only the last.
+ * Otherwise scaffold wrote the wrapper script, warned, and wired nothing,
+ * while validate passed: a gate that looked like it refused and never ran. An
+ * edge guard citing a refusing hook credits it (edgeGuardRefuses). A
+ * citation (`at:`) does not change that: since 0.12.4 only the gate's own
+ * generated hook makes it refuse. `strength: hope` (or detect, none) says the
+ * playbook runs it, and is not reported. Only with no target, claude-code or
+ * codex: Cursor writes a hook for every gate, and claude-workflow leaves a
+ * host gate to the claude-code binding.
+ */
+function v135HooklessRefuseGate(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (opts.target && !V135_TARGETS.includes(opts.target)) return results;
+  const inline = ast.nodes.some((n) => n.type === "orchestrator" && (n as OrchestratorNode).delegation === "inline");
+  // Codex has no entry agent: a gate after it stays a SubagentStop gate there.
+  const p = opts.target === "codex" ? CODEX_GUARDS : CLAUDE_CODE_GUARDS;
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.strength !== undefined && gate.strength !== "refuse") continue;
+    const reason = hooklessGateReason(ast, gate, p);
+    if (!reason) continue;
+    if (edgeGuardRefuses(ast, gate, p)) continue;
+    const fix = inline
+      ? "With delegation inline, only a script step (an action with commands:) in before: gets a hook"
+      : "Give it a subagent in after: or before:, or a script step (an action with commands:) in before:";
+    results.push({
+      rule: "V135",
+      level: "error",
+      node: gate.id,
+      line: lookupLine(ast, gate.id),
+      message:
+        `Gate "${gate.id}" would refuse, but has ${reason}, so no hook runs it: scaffold writes its wrapper script and nothing calls it. ` +
+        `${fix}; or, if a playbook runs it by hand, write strength: hope.` +
+        (gate.at ? " Its at: citation does not make it refuse: only its own generated hook does." : ""),
     });
   }
   return results;

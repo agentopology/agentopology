@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
-import { validate } from "../parser/validator.js";
+import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { BindingRefusal } from "../bindings/types.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
@@ -720,8 +720,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // vanish silently in the output. --allow-invalid compiles the nodes the
   // errors do not touch, never the files the whole topology shares, and exits
   // 1 while errors remain. It used to be --force, which also overwrites kept
-  // files: one flag, two risks.
-  const errors = validate(ast).filter((r) => r.level === "error");
+  // files: one flag, two risks. A rule about another target's hooks (V135 on
+  // cursor) does not stop this one.
+  const errors = validate(ast).filter((r) => r.level === "error" && ruleAppliesTo(r.rule, targetName));
   let scope: InvalidScope | null = null;
   if (errors.length > 0) {
     const say = allowInvalid ? console.log : console.error;
@@ -1342,7 +1343,9 @@ function cmdPlan(
     process.exit(1);
   }
 
-  const results = validate(ast);
+  // Interpreted mode: the executing agent places each gate and runs it, so a
+  // rule about generated hooks (V135) does not hold the plan back.
+  const results = validate(ast).filter((r) => ruleAppliesTo(r.rule, "interpreted"));
   const errors = results.filter((r) => r.level === "error");
 
   // Record the source-tree revision so mid-run drift is detectable. Best
