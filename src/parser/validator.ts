@@ -34,6 +34,7 @@ import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
+import { entryProblem } from "../bindings/lib/entry.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
@@ -424,6 +425,8 @@ function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
     if (!isAgent(node)) continue;
     if (node.invocation === "manual") continue;
     if (gMembers.has(node.id)) continue;
+    // The entry agent is the session itself (V134); it needs no flow edge.
+    if (node.id === ast.topology.entry) continue;
     if (!flowNodes.has(node.id)) {
       results.push({
         rule: "V4",
@@ -4138,6 +4141,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v131LostStructure(ast),
     ...v132PermissionWords(ast, opts),
     ...v133McpServerFrom(ast),
+    ...v134EntryAgent(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4438,6 +4442,45 @@ function v133McpServerFrom(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
+ * V134: `meta { entry }` names the agent every session starts as, which
+ * Claude Code reads from the settings.json `agent` key: a subagent's name. An
+ * error when the entry is not a declared node, is not an agent (an action,
+ * gate, human, group or orchestrator), or is an agent the claude-code binding
+ * does not write as a subagent (`runs: inline` / `fork` become skills; an
+ * `execution: workflow` agent belongs to the workflow script). A warning,
+ * when compiling for Claude Code, when `extensions { claude-code { agent } }`
+ * names a different agent: the extension is the more specific and is written.
+ */
+function v134EntryAgent(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const entry = ast.topology.entry;
+  if (!entry) return results;
+  const problem = entryProblem(ast);
+  if (problem) {
+    const declared = ast.nodes.some((n) => n.id === entry);
+    results.push({
+      rule: "V134",
+      level: "error",
+      message: `meta entry "${entry}" ${problem}.`,
+      ...(declared ? { node: entry, line: lookupLine(ast, entry) } : {}),
+    });
+    return results;
+  }
+  if (opts.target && opts.target !== "claude-code") return results;
+  const ext = ast.extensions?.["claude-code"]?.agent;
+  if (ext !== undefined && String(ext) !== entry) {
+    results.push({
+      rule: "V134",
+      level: "warning",
+      node: entry,
+      line: lookupLine(ast, entry),
+      message: `meta entry is "${entry}" but extensions { claude-code { agent: ${String(ext)} } } names "${String(ext)}"; settings.json gets agent: "${String(ext)}" (the extension is the more specific). Remove one so they agree.`,
+    });
+  }
+  return results;
+}
+
+/**
  * V132: a `permissions:` word whose Claude Code compile is not what the word
  * reads as. `auto` is Claude Code's auto mode (a classifier approves actions
  * without asking) and compiles to `permissionMode: auto`; it is not a short
@@ -4620,6 +4663,12 @@ function stepPlaceholderWarnings(ast: TopologyAST): ValidationResult[] {
 export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const warn = (rule: string, node: string, message: string) => results.push({ rule, level: "warning", node, message: `[codex] ${message}` });
+  // Codex's config.toml has no key that picks the primary session's agent:
+  // the agents.* keys declare roles for spawned subagents only
+  // (learn.chatgpt.com/docs/config-file/config-reference).
+  if (ast.topology.entry) {
+    warn("CX5-entry", ast.topology.entry, `meta entry "${ast.topology.entry}": Codex has no setting that starts a session as a named agent, so nothing is written for it. The agent is still written as a spawnable agent.`);
+  }
   for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
     const p = pluginMcpServer(key, config);
     if (p) warn("CX5-mcp-plugin", key, `MCP server "${key}" comes from the Claude Code plugin "${p.plugin}"; Codex has no Claude Code plugins, so no [mcp_servers.${key}] table is written. Declare the server's command or url for Codex.`);

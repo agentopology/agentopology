@@ -292,8 +292,28 @@ meta {
 | `version` | string | yes | -- |
 | `description` | string | yes | -- |
 | `domain` | identifier | no | -- |
+| `entry` | agent-id | no | -- |
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
+
+**`entry`** -- The agent every session starts as:
+
+```agenttopology
+meta {
+  version: "1.0.0"
+  description: "Release desk"
+  entry: lead
+}
+```
+
+- **claude-code** writes `"agent": "<id>"` into `.claude/settings.json`, Claude Code's key that starts every session as that subagent, with its prompt, tools and model (code.claude.com/docs/en/sub-agents; `claude --agent <name>` overrides it for one session). When `extensions { claude-code { agent } }` names a different agent, that value is written, as the more specific, and V134 warns naming both. A `.claude/settings.json` that already sets `agent` keeps its value, like every other key the merge does not replace, and the run says so.
+- **codex** has no setting that starts a session as a named agent (its `agents.*` keys declare roles for spawned agents only): nothing is written, and `validate --target codex` says so (CX5-entry).
+- **cursor** has no such setting either: nothing is written, and scaffold warns.
+- **claude-workflow** lists it in its LOSSY report: the workflow script runs inside the session and cannot choose which agent that session is.
+
+The entry must be a declared agent that claude-code writes as a subagent: not an action, gate, human, group or orchestrator, not `runs: inline` or `runs: fork` (written as a skill), and not an `execution: workflow` agent (V134). It needs no flow edge (V4 does not apply to it). Import reads a settings.json `agent` that names an imported agent back as `entry`.
+
+`entry` here is the session's agent; `interface { entry: <id> exit: <id> }` (composition) is a fragment's flow entry point. They are separate fields.
 
 ---
 
@@ -1966,6 +1986,7 @@ All optional fields and their defaults when omitted:
 | `gate` | `extensions` | -- (none) |
 | `hook` | `extensions` | -- (none) |
 | `meta` | `domain` | -- (none) |
+| `meta` | `entry` | -- (none: Claude Code's own main agent) |
 
 ---
 

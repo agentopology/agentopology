@@ -106,6 +106,8 @@ as, with, include,
 entry, exit, sha256
 ```
 
+`entry` is in use, and stays reserved so it cannot name a node: `interface { entry: <id> exit: <id> }` (a fragment's flow entry point) and `meta { entry: <agent-id> }` (the agent every session starts as, V134).
+
 ---
 
 ## Wave 5 Keywords (Advanced Patterns)

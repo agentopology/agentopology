@@ -781,10 +781,13 @@ function uniqueId(id: string, taken: Set<string>): string {
 export function parseSettingsJson(content: string): {
   settings: Record<string, unknown>;
   hooks: HookDef[];
+  /** The `agent` key: the subagent every session starts as (meta { entry }). */
+  agent?: string;
 } {
   const json = JSON.parse(content);
   const settings: Record<string, unknown> = {};
   const hooks: HookDef[] = [];
+  const agent = typeof json.agent === "string" && json.agent !== "" ? json.agent : undefined;
 
   // Claude Code reads rules from `permissions`. Import used to read only
   // top-level allow/deny/ask — keys Claude Code ignores — so every normal
@@ -834,7 +837,7 @@ export function parseSettingsJson(content: string): {
     }
   }
 
-  return { settings, hooks };
+  return { settings, hooks, ...(agent ? { agent } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -991,12 +994,14 @@ export function importClaudeCode(
   // 3. Parse settings.json
   let settings: Record<string, unknown> = {};
   let hooks: HookDef[] = [];
+  let settingsAgent: string | undefined;
   const settingsFile = files.find((f) =>
     f.path.endsWith("settings.json") && f.path.includes(".claude"),
   );
   if (settingsFile) {
     const parsed = parseSettingsJson(settingsFile.content);
     settings = parsed.settings;
+    settingsAgent = parsed.agent;
     // The command is written as it is in settings.json. (S-11's `command <tool>`
     // for a bare PATH tool needs emit-as-written, which moved to 0.12.)
     hooks = parsed.hooks;
@@ -1117,6 +1122,16 @@ export function importClaudeCode(
     }
   }
 
+  // settings.json `agent` is the subagent every session starts as: meta
+  // { entry } when an agent file was imported for it. A plugin's or a
+  // built-in agent has no node here, so it is reported, not invented.
+  let entry: string | undefined;
+  if (settingsAgent) {
+    const node = nodes.find((n) => n.id === settingsAgent);
+    if (node && node.type === "agent") entry = settingsAgent;
+    else warnings.push(`.claude/settings.json agent "${settingsAgent}" names no imported agent (a plugin's or built-in agent?), so it is not imported as meta entry.`);
+  }
+
   // Build topology meta
   const atMeta = recovered.first?.topology;
   const meta: TopologyMeta = {
@@ -1129,6 +1144,7 @@ export function importClaudeCode(
     domain: topologyMeta?.domain,
     timeout: topologyMeta?.timeout,
     errorHandler: topologyMeta?.errorHandler,
+    ...(entry ? { entry } : {}),
     durable: topologyMeta?.durable,
   };
 

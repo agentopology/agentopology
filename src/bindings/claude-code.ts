@@ -33,6 +33,7 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { entryProblem } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
@@ -2632,6 +2633,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
 
   // Defaults and observability are documented in the CLAUDE.md context file,
   // not in settings.json (Claude Code doesn't recognize these keys).
+
+  // meta { entry }: the subagent every session starts as (the `agent` key).
+  // An extensions { claude-code { agent } } below is more specific and wins
+  // (V134 warns when they differ). An entry Claude Code cannot start (V134
+  // error) is not written under --allow-invalid.
+  if (ast.topology.entry) {
+    const problem = entryProblem(ast);
+    if (problem) {
+      console.warn(`[claude-code] meta entry "${ast.topology.entry}" ${problem}; agent not written to settings.json.`);
+    } else {
+      settings.agent = ast.topology.entry;
+    }
+  }
 
   // Topology extensions for claude-code: each key at its documented path and
   // type (`defaultMode` lands under permissions). V130 refuses what has no

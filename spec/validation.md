@@ -44,7 +44,7 @@ flow {
 
 ## Rule 4: No Orphans
 
-Every declared agent must appear in the `flow` block or have `invocation: manual`. An agent that exists but is unreachable from the flow graph is an error.
+Every declared agent must appear in the `flow` block or have `invocation: manual`. The `meta { entry }` agent is exempt: it is the session itself (V134). An agent that exists but is unreachable from the flow graph is an error.
 
 ```agenttopology
 # INVALID -- "helper" is declared but never used in flow and not manual
@@ -665,7 +665,7 @@ agent researcher {
 
 ## Summary Table
 
-All 133 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 134 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -677,7 +677,7 @@ through the validator like any other rule.
 | V1 | error | All agent, action, and gate names must be globally unique |
 | V2 | error | No name may match a reserved keyword |
 | V3 | error | Every node referenced in flow must be a declared agent, action, or gate |
-| V4 | error | Every agent must appear in flow unless it has `invocation: manual` or is a group member |
+| V4 | error | Every agent must appear in flow unless it has `invocation: manual`, is a group member, or is the `meta { entry }` agent |
 | V5 | error/warning | Every `[when x.y]` must reference a declared output |
 | V6 | error/warning | Every back-edge must have `max N` |
 | V7 | error/warning | Every agent and orchestrator must have a model |
@@ -807,6 +807,7 @@ through the validator like any other rule.
 | V131 | error | A block the source declares is not in the parse as written: a brace inside a quoted string, or a brace that does not balance, ends the topology or a block before its written end, so what follows would be dropped without a message. The message names the line where parsing stopped and the blocks that are not read (a `#` comment's braces are text and never count). The unused second copy of a single section, such as a second `gates { }` block, is a V23 warning and not reported here |
 | V132 | warning | A `permissions:` word whose Claude Code compile is not what it reads as (target claude-code or none). `permissions: auto` is Claude Code's auto mode (a classifier approves actions without asking) and compiles to `permissionMode: auto`; it is not a short form of `autonomous`, which writes no permissionMode. `permissions: interactive` writes no permissionMode (Claude Code asks) where it wrote `acceptEdits` before 0.12.2; the message names the old value and says to write `permissions: acceptEdits` to keep it |
 | V133 | error | An `mcp-servers` entry's `from:` is not an accepted form. The one accepted form is `from: plugin "<plugin-name>"` (the name may also be written bare, `from: plugin playwright`; a trailing comment is fine). Anything else, such as single quotes, `Plugin`, the whole value quoted, an empty or spaced name, or two names, would fall back to a project server and compile every ref to `mcp__<key>__`, so the agent silently loses the plugin's tools. The message names the expected form |
+| V134 | error/warning | `meta { entry }` names the agent every session starts as (Claude Code: the settings.json `agent` key, which names a subagent). **Error** when the entry is not a declared node; when it names an action, gate, human, group or orchestrator (not an agent); or when it names an agent the claude-code binding does not write as a subagent: `runs: inline` or `runs: fork` (written as a skill) or `extensions { claude-workflow { execution: workflow } }` (run by the workflow script, no `.claude/agents` file). **Warning** (target claude-code or none) when `extensions { claude-code { agent } }` names a different agent: the message names both, and the extension value is what is written, as the more specific. The entry agent needs no flow edge (V4 does not apply to it) |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

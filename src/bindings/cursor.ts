@@ -1938,6 +1938,13 @@ export const cursorBinding: BindingTarget = {
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
     warnSessionsNotCompiled(ast, "cursor");
+    // Cursor subagents are delegated to or invoked with /name; no file makes
+    // one the main chat's agent (cursor.com/docs/context/subagents).
+    if (ast.topology.entry) {
+      console.warn(
+        `[cursor] Warning: meta entry "${ast.topology.entry}": Cursor has no setting that starts a chat as a named agent -- not written. The agent keeps its own rule file.`,
+      );
+    }
     // Fragment check
     if (ast.isFragment) {
       return deduplicateFiles([

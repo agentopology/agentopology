@@ -418,6 +418,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
 
   if (fields.timeout) result.timeout = fields.timeout;
   if (fields["error-handler"]) result.errorHandler = fields["error-handler"];
+  if (fields.entry) result.entry = unquote(fields.entry);
   if (fields.durable) result.durable = fields.durable === "true";
 
   return result;
@@ -2562,6 +2563,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.domain ? { domain: metaFields.domain } : {}),
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
+    ...(metaFields.entry ? { entry: metaFields.entry } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
   };
 
