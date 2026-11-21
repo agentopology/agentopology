@@ -480,7 +480,10 @@ describe("a gate after both the entry agent and a subagent", () => {
   it("guard --check grades it refuse on worker, with a note naming lead", () => {
     const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-mixed-"));
     try {
-      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(src))).out);
+      // A gate check script still a stub grades none (it checks nothing): write it,
+      // as a user would, so the wiring is what is graded.
+      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(src))).out
+        .map((f) => (f.stub === "gate" ? { ...f, content: "#!/usr/bin/env bash\nexit 0\n" } : f)));
       const item = checkGuards(parse(src), root).items.find((i) => i.kind === "gate" && i.id === "check")!;
       expect(item.strength).toBe("refuse");
       expect(item.where).toMatch(/SubagentStop on worker/);
