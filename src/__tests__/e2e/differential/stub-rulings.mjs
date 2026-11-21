@@ -17,11 +17,18 @@
  */
 
 const OLD_STUB_NOTE = /^(\s+)⚠ its check script (\S+) is still a stub, so it blocks every run until it is written$/;
-/** Notes the none branch keeps for a gate before a script step (before-action.sh). */
-const KEPT_NOTES = /⚠ (refuses in Claude Code sessions only|a step named through a variable)/;
+/** Notes only the refuse branch writes (check.ts): a stop event's, and a missing onFailure: block. */
+const REFUSE_ONLY_NOTES = [
+  "exit 2 keeps the agent working until the gate passes; a call it already made is not undone",
+  'the entry has no onFailure: "block", so the step goes through if the hook cannot start',
+];
 const ITEM = /^  \S/;
 const NOTE = /^\s+[⚠✗] /;
 const MARK = / · installed \S+: \S+$/;
+/** A line of scaffold's stub summary between its header and its "Search for" line. */
+const SUMMARY_BODY = /^\s+(by kind: |· )/;
+const SUMMARY_HEAD = /^\s+\d+ stub\(s\) need implementation before this topology can run:$/;
+const SUMMARY_TAIL = /^\s+Search for "# AGENTOPOLOGY_STUB/;
 
 /** validate's stub lines (new): the count, and the paths that hold the user's own files. */
 const VALIDATE_STUB_LINE = /^  (stubs \([^)]+\): \d+ of \d+ generated files are stubs: |1 stub path already holds your own file: |\d+ stub paths already hold your own files: )/;
@@ -40,10 +47,15 @@ export function stubless(text) {
       if (lines[i + 1] === "") i++;
       continue;
     }
-    if (/^\s+\d+ stub\(s\) need implementation before this topology can run:$/.test(lines[i])) {
-      if (out.length && out[out.length - 1] === "") out.pop();
-      while (i < lines.length && !/^\s+Search for "# AGENTOPOLOGY_STUB/.test(lines[i])) i++;
-      continue;
+    if (SUMMARY_HEAD.test(lines[i])) {
+      // Only a whole summary goes: header, by-kind and path lines, the "Search for" line.
+      let j = i + 1;
+      while (j < lines.length && SUMMARY_BODY.test(lines[j])) j++;
+      if (j < lines.length && SUMMARY_TAIL.test(lines[j])) {
+        if (out.length && out[out.length - 1] === "") out.pop();
+        i = j;
+        continue;
+      }
     }
     out.push(lines[i]);
   }
@@ -61,34 +73,43 @@ export function regradeStubbedGates(text) {
     while (j < lines.length && NOTE.test(lines[j])) j++;
     const notes = lines.slice(i + 1, j);
     const stub = notes.map((n) => OLD_STUB_NOTE.exec(n)).find(Boolean);
-    if (!stub) { out.push(...lines.slice(i, j)); i = j - 1; continue; }
-    const m = /^(  gate \S+\s+)(.*?)(\s+by: .*)$/.exec(lines[i].replace(MARK, ""));
+    // Only a gate graded refuse (the only grade the stub note came with) is regraded.
+    const m = /^(  gate \S+\s+)(refuse\b.*?)(\s+by: .*)$/.exec(lines[i].replace(MARK, ""));
+    if (!stub || !m) { out.push(...lines.slice(i, j)); i = j - 1; continue; }
     out.push(`${m[1]}none${m[3]}`);
-    out.push(`${stub[1]}⚠ its check script ${stub[2]} is still a stub: it checks nothing and blocks every run until it is written`);
-    out.push(...notes.filter((n) => KEPT_NOTES.test(n)));
+    // Every note stays in place, except the refuse-only ones; the stub note is reworded.
+    for (const n of notes) {
+      if (REFUSE_ONLY_NOTES.some((r) => n.trim() === `⚠ ${r}`)) continue;
+      out.push(n === stub[0] ? `${stub[1]}⚠ its check script ${stub[2]} is still a stub: it checks nothing and blocks every run until it is written` : n);
+    }
     regraded++;
     i = j - 1;
   }
   if (regraded === 0) return text;
   const e = out.findIndex((l) => /^enforcement: \d+ of \d+ steps refuse/.test(l));
+  if (e < 0) return text;
   out[e] = out[e].replace(/^enforcement: (\d+)/, (_, n) => `enforcement: ${Number(n) - regraded}`);
-  // After the counts: the enforcement line, any unattributed-hook block, the missing line.
+  // Where the report puts it: after the enforcement line, the unattributed-hook block and the missing line.
   let k = e + 1;
-  while (k < out.length && out[k] !== "" && !/^\d+ gate\(s\) cite code/.test(out[k]) && !/^\S.*top level/.test(out[k])) k++;
+  if (k < out.length && /^\d+ hook\(s\) in \S+ are not tied to any step here/.test(out[k])) {
+    k++;
+    while (k < out.length && /^  \S/.test(out[k])) k++;
+  }
+  if (k < out.length && /^\d+ item\(s\) are missing or their citation no longer holds/.test(out[k])) k++;
   out.splice(k, 0, `${regraded} gate(s) graded none because their check script is still a stub: it checks nothing and blocks every run; write it and remove its AGENTOPOLOGY_STUB line`);
   return out.join("\n");
 }
 
-/** Column padding (two or more spaces after text) compared as one space. */
+/** Column padding (two or more spaces after text) compared as one space, on the report's item lines only. */
 export function unpadded(text) {
-  return text.replace(/(\S) {2,}/g, "$1 ");
+  return text.split("\n").map((l) => (ITEM.test(l) && /\s by: /.test(l) ? l.replace(/(\S) {2,}/g, "$1 ") : l)).join("\n");
 }
 
 /**
  * [frozen, today] as the comparison sees them: both without the stub summary,
- * the frozen side regraded. Padding compares as one space only where a
- * regrade happened (it changes the report's column width); elsewhere every
- * byte still counts.
+ * the frozen side regraded. Padding compares as one space only on item lines
+ * of an output where a regrade happened (it changes the report's column
+ * width); elsewhere every byte still counts.
  */
 export function ruledSides(was, now) {
   const regraded = regradeStubbedGates(was);
