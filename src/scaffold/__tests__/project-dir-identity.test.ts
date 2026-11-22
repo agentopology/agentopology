@@ -87,4 +87,16 @@ describe("the merge never makes one hook of two different commands", () => {
   ])("%s  vs  %s", (user, at) => {
     expect(merge(user, at)).toEqual([user, at]);
   });
+
+  // the variable followed by a bare slash names the folder itself, not a file in it: an argument, kept as written
+  it.each([
+    ['bash x.sh "${CLAUDE_PROJECT_DIR}"/', "bash x.sh"],
+    ['bash x.sh "$CLAUDE_PROJECT_DIR"/', "bash x.sh"],
+    ['rsync -a "${CLAUDE_PROJECT_DIR}/" /b', "rsync -a /b"],
+    ['rsync -a "${CLAUDE_PROJECT_DIR:-.}/" /b', "rsync -a /b"],
+  ])("two user hooks %s  and  %s stay two when a generated hook changes the file", (first, second) => {
+    const user = settingsWith(first, second);
+    const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
+    expect(commandsOf(deepMergeSettingsJson(user, at))).toEqual([first, second, "bash .claude/hooks/stop.sh"]);
+  });
 });
