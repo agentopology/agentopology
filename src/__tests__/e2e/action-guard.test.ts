@@ -89,7 +89,7 @@ describe.skipIf(!hasJq)("[N38] before-action.sh refuses a script step until the 
     const settings = JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8"));
     expect(settings.hooks.PreToolUse).toContainEqual({
       matcher: "Bash|Monitor|PowerShell",
-      hooks: [{ type: "command", command: `bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"`, onFailure: "block" }],
+      hooks: [{ type: "command", command: `bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"`, timeout: 120, onFailure: "block" }],
     });
   });
 

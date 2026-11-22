@@ -28,7 +28,8 @@ import {
   generateBeforeEditScript,
   generateGateWrapperScripts,
   getDelegationMode,
-  spawnHeldAgents, MATCH_FUNCTIONS, CANON_FUNCTION } from "./guards.js";
+  spawnHeldAgents, MATCH_FUNCTIONS, CANON_FUNCTION,
+  beforeActionBudgetSum, durationSeconds, gateWorstCase } from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
 const UNIVERSAL_EVENTS: Record<string, string | null> = {
@@ -386,7 +387,7 @@ export function ifFilterScript(): GeneratedFile {
       "  CMD=${values//$'\\\n'/}",
       ...MATCH_FUNCTIONS.map((l) => "  " + l),
       "  set -f",
-      '  SEGS=$(strip_redir "$CMD")',
+      '  SEGS=$(strip_redir "$(at_resolve "$CMD")")',
       "  for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
       '  read -ra GW <<< "$glob"',
       '  key=""; rest=""',
@@ -442,23 +443,7 @@ export const DEADLINE_KILL = 2;
 /** Seconds added to a gate's worst case for jq, the ledger read and process start-up. */
 export const HOOK_MARGIN = 30;
 
-/** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
-export function durationSeconds(d: string | undefined): number | null {
-  const m = /^(\d+)([smhd])$/.exec(d ?? "");
-  return m ? Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"] : null;
-}
-
-/**
- * The longest a gate's check can run: its timeout once per attempt, plus a
- * one-second pause between attempts. Null when the gate has no timeout (the
- * guard's deadline is then the only bound).
- */
-export function gateWorstCase(gate: GateNode): number | null {
-  const t = durationSeconds(gate.timeout);
-  if (t === null) return null;
-  const retry = gate.retry != null && gate.retry > 0 ? gate.retry : 0;
-  return t * (retry + 1) + retry;
-}
+export { durationSeconds, gateWorstCase };
 
 /** The hook timeout for a guard that may run these gates: never below GUARD_TIMEOUT, always above their worst case. */
 export function guardHookTimeout(gates: GateNode[]): number {
@@ -471,9 +456,12 @@ function guardCommand(ast: TopologyAST, file: string, timeout: number): string {
   return launchCommand("bash", `${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}`, [], true, timeout - DEADLINE_MARGIN);
 }
 
-/** A guard handler: the command, with a deadline under the hook timeout, and that timeout. */
-function guardHandler(ast: TopologyAST, file: string, gates: GateNode[]): Record<string, unknown> {
-  const timeout = guardHookTimeout(gates);
+/**
+ * A guard handler: the command, with a deadline under the hook timeout, and that timeout. `atLeast`
+ * raises the timeout (before-action.sh: the sum of its gate budgets, plus the deadline margin).
+ */
+function guardHandler(ast: TopologyAST, file: string, gates: GateNode[], atLeast = 0): Record<string, unknown> {
+  const timeout = Math.max(guardHookTimeout(gates), atLeast);
   return { type: "command", command: guardCommand(ast, file, timeout), timeout };
 }
 
@@ -536,7 +524,8 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
   if (beforeAction) {
     scripts.push(beforeAction);
     const gates = runGates(ast, (g) => checkableActionGate(ast, g));
-    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates)] } });
+    // before-action.sh runs each gate check once, for at most its budget (a gate with no timeout: 60 s).
+    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates, beforeActionBudgetSum(ast) + HOOK_MARGIN + DEADLINE_MARGIN)] } });
   }
   // F-4: an apply_patch that adds, updates, deletes or moves to a gate's ledger is refused.
   const beforeEdit = generateBeforeEditScript(ast, CODEX_GUARDS);

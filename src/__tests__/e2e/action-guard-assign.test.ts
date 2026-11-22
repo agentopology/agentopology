@@ -104,6 +104,7 @@ describe("a resolved value that names the step is still the step", () => {
     ["S=accept && tool enter \${S}", `S=accept && ${X} enter \${S}`],
     ["A=enter; B=accept; tool $A $B", `A=enter; B=accept; ${X} $A $B`],
     ["a newline between", `S=accept\n${X} enter $S`],
+    ["the value joined to more letters", `S=acc; ${X} enter \${S}ept`],
   ];
   for (const [shape, command] of caught) {
     it(`caught like the literal command: ${shape}`, () => {
@@ -151,6 +152,16 @@ describe("every other assignment stays unreadable: the gate checks run", () => {
     ["a ${T:-default} use", `T=/x; ${X} enter \${T:-accept}`],
     ["a single & after the assignment", `T=/x & ${X} enter $T`],
     ["|| after the assignment", `T=/x || ${X} enter $T`],
+    ["eval behind time -p, the name built from other letters", `T=/x; M=Tz; time -p eval "\${M:0:1}=accept"; ${X} enter $T`],
+    ["eval written with quotes inside it", `T=/x; e''val "$Y"; ${X} enter $T`],
+    ["source", `T=/x; source ./env.sh; ${X} enter $T`],
+    ["the dot command", `T=/x; . ./env.sh; ${X} enter $T`],
+    ["printf -v", `T=/x; printf -v "$N" accept; ${X} enter $T`],
+    ["declare with a built name", `T=/x; declare "$N=accept"; ${X} enter $T`],
+    ["a function that sets the name", `T=/x; f() { T=accept; }; f; ${X} enter $T`],
+    ["a loop over the name", `T=/x; for T in accept; do ${X} enter $T; done`],
+    ["the name inside another value", `A=T; T=/x; ${X} enter $T`],
+    ["[[ ]] in the command", `T=/x; [[ $N -eq 1 ]]; ${X} enter $T`],
   ];
   for (const [shape, command] of doubted) {
     it(`doubted: ${shape}`, () => {

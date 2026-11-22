@@ -3,9 +3,9 @@
  * than its budget.
  *
  * - Speed: every hook a topology generates is timed on a fixed set of command shapes, with every
- *   gate check stubbed to pass at once. Each run must answer in under 1 s. Each shape runs up to
- *   3 times and the best run counts, so a loaded machine (the full suite in parallel) does not
- *   fail a hook that is fast on its own.
+ *   gate check stubbed to pass at once. Each run must answer in under 1 s. A shape whose run takes
+ *   longer is run again, up to 5 times, and the best run counts, so a loaded machine (the full
+ *   suite in parallel) does not fail a hook that is fast on its own.
  * - Budget: before-action.sh runs each gate check for at most the gate's own timeout (plus 2 s,
  *   so the wrapper's own timeout reports first), or 60 s when it declares none. Past it the check
  *   is stopped and the step is blocked (exit 2), with a message naming the gate, the cause and
@@ -91,6 +91,9 @@ function payload(event: string, matcher: string | undefined, shape: string): str
   });
 }
 
+/** Runs per shape at most; the best counts. Alone each run takes under 200 ms; under the full suite's load one can pass 1 s. */
+const RUNS = 5;
+
 const SHAPES: [string, string][] = [
   ["plain command", "ls -la"],
   ["assignment then &&", `T=/x; ${X} open $T build && ${X} enter map`],
@@ -124,7 +127,7 @@ describe.skipIf(!hasJq)("every generated hook answers in under 1 s on every shap
     }
   });
 
-  it("times every hook on every shape (best of 3 runs)", () => {
+  it(`times every hook on every shape (best of up to ${RUNS} runs)`, () => {
     const rows: string[] = [];
     const slow: string[] = [];
     for (const [event, entries] of Object.entries(settingsHooks(root))) {
@@ -135,7 +138,10 @@ describe.skipIf(!hasJq)("every generated hook answers in under 1 s on every shap
           for (const [shape, command] of SHAPES) {
             let best = Infinity;
             let status: number | null = null;
-            for (let i = 0; i < 3 && best >= 1000; i++) {
+            let runs = 0;
+            for (let i = 0; i < RUNS && best >= 1000; i++) {
+              // a run over 1 s is tried again after a short pause: the full suite loads every core
+              if (i > 0) spawnSync("sleep", ["0.3"]);
               const t0 = performance.now();
               const r = spawnSync("/bin/sh", ["-c", h.command], {
                 cwd: root,
@@ -146,8 +152,9 @@ describe.skipIf(!hasJq)("every generated hook answers in under 1 s on every shap
               });
               best = Math.min(best, performance.now() - t0);
               status = r.status;
+              runs = i + 1;
             }
-            const row = `[speed] ${event} ${entry.matcher ?? "-"} ${script} | ${shape}: ${Math.round(best)} ms, exit ${status}`;
+            const row = `[speed] ${event} ${entry.matcher ?? "-"} ${script} | ${shape}: ${Math.round(best)} ms (best of ${runs}), exit ${status}`;
             rows.push(row);
             if (best >= 1000) slow.push(row);
           }
@@ -191,7 +198,8 @@ describe.skipIf(!hasJq)("a gate check is bounded by its budget inside before-act
     expect(r.stderr).toContain("gate accept-ready refuses this command");
     expect(r.stderr).toContain("its check took over 4 s, so the step is blocked; raise the gate's timeout: if it needs longer");
     expect(r.ms).toBeLessThan(12_000);
-    const left = spawnSync("/bin/sh", ["-c", "pgrep -f 'sleep 27.25' || true"], { encoding: "utf8" }).stdout.trim();
+    // slee[p]: the pattern must not match the shell that runs pgrep
+    const left = spawnSync("/bin/sh", ["-c", "pgrep -f 'slee[p] 27.25' || true"], { encoding: "utf8" }).stdout.trim();
     expect(left).toBe("");
   });
 
@@ -219,7 +227,7 @@ describe.skipIf(!hasJq)("a gate check is bounded by its budget inside before-act
       expect(r.status, r.stderr).toBe(2);
       expect(r.stderr).toContain("its check took over 4 s, so the step is blocked");
       expect(r.ms).toBeLessThan(12_000);
-      const left = spawnSync("/bin/sh", ["-c", "pgrep -f 'sleep 27.5' || true"], { encoding: "utf8" }).stdout.trim();
+      const left = spawnSync("/bin/sh", ["-c", "pgrep -f 'slee[p] 27.5' || true"], { encoding: "utf8" }).stdout.trim();
       expect(left).toBe("");
     } finally {
       fs.rmSync(bin, { recursive: true, force: true });
@@ -286,7 +294,8 @@ ${gates}
   const codexEntry = (src: string) => {
     const dir = fs.mkdtempSync(join(os.tmpdir(), "at-budget-codex-"));
     try {
-      scaffoldInto(dir, src, codexBinding);
+      // Codex runs no Claude model
+      scaffoldInto(dir, src.replace(/model: sonnet/g, "model: gpt-5.2"), codexBinding);
       const hooks = JSON.parse(fs.readFileSync(join(dir, ".codex/hooks.json"), "utf8")).hooks as Record<string, Entry[]>;
       return hooks.PreToolUse.find((e) => e.matcher === "Bash" && e.hooks[0].command!.includes("before-action.sh"))!.hooks[0];
     } finally {

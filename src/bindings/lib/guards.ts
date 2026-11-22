@@ -414,6 +414,57 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
 }
 
+/** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
+export function durationSeconds(d: string | undefined): number | null {
+  const m = /^(\d+)([smhd])$/.exec(d ?? "");
+  return m ? Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"] : null;
+}
+
+/**
+ * The longest a gate's check can run: its timeout once per attempt, plus a
+ * one-second pause between attempts. Null when the gate has no timeout (the
+ * guard's deadline is then the only bound).
+ */
+export function gateWorstCase(gate: GateNode): number | null {
+  const t = durationSeconds(gate.timeout);
+  if (t === null) return null;
+  const retry = gate.retry != null && gate.retry > 0 ? gate.retry : 0;
+  return t * (retry + 1) + retry;
+}
+
+/** Seconds before-action.sh gives a gate check that declares no timeout. */
+export const GATE_BUDGET_DEFAULT = 60;
+/** Seconds past a declared timeout before before-action.sh stops a check: the wrapper's own `timeout` reports first. */
+export const GATE_BUDGET_SLACK = 2;
+/** Seconds a before-action hook timeout leaves above the gate budgets: jq, the ledger reads, start-up. */
+export const BEFORE_ACTION_MARGIN = 30;
+/** The least hook timeout a before-action hook gets, in seconds. */
+export const BEFORE_ACTION_MIN_TIMEOUT = 120;
+
+/** How long before-action.sh lets a gate's check run: its worst case plus the slack, or the default. */
+export function inlineGateBudget(gate: GateNode): number {
+  const worst = gateWorstCase(gate);
+  return worst === null ? GATE_BUDGET_DEFAULT : worst + GATE_BUDGET_SLACK;
+}
+
+/** The gates whose check script before-action.sh runs, each once. */
+export function beforeActionGates(ast: TopologyAST): GateNode[] {
+  return [...new Set(actionGuards(ast).flatMap(({ gates }) => gates))].filter((g) => !!scriptNameFromRun(g.run));
+}
+
+/**
+ * The hook timeout for before-action.sh: each gate check runs at most once per command, for at most its
+ * budget, so the sum of the budgets plus a margin bounds the script. Never below {@link BEFORE_ACTION_MIN_TIMEOUT}.
+ */
+export function beforeActionHookTimeout(ast: TopologyAST): number {
+  return Math.max(BEFORE_ACTION_MIN_TIMEOUT, beforeActionBudgetSum(ast) + BEFORE_ACTION_MARGIN);
+}
+
+/** The sum of the budgets of the gate checks before-action.sh may run in one command. */
+export function beforeActionBudgetSum(ast: TopologyAST): number {
+  return beforeActionGates(ast).reduce((s, g) => s + inlineGateBudget(g), 0);
+}
+
 /** A placeholder word in a step's command: ALL-CAPS (`EP`, `PID`, `OUT.mp4`), or holding < > { } [ ] (E-3). */
 export function isPlaceholderWord(word: string): boolean {
   return /^[A-Z0-9_]*[A-Z][A-Z0-9_]*(\.[A-Za-z0-9]+)*$/.test(word) || /[<>{}[\]]/.test(word);
@@ -674,6 +725,66 @@ const AT_NAMES_FUNCTIONS: string[] = [
   "}",
 ];
 
+/**
+ * at_resolve CMD (MATCH_FUNCTIONS): the literal assignments that open a command, read into their uses
+ * (`T=/x; tool open $T` is read as `tool open /x`). Needs strip_redir, norm and AT_LEAD.
+ */
+const RESOLVE_FUNCTIONS: string[] = [
+  "# at_resolve CMD: CMD with the literal assignments at its start read into their uses. NAME=VALUE opens the",
+  "# command, alone, followed by ; && or a newline (one after another, before any other command), and VALUE",
+  "# is one plain word (letters, digits and _ . / : @ % + , -). Its uses $NAME and ${NAME} then read as VALUE",
+  "# when NAME appears nowhere else in the command, no program in it is an expansion or one that can set a",
+  "# variable another way (AT_SETS), and IFS is not named. Anything else is left as written: its expansions",
+  "# stay doubt.",
+  "AT_SETS=\" eval source . read declare typeset local export readonly mapfile readarray getopts let printf unset trap alias command builtin exec enable coproc wait function [[ \"",
+  "# at_subst TEXT NAME VALUE: TEXT with $NAME and ${NAME} written as VALUE ($NAMEX is another name).",
+  "at_subst() {",
+  "  local s=$1 n=$2 v=$3 out='' pre",
+  "  s=${s//\"\\${$n}\"/$v}",
+  "  while [[ $s == *\"\\$$n\"* ]]; do",
+  "    pre=${s%%\"\\$$n\"*}; s=${s#*\"\\$$n\"}",
+  "    if [[ $s == [A-Za-z0-9_]* ]]; then out+=\"$pre\\$$n\"; else out+=\"$pre$v\"; fi",
+  "  done",
+  "  printf '%s' \"$out$s\"",
+  "}",
+  "at_resolve() {",
+  "  local t=$1 rest=$1 head='' out segs seg x i j others nl=$'\\n' re rb",
+  "  local -a ws names vals",
+  "  names=(); vals=()",
+  String.raw`  re="^([[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./:@%+,-]+)[[:space:]]*(;|&&|$nl))(.*)\$"`,
+  "  while [[ $rest =~ $re ]]; do",
+  "    names+=(\"${BASH_REMATCH[2]}\"); vals+=(\"${BASH_REMATCH[3]}\"); head+=${BASH_REMATCH[1]}; rest=${BASH_REMATCH[5]}",
+  "  done",
+  "  if [ \"${#names[@]}\" = 0 ]; then printf '%s' \"$t\"; return 0; fi",
+  String.raw`  rb='(^|[^A-Za-z0-9_])IFS([^A-Za-z0-9_]|$)'`,
+  "  if [[ $t =~ $rb ]]; then printf '%s' \"$t\"; return 0; fi",
+  "  # every program (and the word after an option where one stands first, as in time -p): no expansion, none of AT_SETS",
+  "  segs=$(strip_redir \"$t\")",
+  "  for x in '&' '|' ';' '(' ')' '`'; do segs=${segs//\"$x\"/$'\\n'}; done",
+  "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+  "    read -ra ws <<< \"$(norm \"$seg\")\"",
+  "    i=0",
+  "    while [ \"$i\" -lt \"${#ws[@]}\" ] && [[ ${ws[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*= || \"$AT_LEAD\" == *\" ${ws[i]} \"* ]]; do i=$((i+1)); done",
+  "    for ((j=i; j<i+2 && j<${#ws[@]}; j++)); do",
+  "      x=${ws[j]}",
+  String.raw`      if [[ $x == *[\$\`]* || "$AT_SETS" == *" $x "* ]]; then printf '%s' "$t"; return 0; fi`,
+  "      [[ $x == -* ]] || break",
+  "    done",
+  "  done <<< \"$segs\"",
+  "  out=$rest",
+  "  for ((i=0; i<${#names[@]}; i++)); do",
+  "    # the name anywhere but its own assignment and its uses: a second assignment, read T, ${T:-x}, T+=x, ...",
+  "    others=''",
+  "    for ((j=0; j<${#names[@]}; j++)); do [ \"$j\" = \"$i\" ] || others+=\" ${names[j]}=${vals[j]}\"; done",
+  "    rb=\"(^|[^A-Za-z0-9_])${names[i]}([^A-Za-z0-9_]|\\$)\"",
+  "    x=\"$others $(at_subst \"$rest\" \"${names[i]}\" '')\"",
+  "    [[ $x =~ $rb ]] && continue",
+  "    out=$(at_subst \"$out\" \"${names[i]}\" \"${vals[i]}\")",
+  "  done",
+  "  printf '%s' \"$head$out\"",
+  "}",
+];
+
 /** at_reads_only BASE WORD...: the program reads its arguments only (MATCH_FUNCTIONS, the no-jq glob check). */
 const READS_ONLY_FUNCTION: string[] = [
   "# at_runs_args BASE: the program reads its arguments only (no word of the segment makes it run one).",
@@ -719,6 +830,7 @@ export const MATCH_FUNCTIONS: string[] = [
   String.raw`  local re='\{[^{}]*(,|\.\.)[^{}]*\}'`,
   "  [[ $1 =~ $re ]]",
   "}",
+  ...RESOLVE_FUNCTIONS,
   ...AT_NAMES_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
   ...STDIN_JQ_FUNCTIONS,
@@ -767,7 +879,11 @@ export const MATCH_FUNCTIONS: string[] = [
   "  local key=$2 kl n p i j k base",
   "  local -a w r cand",
   "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
-  "  n=${#w[@]}; SEG_N=0; kl=$(letters \"$key\"); cand=()",
+  "  # the tool's letters, kept for the next call with the same tool (AT_KLS: \" KEY=LETTERS ...\"), since",
+  "  # one command reads every segment for every tool",
+  "  kl=${AT_KLS-}",
+  "  if [[ $kl == *\" $key=\"* ]]; then kl=${kl#*\" $key=\"}; kl=${kl%% *}; else kl=$(letters \"$key\"); AT_KLS=\"${AT_KLS-} $key=$kl \"; fi",
+  "  n=${#w[@]}; SEG_N=0; cand=()",
   "  p=0",
   "  while [ \"$p\" -lt \"$n\" ]; do",
   "    if [[ ${w[p]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then",
@@ -1158,6 +1274,37 @@ export function stepKey(command: string): { key: string; rest: string } {
   return { key: base(words[i] ?? ""), rest: words.slice(i + 1).join(" ").toLowerCase() };
 }
 
+/**
+ * at_gate (before-action.sh): a gate's check script, run once per command and for at most its budget
+ * ({@link inlineGateBudget}). A watchdog in bash, not the `timeout` program, which stock macOS lacks; it
+ * stops the check and every process it started (pgrep -P). The check writes to a temp file, so a process
+ * left behind cannot hold the hook's output open. bash 3.2 safe. Needs deny and $DIR.
+ */
+const GATE_BUDGET_FUNCTIONS: string[] = [
+  "# at_gate ID SECONDS FIX: run gate ID's check script once per command, for at most SECONDS. Past that, the",
+  "# check and every process it started are stopped and the step is blocked (a hook that runs past its own",
+  "# timeout could let the call through). FIX says what to change.",
+  "AT_GATES_OK=' '",
+  "at_kill() { local c; for c in $(pgrep -P \"$1\" 2>/dev/null); do at_kill \"$c\"; done; kill -KILL \"$1\" 2>/dev/null || true; }",
+  "at_gate() {",
+  "  local id=$1 s=$2 rc=0 late=0 p w o",
+  "  [[ $AT_GATES_OK != *\" $id \"* ]] || return 0",
+  "  o=$(mktemp) || deny \"$id\" \"no temp file could be made for its check\"",
+  "  bash \"$DIR/gate-$id.sh\" </dev/null >\"$o\" 2>&1 & p=$!",
+  "  # the watchdog: past SECONDS it stops the check (exit 3); stopped first, it ends with its sleep (exit 0)",
+  "  ( z=''; trap '[ -z \"$z\" ] || kill \"$z\" 2>/dev/null; exit 0' TERM; sleep \"$s\" & z=$!; wait \"$z\" || true; trap '' TERM",
+  "    kill -0 \"$p\" 2>/dev/null || exit 0; at_kill \"$p\"; exit 3 ) </dev/null >/dev/null 2>&1 & w=$!",
+  "  wait \"$p\" || rc=$?",
+  "  kill \"$w\" 2>/dev/null || true",
+  "  if wait \"$w\"; then :; else [ \"$?\" != 3 ] || late=1; fi",
+  "  cat \"$o\" >&2; rm -f \"$o\"",
+  "  [ \"$late\" = 0 ] || deny \"$id\" \"its check took over $s s, so the step is blocked; $3\"",
+  "  [ \"$rc\" = 0 ] || deny \"$id\" \"its check script failed\"",
+  "  AT_GATES_OK=\"$AT_GATES_OK$id \"",
+  "}",
+  "",
+];
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -1231,6 +1378,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "",
     "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
     "",
+    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
     "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
@@ -1276,7 +1424,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "CMD_SUBST=0",
     "[[ $CMD == *'$('* || $CMD == *'`'* ]] && CMD_SUBST=1",
     "set -f",
-    "SEGS=$(strip_redir \"$CMD\")",
+    "# A literal assignment that opens the command (T=/x; tool open $T) is read into its uses (at_resolve).",
+    ...(p.powershellTool
+      ? ['if [ "$PWSH" = 1 ]; then SEGS=$(strip_redir "$CMD"); else SEGS=$(strip_redir "$(at_resolve "$CMD")"); fi']
+      : ['SEGS=$(strip_redir "$(at_resolve "$CMD")")']),
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
@@ -1320,7 +1471,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
           }
         }
         if (scriptNameFromRun(gate.run)) {
-          out.push(`${indent}bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${sq(gate.id)} "its check script failed"`);
+          const fix = gateWorstCase(gate) === null ? "declare a timeout: on the gate if it needs longer" : "raise the gate's timeout: if it needs longer";
+          out.push(`${indent}at_gate ${sq(gate.id)} ${inlineGateBudget(gate)} ${sq(fix)}`);
         }
       }
       return out;
