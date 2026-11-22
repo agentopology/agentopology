@@ -96,6 +96,8 @@ describe("[I-0113] import → scaffold never stubs a command that ran, unless im
       "python -c 'import sys'", "python3 -m mypkg.guard",
       "bash -c 'exit 2'", "sh -c 'exit 2'", "zsh -c 'exit 2'", "node -e '1'", "node -r ts-node/register x.ts",
       'bun run "$CLAUDE_PROJECT_DIR/x.ts"', "deno run x.ts", 'powershell -File "$CLAUDE_PROJECT_DIR/x.ps1"', "pwsh -Command Get-Date",
+      // an unlisted long flag may take the next word as its value, so no script is read after it
+      "node --x tools/a.mjs", "node --unhandled-rejections strict tools/x.js", "node --eval=1 tools/x.js",
     ]) {
       const { report } = importClaudeCodeWithReport(harness(command), "t");
       expect(errorsOf(report), command).toHaveLength(1);
@@ -105,7 +107,7 @@ describe("[I-0113] import → scaffold never stubs a command that ran, unless im
 
   it("an interpreter's flags before a project script compile faithfully: no error, no stub", () => {
     // These were ruled shapes while a flag after the interpreter named a stub after the interpreter.
-    for (const command of ['python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "node --x tools/a.mjs"]) {
+    for (const command of ['python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "node --no-warnings tools/a.mjs", "node --max-old-space-size=4096 tools/a.mjs"]) {
       const r = importThenScaffold(command);
       expect(r, command).not.toBeNull();
       expect(r!.stubbed, command).toEqual([]);
