@@ -668,6 +668,8 @@ agentopology docs [topic]                 Language reference (43 topics)
 - A hand-written hook in `.claude/settings.json` that passes quoted arguments to a script (`bash .claude/hooks/x.sh "$CLAUDE_PROJECT_DIR" "a b"`) is rewritten by `import` then `scaffold` with its quotes escaped, which changes the arguments the script gets. Until a fix ships, keep a copy of `.claude/settings.json` before `scaffold` and restore such entries, or pass the values without quotes. Fixed in a later release.
 - A hook you add by hand that runs a script the `.at` names as your own file (a `run:` on `.claude/hooks/x.sh`) is removed by the next `scaffold` without a message. Until a fix ships, keep a copy of `.claude/settings.json` before `scaffold` and compare after, or declare that hook in the `.at`. Fixed in a later release.
 
+How a release may change what agentopology accepts, and how it tells you: [docs/compatibility.md](docs/compatibility.md).
+
 ---
 
 ## Contributing
