@@ -176,6 +176,8 @@ export function projectWord(word: string): string {
     if (!path.endsWith('"')) return word;
     path = path.slice(0, -1);
   }
+  // `"$CLAUDE_PROJECT_DIR"/` alone names the folder itself, not a file in it: an argument, kept as written
+  if (path === "/") return word;
   return path.includes('"') ? word : `.${path}`;
 }
 
