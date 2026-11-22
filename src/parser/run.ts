@@ -207,11 +207,9 @@ function scriptWord(word: string): string {
  *
  * A script word through `$CLAUDE_PROJECT_DIR` after an interpreter is read
  * as the project path it names (see scriptWord): `./x`; a word through any
- * other variable is left as written. When
- * that word was quoted the way a .at string keeps it
- * (`\"$CLAUDE_PROJECT_DIR/x.py\"`), the arguments' `\"` are read as `"` too,
- * so the command is the one the harness ran. Such a run named no script file
- * before (its basename kept a quote), so no run that compiled before changes.
+ * other variable is left as written. When that word names a file, the
+ * arguments' `\"` (a .at string's form) are read as `"`, so the command is
+ * the one the harness ran (see decodedArgs).
  * A first word through a variable, and a word after anything but an
  * interpreter (`cd "$CLAUDE_PROJECT_DIR/web"`), are left as written, as
  * before: V96 refuses the first, and the second is an argument.
@@ -245,9 +243,17 @@ export function runParts(run: string): { interpreter?: string; flags?: string[];
   return { interpreter: first, ...flagWords, script: scriptWord(script), args: decodedArgs(script, args) };
 }
 
-/** A run whose script word scriptWord reads through `\"` is in a .at string's form: its arguments' `\"` are `"`. */
+/**
+ * An interpreter's arguments as the harness passed them: in a .at string's
+ * form every `"` is `\"`, so they are read as `"` whenever the script word
+ * names a file, quoted or not (`bash .claude/hooks/x.sh \"a b\"` passes one
+ * argument, `a b`). It used to be only when the script word was quoted, so
+ * import → scaffold wrote `\"a b\"` and the script got two. A run whose
+ * script names no file (`bun run ...`, a stub import flags) keeps its
+ * arguments as written, as 0.11.2 did.
+ */
 function decodedArgs(script: string, args: string[]): string[] {
-  return script.includes('\\"') && scriptWord(script) !== script ? args.map((a) => a.replace(/\\"/g, '"')) : args;
+  return isProjectPath(scriptWord(script)) ? args.map((a) => a.replace(/\\"/g, '"')) : args;
 }
 
 /**
