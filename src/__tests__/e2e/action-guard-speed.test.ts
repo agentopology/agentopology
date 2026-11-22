@@ -102,7 +102,7 @@ const SHAPES: [string, string][] = [
   ["subshell", `(cd sub && ${X} enter map)`],
   ["quoted strings", `echo "a && b; c | d" 'e || f' && ${X} enter "the map"`],
   ["here-string", `${X} enter map <<< "$(cat notes.txt)"`],
-  ["resolved: s=accept names the step", `s=accept; ${X} enter $s`],
+  ["doubted: s=accept names the step", `s=accept; ${X} enter $s`],
   ["doubted: prefix assignment", `T=/x ${X} enter $T`],
   ["doubted: reassigned", `T=/x; ${X} enter $T; T=/y`],
   ["doubted: export", `export T=/x; ${X} enter $T`],
