@@ -1,6 +1,6 @@
 Validating hybrid-release.at (hybrid-release v1.0.0)
 
-  stubs (claude-code): 5 of 14 generated files are stubs: 1 gate check script, 1 hook script, 2 action scripts, 1 workflow launch script
+  stubs (claude-code): 4 of 14 generated files are stubs: 1 gate check script, 1 hook script, 1 action script, 1 workflow launch script
 
   All validation rules passed.
 

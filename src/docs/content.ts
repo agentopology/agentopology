@@ -372,7 +372,7 @@ action NAME {
 | kind | string | yes (V26) | -- | "external", "git", "decision", "inline", "report" |
 | source | string | no | -- | Source reference (file path or URL) |
 | description | string | no | -- | Human-readable description |
-| commands | string[] | no | -- | Shell commands to execute. The action's script runs each one as written (an interpreter flag, \`npx\` or \`env\` included). With none, any kind but inline scaffolds a stub, counted by validate and scaffold. A gate before this action guards them in Claude Code sessions |
+| commands | string[] | no | -- | Shell commands to execute. The action's script runs each one as written (an interpreter flag, \`npx\` or \`env\` included). With none, an inline, decision or report action is done by the orchestrator in conversation (its script says so and is no stub); an external or git action scaffolds a stub, counted by validate and scaffold. A gate before this action guards them in Claude Code sessions |
 | unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\\\S+)"\`. Needs a capture group (V111) |
 | timeout | string | no | -- | Duration string (e.g. "5m", "2h") |
 | on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
@@ -384,9 +384,9 @@ action NAME {
 |------|-------------|
 | external | External API call or service invocation |
 | git | Git operation (commit, branch, PR) |
-| decision | Routing decision point |
-| inline | Inline logic, no external side effects |
-| report | Compile and deliver output |
+| decision | Routing decision point. With no \`commands:\` the orchestrator decides in conversation; no stub |
+| inline | Inline logic, no external side effects. With no \`commands:\` the orchestrator does it in conversation; no stub |
+| report | Compile and deliver output. With no \`commands:\` the orchestrator reports in conversation; no stub |
 
 ## Validation Rules
 

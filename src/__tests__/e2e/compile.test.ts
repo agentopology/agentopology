@@ -159,11 +159,14 @@ describe("a skill's instructions reach the model", () => {
 });
 
 describe("actions, tools and schedules run what they declare", () => {
-  it("[A3] an action's commands are emitted whatever its kind; one without commands is a marked stub that fails", () => {
+  it("[A3] an action's commands are emitted whatever its kind; a report action without commands is done in conversation, not a stub", () => {
     expect(read(".claude/skills/compile/scripts/action-fetch.sh")).toContain("curl -fsS https://feeds.example.com/brief -o brief.json");
+    // A report action with no commands reports in conversation, like an inline
+    // one (routing-actions.test.ts holds the external and git stubs).
     const digest = read(".claude/skills/compile/scripts/action-digest.sh");
-    expect(digest).toContain(STUB_MARKER);
-    expect(digest).toMatch(/exit 1\n$/);
+    expect(digest).not.toContain(STUB_MARKER);
+    expect(digest).toContain("# Performed by the orchestrator in conversation; nothing to run.");
+    expect(digest).not.toMatch(/exit 1\n$/);
     // an inline action is done in conversation: not a stub
     expect(read(".claude/skills/compile/scripts/action-intake.sh")).not.toContain(STUB_MARKER);
   });

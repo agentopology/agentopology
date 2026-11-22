@@ -1,6 +1,6 @@
 Validating compile.at (compile v1.0.0)
 
-  stubs (claude-code): 8 of 27 generated files are stubs: 2 gate check scripts, 3 hook scripts, 1 action script, 2 tool scripts
+  stubs (claude-code): 7 of 27 generated files are stubs: 2 gate check scripts, 3 hook scripts, 2 tool scripts
 
   All validation rules passed.
 

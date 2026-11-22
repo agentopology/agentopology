@@ -1,6 +1,6 @@
 Validating data-processing.at (data-processing v1.0.0)
 
-  stubs (claude-code): 10 of 28 generated files are stubs: 1 gate check script, 2 hook scripts, 2 action scripts, 4 tool scripts, 1 metering script
+  stubs (claude-code): 9 of 28 generated files are stubs: 1 gate check script, 2 hook scripts, 1 action script, 4 tool scripts, 1 metering script
 
   All validation rules passed.
 
