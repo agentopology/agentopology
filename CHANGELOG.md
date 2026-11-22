@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.12.6] - unreleased
+
+### Fixed
+
+- `import` then `scaffold` no longer changes the arguments of a hand-written hook that passes quoted arguments to a script through an interpreter. `bash .claude/hooks/x.sh "$CLAUDE_PROJECT_DIR" "a b"` was written back as `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh" \"$CLAUDE_PROJECT_DIR\" \"a b\"`, so the script got three arguments (`"<root>"`, `"a`, `b"`) instead of two, while `import` reported that the generated file passes all validation rules. The arguments now keep their quoting, so the script gets the same arguments as before: a quoted variable, a value with a space, single quotes and an escaped quote inside a value included. This holds when the interpreter's script names a file; a script run directly without an interpreter is a known issue (see the README).
+- `scaffold` no longer removes, without a message, a hook added by hand in `.claude/settings.json` that runs a script the `.at` names as the user's own file (a `run:` on `.claude/hooks/x.sh`, which scaffold creates only when it is missing). Such a hook is kept, and scaffold prints `kept a command the .at does not generate`, in every spelling of the project folder (`"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh"`, `"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.sh`). A copy of the generated command under the event and matcher where the `.at` generates it is replaced by the generated entry, as before, and when the `.at` moves that hook to another event its old entry is removed, so the script never runs twice.
+- `scaffold` removes a stale entry for a script the topology writes in every spelling of the project folder (`"$CLAUDE_PROJECT_DIR"/…`, `"${CLAUDE_PROJECT_DIR:-.}/…"`); before, only some spellings were removed, and a stale entry could keep running a deleted script.
+- The project folder variable standing alone as an argument (`rsync -a "$CLAUDE_PROJECT_DIR/" /b`, `bash x.sh "$CLAUDE_PROJECT_DIR"`) is part of a hook's identity, so two hand-written hooks that differ only by it are no longer merged into one.
+- `import` reports a hook whose quoted script path holds a space (`bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"`) as one it cannot compile faithfully, as `validate` already refused it; before, the library path could write a broken second entry for it.
+
 ## [0.12.5] - 2026-11-23
 
 ### Changed behaviour
