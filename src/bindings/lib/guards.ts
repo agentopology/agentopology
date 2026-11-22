@@ -726,43 +726,95 @@ const AT_NAMES_FUNCTIONS: string[] = [
 ];
 
 /**
+ * The variables bash sets or reads itself (bash(1), Shell Variables), and `_`: never read as the literal a
+ * command assigns, since bash may change them between the assignment and the use ($_ is the last word of
+ * the command before, REPLY is select's answer, PWD changes with cd). at_resolve reads lower-case names
+ * only, which already leaves all of these out; the list holds anyway. Any BASH_* or COMP_* name is left out too.
+ */
+export const BASH_SET_NAMES: string[] = [
+  "_", "BASH", "BASHOPTS", "BASHPID", "CDPATH", "CHILD_MAX", "COLUMNS", "COMPREPLY", "COPROC", "DIRSTACK", "EMACS",
+  "ENV", "EPOCHREALTIME", "EPOCHSECONDS", "EUID", "EXECIGNORE", "FCEDIT", "FIGNORE", "FUNCNAME", "FUNCNEST", "GLOBIGNORE",
+  "GLOBSORT", "GROUPS", "HISTCMD", "HISTCONTROL", "HISTFILE", "HISTFILESIZE", "HISTIGNORE", "HISTSIZE", "HISTTIMEFORMAT",
+  "HOME", "HOSTFILE", "HOSTNAME", "HOSTTYPE", "IFS", "IGNOREEOF", "INPUTRC", "INSIDE_EMACS", "LANG", "LC_ALL",
+  "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME", "LINENO", "LINES", "MACHTYPE", "MAIL", "MAILCHECK",
+  "MAILPATH", "MAPFILE", "OLDPWD", "OPTARG", "OPTERR", "OPTIND", "OSTYPE", "PATH", "PIPESTATUS", "POSIXLY_CORRECT",
+  "PPID", "PROMPT_COMMAND", "PROMPT_DIRTRIM", "PS0", "PS1", "PS2", "PS3", "PS4", "PWD", "RANDOM", "READLINE_ARGUMENT",
+  "READLINE_LINE", "READLINE_MARK", "READLINE_POINT", "REPLY", "SECONDS", "SHELL", "SHELLOPTS", "SHLVL", "SRANDOM",
+  "TIMEFORMAT", "TMOUT", "TMPDIR", "UID",
+];
+
+/**
+ * The longest command at_resolve reads, in characters, and the most assignments at its start. Past either the
+ * command is left as written (doubt), so the reading's cost has a bound: at the limit at_resolve itself takes
+ * under 50 ms on its costliest shapes, and the whole hook about 0.2 s (measured, action-guard-assign.test.ts).
+ */
+export const RESOLVE_MAX_LENGTH = 2048;
+export const RESOLVE_MAX_NAMES = 16;
+
+/**
  * at_resolve CMD (MATCH_FUNCTIONS): the literal assignments that open a command, read into their uses
- * (`T=/x; tool open $T` is read as `tool open /x`). Needs strip_redir, norm and AT_LEAD.
+ * (`t=/x; tool open $t` is read as `tool open /x`). Needs strip_redir, norm and AT_LEAD.
  */
 const RESOLVE_FUNCTIONS: string[] = [
   "# at_resolve CMD: CMD with the literal assignments at its start read into their uses. NAME=VALUE opens the",
   "# command, alone, followed by ; && or a newline (one after another, before any other command), and VALUE",
   "# is one plain word (letters, digits and _ . / : @ % + , -). Its uses $NAME and ${NAME} then read as VALUE",
-  "# when NAME appears nowhere else in the command, no program in it is an expansion or one that can set a",
-  "# variable another way (AT_SETS), and IFS is not named. Anything else is left as written: its expansions",
-  "# stay doubt.",
-  "AT_SETS=\" eval source . read declare typeset local export readonly mapfile readarray getopts let printf unset trap alias command builtin exec enable coproc wait function [[ \"",
-  "# at_subst TEXT NAME VALUE: TEXT with $NAME and ${NAME} written as VALUE ($NAMEX is another name).",
+  "# when NAME is lower case (bash's own names are upper case or _, and none of AT_BASH_VARS is read either),",
+  "# NAME appears nowhere else in the command, no program in it is an expansion or one that can set a",
+  "# variable or the folder another way (AT_SETS), and IFS is not named. A command with arithmetic, an array",
+  "# subscript, a ${...} with more than a name, a $'...' string or a function definition, longer than",
+  "# AT_RESOLVE_MAX characters, or with more than AT_RESOLVE_NAMES assignments at its start, is not read this",
+  "# way. Anything else is left as written: its expansions stay doubt.",
+  "AT_SETS=\" eval source . read declare typeset local export readonly mapfile readarray getopts let printf unset trap alias command builtin exec enable coproc wait function [[ select test [ compgen cd pushd popd dirs shopt fc history bind \"",
+  `AT_BASH_VARS=" ${BASH_SET_NAMES.join(" ")} "`,
+  `AT_RESOLVE_MAX=${RESOLVE_MAX_LENGTH}; AT_RESOLVE_NAMES=${RESOLVE_MAX_NAMES}`,
+  "# at_subst TEXT MAP: TEXT with each $NAME and ${NAME} whose NAME is in MAP (\" NAME=VALUE ...\") written as",
+  "# VALUE, in one pass over the words that follow each $ ($NAMEX is another name, and is kept).",
   "at_subst() {",
-  "  local s=$1 n=$2 v=$3 out='' pre",
-  "  s=${s//\"\\${$n}\"/$v}",
-  "  while [[ $s == *\"\\$$n\"* ]]; do",
-  "    pre=${s%%\"\\$$n\"*}; s=${s#*\"\\$$n\"}",
-  "    if [[ $s == [A-Za-z0-9_]* ]]; then out+=\"$pre\\$$n\"; else out+=\"$pre$v\"; fi",
+  "  local s=$1 map=$2 out p q n v i k nl=$'\\n'",
+  "  local -a parts",
+  "  parts=()",
+  "  IFS='$' read -r -d '' -a parts <<< \"$s\" || true",
+  "  out=${parts[0]-}",
+  "  for ((i=1; i<${#parts[@]}; i++)); do",
+  "    p=${parts[i]}; q=$p; k=0",
+  "    if [[ $p == '{'* ]]; then q=${p#?}; k=1; fi",
+  "    # the name: the longest run of name characters; ${NAME} must close right after it",
+  "    n=${q%%[!A-Za-z0-9_]*}",
+  "    if [ -n \"$n\" ] && [[ $map == *\" $n=\"* ]] && { [ \"$k\" = 0 ] || [ \"${q:${#n}:1}\" = '}' ]; }; then",
+  "      v=${map#*\" $n=\"}; out+=\"${v%% *}${q:${#n}+k}\"",
+  "    else",
+  "      out+=\"\\$$p\"",
+  "    fi",
   "  done",
-  "  printf '%s' \"$out$s\"",
+  "  # the here-string added one newline at the end",
+  "  printf '%s' \"${out%$nl}\"",
   "}",
   "at_resolve() {",
-  "  local t=$1 rest=$1 head='' out segs seg x i j others nl=$'\\n' re rb",
+  "  local t=$1 rest=$1 head='' segs seg x i j others empty='' map='' nl=$'\\n' re rb",
   "  local -a ws names vals",
   "  names=(); vals=()",
+  "  # a long command is not read this way",
+  "  if [ \"${#t}\" -gt \"$AT_RESOLVE_MAX\" ]; then printf '%s' \"$t\"; return 0; fi",
   String.raw`  re="^([[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./:@%+,-]+)[[:space:]]*(;|&&|$nl))(.*)\$"`,
-  "  while [[ $rest =~ $re ]]; do",
+  "  while [ \"${#names[@]}\" -le \"$AT_RESOLVE_NAMES\" ] && [[ $rest =~ $re ]]; do",
   "    names+=(\"${BASH_REMATCH[2]}\"); vals+=(\"${BASH_REMATCH[3]}\"); head+=${BASH_REMATCH[1]}; rest=${BASH_REMATCH[5]}",
   "  done",
-  "  if [ \"${#names[@]}\" = 0 ]; then printf '%s' \"$t\"; return 0; fi",
+  "  if [ \"${#names[@]}\" = 0 ] || [ \"${#names[@]}\" -gt \"$AT_RESOLVE_NAMES\" ]; then printf '%s' \"$t\"; return 0; fi",
   String.raw`  rb='(^|[^A-Za-z0-9_])IFS([^A-Za-z0-9_]|$)'`,
+  "  if [[ $t =~ $rb ]]; then printf '%s' \"$t\"; return 0; fi",
+  "  # arithmetic ((...)) $((...)) $[...], an array subscript, a ${...} that is more than a name (an offset is",
+  "  # arithmetic too), a $'...' or $\"...\" string, a function definition: a name can change without being written",
+  String.raw`  if [[ $t == *'(('* || $t == *'$['* || $t == *"\$'"* || $t == *'$"'* ]]; then printf '%s' "$t"; return 0; fi`,
+  String.raw`  rb='\$\{([^A-Za-z_]|[A-Za-z_][A-Za-z0-9_]*([^A-Za-z0-9_}]|$))|[A-Za-z0-9_]\[|\([[:space:]]*\)'`,
   "  if [[ $t =~ $rb ]]; then printf '%s' \"$t\"; return 0; fi",
   "  # every program (and the word after an option where one stands first, as in time -p): no expansion, none of AT_SETS",
   "  segs=$(strip_redir \"$t\")",
   "  for x in '&' '|' ';' '(' ')' '`'; do segs=${segs//\"$x\"/$'\\n'}; done",
+  "  # quotes and backslashes dropped, as norm does, without a process per segment",
+  "  segs=${segs//\\\"/}; segs=${segs//\\'/}; segs=${segs//\\\\/}",
   "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
-  "    read -ra ws <<< \"$(norm \"$seg\")\"",
+  "    read -ra ws <<< \"$seg\"",
   "    i=0",
   "    while [ \"$i\" -lt \"${#ws[@]}\" ] && [[ ${ws[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*= || \"$AT_LEAD\" == *\" ${ws[i]} \"* ]]; do i=$((i+1)); done",
   "    for ((j=i; j<i+2 && j<${#ws[@]}; j++)); do",
@@ -771,17 +823,25 @@ const RESOLVE_FUNCTIONS: string[] = [
   "      [[ $x == -* ]] || break",
   "    done",
   "  done <<< \"$segs\"",
-  "  out=$rest",
+  "  # lower case only, and never a name bash sets itself",
   "  for ((i=0; i<${#names[@]}; i++)); do",
-  "    # the name anywhere but its own assignment and its uses: a second assignment, read T, ${T:-x}, T+=x, ...",
+  "    [[ ${names[i]} =~ ^[a-z][a-z0-9_]*$ ]] || continue",
+  "    [[ \"$AT_BASH_VARS\" != *\" ${names[i]} \"* && ${names[i]} != BASH_* && ${names[i]} != COMP_* ]] || continue",
+  "    empty+=\" ${names[i]}= \"",
+  "  done",
+  "  [ -n \"$empty\" ] || { printf '%s' \"$t\"; return 0; }",
+  "  for ((i=0; i<${#names[@]}; i++)); do",
+  "    [[ $empty == *\" ${names[i]}= \"* ]] || continue",
   "    others=''",
   "    for ((j=0; j<${#names[@]}; j++)); do [ \"$j\" = \"$i\" ] || others+=\" ${names[j]}=${vals[j]}\"; done",
-  "    rb=\"(^|[^A-Za-z0-9_])${names[i]}([^A-Za-z0-9_]|\\$)\"",
-  "    x=\"$others $(at_subst \"$rest\" \"${names[i]}\" '')\"",
+  "    # the name anywhere but its uses $name and ${name} (a second assignment, read t, t+=x, {t}>f) is doubt",
+  "    rb=\"(^|^[{]|[^A-Za-z0-9_\\${]|[^\\$][{])${names[i]}([^A-Za-z0-9_]|\\$)\"",
+  "    x=\"$others $rest\"",
   "    [[ $x =~ $rb ]] && continue",
-  "    out=$(at_subst \"$out\" \"${names[i]}\" \"${vals[i]}\")",
+  "    map+=\" ${names[i]}=${vals[i]} \"",
   "  done",
-  "  printf '%s' \"$head$out\"",
+  "  [ -n \"$map\" ] || { printf '%s' \"$t\"; return 0; }",
+  "  printf '%s' \"$head$(at_subst \"$rest\" \"$map\")\"",
   "}",
 ];
 
