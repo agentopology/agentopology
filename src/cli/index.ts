@@ -5,6 +5,7 @@
  * Commands:
  *   agentopology plan <file.at>                            — interpreted-mode brief
  *   agentopology validate <file.at>                        — parse and validate
+ *   agentopology fix <file.at> [--target <binding>] [--write] — grade V135 gates strength: hope
  *   agentopology scaffold <file.at> --target <binding>     — generate files
  *   agentopology scaffold <file.at> --target <binding> --dry-run — preview only
  *   agentopology sync <file.at> --target <binding> --dir <path> — sync prompts back
@@ -68,6 +69,7 @@ import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
+import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
 import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,19 @@ ${c.bold("Usage:")}
                        ownedKeys, drift: [{ path, kind, id, key, state, at, file, base }] }.
                        state "kept-narrower": a tool, server or permission key the user
                        holds narrower than the .at; scaffold keeps it (--force widens).
+  agentopology fix <file.at> [--target <binding>] [--write]
+                       For each V135 error (a gate meant to refuse that no generated hook
+                       runs): the gate, why no hook runs it, and the fix, strength: hope,
+                       with an anchor from the flow that would make it refuse when there
+                       is one (a suggestion; never applied). Dry run by default: writes
+                       nothing, exits 2 when there is something to fix, 0 when not.
+                       --write adds only the strength: hope lines (the rest of the file
+                       is kept byte for byte), then validates again: exit 0 when no V135
+                       error is left, 1 when one is (a gate it cannot edit in place, or
+                       one in an imported file: run fix on that file). A gate that cites
+                       code (at:) is listed with V135's fix, drop run: and keep the
+                       citation, for a hand edit. --write refuses --dry-run and a file
+                       that is not valid UTF-8 (exit 1, nothing written).
   agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
@@ -152,6 +167,7 @@ ${c.bold("Commands:")}
              defaults, order the flow (gates spliced by after/before), and render.
              A CLI cannot spawn agents — this prepares, the host agent enacts.
   validate   Parse an .at file and run all validation rules.
+  fix        Grade the gates V135 errors on strength: hope (dry run unless --write).
   scaffold   Generate project files for a target platform.
   sync       Sync prompt content from platform files back into .at source.
   visualize  Generate an interactive HTML visualization of the topology.
@@ -178,6 +194,7 @@ ${c.bold("Options:")}
   --no-check        visualize: do not read the project; every fact reads "not checked".
   --print-summary   visualize: print node counts and facts to stdout.
   --dry-run         Preview generated files without writing to disk.
+  --write           fix: apply the edits it lists (without it, fix writes nothing).
   --force           scaffold: overwrite files scaffold did not create or that were edited (never symlinks).
                     import: overwrite the .at that is already at the output path.
   --allow-invalid   With validation errors, scaffold the agents they do not touch; shared files such as
@@ -237,6 +254,8 @@ interface ParsedArgs {
   output: string | undefined;
   name: string | undefined;
   dryRun: boolean;
+  /** `fix --write`: apply the edits. */
+  write: boolean;
   force: boolean;
   allowInvalid: boolean;
   prune: boolean;
@@ -275,6 +294,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     output: undefined,
     name: undefined,
     dryRun: false,
+    write: false,
     force: false,
     allowInvalid: false,
     prune: false,
@@ -309,6 +329,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--dry-run") {
       result.dryRun = true;
+      i++;
+      continue;
+    }
+    if (arg === "--write") {
+      result.write = true;
       i++;
       continue;
     }
@@ -1849,6 +1874,98 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   cmdGuardCheck(filePath, dirPath);
 }
 
+/**
+ * `fix <file.at> [--target <binding>] [--write]`: grade each gate V135
+ * errors on `strength: hope`. Exit 0: nothing (left) to fix. Exit 2: a dry
+ * run found gates to fix and wrote nothing (2, not 1, so a script can tell
+ * "there is work" from "the command failed"). Exit 1: no file, a parse
+ * error, an unknown target, --write with --dry-run, --write on a file that
+ * is not valid UTF-8, or a V135 error left after --write. A V135 error in an
+ * imported file counts in both verdicts; it is fixed in that file.
+ */
+function cmdFix(filePath: string, target: string | undefined, write: boolean, dryRun: boolean): void {
+  if (write && dryRun) {
+    console.error(c.red("Error: --write and --dry-run cannot be used together; fix without --write is the dry run. Nothing written."));
+    process.exit(1);
+  }
+  if (target && !bindings[target]) {
+    console.error(c.red(`Error: unknown target "${target}". Available: ${Object.keys(bindings).join(", ")}`));
+    process.exit(1);
+  }
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    console.error(c.red(`Error: file not found: ${resolved}`));
+    process.exit(1);
+  }
+  const bytes = fs.readFileSync(resolved);
+  const source = bytes.toString("utf-8");
+  const name = path.basename(filePath);
+  // Writing the decoded text back would turn each byte that is not UTF-8
+  // into U+FFFD (EF BF BD), changing bytes outside the edited lines.
+  if (write && !Buffer.from(source, "utf-8").equals(bytes)) {
+    console.error(c.red(`Error: ${name} is not valid UTF-8, so --write would change bytes outside the lines it edits. Nothing written; save it as UTF-8 first, or add strength: hope by hand.`));
+    process.exit(1);
+  }
+  const importLine = (p: { relayed: unknown[]; relayedFiles: string[] }) =>
+    `${p.relayed.length} V135 error(s) in imported files: run fix on ${p.relayedFiles.map((f) => path.relative(process.cwd(), f) || f).join(", ")}`;
+  const on = target ? `--target ${target}` : "no target";
+  let plan;
+  try {
+    plan = planV135Fixes(source, { target, filePath: resolved });
+  } catch (err) {
+    console.error(c.red(`Parse error: ${name}: ${(err as Error).message}`));
+    process.exit(1);
+  }
+  if (!plan.applies) {
+    console.log(`V135 does not apply to --target ${target}: nothing to fix in ${name}.`);
+    process.exit(0);
+  }
+  if (plan.fixes.length === 0 && plan.relayed.length === 0) {
+    console.log(c.green(`Nothing to fix in ${name} (V135, ${on}).`));
+    process.exit(0);
+  }
+  if (plan.fixes.length > 0) console.log(`${c.bold(name)}: ${plan.fixes.length} gate(s) meant to refuse that no generated hook runs (V135, ${on}):`);
+  for (const f of plan.fixes) {
+    console.log("");
+    console.log(`  gate "${f.gate}"${f.line !== undefined ? ` (line ${f.line})` : ""}`);
+    console.log(`    why: no hook runs it: ${f.reason}`);
+    if (f.edit) {
+      console.log(f.edit.kind === "insert"
+        ? `    fix: add strength: hope after line ${f.edit.line}, its run: line (nothing enforces it today; the playbook runs it)`
+        : `    fix: strength: refuse becomes strength: hope on line ${f.edit.line} (nothing enforces it today; the playbook runs it)`);
+    } else {
+      console.log(c.yellow(`    fix: ${f.manual}`));
+    }
+    if (f.suggestions.length === 0) console.log(`    to make it refuse: no subagent or script step next to it in the flow; anchor it yourself`);
+    for (const s of f.suggestions) console.log(`    to make it refuse (a suggestion, not applied): ${s}`);
+  }
+  if (plan.fixes.length > 0) console.log("");
+  if (plan.relayed.length > 0) console.log(c.yellow(importLine(plan)));
+  const editable = plan.fixes.filter((f) => f.edit).length;
+  if (!write) {
+    console.log(editable > 0
+      ? `Dry run: Nothing written. Run with --write to add strength: hope to ${editable} gate(s).`
+      : "Dry run: Nothing written; nothing here that --write can edit.");
+    process.exit(2);
+  }
+  if (editable > 0) {
+    fs.writeFileSync(resolved, applyV135Fixes(source, plan), "utf-8");
+    console.log(`Wrote ${name}: strength: hope on ${editable} gate(s); nothing else changed.`);
+  } else {
+    console.log(`Nothing written to ${name}: no gate here that fix can edit.`);
+  }
+  const after = planV135Fixes(fs.readFileSync(resolved, "utf-8"), { target, filePath: resolved });
+  if (after.fixes.length === 0 && after.relayed.length === 0) {
+    console.log(c.green(`validate: no V135 error left (${on}).`));
+    process.exit(0);
+  }
+  if (after.fixes.length > 0) {
+    console.error(c.red(`validate: ${after.fixes.length} V135 error(s) left: ${after.fixes.map((f) => f.gate).join(", ")}. Edit them by hand.`));
+  }
+  if (after.relayed.length > 0) console.error(c.red(`validate: ${importLine(after)}.`));
+  process.exit(1);
+}
+
 function cmdStubs(dirPath: string): void {
   const resolved = path.resolve(dirPath);
   if (!fs.existsSync(resolved)) {
@@ -1920,6 +2037,15 @@ function main(): void {
         process.exit(1);
       }
       cmdValidate(args.file, args.inventory, args.dir, args.user, args.more, args.target, args.json);
+      break;
+
+    case "fix":
+      if (!args.file) {
+        console.error(c.red("Error: fix requires a file argument."));
+        usage();
+        process.exit(1);
+      }
+      cmdFix(args.file, args.target, args.write, args.dryRun);
       break;
 
     case "inventory":

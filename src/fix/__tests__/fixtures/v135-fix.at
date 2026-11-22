@@ -1,0 +1,123 @@
+# A hand-built harness after an upgrade: four gates meant to refuse that no
+# generated hook runs (V135 errors), next to gates that are fine.
+topology fixme : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "gates for agentopology fix"
+  }
+
+  orchestrator {
+    model: opus
+    handles: [intake, finish, deploy]
+  }
+
+  action intake {
+    kind: inline
+    description: "Take the request"
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Writes the draft"
+    prompt { Write the draft. }
+  }
+
+  human approve {
+    description: "A person approves the draft"
+  }
+
+  agent reviewer {
+    model: sonnet
+    description: "Reviews the draft"
+    prompt { Review the draft. }
+  }
+
+  action finish {
+    kind: report
+    description: "Hand the result back"
+  }
+
+  action deploy {
+    kind: inline
+    description: "Ship it"
+    commands: ["./deploy.sh"]
+  }
+
+  hooks {
+    hook lint {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "scripts/lint.sh"
+      type: command
+      strength: refuse
+    }
+  }
+
+  flow {
+    intake -> writer
+    writer -> approve
+    approve -> reviewer
+    reviewer -> finish
+    finish -> deploy
+  }
+
+  gates {
+    # Every claim needs a source. Only before a report step: no hook runs it.
+    gate needs-source {
+      before: finish
+      run: "scripts/source.sh"   # checks the citations
+      on-fail: halt
+    }
+
+    # After a human step: no hook runs it.
+    gate after-approval {
+      after: approve
+      run: "scripts/approval.sh"
+    }
+
+    # strength: refuse written, but no hook runs it.
+    gate claimed {
+      after: finish
+      run: "scripts/claimed.sh"
+      strength: refuse   # we thought so
+      by: hook
+    }
+
+    # No anchor at all.
+    gate orphan-check {
+      run: "scripts/orphan.sh"
+    }
+
+    # Fine: after a subagent (SubagentStop).
+    gate draft-ok {
+      after: writer
+      run: "scripts/draft.sh"
+    }
+
+    # Fine: before a script step (before-action.sh).
+    gate deploy-ok {
+      before: deploy
+      run: "scripts/deploy-check.sh"
+    }
+
+    # Fine: advisory.
+    gate style {
+      before: finish
+      run: "scripts/style.sh"
+      behavior: advisory
+    }
+
+    # Fine: already graded hope.
+    gate by-hand {
+      before: finish
+      run: "scripts/by-hand.sh"
+      strength: hope
+    }
+
+    # A declared hook runs its command: a V135 warning, not an error.
+    gate lint-gate {
+      before: finish
+      run: "scripts/lint.sh"
+    }
+  }
+}

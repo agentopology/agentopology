@@ -96,6 +96,17 @@ agentopology validate my-pipeline.at
 
 The validator checks all 82 rules: unique names, flow resolution, exhaustive conditions, bounded loops, provider security, and more. If something is wrong, you get a clear error message pointing to the issue.
 
+### Gates no hook runs (V135)
+
+A gate meant to refuse (its `run:` names a script, it is not `behavior: advisory`, and its `strength` is `refuse` or not written) needs a moment a generated hook can catch: a subagent in `after:` or `before:`, or a script step (an action with `commands:`) in `before:`. A gate without one is a V135 error. When a harness has many, `fix` lists them:
+
+```bash
+agentopology fix my-pipeline.at            # dry run: writes nothing
+agentopology fix my-pipeline.at --write    # adds strength: hope to each one
+```
+
+For each gate it prints why no hook runs it, the fix (`strength: hope`: nothing enforces the gate today, the playbook runs it) and, when the flow has one, an anchor that would make it refuse, as a suggestion it never applies. `--write` inserts one `strength: hope` line after the gate's `run:` line (or turns a written `strength: refuse` into `strength: hope`); every other byte of the file stays as it was. It then validates again. A gate that cites code (`at:`) gets V135's own fix instead, drop `run:` and keep the citation, and is left for you to edit. A V135 error in an imported file is counted and names that file: run `fix` on it there; the importer's run never edits it. Exit codes: 0 when nothing is left to fix, 2 when a dry run found something to fix (in this file or an imported one), 1 on an error or when a V135 error is left after `--write` (a gate written on a single line, a cited gate, or one in an imported file). `--write` refuses `--dry-run`, and a file that is not valid UTF-8, since writing it back would change bytes outside the edited lines; both exit 1 and write nothing. `--target cursor` and `--target claude-workflow` have nothing to fix: V135 does not apply there. A V135 warning (a declared hook runs the gate's command) is left alone.
+
 ## Scaffold
 
 Generate platform-specific files from your topology:
