@@ -201,11 +201,11 @@ describe("blocking 3: strength survives scaffold then import", () => {
 describe("minor 4: a declared refusing hook that runs the gate's own command runs the gate", () => {
   const gate = `    gate g {\n      before: finish\n      run: "bash tools/numbers.sh"\n      strength: refuse\n      at: "tools/checks.py"\n    }`;
 
-  it("passes: a PreToolUse command hook with strength: refuse runs the same command (whitespace aside)", () => {
-    expect(v135(topo(gate, { hooks: hook("practice-numbers", "PreToolUse", "bash   tools/numbers.sh", "refuse") }))).toEqual([]);
+  it("no error: a PreToolUse command hook with strength: refuse runs the same command (whitespace aside); a warning says so", () => {
+    expect(v135(topo(gate, { hooks: hook("practice-numbers", "PreToolUse", "bash   tools/numbers.sh", "refuse") })).map((r) => r.level)).toEqual(["warning"]);
   });
-  it("passes on codex too (PreToolUse blocks there)", () => {
-    expect(v135(topo(gate, { hooks: hook("practice-numbers", "PreToolUse", "bash tools/numbers.sh", "refuse") }), "codex")).toEqual([]);
+  it("no error on codex too (PreToolUse blocks there); a warning says so", () => {
+    expect(v135(topo(gate, { hooks: hook("practice-numbers", "PreToolUse", "bash tools/numbers.sh", "refuse") }), "codex").map((r) => r.level)).toEqual(["warning"]);
   });
   it("errors: the hook runs another command", () => {
     expect(v135(topo(gate, { hooks: hook("practice-numbers", "PreToolUse", "bash tools/other.sh", "refuse") }))).toHaveLength(1);
@@ -227,7 +227,7 @@ describe("minor 4: a declared refusing hook that runs the gate's own command run
       console.warn = original;
     }
     const line = warnings.find((w) => w.includes('Gate "g"'));
-    expect(line).toContain('hook "practice-numbers" (PreToolUse) runs the same command');
+    expect(line).toContain('hook "practice-numbers" (PreToolUse, matcher Bash) runs the same command');
   });
   it("a cited gate the message also offers dropping run: (the citation is the claim)", () => {
     const [hit] = v135(topo(gate));
@@ -293,5 +293,45 @@ describe("minor 8: guard --check on the unset-strength N33 shape, without valida
     const item = checkGuards(parse(src), dir).items.find((i) => i.kind === "gate" && i.id === "lock-voice")!;
     expect(item.strength).toBe("hope");
     expect(item.notes.join(" ")).toMatch(/note-bash declares no strength/);
+  });
+});
+
+describe("round 3: a gate credited only by a same-command hook is a V135 warning, not silence", () => {
+  const gate = `    gate g {\n      before: finish\n      run: "bash tools/numbers.sh"\n      strength: refuse\n      at: "tools/checks.py"\n    }`;
+  const sameHook = (on: string, matcher: string | null, ifLine = "") =>
+    `    hook n {\n      on: ${on}\n${matcher ? `      matcher: "${matcher}"\n` : ""}${ifLine ? `      if: "${ifLine}"\n` : ""}      run: "bash tools/numbers.sh"\n      type: command\n      strength: refuse\n    }`;
+  const results = (src: string) => validate(parse(src)).filter((r) => r.rule === "V135");
+
+  const CASES: Array<[string, string, string]> = [
+    ["PreToolUse, matcher WebFetch", sameHook("PreToolUse", "WebFetch"), '(PreToolUse, matcher WebFetch)'],
+    ["PreToolUse Bash with if:", sameHook("PreToolUse", "Bash", "Bash(rm -rf *)"), '(PreToolUse, matcher Bash, if: Bash(rm -rf *))'],
+    ["UserPromptSubmit", sameHook("UserPromptSubmit", null), "(UserPromptSubmit)"],
+    ["PermissionRequest", sameHook("PermissionRequest", null), "(PermissionRequest)"],
+    ["the at-skill shape: PreToolUse, matcher Bash", sameHook("PreToolUse", "Bash"), "(PreToolUse, matcher Bash)"],
+  ];
+  for (const [name, hooks, desc] of CASES) {
+    it(`warns, no error: ${name}`, () => {
+      const hits = results(topo(gate, { hooks }));
+      expect(hits.map((h) => h.level)).toEqual(["warning"]);
+      expect(hits[0].node).toBe("g");
+      expect(hits[0].message).toBe(`Gate "g" is run only by hook "n" ${desc}, which runs its command; guard --check grades it hope.`);
+    });
+  }
+
+  it("the scaffold warning line carries the matcher and if:", () => {
+    const src = topo(gate, { hooks: sameHook("PreToolUse", "Bash", "Bash(rm -rf *)") });
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+    try {
+      claudeCodeBinding.scaffold(parse(src));
+    } finally {
+      console.warn = original;
+    }
+    expect(warnings.find((w) => w.includes('Gate "g"'))).toContain('hook "n" (PreToolUse, matcher Bash, if: Bash(rm -rf *)) runs the same command');
+  });
+
+  it("a gate a hook of its own runs gives no V135 at all", () => {
+    expect(results(topo(`    gate g {\n      after: a\n      run: "bash tools/numbers.sh"\n    }`, { hooks: sameHook("PreToolUse", "Bash") }))).toEqual([]);
   });
 });
