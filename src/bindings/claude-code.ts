@@ -45,11 +45,13 @@ import {
   generateBeforeEditScript as buildBeforeEditScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
+  hooklessGateReason,
   isRegisteredSubagentType,
   runsAsSkill,
   shellQuote,
   stepMatchWords,
 } from "./lib/guards.js";
+import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -1556,6 +1558,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // Read back by import, so a gate written strength: hope (V135) stays one.
+      if (gate.strength) sections.push(`Strength: ${gate.strength}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
         sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
@@ -2487,52 +2491,42 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // in its own session context. SubagentStop hooks would be dead config in
   // this mode, so we skip emitting them entirely (still generate the wrapper
   // script). The gate must be invoked from the playbook at the right step.
-  const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
     if (!scriptNameFromRun(gate.run)) continue; // no run, or V96 prose
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
 
-    if (delegationMode === "inline") {
-      console.warn(
-        `[claude-code] Gate "${gate.id}" — orchestrator.delegation is "inline", ` +
-          `so no subagent ever runs. SubagentStop hook not emitted; invoke ` +
-          `.claude/skills/${topologyName}/scripts/gate-${gate.id}.sh from your ` +
-          `orchestrator playbook at the right step.`,
-      );
-      continue;
-    }
-
     // SubagentStop matcher must be a registered subagent_type. A gate after an
-    // action or a human runs before its next agent instead (before-agent.sh,
-    // wired below); with no agent on either side, warn and skip so we don't
-    // ship dead config that never fires.
-    const anchors = gateAnchors(gate, "after");
-    const wiring = gateWiring(ast, gate);
-    if (wiring.kind === "before-agent") continue;
-    if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
-    if (wiring.kind !== "subagent-stop") {
-      const session = sessionAgentId(ast);
-      if (session && anchors.includes(session)) {
-        // The entry agent is the session, not a subagent (V134).
+    // action or a human runs before its next agent instead (before-agent.sh),
+    // and a gate before a script step from before-action.sh (both wired
+    // below, and before-action.sh under inline delegation too). With nothing
+    // to mark its moment, warn and skip so we don't ship dead config that
+    // never fires. The reason is V135's, which refuses the gate when it would
+    // refuse (strength refuse or unset).
+    const hookless = hooklessGateReason(ast, gate);
+    if (hookless) {
+      const inline = getDelegationMode(ast) === "inline";
+      const same = sameCommandHook(ast, gate, "claude-code");
+      if (same) {
         console.warn(
-          `[claude-code] Gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, ` +
-            `so SubagentStop never fires for it. SubagentStop hook not emitted; the gate wrapper script is still ` +
-            `generated. Anchor the gate on a subagent or a script step.`,
+          `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook of its own runs it; ` +
+            `hook "${same.name}" ${describeHook(same)} runs the same command, so the check runs there, on the calls that hook matches.`,
         );
         continue;
       }
-      const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
-      const targetDesc = anchors.length
-        ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
-        : "no after: target";
       console.warn(
-        `[claude-code] Gate "${gate.id}" has ${targetDesc} — SubagentStop hook not emitted ` +
-          `(matcher must be an agent node id). The gate wrapper script is still generated; ` +
-          `invoke it from your orchestrator playbook or a slash command at the right step.`,
+        `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook runs it — SubagentStop hook not emitted ` +
+          (inline ? "" : "(matcher must be an agent node id). ") +
+          `The gate wrapper script is still generated; invoke ` +
+          `.claude/skills/${topologyName}/scripts/gate-${gate.id}.sh from your orchestrator playbook ` +
+          `or a slash command at the right step.`,
       );
       continue;
     }
+    if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
+    const anchors = gateAnchors(gate, "after");
+    const wiring = gateWiring(ast, gate);
+    if (wiring.kind !== "subagent-stop") continue; // before-agent.sh runs it
 
     // An anchor that is the entry agent (the session) is left out; the
     // subagents beside it keep their hook (V134 warns about the entry agent).

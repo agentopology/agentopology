@@ -265,6 +265,9 @@ export function checkStdout(event: string, stdout: string): string | null {
   return null;
 }
 
+/** Claude Code events whose hook can stop the call it runs before (exit 2). guard --check and V135 read this one list. */
+export const BLOCKING_EVENTS: ReadonlySet<string> = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
+
 /** Tool events: the ones a handler's `if` is read on, and whose matcher is a tool name. */
 export const TOOL_EVENTS: ReadonlySet<string> = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied"]);
 

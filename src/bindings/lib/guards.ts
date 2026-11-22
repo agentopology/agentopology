@@ -23,6 +23,7 @@ import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
+import { isWorkflowSeamAgent } from "./seam.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -173,8 +174,11 @@ export function isRegisteredSubagentType(ast: TopologyAST, name: string | undefi
   // settings key is the same mechanism as --agent (the sub-agents doc: the
   // flag overrides the setting): INFERRED. Codex has no entry agent.
   if (p.id === "claude-code" && name === sessionAgentId(ast)) return false;
+  // An `execution: workflow` agent runs inside the workflow script: the
+  // claude-code binding writes no agent file for it, so it is no subagent_type
+  // there. Codex writes it as an agent.
   return ast.nodes.some(
-    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode))) && n.id === name,
+    (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode) && !(p.id === "claude-code" && isWorkflowSeamAgent(n as AgentNode)))) && n.id === name,
   );
 }
 
@@ -224,6 +228,52 @@ export function gateWiring(ast: TopologyAST, gate: GateNode, p: GuardPlatform = 
   }
   const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b, p));
   return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
+}
+
+/** A node id with what it is, for a message: `"finish" (an action with no commands:)`. */
+function anchorKind(ast: TopologyAST, id: string, p: GuardPlatform): string {
+  const node = ast.nodes.find((n) => n.id === id);
+  const kind = !node
+    ? "not a declared node"
+    : node.type === "agent" && p.id === "claude-code" && id === sessionAgentId(ast)
+      ? "the entry agent: it is the session, so SubagentStop never fires for it"
+    : node.type === "agent" && p.id === "claude-code" && isWorkflowSeamAgent(node as AgentNode)
+      ? "an execution: workflow agent: it runs in the workflow script, not as a subagent"
+    : node.type === "agent"
+      ? `an agent with runs: ${(node as AgentNode).runs}, so not a subagent`
+      : node.type === "action"
+        ? (node as ActionNode).commands?.length ? "an action" : "an action with no commands:"
+        : `${/^[aeiou]/.test(node.type) ? "an" : "a"} ${node.type}`;
+  return `"${id}" (${kind})`;
+}
+
+/**
+ * Why no generated hook runs a gate on Claude Code (and Codex, which wires
+ * gates the same way), or null when one does or the gate is not one a hook
+ * runs. A hook runs a gate that is not advisory and whose `run:` names a
+ * script when a script step (an action with `commands:`) is in its `before:`
+ * (before-action.sh), or {@link gateWiring} is not `none`. Every other such
+ * gate gets its wrapper script and nothing that calls it: inline delegation,
+ * or no subagent in `after:` (each must be one) and none in `before:`. V135
+ * and the binding's scaffold warning share this text. `p` matters for the
+ * entry agent: on Claude Code it is the session, not a subagent; Codex has
+ * no entry agent, so there it is wired like any other.
+ */
+export function hooklessGateReason(ast: TopologyAST, gate: GateNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): string | null {
+  if (gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) return null;
+  if (checkableActionGate(ast, gate)) return null;
+  if (gateWiring(ast, gate, p).kind !== "none") return null;
+  if (getDelegationMode(ast) === "inline") return 'orchestrator.delegation "inline" (no subagent ever runs)';
+  const afters = gateAnchors(gate, "after");
+  const befores = gateAnchors(gate, "before");
+  const badAfters = afters.filter((a) => !isRegisteredSubagentType(ast, a, p));
+  const afterPart = afters.length === 0
+    ? "no after: target"
+    : `after: ${badAfters.map((a) => anchorKind(ast, a, p)).join(", ")}, not a subagent`;
+  const beforePart = befores.length === 0
+    ? "no before: target"
+    : `before: ${befores.map((b) => anchorKind(ast, b, p)).join(", ")}, not a subagent or a script step`;
+  return `${afterPart} and ${beforePart}`;
 }
 
 /**
