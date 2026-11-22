@@ -80,6 +80,49 @@ describe("a flag that takes inline code, or one the table does not know, still n
   });
 });
 
+describe("a long flag: inline code written with `=`, and an unlisted flag that may take the next word", () => {
+  // `node --eval=code tools/x.js` runs the code, not tools/x.js; read as before flags were read.
+  it.each([
+    "node --eval=1 tools/x.js",
+    "node --print=1 tools/x.js",
+    "tsx --eval=1 tools/x.ts",
+    "bun --eval=1 tools/x.ts",
+    "bun --print=1 tools/x.ts",
+    "deno --eval=1 tools/x.ts",
+  ])("inline: %s", (run) => {
+    const words = run.split(/\s+/);
+    expect(runParts(run)).toEqual({ script: words[0], args: words.slice(1) });
+  });
+
+  // An unlisted `--flag` with no `=` may take the next word as its value, so the
+  // value would be read as the script (a stub named `strict`): read as before.
+  it.each([
+    "node --unhandled-rejections strict tools/x.js",
+    "node --max-old-space-size 4096 tools/x.js",
+    "node --watch-path ./src tools/x.js",
+    "tsx --tsconfig tsconfig.json tools/x.ts",
+    "bun --some-flag value tools/x.ts",
+    "deno --cert ca.pem tools/x.ts",
+  ])("unlisted: %s", (run) => {
+    const words = run.split(/\s+/);
+    expect(runParts(run)).toEqual({ script: words[0], args: words.slice(1) });
+    expect(scriptNameFromRun(run)).toBe(words[0]);
+  });
+
+  // A long flag listed as taking no value, and any `--flag=value`, still lead to the script.
+  it.each<[string, string[]]>([
+    ["node --no-warnings tools/x.js", ["--no-warnings"]],
+    ["node --enable-source-maps --experimental-strip-types tools/x.ts", ["--enable-source-maps", "--experimental-strip-types"]],
+    ["node --max-old-space-size=4096 tools/x.js", ["--max-old-space-size=4096"]],
+    ["node --unhandled-rejections=strict tools/x.js", ["--unhandled-rejections=strict"]],
+    ["tsx --tsconfig=tsconfig.json tools/x.ts", ["--tsconfig=tsconfig.json"]],
+    ["bun --smol tools/x.ts", ["--smol"]],
+    ["deno --allow-read --allow-env=HOME tools/x.ts", ["--allow-read", "--allow-env=HOME"]],
+  ])("listed or with `=`: %s", (run, flags) => {
+    expect(runParts(run)).toEqual({ interpreter: run.split(" ")[0], flags, script: run.split(" ").at(-1), args: [] });
+  });
+});
+
 describe("a $CLAUDE_PROJECT_DIR script word is a project path, named by its basename without quotes", () => {
   it("a word through any other variable is left as written, as before", () => {
     expect(runParts('bash "$HOME/bin/x.sh" --a')).toEqual({ interpreter: "bash", script: '"$HOME/bin/x.sh"', args: ["--a"] });
