@@ -8,6 +8,7 @@
  */
 
 import type { TopologyAST } from "../parser/ast.js";
+import type { StubKind } from "./lib/stub.js";
 
 /** A file to be written to disk by a binding's scaffold function. */
 export interface GeneratedFile {
@@ -36,6 +37,12 @@ export interface GeneratedFile {
    * stub marker is treated the same without this flag.
    */
   userScript?: boolean;
+  /**
+   * What this file stands in for when it is a stub (its content carries the
+   * stub marker): set by the generator that decided to write a stub, read by
+   * the stub count validate and scaffold print (src/scaffold/stubs.ts).
+   */
+  stub?: StubKind;
 }
 
 /**

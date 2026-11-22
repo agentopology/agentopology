@@ -39,6 +39,11 @@ function scaffoldInto(src: string, dir = root) {
   return files;
 }
 
+/** Write each gate's check script over its stub, as a user would: a stub grades none (it checks nothing). */
+function writeGateScripts(files: Array<{ path: string; stub?: string }>, dir = root) {
+  for (const f of files) if (f.stub === "gate") fs.writeFileSync(join(dir, f.path), "#!/usr/bin/env bash\nexit 0\n");
+}
+
 beforeEach(() => { root = fs.mkdtempSync(join(os.tmpdir(), "at-rfix-")); spawnSync("git", ["init", "-q", root]); });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -574,7 +579,7 @@ describe("[R-1] honesty: on Codex a gate that holds reads unverified, and one th
     const f = writeAt(AGENT_GATE("writer"));
     const proj = join(root, "p");
     fs.mkdirSync(proj);
-    scaffoldInto(AGENT_GATE("writer"), proj);
+    writeGateScripts(scaffoldInto(AGENT_GATE("writer"), proj), proj);
     const line = enforcementLine(fs.readFileSync(join(proj, "AGENTS.md"), "utf8"));
     expect(line).toMatch(/\*\*Enforcement:\*\* unverified/);
     expect(line).not.toMatch(/\bhook\b/);
@@ -619,7 +624,7 @@ describe("[E-5] guard --check grades a Codex project from .codex/", () => {
     const f = writeAt(fs.readFileSync(FIXTURE, "utf8"));
     const proj = join(root, "p");
     fs.mkdirSync(proj);
-    scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj);
+    writeGateScripts(scaffoldInto(fs.readFileSync(FIXTURE, "utf8"), proj), proj);
     const r = cliIn(["guard", f, "--check", "--dir", proj]);
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout).toMatch(/gate publish-ready\s+unverified/);

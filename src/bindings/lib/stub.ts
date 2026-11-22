@@ -28,6 +28,14 @@
 export const STUB_MARKER = "# AGENTOPOLOGY_STUB — fill this in before relying on this script";
 
 /**
+ * What a stub stands in for, set by the generator that writes it (the one
+ * place the decision is made): a gate's check script, a hook's script, an
+ * action with no commands, a tool's script, the metering script, or a
+ * workflow seam launcher. A stub no generator tagged counts as "other".
+ */
+export type StubKind = "gate" | "hook" | "action" | "tool" | "metering" | "workflow" | "other";
+
+/**
  * Generate a shell script stub with a header comment and the {@link STUB_MARKER}.
  *
  * Output shape:

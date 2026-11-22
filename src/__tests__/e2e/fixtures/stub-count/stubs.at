@@ -1,0 +1,70 @@
+# stubs.at: one of each script scaffold cannot write for the user, and one
+# action that points at its real commands. Used by stub-count.test.ts (in its
+# own folder, so the scaffold golden, which reads fixtures/*.at, is unchanged).
+
+topology stubs : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "Every kind of stub, counted"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [fetch, pull]
+  }
+
+  action fetch {
+    kind: external
+    description: "Runs the real commands, so no stub"
+    commands: ["python3 -I tools/fetch.py --since 7d", "npx foo"]
+  }
+
+  action pull {
+    kind: external
+    source: "github-pr"
+    description: "Names no command, so its script is a stub"
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Writes the draft"
+    prompt { Write the draft. }
+  }
+
+  agent reviewer {
+    model: sonnet
+    description: "Reviews the draft"
+    prompt { Review the draft. }
+  }
+
+  flow {
+    fetch -> pull
+    pull -> writer
+    writer -> reviewer
+  }
+
+  gates {
+    gate check {
+      after: writer
+      before: reviewer
+      run: "scripts/check.sh"
+    }
+  }
+
+  hooks {
+    hook block-push {
+      on: PreToolUse
+      matcher: "Bash"
+      run: "scripts/block-push.sh"
+    }
+  }
+
+  tools {
+    tool fmt {
+      script: "tools/fmt.py"
+      lang: python
+      description: "Formats the draft"
+    }
+  }
+}

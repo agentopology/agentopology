@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import { runSequence } from "./differential/merge-sequences.mjs";
 // @ts-expect-error plain JavaScript module
 import { EXCEPTION_SEQUENCES, S12_HOOK, S13_KEYS } from "./differential/exception-sequences.mjs";
+// @ts-expect-error plain JavaScript module
+import { ruledSides } from "./differential/stub-rulings.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -45,7 +47,9 @@ describe("[D-exceptions-0112] the two scaffold differences from 0.11.2, and noth
   it("[S-13] the environments values 0.11.2 leaked into env are gone; exit code, output and every other setting as 0.11.2", () => {
     const { was, now } = run(1);
     expect(now.code).toBe(was.code);
-    expect(now.output).toBe(was.output);
+    // Its gate's stub is listed in the stub summary, which now counts by kind (differential/stub-rulings.mjs).
+    const [wasOut, nowOut] = ruledSides(was.output, now.output);
+    expect(nowOut).toBe(wasOut);
     const old = JSON.parse(was.settings!);
     const cur = JSON.parse(now.settings!);
     expect(Object.keys(old.env)).toEqual(S13_KEYS);

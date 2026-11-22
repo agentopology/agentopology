@@ -17,6 +17,8 @@ Validating openclaw-assistant.at (personal-assistant v1.0.0)
     .claude/agents/writer/AGENT.md  tools  at-ahead  .at [Read, Write, Edit]  file (absent)
   scaffold writes at-ahead keys and removes at-removed ones; it keeps file-ahead, conflict and released keys as the file has them (--force takes the .at's value). It never writes a file's text.
 
+  stubs (claude-code): 1 of 13 generated files are stubs: 1 metering script
+
   WARN  [V99] line 56: Agent "scheduler" uses skill "google-calendar", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill google-calendar { file: ".claude/skills/google-calendar/SKILL.md" }; otherwise check the name (scheduler)
 
   0 error(s), 1 warning(s)
