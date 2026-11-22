@@ -28,7 +28,7 @@ import {
   generateBeforeEditScript,
   generateGateWrapperScripts,
   getDelegationMode,
-  spawnHeldAgents, MATCH_FUNCTIONS, CANON_FUNCTION,
+  spawnHeldAgents, MATCH_FUNCTIONS, RESOLVE_FUNCTIONS, GUARD_OPTIONS, CANON_FUNCTION,
   beforeActionBudgetSum, durationSeconds, gateWorstCase } from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
@@ -387,9 +387,9 @@ export function ifFilterScript(): GeneratedFile {
       "  # glob test still holds. A refuse hook that cannot read the command treats it as a match.",
       '  case "$values" in $glob) matched=1 ;; esac',
       "  CMD=${values//$'\\\n'/}",
-      ...MATCH_FUNCTIONS.map((l) => "  " + l),
+      ...[...MATCH_FUNCTIONS, ...(GUARD_OPTIONS.resolveLeadingAssignments ? RESOLVE_FUNCTIONS : [])].map((l) => "  " + l),
       "  set -f",
-      '  SEGS=$(strip_redir "$(at_resolve "$CMD")")',
+      GUARD_OPTIONS.resolveLeadingAssignments ? '  SEGS=$(strip_redir "$(at_resolve "$CMD")")' : '  SEGS=$(strip_redir "$CMD")',
       "  for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
       '  read -ra GW <<< "$glob"',
       '  key=""; rest=""',

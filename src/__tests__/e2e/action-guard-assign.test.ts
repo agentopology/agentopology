@@ -1,5 +1,6 @@
 /**
- * before-action.sh reads a lower-case variable the command itself sets to a plain literal at its
+ * With GUARD_OPTIONS.resolveLeadingAssignments on (it is off by default, and this file turns it on only
+ * while it scaffolds), before-action.sh reads a lower-case variable the command itself sets to a plain literal at its
  * start (`t=/x; tool open $t build && tool enter map`) as that literal: the step's words are then
  * read as written, and a command that names no gated step runs without running the gate checks.
  * Every other shape of assignment stays unreadable, and the gate checks run as before: an
@@ -17,7 +18,7 @@ import * as os from "node:os";
 import { dirname, join } from "node:path";
 import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
-import { MATCH_FUNCTIONS } from "../../bindings/lib/guards.js";
+import { MATCH_FUNCTIONS, RESOLVE_FUNCTIONS, GUARD_OPTIONS } from "../../bindings/lib/guards.js";
 
 const topology = `topology ship : [pipeline] {
   meta { version: "1.0.0" description: "Open then accept" }
@@ -53,7 +54,15 @@ let marker: string;
 beforeAll(() => {
   root = fs.mkdtempSync(join(os.tmpdir(), "at-guard-assign-"));
   marker = join(root, "gate-ran");
-  for (const f of claudeCodeBinding.scaffold(parse(topology))) {
+  // the reading is off by default (action-guard-resolution-off.test.ts); these rows keep its code covered
+  GUARD_OPTIONS.resolveLeadingAssignments = true;
+  let files;
+  try {
+    files = claudeCodeBinding.scaffold(parse(topology));
+  } finally {
+    GUARD_OPTIONS.resolveLeadingAssignments = false;
+  }
+  for (const f of files) {
     fs.mkdirSync(dirname(join(root, f.path)), { recursive: true });
     fs.writeFileSync(join(root, f.path), f.content);
     if (f.executable) fs.chmodSync(join(root, f.path), 0o755);
@@ -76,6 +85,27 @@ function run(command: string) {
   });
   const ms = performance.now() - t0;
   return { status: r.status, stderr: r.stderr, ms, gateRan: fs.existsSync(marker) };
+}
+
+/**
+ * The CPU time (user + system, ms) of the same hook run and every process it waited for, best of up
+ * to 5. Unlike wall-clock time it does not grow when other work loads the machine, so a bound on it
+ * fails only when the hook itself does more work.
+ */
+function cpuMs(command: string) {
+  let best = Infinity;
+  for (let i = 0; i < 5 && best >= 1000; i++) {
+    const r = spawnSync("bash", ["-c", `TIMEFORMAT='%3U %3S'; time /bin/sh -c 'bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"' >/dev/null 2>&1`], {
+      cwd: join(root, "src/deep"),
+      input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } }),
+      env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+      encoding: "utf8",
+      timeout: 20_000,
+    });
+    const [user, sys] = r.stderr.trim().split("\n").pop()!.split(" ").map(Number);
+    best = Math.min(best, (user + sys) * 1000);
+  }
+  return best;
 }
 
 describe("a literal assignment at the command's start is read as its value", () => {
@@ -340,28 +370,26 @@ describe("resolution has a size limit: a longer command stays doubted", () => {
     return (c + " " + "z".repeat(len - c.length - 1)).slice(0, len);
   };
 
-  it(`at the limit (${MAX_LEN} characters, mostly $t uses): resolved, no gate, under 1 s`, () => {
+  // The cost bound is on the hook's CPU time, not wall-clock: under a full-suite load the wall-clock
+  // time of these rows passed 1 s with the hook doing the same work. The path taken is asserted as before.
+  it(`at the limit (${MAX_LEN} characters, mostly $t uses): resolved, no gate, under 1 s of CPU`, () => {
     const cmd = ofLength(MAX_LEN);
     expect(cmd.length).toBe(MAX_LEN);
-    // best of up to 5 runs, as in the speed test: the full suite loads every core
-    let r = run(cmd);
-    for (let i = 1; i < 5 && r.ms >= 1000; i++) {
-      spawnSync("sleep", ["0.3"]);
-      const again = run(cmd);
-      if (again.ms < r.ms) r = again;
-    }
-    console.log(`[cap] ${MAX_LEN} characters: ${Math.round(r.ms)} ms, exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
+    const r = run(cmd);
+    const cpu = cpuMs(cmd);
+    console.log(`[cap] ${MAX_LEN} characters: ${Math.round(cpu)} ms CPU (${Math.round(r.ms)} ms wall), exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
     expect(r.gateRan).toBe(false);
-    expect(r.ms).toBeLessThan(1000);
+    expect(cpu).toBeLessThan(1000);
   });
 
-  it(`one character past it (${MAX_LEN + 1}): doubted, the gate runs, under 1 s`, () => {
+  it(`one character past it (${MAX_LEN + 1}): doubted, the gate runs, under 1 s of CPU`, () => {
     const cmd = ofLength(MAX_LEN + 1);
     expect(cmd.length).toBe(MAX_LEN + 1);
     const r = run(cmd);
-    console.log(`[cap] ${MAX_LEN + 1} characters: ${Math.round(r.ms)} ms, exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
+    const cpu = cpuMs(cmd);
+    console.log(`[cap] ${MAX_LEN + 1} characters: ${Math.round(cpu)} ms CPU (${Math.round(r.ms)} ms wall), exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
     expect(r.gateRan).toBe(true);
-    expect(r.ms).toBeLessThan(1000);
+    expect(cpu).toBeLessThan(1000);
   });
 
   it("the reading alone, on the costliest shapes at the limit, takes under 0.3 s", () => {
@@ -390,8 +418,10 @@ describe("resolution has a size limit: a longer command stays doubted", () => {
       let runs = 0;
       for (let i = 0; i < 5 && best >= 300; i++) {
         if (i > 0) spawnSync("sleep", ["0.3"]);
-        const r = spawnSync("bash", ["-c", `${MATCH_FUNCTIONS.join("\n")}\nTIMEFORMAT=%3R; time at_resolve "$1" >/dev/null`, "at", cmd], { encoding: "utf8" });
-        best = Math.min(best, Number(r.stderr.trim().split("\n").pop()) * 1000);
+        // CPU time (user + system), as cpuMs: it does not grow when other work loads the machine
+        const r = spawnSync("bash", ["-c", `${[...MATCH_FUNCTIONS, ...RESOLVE_FUNCTIONS].join("\n")}\nTIMEFORMAT='%3U %3S'; time at_resolve "$1" >/dev/null`, "at", cmd], { encoding: "utf8" });
+        const [user, sys] = r.stderr.trim().split("\n").pop()!.split(" ").map(Number);
+        best = Math.min(best, (user + sys) * 1000);
         runs = i + 1;
       }
       const row = `[cap] at_resolve alone, ${shape}, ${cmd.length} characters: ${Math.round(best)} ms (best of ${runs})`;

@@ -42,7 +42,11 @@ interface FlagTable {
   valueLetter?: string;
   /** Flags whose value is written attached (`-Xdev`, `-Wignore`, `-Ilib`). */
   attached?: readonly string[];
-  /** Any other `--long` flag, and `--long=value`, is skipped as taking no separate value. */
+  /**
+   * Any other `--long=value` is skipped. An unlisted `--long` with no `=` may
+   * take the next word as its value (`--unhandled-rejections strict`), so it
+   * stops the search: the run names no script there, as before flags were read.
+   */
   long?: boolean;
 }
 
@@ -60,29 +64,39 @@ const PYTHON: FlagTable = {
 /**
  * node, and tsx, which takes node's flags. `-r` / `--require`, `--import`,
  * `--loader` / `--experimental-loader`, `-C` / `--conditions`, `--env-file`
- * and `--input-type` take the next word as their value; any other `--flag`
- * (or `--flag=value`) takes none.
+ * and `--input-type` take the next word as their value; the listed bare
+ * flags take none; any other `--flag=value` is one word. Any other `--flag`
+ * stops the search (see FlagTable.long).
  */
 const NODE: FlagTable = {
-  bare: set(),
+  bare: set(
+    "--no-warnings", "--no-deprecation", "--trace-warnings", "--trace-deprecation", "--trace-uncaught",
+    "--throw-deprecation", "--pending-deprecation", "--enable-source-maps", "--experimental-strip-types",
+    "--experimental-transform-types", "--experimental-vm-modules", "--expose-gc", "--preserve-symlinks",
+    "--preserve-symlinks-main", "--abort-on-uncaught-exception", "--inspect", "--inspect-brk", "--watch",
+  ),
   value: set("-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions", "--env-file", "--input-type"),
   inline: set("-e", "--eval", "-p", "--print", "--run", "-"),
   long: true,
 };
 
 const BUN: FlagTable = {
-  bare: set(),
+  bare: set("--smol", "--hot", "--watch", "--bun", "--silent", "--no-install"),
   value: set("-r", "--preload", "--cwd", "--env-file", "--tsconfig-override"),
   inline: set("-e", "--eval", "-p", "--print"),
   long: true,
 };
 
+/** deno: `--allow-*` and `--deny-*` take a value only after `=`. */
 const DENO: FlagTable = {
-  bare: set("-A", "-q"),
+  bare: set("-A", "-q", "--quiet", "--no-check", "--reload", "--unstable", "--allow-all"),
   value: set("--config", "--import-map"),
   inline: set("--eval"),
   long: true,
 };
+
+/** Permission flags a family takes with no separate value (`--allow-read`, `--allow-env=HOME`). */
+const BARE_PREFIX: ReadonlyMap<FlagTable, RegExp> = new Map([[DENO, /^--(?:allow|deny)-[a-z-]+$/]]);
 
 const SHELL: FlagTable = {
   bare: set("--norc", "--noprofile", "--posix", "--login", "--verbose", "--noediting", "--restricted"),
@@ -130,10 +144,11 @@ function flagCount(table: FlagTable, words: string[]): number | null {
     const w = words[i];
     if (w === "--") return words.length > i + 1 ? i : null; // the end of the flags; counted as one
     if (!/^[-+]/.test(w)) return i - 1;
-    if (table.inline.has(w)) return null;
-    if (table.bare.has(w)) { i += 1; continue; }
+    const name = /^--[^=]+=/.test(w) ? w.slice(0, w.indexOf("=")) : w; // `--eval=code` is `--eval`
+    if (table.inline.has(name)) return null;
+    if (table.bare.has(w) || BARE_PREFIX.get(table)?.test(w)) { i += 1; continue; }
     if (table.value.has(w)) { i += 2; continue; }
-    if (table.long && /^--[A-Za-z0-9][A-Za-z0-9-]*(?:=.*)?$/.test(w)) { i += 1; continue; }
+    if (table.long && /^--[A-Za-z0-9][A-Za-z0-9-]*=.*$/.test(w)) { i += 1; continue; }
     if (table.attached?.some((f) => w.startsWith(f) && w.length > f.length)) { i += 1; continue; }
     const group = /^[-+]([A-Za-z]+)$/.exec(w)?.[1];
     if (group && table.letters) {
@@ -161,7 +176,10 @@ export function projectWord(word: string): string {
     if (!path.endsWith('"')) return word;
     path = path.slice(0, -1);
   }
-  return path.includes('"') ? word : `.${path}`;
+  // `"$CLAUDE_PROJECT_DIR"/` alone names the folder itself, not a file in it: an argument, kept as written
+  if (/^\/+$/.test(path)) return word;
+  // `"$CLAUDE_PROJECT_DIR"//x.sh` is `./x.sh`, never the root's `/x.sh`
+  return path.includes('"') ? word : `.${path.replace(/^\/+/, "/")}`;
 }
 
 /**

@@ -5,6 +5,9 @@ export default defineConfig({
     // The CLI and e2e tests run the built CLI. Without this they ran whatever
     // stale dist/ was on disk, so a source change could pass on old output.
     globalSetup: ["./src/__tests__/global-setup.ts"],
+    // A macrotask before every test, so vitest's worker RPC replies are read
+    // between synchronous tests (see the file for the measured cause).
+    setupFiles: ["./src/__tests__/yield-setup.ts"],
     // The e2e tests start the CLI two or three times each; under a full
     // parallel run one occasionally passed the 5 s default and failed (G3, G2,
     // R3 seen) though nothing was wrong.

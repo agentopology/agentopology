@@ -1130,12 +1130,17 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
       scaffoldInto(AGENT_GATE("writer"));
       const pidFile = at("check.pid");
       fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\ntrap "" TERM\necho $$ > "${pidFile}"\nsleep 30\nexit 0\n`, { mode: 0o755 });
-      const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 3 ").replace(/AT_D=\d+/, "AT_D=3");
+      // An 8 s deadline, not 3: the deadline starts with the check, so on a loaded machine a check that had
+      // not yet reached its trap and pid line in 3 s was killed first. 8 s leaves it time to get there.
+      const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 8 ").replace(/AT_D=\d+/, "AT_D=8");
       const env = { ...process.env } as Record<string, string>;
       delete env.CLAUDE_PROJECT_DIR;
       if (mode === "POSIX watchdog") env.PATH = pathWithout("timeout", "gtimeout");
       const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: root, input: spawnPayload("reviewer"), env, encoding: "utf8", timeout: 40_000 });
       expect(r.status, r.stderr).toBe(2);
+      // blocked for the deadline (the message keeps the scaffolded number), not for another reason
+      expect(r.stderr).toMatch(/ran past its \d+s deadline, so this call is blocked/);
+      expect(fs.existsSync(pidFile), "the check was cut before it wrote its pid").toBe(true);
       const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
       expect(pid).toBeGreaterThan(0);
       expect(alive(pid), `check ${pid} still running after the hook returned`).toBe(false);
