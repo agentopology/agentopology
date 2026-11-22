@@ -221,15 +221,61 @@ describe.skipIf(!hasJq)("[CX-15] [C] a deny payload gives exit 2", () => {
 // ---------------------------------------------------------------------------
 const tierD = hasCodex ? describe : describe.skip;
 // npm's cache lives outside the scratch home: codex's background work fills it after a call returns, and
-// it is npm's, not a codex leftover. The home's own cleanup below still fails the file on a leftover writer.
+// it is npm's, not a codex leftover. The home's own cleanup below names and ends a leftover process, then removes the home strictly.
 const npmCache = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-npm-"));
 const sealed = (home: string) => ({ ...process.env, HOME: home, CODEX_HOME: home, npm_config_cache: npmCache }) as Record<string, string>;
+// Every codex call turns off the `plugins` feature (`--disable <FEATURE>` in `codex --help`; `plugins` is listed
+// by `codex features list`). With it on, a call clones the curated plugin repo into <home>/.tmp/plugins in the
+// background (MEASURED on 0.156.1: about 8,000 files) and can still be writing when the call returns.
+// The generated config writes no [features] or plugin key, so this hides nothing the checks below look at.
+const NO_PLUGINS = ["--disable", "plugins"];
+
+/** Every process whose environment holds HOME=<home> (Linux /proc; none are found where /proc is absent). */
+function processesWithHome(home: string): Array<{ pid: number; name: string }> {
+  let pids: string[];
+  try { pids = fs.readdirSync("/proc").filter((d) => /^\d+$/.test(d)); } catch { return []; }
+  const out: Array<{ pid: number; name: string }> = [];
+  for (const p of pids) {
+    try {
+      if (!fs.readFileSync(`/proc/${p}/environ`, "latin1").split("\0").includes(`HOME=${home}`)) continue;
+      out.push({ pid: Number(p), name: fs.readFileSync(`/proc/${p}/comm`, "utf8").trim() });
+    } catch { /* gone already, or not readable by us */ }
+  }
+  return out;
+}
+
+/** Name every process still running with this HOME, TERM it, then KILL what is left after 1.5 s. */
+async function endLeftovers(home: string): Promise<string[]> {
+  const seen = new Map<number, string>();
+  const start = Date.now();
+  for (;;) {
+    const live = processesWithHome(home);
+    if (live.length === 0) break;
+    const late = Date.now() - start > 1500;
+    if (Date.now() - start > 3000) break; // the strict removal below reports whatever survived
+    for (const x of live) {
+      seen.set(x.pid, x.name);
+      try { process.kill(x.pid, late ? "SIGKILL" : "SIGTERM"); } catch { /* already gone */ }
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const names = [...seen.values()];
+  const msg = `[CX-15] tier D cleanup: ${seen.size} process(es) still running with the scratch HOME`;
+  if (seen.size) console.warn(`${msg}, ended: ${[...new Set(names)].map((n) => `${n} x${names.filter((m) => m === n).length}`).join(", ")}`);
+  else console.log(msg);
+  return names;
+}
 
 tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() : "not installed: skipped"})`, () => {
   let home: string;
   beforeAll(() => { home = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-home-")); });
-  // Retries: ENOTEMPTY on <home>/.tmp was seen under load, a codex process still syncing its plugins there.
-  afterAll(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  // A process codex leaves running with this HOME (background work after a call returns; codex 0.156.1 has been
+  // seen leaving an `npm exec` child) is named on stderr and ended, not failed on: it is codex's, not the
+  // binding's. The removal stays strict, so a writer that escapes the sweep still fails the file (ENOTEMPTY).
+  afterAll(async () => {
+    await endLeftovers(home);
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
 
   const withRules = CORPUS.map((f) => ({ f, files: scaffoldCodex(f) })).filter((x) => x.files.some((y) => y.path.endsWith(".rules")));
 
@@ -251,7 +297,7 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
             const example = /match\s*=\s*(\[\[.*?\]\])\s*,/s.exec(block)?.[1];
             if (!decision || !example) { problems.push(`${f}: a rule has no decision or match example`); continue; }
             const cmd = (JSON.parse(example) as string[][])[0];
-            const r = spawnSync("codex", ["execpolicy", "check", "--rules", path, "--", ...cmd], { encoding: "utf8", env: sealed(home), timeout: 20_000 });
+            const r = spawnSync("codex", ["execpolicy", ...NO_PLUGINS, "check", "--rules", path, "--", ...cmd], { encoding: "utf8", env: sealed(home), timeout: 20_000 });
             const got = (() => { try { return JSON.parse(r.stdout).decision; } catch { return `unreadable (${r.stdout.trim().slice(0, 80)} ${r.stderr.trim().slice(0, 80)})`; } })();
             checked++;
             if (got !== decision) problems.push(`${f}: ${cmd.join(" ")} → ${got}, declared ${decision}`);
@@ -268,7 +314,7 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
     const outside = join("/var/tmp", `at-cx15-outside-${process.pid}`);
     try {
       spawnSync("git", ["init", "-q", ws]);
-      const r = spawnSync("codex", ["sandbox", "-P", ":workspace", "--", "sh", "-c", `touch ${outside}`], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 30_000 });
+      const r = spawnSync("codex", ["sandbox", ...NO_PLUGINS, "-P", ":workspace", "--", "sh", "-c", `touch ${outside}`], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 30_000 });
       if (fs.existsSync(outside)) {
         console.warn("[CX-15] sandbox check inconclusive: this machine's sandbox let a write outside the workspace through");
         return;
@@ -285,7 +331,7 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
     try {
       spawnSync("git", ["init", "-q", ws]);
       fs.mkdirSync(join(ws, ".codex"));
-      const r = spawnSync("codex", ["sandbox", "-P", ":workspace", "--", "sh", "-c", "touch .codex/forged; touch ok.txt"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 30_000 });
+      const r = spawnSync("codex", ["sandbox", ...NO_PLUGINS, "-P", ":workspace", "--", "sh", "-c", "touch .codex/forged; touch ok.txt"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 30_000 });
       if (fs.existsSync(join(ws, ".codex/forged"))) { console.warn("[CX-15] P8 inconclusive here: .codex/ was writable under this machine's sandbox"); return; }
       expect(fs.existsSync(join(ws, "ok.txt"))).toBe(true);
       expect(r.stderr + r.stdout).toMatch(/not permitted|denied|read-only/i);
@@ -301,7 +347,7 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
       // after it. SIGKILL killed only the launcher, and the orphaned binary went on writing <home>/.tmp/plugins
       // while afterAll removed <home> (ENOTEMPTY). With TERM, spawnSync returns once that binary is gone.
       fs.writeFileSync(join(home, "config.toml"), `[projects."${ws}"]\ntrust_level = "trusted"\n\n[model_providers.deadp]\nname = "dead"\nbase_url = "http://127.0.0.1:9/v1"\n`);
-      return spawnSync("codex", ["exec", "--strict-config", "-c", "model_provider=deadp", "--skip-git-repo-check", "hello"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 6000, killSignal: "SIGTERM" });
+      return spawnSync("codex", ["exec", ...NO_PLUGINS, "--strict-config", "-c", "model_provider=deadp", "--skip-git-repo-check", "hello"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 6000, killSignal: "SIGTERM" });
     };
     for (const f of sources) {
       const ws = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-strict-"));
