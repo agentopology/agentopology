@@ -979,15 +979,22 @@ function generateActionScripts(ast: TopologyAST): GeneratedFile[] {
       lines.push(`# Join semantics: ${action.join}`);
     }
 
+    // An action's commands run as written, whatever its kind; a report,
+    // decision or external action used to drop them for a TODO line.
+    const commands = action.commands ?? [];
     switch (action.kind) {
       case "external":
         lines.push(
           `# External source: ${action.source ?? "unknown"}`,
         );
         lines.push("");
-        lines.push(
-          `echo "TODO: implement external action -- fetch from ${action.source ?? "source"}"`,
-        );
+        if (commands.length > 0) {
+          lines.push(...commands);
+        } else {
+          lines.push(
+            `echo "TODO: implement external action -- fetch from ${action.source ?? "source"}"`,
+          );
+        }
         break;
       case "inline":
         if (action.commands && action.commands.length > 0) {
@@ -1014,13 +1021,21 @@ function generateActionScripts(ast: TopologyAST): GeneratedFile[] {
       case "report":
         lines.push("");
         lines.push("# Report generation");
-        lines.push('echo "TODO: implement report action"');
+        if (commands.length > 0) {
+          lines.push(...commands);
+        } else {
+          lines.push('echo "TODO: implement report action"');
+        }
         break;
       default:
         lines.push("");
-        lines.push(
-          `echo "TODO: implement ${action.kind ?? "unknown"} action"`,
-        );
+        if (commands.length > 0) {
+          lines.push(...commands);
+        } else {
+          lines.push(
+            `echo "TODO: implement ${action.kind ?? "unknown"} action"`,
+          );
+        }
         break;
     }
 
