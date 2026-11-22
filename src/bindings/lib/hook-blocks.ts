@@ -24,6 +24,15 @@ export function hookCanRefuse(hook: HookDef, p: string): boolean {
   return (p === "codex" ? CODEX_BLOCKING_EVENTS : CLAUDE_BLOCKING_EVENTS).has(hook.on);
 }
 
+/**
+ * A hook as a message names it: `(PreToolUse, matcher Bash, if: Bash(rm *))`,
+ * the matcher and `if:` only when written. They decide which calls the hook
+ * runs on, which is why a gate credited by such a hook is still graded hope.
+ */
+export function describeHook(hook: HookDef): string {
+  return `(${[hook.on, ...(hook.matcher ? [`matcher ${hook.matcher}`] : []), ...(hook.if ? [`if: ${hook.if}`] : [])].join(", ")})`;
+}
+
 /** A command with runs of whitespace made one space, ends trimmed. */
 const words = (command: string) => command.trim().replace(/\s+/g, " ");
 

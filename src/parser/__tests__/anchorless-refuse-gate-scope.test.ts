@@ -314,9 +314,16 @@ describe("round 3: a gate credited only by a same-command hook is a V135 warning
       const hits = results(topo(gate, { hooks }));
       expect(hits.map((h) => h.level)).toEqual(["warning"]);
       expect(hits[0].node).toBe("g");
-      expect(hits[0].message).toBe(`Gate "g" is run only by hook "n" ${desc}, which runs its command; guard --check grades it hope.`);
+      // The gate cites code (at:), so guard --check grades it cited, not refuse (0.12.4).
+      expect(hits[0].message).toBe(`Gate "g" is run only by hook "n" ${desc}, which runs its command; guard --check grades it cited (by its at:), not refuse.`);
     });
   }
+
+  it("with no at:, the warning says guard --check grades it hope", () => {
+    const hits = results(topo(gate.replace(`\n      at: "tools/checks.py"`, ""), { hooks: sameHook("PreToolUse", "WebFetch") }));
+    expect(hits.map((h) => h.level)).toEqual(["warning"]);
+    expect(hits[0].message).toBe('Gate "g" is run only by hook "n" (PreToolUse, matcher WebFetch), which runs its command; guard --check grades it hope.');
+  });
 
   it("the scaffold warning line carries the matcher and if:", () => {
     const src = topo(gate, { hooks: sameHook("PreToolUse", "Bash", "Bash(rm -rf *)") });

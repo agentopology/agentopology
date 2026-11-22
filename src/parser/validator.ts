@@ -34,7 +34,7 @@ import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { checkableActionGate, hooklessGateReason, stepMatchWords } from "../bindings/lib/guards.js";
-import { hookCanRefuse, sameCommandHook } from "../bindings/lib/hook-blocks.js";
+import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/hook-blocks.js";
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
@@ -4517,8 +4517,21 @@ function v135HooklessRefuseGate(ast: TopologyAST, opts: ValidateOptions): Valida
     const reason = hooklessGateReason(ast, gate, p);
     if (!reason) continue;
     if (edgeGuardRefuses(ast, gate, p)) continue;
-    // A declared refusing hook that runs this gate's own command runs its check.
-    if (sameCommandHook(ast, gate, p.id)) continue;
+    // A declared refusing hook that runs this gate's own command runs its check:
+    // no error. It runs only on the calls its matcher and if: select, and
+    // guard --check grades the gate hope, so validate says so.
+    const same = sameCommandHook(ast, gate, p.id);
+    if (same) {
+      results.push({
+        rule: "V135",
+        level: "warning",
+        node: gate.id,
+        line: lookupLine(ast, gate.id),
+        // guard --check: no hook of its own, so hope; with a holding at:, cited (0.12.4). Never refuse.
+        message: `Gate "${gate.id}" is run only by hook "${same.name}" ${describeHook(same)}, which runs its command; guard --check grades it ${gate.at ? "cited (by its at:), not refuse" : "hope"}.`,
+      });
+      continue;
+    }
     const fix = inline
       ? "With delegation inline, only a script step (an action with commands:) in before: gets a hook"
       : "Give it a subagent in after: or before:, or a script step (an action with commands:) in before:";

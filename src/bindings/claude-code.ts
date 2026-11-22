@@ -51,7 +51,7 @@ import {
   shellQuote,
   stepMatchWords,
 } from "./lib/guards.js";
-import { sameCommandHook } from "./lib/hook-blocks.js";
+import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -2510,7 +2510,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       if (same) {
         console.warn(
           `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook of its own runs it; ` +
-            `hook "${same.name}" (${same.on}) runs the same command, so the check runs there.`,
+            `hook "${same.name}" ${describeHook(same)} runs the same command, so the check runs there, on the calls that hook matches.`,
         );
         continue;
       }
