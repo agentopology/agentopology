@@ -221,7 +221,7 @@ describe.skipIf(!hasJq)("[CX-15] [C] a deny payload gives exit 2", () => {
 // ---------------------------------------------------------------------------
 const tierD = hasCodex ? describe : describe.skip;
 // npm's cache lives outside the scratch home: codex's background work fills it after a call returns, and
-// it is npm's, not a codex leftover. The home's own cleanup below still fails the file on a leftover writer.
+// it is npm's, not a codex leftover. The home's own cleanup below names and ends a leftover process, then removes the home strictly.
 const npmCache = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-npm-"));
 const sealed = (home: string) => ({ ...process.env, HOME: home, CODEX_HOME: home, npm_config_cache: npmCache }) as Record<string, string>;
 // Every codex call turns off the `plugins` feature (`--disable <FEATURE>` in `codex --help`; `plugins` is listed
@@ -245,7 +245,7 @@ function processesWithHome(home: string): Array<{ pid: number; name: string }> {
 }
 
 /** Name every process still running with this HOME, TERM it, then KILL what is left after 1.5 s. */
-async function endLeftovers(home: string): Promise<void> {
+async function endLeftovers(home: string): Promise<string[]> {
   const seen = new Map<number, string>();
   const start = Date.now();
   for (;;) {
@@ -263,13 +263,15 @@ async function endLeftovers(home: string): Promise<void> {
   const msg = `[CX-15] tier D cleanup: ${seen.size} process(es) still running with the scratch HOME`;
   if (seen.size) console.warn(`${msg}, ended: ${[...new Set(names)].map((n) => `${n} x${names.filter((m) => m === n).length}`).join(", ")}`);
   else console.log(msg);
+  return names;
 }
 
 tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() : "not installed: skipped"})`, () => {
   let home: string;
   beforeAll(() => { home = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-home-")); });
-  // A process still running with this HOME is named and ended first; the removal stays strict, so a writer
-  // that escapes the sweep still fails the file (ENOTEMPTY) instead of passing silently.
+  // A process codex leaves running with this HOME (background work after a call returns; codex 0.156.1 has been
+  // seen leaving an `npm exec` child) is named on stderr and ended, not failed on: it is codex's, not the
+  // binding's. The removal stays strict, so a writer that escapes the sweep still fails the file (ENOTEMPTY).
   afterAll(async () => {
     await endLeftovers(home);
     fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
