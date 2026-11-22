@@ -255,6 +255,10 @@ describe("a use the parent shell does not expand, or a child that can see anothe
     ["node -e", `ab=x; node -e "require('child_process').execSync('${X} enter $ab')"`],
     ["perl -e", `ab=x; perl -e 'system("${X} enter $ab")'`],
     ["a name spelled apart in a prefix assignment", `ab=x; a""b=accept ${X} enter $ab`],
+    ["a shell with a version in its name", `ab=x; /usr/bin/e""nv a""b=accept bash5.2 -c '${X} enter $ab'`],
+    ["a shell named .exe", `ab=x; bash.exe -c "${X} enter \\$ab"`],
+    ["a here-doc with an escaped delimiter", `ab=x; cat <<\\EOF | sh\n${X} enter $ab\nEOF`],
+    ["a here-doc with <<-", `ab=x; sh <<-"EOF"\n\t${X} enter $ab\n\tEOF`],
   ];
   for (const [shape, command] of doubted) {
     it(`doubted: ${shape}`, () => {
@@ -320,6 +324,10 @@ describe("resolution has a size limit: a longer command stays doubted", () => {
       ["one name, $t joined uses", fill("t=/x; ", () => "$t$t$t$t$t$t$t$t")],
       [`${MAX_NAMES} names, their uses in turn`, fill(heads16, (i) => `$n${i % MAX_NAMES}`)],
       ["one name, a segment per use", fill("t=/x; ", () => "; : $t")],
+      // a single quote in the command: the reading follows the quotes
+      ["one name, $t uses after a single-quoted word", fill("t=/x; echo 'q'; ", () => "$t")],
+      ["one name, \"$t\" uses after a single-quoted word", fill("t=/x; echo 'q'; ", () => "\"$t\"")],
+      ["one name, '$t' and $t in turn", fill("t=/x; ", (i) => (i % 2 ? "'$t'" : "$t"))],
     ];
     const slow: string[] = [];
     for (const [shape, cmd] of shapes) {
