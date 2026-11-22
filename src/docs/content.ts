@@ -392,6 +392,7 @@ action NAME {
 
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
+- **V136**: warning, a schedule job runs a decision or report action with no \`commands:\`: the job does nothing
 
 ## Example
 
@@ -2816,6 +2817,7 @@ schedule {
 
 - **V20**: \`cron\` and \`every\` are mutually exclusive -- use one or the other
 - **V20**: Job must reference a declared agent or action node
+- **V136**: warning, a job runs a decision or report action with no \`commands:\` (done in conversation, so the job does nothing)
 
 ## Example
 
@@ -3384,6 +3386,12 @@ A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` 
 **Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
 **Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim.
 
+### V136: Scheduled Routing Action (warning)
+A schedule job runs a \`decision\` or \`report\` action with no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. Every target.
+
+**Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
+**Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3420,6 +3428,7 @@ A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` 
 | V87 | error | Orchestrator Delegation Enum |
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
+| V136 | warning | Scheduled Routing Action |
 `,
   },
 

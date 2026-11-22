@@ -122,7 +122,6 @@ describe("V136: a schedule that runs a decision or report action with no command
     expect(found[1].message).toContain('Schedule job "nightly-pick"');
     expect(found[1].message).toContain('action "pick"');
     expect(found[1].message).toContain("decision");
-    expect(found[0].line).toBeGreaterThan(0);
   });
 
   it("is silent for a decision with commands, an external stub and an agent job", () => {

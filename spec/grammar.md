@@ -511,7 +511,7 @@ action <name> {
 
 **action-kind:** `external` | `git` | `decision` | `inline` | `report`
 
-An action with `commands:` runs them as written, whatever its kind. With none, an `inline`, `decision` or `report` action is done by the orchestrator in conversation, so scaffold writes no stub for it; an `external` or `git` action with no commands scaffolds a stub that fails until it is written.
+An action with `commands:` runs them as written, whatever its kind. With none, an `inline`, `decision` or `report` action is done by the orchestrator in conversation, so scaffold writes no stub for it; an `external` or `git` action with no commands scaffolds a stub that fails until it is written. A schedule job that runs a `decision` or `report` action with no commands does nothing, and validate warns (V136).
 
 Actions **cannot have outputs**. Only `agent` and `orchestrator` produce outputs.
 
