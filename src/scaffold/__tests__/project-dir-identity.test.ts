@@ -94,6 +94,9 @@ describe("the merge never makes one hook of two different commands", () => {
     ['bash x.sh "$CLAUDE_PROJECT_DIR"/', "bash x.sh"],
     ['rsync -a "${CLAUDE_PROJECT_DIR}/" /b', "rsync -a /b"],
     ['rsync -a "${CLAUDE_PROJECT_DIR:-.}/" /b', "rsync -a /b"],
+    // a doubled slash after the variable is still a path in the project, never the filesystem root
+    ['bash "$CLAUDE_PROJECT_DIR"//x.sh', "bash /x.sh"],
+    ['ls "${CLAUDE_PROJECT_DIR}//"', "ls /"],
   ])("two user hooks %s  and  %s stay two when a generated hook changes the file", (first, second) => {
     const user = settingsWith(first, second);
     const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
