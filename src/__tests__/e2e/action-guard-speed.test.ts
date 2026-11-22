@@ -96,12 +96,13 @@ const RUNS = 5;
 
 const SHAPES: [string, string][] = [
   ["plain command", "ls -la"],
-  ["assignment then &&", `T=/x; ${X} open $T build && ${X} enter map`],
+  ["assignment then &&", `t=/x; ${X} open $t build && ${X} enter map`],
+  ["doubted: an upper-case name, assignment then &&", `T=/x; ${X} open $T build && ${X} enter map`],
   ["pipes", `cat a.txt | grep foo | ${X} enter map`],
   ["subshell", `(cd sub && ${X} enter map)`],
   ["quoted strings", `echo "a && b; c | d" 'e || f' && ${X} enter "the map"`],
   ["here-string", `${X} enter map <<< "$(cat notes.txt)"`],
-  ["resolved: S=accept names the step", `S=accept; ${X} enter $S`],
+  ["resolved: s=accept names the step", `s=accept; ${X} enter $s`],
   ["doubted: prefix assignment", `T=/x ${X} enter $T`],
   ["doubted: reassigned", `T=/x; ${X} enter $T; T=/y`],
   ["doubted: export", `export T=/x; ${X} enter $T`],

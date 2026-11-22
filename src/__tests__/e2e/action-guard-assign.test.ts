@@ -1,8 +1,10 @@
 /**
- * before-action.sh reads a variable the command itself sets to a plain literal at its start
- * (`T=/x; tool open $T build && tool enter map`) as that literal: the step's words are then read
- * as written, and a command that names no gated step runs without running the gate checks.
- * Every other shape of assignment stays unreadable, and the gate checks run as before.
+ * before-action.sh reads a lower-case variable the command itself sets to a plain literal at its
+ * start (`t=/x; tool open $t build && tool enter map`) as that literal: the step's words are then
+ * read as written, and a command that names no gated step runs without running the gate checks.
+ * Every other shape of assignment stays unreadable, and the gate checks run as before: an
+ * upper-case or underscore name (bash sets several itself: $_, FUNCNAME, REPLY, PWD, ...), and
+ * any command with something that can change a variable between its assignment and its use.
  *
  * The gate's check script appends a line to a marker file, so each row can tell whether the
  * gate ran.
@@ -41,6 +43,9 @@ const topology = `topology ship : [pipeline] {
 
 const SCRIPT = ".claude/skills/ship/scripts/before-action.sh";
 const X = "python3 tools/runstate.py";
+/** The longest command at_resolve reads (characters), and the most leading assignments; past either it stays doubted. */
+const MAX_LEN = 2048;
+const MAX_NAMES = 16;
 let root: string;
 let marker: string;
 
@@ -73,8 +78,8 @@ function run(command: string) {
 }
 
 describe("a literal assignment at the command's start is read as its value", () => {
-  it("the measured shape: an assignment, a step that is not gated, && another: no gate runs, under 1 s", () => {
-    const r = run(`T=/x; ${X} open $T build && ${X} enter map`);
+  it("the measured shape, with a lower-case name: an assignment, a step that is not gated, && another: no gate runs, under 1 s", () => {
+    const r = run(`t=/x; ${X} open $t build && ${X} enter map`);
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
     expect(r.gateRan).toBe(false);
@@ -82,11 +87,12 @@ describe("a literal assignment at the command's start is read as its value", () 
   });
 
   const resolved: [string, string][] = [
-    ["; then $T", `T=/x; ${X} enter $T`],
-    ["&& then \${T}", `T=/x && ${X} enter \${T}`],
-    ["a newline then $T", `T=/x\n${X} enter $T`],
-    ["two assignments, both used", `A=/x; B=map; ${X} $B $A`],
-    ["the value quoted where it is used", `T=/x; ${X} enter "$T"`],
+    ["; then $t", `t=/x; ${X} enter $t`],
+    ["&& then \${t}", `t=/x && ${X} enter \${t}`],
+    ["a newline then $t", `t=/x\n${X} enter $t`],
+    ["two assignments, both used", `a=/x; b=map; ${X} $b $a`],
+    ["the value quoted where it is used", `t=/x; ${X} enter "$t"`],
+    ["a name with digits and underscores", `run_dir2=/x; ${X} enter $run_dir2`],
   ];
   for (const [shape, command] of resolved) {
     it(`resolved, no gated step named: ${shape}`, () => {
@@ -100,11 +106,11 @@ describe("a literal assignment at the command's start is read as its value", () 
 describe("a resolved value that names the step is still the step", () => {
   const literal = run.bind(null);
   const caught: [string, string][] = [
-    ["S=accept; tool enter $S", `S=accept; ${X} enter $S`],
-    ["S=accept && tool enter \${S}", `S=accept && ${X} enter \${S}`],
-    ["A=enter; B=accept; tool $A $B", `A=enter; B=accept; ${X} $A $B`],
-    ["a newline between", `S=accept\n${X} enter $S`],
-    ["the value joined to more letters", `S=acc; ${X} enter \${S}ept`],
+    ["s=accept; tool enter $s", `s=accept; ${X} enter $s`],
+    ["s=accept && tool enter \${s}", `s=accept && ${X} enter \${s}`],
+    ["a=enter; b=accept; tool $a $b", `a=enter; b=accept; ${X} $a $b`],
+    ["a newline between", `s=accept\n${X} enter $s`],
+    ["the value joined to more letters", `s=acc; ${X} enter \${s}ept`],
   ];
   for (const [shape, command] of caught) {
     it(`caught like the literal command: ${shape}`, () => {
@@ -122,7 +128,7 @@ describe("a resolved value that names the step is still the step", () => {
     try {
       fs.writeFileSync(check, `#!/usr/bin/env bash\necho ran >> '${marker}'\nexit 1\n`, { mode: 0o755 });
       expect(run(`${X} enter accept`).status).toBe(2);
-      const r = run(`S=accept; ${X} enter $S`);
+      const r = run(`s=accept; ${X} enter $s`);
       expect(r.gateRan).toBe(true);
       expect(r.status).toBe(2);
     } finally {
@@ -133,35 +139,35 @@ describe("a resolved value that names the step is still the step", () => {
 
 describe("every other assignment stays unreadable: the gate checks run", () => {
   const doubted: [string, string][] = [
-    ["a reassignment later in the command", `T=/x; ${X} enter $T; T=/y`],
-    ["an assignment inside a subshell", `( T=/x; ${X} enter $T )`],
-    ["an assignment as a pipeline stage", `T=/x | ${X} enter $T`],
-    ["a prefix assignment", `T=/x ${X} enter $T`],
-    ["a conditional assignment", `false && T=/x; ${X} enter $T`],
-    ["export T=x", `export T=/x; ${X} enter $T`],
-    ["a value with $", `T=$HOME; ${X} enter $T`],
-    ["a value with a glob", `T=/x*; ${X} enter $T`],
-    ["a quoted value with a space", `T="/x y"; ${X} enter $T`],
-    ["an assignment after the step's tool word", `${X} open; T=/x; ${X} enter $T`],
-    ["T=/x; T=enter ...", `T=/x; T=enter; ${X} $T accept`],
-    ["the same name assigned twice", `T=/x; T=/x; ${X} enter $T`],
-    ["the name read into later", `T=/x; read T < f; ${X} enter $T`],
-    ["eval in the command", `T=/x; eval "$Y"; ${X} enter $T`],
-    ["a program named by an expansion", `T=/x; $P; ${X} enter $T`],
-    ["IFS set in the command", `T=/x; IFS=/; ${X} enter $T`],
-    ["a ${T:-default} use", `T=/x; ${X} enter \${T:-accept}`],
-    ["a single & after the assignment", `T=/x & ${X} enter $T`],
-    ["|| after the assignment", `T=/x || ${X} enter $T`],
-    ["eval behind time -p, the name built from other letters", `T=/x; M=Tz; time -p eval "\${M:0:1}=accept"; ${X} enter $T`],
-    ["eval written with quotes inside it", `T=/x; e''val "$Y"; ${X} enter $T`],
-    ["source", `T=/x; source ./env.sh; ${X} enter $T`],
-    ["the dot command", `T=/x; . ./env.sh; ${X} enter $T`],
-    ["printf -v", `T=/x; printf -v "$N" accept; ${X} enter $T`],
-    ["declare with a built name", `T=/x; declare "$N=accept"; ${X} enter $T`],
-    ["a function that sets the name", `T=/x; f() { T=accept; }; f; ${X} enter $T`],
-    ["a loop over the name", `T=/x; for T in accept; do ${X} enter $T; done`],
-    ["the name inside another value", `A=T; T=/x; ${X} enter $T`],
-    ["[[ ]] in the command", `T=/x; [[ $N -eq 1 ]]; ${X} enter $T`],
+    ["a reassignment later in the command", `t=/x; ${X} enter $t; t=/y`],
+    ["an assignment inside a subshell", `( t=/x; ${X} enter $t )`],
+    ["an assignment as a pipeline stage", `t=/x | ${X} enter $t`],
+    ["a prefix assignment", `t=/x ${X} enter $t`],
+    ["a conditional assignment", `false && t=/x; ${X} enter $t`],
+    ["export t=x", `export t=/x; ${X} enter $t`],
+    ["a value with $", `t=$HOME; ${X} enter $t`],
+    ["a value with a glob", `t=/x*; ${X} enter $t`],
+    ["a quoted value with a space", `t="/x y"; ${X} enter $t`],
+    ["an assignment after the step's tool word", `${X} open; t=/x; ${X} enter $t`],
+    ["t=/x; t=enter ...", `t=/x; t=enter; ${X} $t accept`],
+    ["the same name assigned twice", `t=/x; t=/x; ${X} enter $t`],
+    ["the name read into later", `t=/x; read t < f; ${X} enter $t`],
+    ["eval in the command", `t=/x; eval "$y"; ${X} enter $t`],
+    ["a program named by an expansion", `t=/x; $p; ${X} enter $t`],
+    ["IFS set in the command", `t=/x; IFS=/; ${X} enter $t`],
+    ["a ${t:-default} use", `t=/x; ${X} enter \${t:-accept}`],
+    ["a single & after the assignment", `t=/x & ${X} enter $t`],
+    ["|| after the assignment", `t=/x || ${X} enter $t`],
+    ["eval behind time -p, the name built from other letters", `t=/x; m=tz; time -p eval "\${m:0:1}=accept"; ${X} enter $t`],
+    ["eval written with quotes inside it", `t=/x; e''val "$y"; ${X} enter $t`],
+    ["source", `t=/x; source ./env.sh; ${X} enter $t`],
+    ["the dot command", `t=/x; . ./env.sh; ${X} enter $t`],
+    ["printf -v", `t=/x; printf -v "$n" accept; ${X} enter $t`],
+    ["declare with a built name", `t=/x; declare "$n=accept"; ${X} enter $t`],
+    ["a function that sets the name", `t=/x; f() { t=accept; }; f; ${X} enter $t`],
+    ["a loop over the name", `t=/x; for t in accept; do ${X} enter $t; done`],
+    ["the name inside another value", `a=t; t=/x; ${X} enter $t`],
+    ["[[ ]] in the command", `t=/x; [[ $n -eq 1 ]]; ${X} enter $t`],
   ];
   for (const [shape, command] of doubted) {
     it(`doubted: ${shape}`, () => {
@@ -169,4 +175,84 @@ describe("every other assignment stays unreadable: the gate checks run", () => {
       expect(r.gateRan).toBe(true);
     });
   }
+});
+
+describe("names bash sets itself, and commands that can change a variable without naming it, stay doubted", () => {
+  const doubted: [string, string][] = [
+    // names bash sets: only lower-case names are read, and these are never read
+    ["$_ after `: accept`", `_=x; : accept; ${X} enter $_`],
+    ["$_ after `true accept &&`", `_=x; true accept && ${X} enter $_`],
+    ["$_ after the step's own --help", `_=x; ${X} enter accept --help; ${X} enter $_`],
+    ["FUNCNAME inside a function named accept", `FUNCNAME=x; accept() { ${X} enter $FUNCNAME; }; accept`],
+    ["REPLY set by select", `REPLY=x; select y in a; do ${X} enter $REPLY; break; done <<< accept`],
+    ["PWD after cd", `PWD=/x; cd /tmp && ${X} enter $PWD`],
+    ["DIRSTACK after pushd", `DIRSTACK=x; pushd /tmp; ${X} enter $DIRSTACK`],
+    ["an upper-case name", `T=/x; ${X} enter $T`],
+    // commands that stop resolution for every name
+    ["cd anywhere", `t=/x; cd /tmp; ${X} enter $t`],
+    ["pushd anywhere", `t=/x; pushd /tmp; ${X} enter $t`],
+    ["popd anywhere", `t=/x; popd; ${X} enter $t`],
+    ["select anywhere", `t=/x; select y in a; do break; done; ${X} enter $t`],
+    ["a function definition with ()", `t=/x; g() { :; }; ${X} enter $t`],
+    ["a function definition with the keyword", `t=/x; function g { :; }; ${X} enter $t`],
+    ["shopt", `t=/x; shopt -s expand_aliases; ${X} enter $t`],
+    ["compgen -V with a built name", `t=/x; compgen -V "$w" -W accept; ${X} enter $t`],
+    // arithmetic can assign to a name held in another variable's value
+    ["(( )) on a variable", `t=/x; v=$'\\x74=5'; (( v )); ${X} enter $t`],
+    ["$(( ))", `t=/x; echo $(( v )); ${X} enter $t`],
+    ["$[ ]", `t=/x; echo $[ v ]; ${X} enter $t`],
+    ["an array subscript in an assignment", `t=/x; a[v]=1; ${X} enter $t`],
+    ["an array subscript in an expansion", `t=/x; echo \${a[v]}; ${X} enter $t`],
+    ["a substring offset", `t=/x; echo \${s:v}; ${X} enter $t`],
+    ["[ -v ] with a subscript", `t=/x; [ -v "a[v]" ]; ${X} enter $t`],
+    ["test -v with a built name", `t=/x; test -v "$k"; ${X} enter $t`],
+    ["a $'...' string", `t=/x; echo $'\\x61'; ${X} enter $t`],
+  ];
+  for (const [shape, command] of doubted) {
+    it(`doubted: ${shape}`, () => {
+      const r = run(command);
+      expect(r.gateRan).toBe(true);
+    });
+  }
+});
+
+describe("resolution has a size limit: a longer command stays doubted", () => {
+  /** `t=/x; tool enter $t $t ...`, padded with uses (and one filler) to exactly `len` characters. */
+  const ofLength = (len: number) => {
+    let c = `t=/x; ${X} enter`;
+    while (c.length + 3 <= len - 2) c += " $t";
+    return (c + " " + "z".repeat(len - c.length - 1)).slice(0, len);
+  };
+
+  it(`at the limit (${MAX_LEN} characters, mostly $t uses): resolved, no gate, under 1 s`, () => {
+    const cmd = ofLength(MAX_LEN);
+    expect(cmd.length).toBe(MAX_LEN);
+    const r = run(cmd);
+    console.log(`[cap] ${MAX_LEN} characters: ${Math.round(r.ms)} ms, exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
+    expect(r.gateRan).toBe(false);
+    expect(r.ms).toBeLessThan(1000);
+  });
+
+  it(`one character past it (${MAX_LEN + 1}): doubted, the gate runs, under 1 s`, () => {
+    const cmd = ofLength(MAX_LEN + 1);
+    expect(cmd.length).toBe(MAX_LEN + 1);
+    const r = run(cmd);
+    console.log(`[cap] ${MAX_LEN + 1} characters: ${Math.round(r.ms)} ms, exit ${r.status}, gate ${r.gateRan ? "ran" : "not run"}`);
+    expect(r.gateRan).toBe(true);
+    expect(r.ms).toBeLessThan(1000);
+  });
+
+  const names = (k: number) => Array.from({ length: k }, (_, i) => `n${i}=/x; `).join("") + `${X} enter ` + Array.from({ length: k }, (_, i) => `$n${i}`).join(" ");
+
+  it(`${MAX_NAMES} leading assignments: resolved, no gate`, () => {
+    const r = run(names(MAX_NAMES));
+    console.log(`[cap] ${MAX_NAMES} names: ${Math.round(r.ms)} ms, gate ${r.gateRan ? "ran" : "not run"}`);
+    expect(r.gateRan).toBe(false);
+  });
+
+  it(`${MAX_NAMES + 1} leading assignments: doubted, the gate runs`, () => {
+    const r = run(names(MAX_NAMES + 1));
+    console.log(`[cap] ${MAX_NAMES + 1} names: ${Math.round(r.ms)} ms, gate ${r.gateRan ? "ran" : "not run"}`);
+    expect(r.gateRan).toBe(true);
+  });
 });
