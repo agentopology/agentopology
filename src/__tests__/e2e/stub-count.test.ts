@@ -223,3 +223,79 @@ describe("guard --check grades a stubbed gate none", () => {
     expect(checkCodexGuards(codexAst, tmp).missing).toBe(0);
   });
 });
+
+describe("a stub never hides missing wiring, and never credits a refusal", () => {
+  // The stub is set apart (not missing) only when it is the gate's sole problem:
+  // with its hook entry gone, the stub never runs and nothing stops the step.
+  it("claude-code: a stub plus a removed settings entry is missing (✗) and exits 1", () => {
+    write(tmp, quiet(() => claudeCodeBinding.scaffold(ast)));
+    fs.writeFileSync(join(tmp, ".claude/settings.json"), "{}\n");
+    const r = checkGuards(ast, tmp);
+    const g = r.items.find((i) => i.id === "check")!;
+    expect(g.strength).toBe("none");
+    expect(g.stub).toBeFalsy();
+    expect(g.notes.join(" ")).toMatch(/still a stub/);
+    expect(r.missing).toBeGreaterThanOrEqual(1);
+    const out = cli(["guard", FIXTURE, "--check", "--dir", tmp]);
+    expect(out.code).toBe(1);
+    expect(out.stdout).toMatch(/✗ .*still a stub/);
+    expect(out.stdout).toContain("item(s) are missing");
+    expect(out.stdout).not.toContain("graded none because their check script is still a stub");
+  });
+
+  it("claude-code: a stub plus a deleted gate wrapper is missing and exits 1", () => {
+    write(tmp, quiet(() => claudeCodeBinding.scaffold(ast)));
+    fs.rmSync(join(tmp, ".claude/skills/stubs/scripts/gate-check.sh"));
+    const g = checkGuards(ast, tmp).items.find((i) => i.id === "check")!;
+    expect(g).toMatchObject({ strength: "none" });
+    expect(g.stub).toBeFalsy();
+    expect(cli(["guard", FIXTURE, "--check", "--dir", tmp]).code).toBe(1);
+  });
+
+  it("codex: a stub plus an emptied hooks.json is missing", () => {
+    write(tmp, quiet(() => codexBinding.scaffold(codexAst)));
+    fs.writeFileSync(join(tmp, ".codex/hooks.json"), '{"hooks":{}}\n');
+    const r = checkCodexGuards(codexAst, tmp);
+    const g = r.items.find((i) => i.id === "check")!;
+    expect(g.strength).toBe("none");
+    expect(g.stub).toBeFalsy();
+    expect(r.missing).toBeGreaterThanOrEqual(1);
+    expect(cli(["guard", codexFile(), "--check", "--target", "codex", "--dir", tmp]).code).toBe(1);
+  });
+
+  // A gate with no script of its own, credited by a refuse hook cited on its edge,
+  // where that hook's script is still the scaffold stub.
+  const HELD = SOURCE
+    .replace('      run: "scripts/check.sh"\n', "")
+    .replace(/  hooks \{[\s\S]*?\n  \}\n/, [
+      "  hooks {",
+      "    hook hold {",
+      "      on: PreToolUse",
+      '      matcher: "Agent"',
+      '      run: "scripts/hold.sh"',
+      "      strength: refuse",
+      "    }",
+      "  }",
+      "",
+    ].join("\n"))
+    .replace("    writer -> reviewer\n", "    writer -> reviewer [guard: hold]\n");
+  const heldAst = parse(HELD);
+
+  it("claude-code: a gate credited by a hook whose script is a stub is none, not refuse, and not counted in enforcement", () => {
+    expect(HELD).toContain("[guard: hold]");
+    write(tmp, quiet(() => claudeCodeBinding.scaffold(heldAst)));
+    const hold = ".claude/skills/stubs/scripts/hold.sh";
+    expect(isStubContent(fs.readFileSync(join(tmp, hold), "utf-8"))).toBe(true);
+    let r = checkGuards(heldAst, tmp);
+    let g = r.items.find((i) => i.id === "check")!;
+    expect(g.strength).toBe("none");
+    expect(g.notes.join(" ")).toContain(`${hold} is still a stub`);
+    expect(r.enforcement.refuse).toBe(0);
+    // Once the hook's script is written, the edge credits the refusal as before.
+    fs.writeFileSync(join(tmp, hold), "#!/usr/bin/env bash\nexit 0\n");
+    r = checkGuards(heldAst, tmp);
+    g = r.items.find((i) => i.id === "check")!;
+    expect(g.strength).toBe("refuse");
+    expect(r.enforcement.refuse).toBe(1);
+  });
+});
