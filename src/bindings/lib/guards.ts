@@ -780,10 +780,20 @@ export const RESOLVE_MAX_LENGTH = 1024;
 export const RESOLVE_MAX_NAMES = 16;
 
 /**
- * at_resolve CMD (MATCH_FUNCTIONS): the literal assignments that open a command, read into their uses
- * (`t=/x; tool open $t` is read as `tool open /x`). Needs strip_redir, norm and AT_LEAD.
+ * Switches for the generated step guard. `resolveLeadingAssignments` (off by default): read the literal
+ * assignments that open a command into their uses (RESOLVE_FUNCTIONS) before the command is cut into
+ * steps. Off, any expansion among a gated tool's words is doubt and the step's gate checks run; the
+ * generated scripts then carry none of the RESOLVE_FUNCTIONS. The reading stays off until it is proven
+ * for every shell the command may run in. Tests turn it on to keep the code covered.
  */
-const RESOLVE_FUNCTIONS: string[] = [
+export const GUARD_OPTIONS: { resolveLeadingAssignments: boolean } = { resolveLeadingAssignments: false };
+
+/**
+ * at_resolve CMD (only when GUARD_OPTIONS.resolveLeadingAssignments is on): the literal assignments that
+ * open a command, read into their uses (`t=/x; tool open $t` is read as `tool open /x`). Needs
+ * MATCH_FUNCTIONS before it (strip_redir, norm and AT_LEAD).
+ */
+export const RESOLVE_FUNCTIONS: string[] = [
   "# at_resolve CMD: CMD with the literal assignments at its start read into their uses. NAME=VALUE opens the",
   "# command, alone, followed by ; && or a newline (one after another, before any other command), and VALUE",
   "# is one plain word (letters, digits and _ . / : @ % + , -). Its uses $NAME and ${NAME} then read as VALUE",
@@ -991,7 +1001,6 @@ export const MATCH_FUNCTIONS: string[] = [
   String.raw`  local re='\{[^{}]*(,|\.\.)[^{}]*\}'`,
   "  [[ $1 =~ $re ]]",
   "}",
-  ...RESOLVE_FUNCTIONS,
   ...AT_NAMES_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
   ...STDIN_JQ_FUNCTIONS,
@@ -1496,6 +1505,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const ledgers = protectedLedgers(ast, p);
   if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
+  const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
   const stepWords = guards.flatMap(({ action }) => (action.commands ?? []).map(stepKey));
   const gitSteps = [...new Set(ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
@@ -1578,6 +1588,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     // PowerShell: a backslash is a path separator, not an escape (its escape is the backtick, a separator here).
     ...(p.powershellTool ? ['[ "$PWSH" = 0 ] || CMD=${CMD//\\\\//}'] : []),
     ...MATCH_FUNCTIONS,
+    ...(resolve ? RESOLVE_FUNCTIONS : []),
     `AT_GIT_STEPS=${shellQuote(gitSteps.join(" "))}`,
     "# key_count LETTERS: how often the tool's letters appear in the whole command's letters.",
     "CMD_L=$(letters \"$CMD\")",
@@ -1585,10 +1596,14 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "CMD_SUBST=0",
     "[[ $CMD == *'$('* || $CMD == *'`'* ]] && CMD_SUBST=1",
     "set -f",
-    "# A literal assignment that opens the command (T=/x; tool open $T) is read into its uses (at_resolve).",
-    ...(p.powershellTool
-      ? ['if [ "$PWSH" = 1 ]; then SEGS=$(strip_redir "$CMD"); else SEGS=$(strip_redir "$(at_resolve "$CMD")"); fi']
-      : ['SEGS=$(strip_redir "$(at_resolve "$CMD")")']),
+    ...(!resolve
+      ? ['SEGS=$(strip_redir "$CMD")']
+      : [
+        "# A literal assignment that opens the command (T=/x; tool open $T) is read into its uses (at_resolve).",
+        ...(p.powershellTool
+          ? ['if [ "$PWSH" = 1 ]; then SEGS=$(strip_redir "$CMD"); else SEGS=$(strip_redir "$(at_resolve "$CMD")"); fi']
+          : ['SEGS=$(strip_redir "$(at_resolve "$CMD")")']),
+      ]),
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
