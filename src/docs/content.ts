@@ -60,6 +60,7 @@ topology my-system {
 | advanced | name-list | no | [] | Advanced pattern names |
 | timeout | string | no | -- | Topology-level timeout (e.g. "30m", "2h") |
 | error-handler | identifier | no | -- | Node ID for catch-all error handler |
+| entry | identifier | no | -- | The agent every session starts as (Claude Code: settings.json \`agent\`; see V134) |
 | durable | boolean | no | false | Enable durable execution (requires checkpoint block) |
 
 ## Available Patterns
@@ -85,6 +86,7 @@ topology content-pipeline : [pipeline, human-gate] {
 - Every .at file must have exactly one \`topology\` block (or one \`fragment\` block).
 - The topology name must be globally unique and follow identifier rules (lowercase, hyphens allowed).
 - Pattern tags are informational metadata -- they don't enforce behavior but document intent.
+- \`entry: <agent-id>\` names the agent every session starts as. claude-code writes it as \`"agent": "<name>"\` in .claude/settings.json (the agent file's name: its \`extensions { claude-code { name } }\`, else its id). A settings.json that already sets \`agent\` keeps it, an earlier scaffold's value included: after changing \`entry\`, delete the \`agent\` key and scaffold again. The entry agent is the session, so a gate after it is not a SubagentStop hook, and its \`tools\` are the session's tools (include \`Agent\`). An \`extensions { claude-code { agent } }\` value is more specific and wins; V134 warns when they differ. Codex and Cursor have no such setting and write nothing (\`validate --target codex\`: CX5-entry; Cursor: a scaffold warning). claude-workflow lists it in its LOSSY report. V134 errors when the entry is not an agent Claude Code can start as a subagent.
 `,
   },
 
@@ -370,7 +372,7 @@ action NAME {
 | kind | string | yes (V26) | -- | "external", "git", "decision", "inline", "report" |
 | source | string | no | -- | Source reference (file path or URL) |
 | description | string | no | -- | Human-readable description |
-| commands | string[] | no | -- | Shell commands to execute. A gate before this action guards them in Claude Code sessions |
+| commands | string[] | no | -- | Shell commands to execute. The action's script runs each one as written (an interpreter flag, \`npx\` or \`env\` included). With none, an inline, decision or report action is done by the orchestrator in conversation (its script says so and is no stub); an external or git action scaffolds a stub, counted by validate and scaffold. A gate before this action guards them in Claude Code sessions |
 | unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\\\S+)"\`. Needs a capture group (V111) |
 | timeout | string | no | -- | Duration string (e.g. "5m", "2h") |
 | on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
@@ -382,14 +384,15 @@ action NAME {
 |------|-------------|
 | external | External API call or service invocation |
 | git | Git operation (commit, branch, PR) |
-| decision | Routing decision point |
-| inline | Inline logic, no external side effects |
-| report | Compile and deliver output |
+| decision | Routing decision point. With no \`commands:\` the orchestrator decides in conversation; no stub |
+| inline | Inline logic, no external side effects. With no \`commands:\` the orchestrator does it in conversation; no stub |
+| report | Compile and deliver output. With no \`commands:\` the orchestrator reports in conversation; no stub |
 
 ## Validation Rules
 
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
+- **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
 
 ## Example
 
@@ -501,6 +504,7 @@ gates {
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
+- **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
 
 ## Example
 
@@ -2813,6 +2817,7 @@ schedule {
 
 - **V20**: \`cron\` and \`every\` are mutually exclusive -- use one or the other
 - **V20**: Job must reference a declared agent or action node
+- **V136**: warning, a job runs a decision, report or inline action, or one with no kind, with no \`commands:\` (done in conversation, so the job does nothing)
 
 ## Example
 
@@ -3197,7 +3202,7 @@ Every node referenced in a flow edge must be declared.
 **Fix:** Declare the missing node or fix the typo.
 
 ### V4: No Orphans (error)
-Every agent must appear in at least one flow edge, or have \`invocation: manual\`.
+Every agent must appear in at least one flow edge, or have \`invocation: manual\`. The \`meta { entry }\` agent is exempt: it is the session itself (V134).
 
 **Violation:** An agent declared but never referenced in flow.
 **Fix:** Add the agent to the flow or set \`invocation: manual\`.
@@ -3360,10 +3365,32 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 \`orchestrator.delegation\` must be one of:
 
 - \`subagent\` (default) — orchestrator spawns each agent via the platform's subagent / Task-tool mechanism.
-- \`inline\` — orchestrator drives every agent step in its own session context; no subagent is ever spawned. The claude-code binding suppresses \`SubagentStop\` hooks in this mode and emits a "Gates to invoke" cheat sheet in the trigger playbook.
+- \`inline\` — orchestrator drives every agent step in its own session context; no subagent is ever spawned. The claude-code binding suppresses \`SubagentStop\` hooks in this mode and emits a "Gates to invoke" cheat sheet in the trigger playbook. A gate the playbook runs is \`strength: hope\`; one left to refuse is a V135 error unless a script step is in its \`before:\`.
 
 **Violation:** \`delegation: hybrid\`.
 **Fix:** Use \`subagent\` or \`inline\`.
+
+### V134: Entry Agent (error/warning)
+\`meta { entry }\` names the agent every session starts as; Claude Code reads it from the settings.json \`agent\` key, which names a subagent. It must be a declared agent that claude-code writes as a subagent.
+
+**Violation (error):** \`entry: ghost\` (no such node); \`entry: intake\` where intake is an action, gate, human, group or orchestrator; an agent with \`runs: inline\` or \`runs: fork\` (written as a skill); an agent marked \`execution: workflow\` (run by the workflow script).
+**Violation (error):** \`entry:\` with no value, or a list (\`entry: [a, b]\`).
+**Violation (warning):** \`extensions { claude-code { agent: other } }\` names a different agent. The extension value is written. If it names a declared node Claude Code cannot start, it is not written.
+**Violation (warning):** a gate \`after:\` the entry agent. The entry agent is the session, so SubagentStop never fires for it; the hook is not written, and guard --check grades the gate hope.
+**Violation (warning):** the entry agent has a \`tools\` list without \`Agent\` (or \`Task\`) while other agents exist: its tools are the session's, so the session cannot start them.
+**Fix:** Point \`entry\` at a subagent, and remove the extension's \`agent\` or make it agree. Anchor a gate on a subagent or a script step. Add \`Agent\`, or \`Agent(worker, reviewer)\`, to the entry agent's tools.
+
+### V135: Refusing Gate No Hook Runs (error)
+A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` refuse or not written) must have a moment Claude Code or Codex can hook: every \`after:\` a subagent (SubagentStop), a subagent in \`before:\` (before-agent.sh), or a script step, an action with \`commands:\`, in \`before:\` (before-action.sh). Under \`delegation: inline\` only the script step wires. Anything else got a wrapper script nothing calls, a scaffold warning, and a passing validate. An edge between its anchors that cites (\`guard:\`) a declared blocking hook with \`strength: refuse\` credits it, and so does such a hook that runs the gate's own \`run:\` command (a V135 warning then names it with its matcher and \`if:\`, since guard --check grades that gate hope, or cited with \`at:\`); a cited \`at:\` does not. A blocking hook is a command hook, not async, on an event the platform blocks on (the list guard --check reads). On Claude Code an \`execution: workflow\` agent is not a subagent. Applies with no target, claude-code and codex, including in scaffold, guard --target and imported files; not cursor (a hook for every gate) or claude-workflow, and \`plan\` does not stop on it. On Codex a gate run only by SubagentStop passes V135 but cannot hold the next step (CX9-noblock warns).
+
+**Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
+**Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim.
+
+### V136: Scheduled Routing Action (warning)
+A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an action with no \`kind:\`, that has no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. The warning names the job, the action and its kind (or "no kind"). Every target; an \`external\` or \`git\` action with no commands is a stub, not reported.
+
+**Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
+**Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
 ## Summary
 
@@ -3399,6 +3426,9 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 | V28 | error | Metering Format Enum |
 | V29 | warning | Metering Pricing Enum |
 | V87 | error | Orchestrator Delegation Enum |
+| V134 | error/warning | Entry Agent |
+| V135 | error | Refusing Gate No Hook Runs |
+| V136 | warning | Scheduled Routing Action |
 `,
   },
 

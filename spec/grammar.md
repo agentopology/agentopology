@@ -292,8 +292,31 @@ meta {
 | `version` | string | yes | -- |
 | `description` | string | yes | -- |
 | `domain` | identifier | no | -- |
+| `entry` | agent-id | no | -- |
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
+
+**`entry`** -- The agent every session starts as:
+
+```agenttopology
+meta {
+  version: "1.0.0"
+  description: "Release desk"
+  entry: lead
+}
+```
+
+- **claude-code** writes `"agent": "<name>"` into `.claude/settings.json`, Claude Code's key that starts every session as that subagent, with its prompt, tools and model (code.claude.com/docs/en/sub-agents; `claude --agent <name>` overrides it for one session). Claude Code resolves the key by the agent file's frontmatter `name`, so the value is the name the binding writes there: the agent's `extensions { claude-code { name } }` when set, else its id. An agent with a hand-written `file:` keeps that file's own `name`; when it differs from the id, state it as `extensions { claude-code { name: <name> } }` (import does this for the entry agent). When `extensions { claude-code { agent } }` names a different agent, that value is written, as the more specific, and V134 warns naming both; when that value names a declared node Claude Code cannot start (the cases below), it is not written and V134 warns. A name the topology does not declare (a plugin's agent, say) is written as is.
+  - **A `.claude/settings.json` that already sets `agent` keeps its value**, like every other key the merge does not replace, and the run says so (`.claude/settings.json agent: file has "lead", the .at states "worker" — not changed`). This includes the value an earlier scaffold wrote: after changing or removing `entry`, delete the `agent` key from `.claude/settings.json` (or set it by hand) and run scaffold again, which then writes the new value. When the file holds `agent` and the .at states no entry, scaffold says so too (`agent: file has "lead", the .at states none — not changed`). The binding cannot see the file, so with no entry it compiles a gate after that agent to SubagentStop as usual; `guard --check` reads `agent` from the settings.json on disk and grades such a gate `hope`, naming the file's value.
+  - **The entry agent is the session, not a subagent.** Claude Code runs a Stop hook for it, never SubagentStop (measured with `claude --agent`, which the settings key is the same mechanism as). A gate `after:` the entry agent is therefore not written as a SubagentStop hook for it: other `after:` anchors that are subagents keep theirs (`after: [worker, lead]` hooks worker only); with no other anchor, when its `before:` names an agent it runs before that agent launches instead, otherwise the playbook runs it. V134 warns on the gate, and `guard --check` grades it `hope` (or `refuse` on the other anchors, with a note naming the entry agent). The entry agent is also never launched, so a gate `before:` it and a human step whose flow goes into it have no launch to hook: V134 warns on each, and `guard --check` grades them `hope` with that reason.
+  - **The entry agent's `tools` are the whole session's tools.** An entry agent with a `tools` list that has no `Agent` (or the older `Task`) cannot start any other agent; V134 warns when it has flow edges to agents or the topology has other subagents. Add `Agent`, or `Agent(worker, reviewer)` to allow only those (code.claude.com/docs/en/sub-agents, "Restrict which subagents can be spawned"). No `tools` list means every tool.
+- **codex** has no setting that starts a session as a named agent (its `agents.*` keys declare roles for spawned agents only): nothing is written, and `validate --target codex` says so (CX5-entry).
+- **cursor** has no such setting either: nothing is written, and scaffold warns.
+- **claude-workflow** lists it in its LOSSY report: the workflow script runs inside the session and cannot choose which agent that session is.
+
+The entry must be a declared agent that claude-code writes as a subagent: not an action, gate, human, group or orchestrator, not `runs: inline` or `runs: fork` (written as a skill), and not an `execution: workflow` agent (V134). An empty value or a list is a V134 error too: `entry` takes one agent id. It needs no flow edge (V4 does not apply to it, unless V134 refuses it). Import reads a settings.json `agent` back as `entry` when it matches an imported agent's frontmatter `name` or its id, and does not mark that agent `invocation: manual`.
+
+`entry` here is the session's agent; `interface { entry: <id> exit: <id> }` (composition) is a fragment's flow entry point. They are separate fields.
 
 ---
 
@@ -326,7 +349,7 @@ orchestrator {
 **Delegation modes:**
 
 - `subagent` (default): the orchestrator spawns each agent step via the platform's subagent / Task-tool mechanism. Each agent runs in its own context window. On claude-code, `SubagentStop` hooks fire when each subagent completes — gates with `after:` an agent compile to those hooks.
-- `inline`: the orchestrator drives every agent step in its own session context. Agent `AGENT.md` files are read as prompt fragments by the main session; no subagent is ever spawned. On claude-code, `SubagentStop` hooks would never fire, so the binding suppresses them entirely and emits a "Gates to invoke" cheat sheet in the trigger playbook instead. Use this mode for orchestrator-driven pipelines that don't actually delegate.
+- `inline`: the orchestrator drives every agent step in its own session context. Agent `AGENT.md` files are read as prompt fragments by the main session; no subagent is ever spawned. On claude-code, `SubagentStop` hooks would never fire, so the binding suppresses them entirely and emits a "Gates to invoke" cheat sheet in the trigger playbook instead. A gate before a script step still runs from `before-action.sh`; any other gate with a `run:` script is one the playbook runs, so write `strength: hope` on it, or validate reports V135. Use this mode for orchestrator-driven pipelines that don't actually delegate.
 
 Setting an unrecognized value is a topology error (V87).
 
@@ -487,6 +510,8 @@ action <name> {
 | `unit-from` | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. `"./tool publish (\\S+)"`. Needs a capture group (V111) |
 
 **action-kind:** `external` | `git` | `decision` | `inline` | `report`
+
+An action with `commands:` runs them as written, whatever its kind. With none, an `inline`, `decision` or `report` action is done by the orchestrator in conversation, so scaffold writes no stub for it; an `external` or `git` action with no commands scaffolds a stub that fails until it is written. A schedule job that runs a `decision`, `report` or `inline` action, or an action with no kind, with no commands does nothing, and validate warns (V136).
 
 Actions **cannot have outputs**. Only `agent` and `orchestrator` produce outputs.
 
@@ -1036,6 +1061,8 @@ gates {
 | `ledger` | record id | no | the only record | The record a gate before a script step reads. Omitted, a topology with exactly one `record` uses it (V112) |
 
 **Gates before a script step.** A gate whose `before:` is an `action` with `commands:` refuses that step in Claude Code sessions. The claude-code binding writes one script, `before-action.sh`, wired as a `PreToolUse` hook on `Bash|Monitor|PowerShell` (every Claude Code tool that runs a shell command; Monitor from Claude Code 2.1.314) with `onFailure: "block"`. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; a Monitor call with no `command` passes. When the command starts with one of the action's `commands:` (leading `VAR=value` words are ignored), the script checks the gate: if it has a ledger, the **last** line for the `after:` step (and the same unit, when the command names one with `unit-from`) must have `ok: true`; if it has `run:`, that wrapper must exit 0. Anything else exits 2 and says which gate, step, unit and ledger path refused. A gate with neither a ledger nor `run:` has nothing to check (V110).
+
+**A gate that refuses needs a moment a hook can mark (V135).** On Claude Code (and Codex, which wires gates the same way) a gate's `run:` script runs from a hook in three cases: every `after:` is a subagent (an `agent` without `runs: inline/fork`, or a `group`), so a `SubagentStop` hook runs it; a `before:` is a subagent, so `before-agent.sh` runs it before that agent starts; or a `before:` is a script step, so `before-action.sh` runs it before the step's command. With `orchestrator { delegation: inline }` no subagent runs, and only the script step wires. Any other gate gets its wrapper script and nothing that calls it. When such a gate is meant to refuse (its `run:` names a script, it is not `behavior: advisory`, and its `strength` is `refuse` or not written), validate reports a V135 error naming each anchor and what it is, unless an edge between its anchors cites (`guard:`) a declared hook with `strength: refuse` that can block, or another gate a hook runs, or a declared hook with `strength: refuse` that can block runs the gate's own `run:` command (then a V135 warning names that hook, its matcher and `if:`: it runs only on the calls they select, and `guard --check` grades the gate hope, or cited with `at:`, never refuse). A hook can block when it is a command hook, not async, on an event the platform blocks on (the list `guard --check` reads). Fix the anchor, or write `strength: hope` when a playbook runs the gate by hand; a cited gate may instead drop `run:` and keep the citation as the claim. A citation (`at:`) does not exempt it: only the gate's own generated hook makes it refuse. On Claude Code an `execution: workflow` agent is not a subagent (it runs in the workflow script). On Codex a gate run only by SubagentStop passes V135 but cannot hold the next step (CX9-noblock warns). Cursor writes a hook for every gate and is not checked; `plan` (interpreted mode) places the gate by its anchors and does not stop on V135.
 
 ```agenttopology
 records {
@@ -1966,6 +1993,7 @@ All optional fields and their defaults when omitted:
 | `gate` | `extensions` | -- (none) |
 | `hook` | `extensions` | -- (none) |
 | `meta` | `domain` | -- (none) |
+| `meta` | `entry` | -- (none: Claude Code's own main agent) |
 
 ---
 

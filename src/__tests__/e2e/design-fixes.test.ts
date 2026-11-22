@@ -499,7 +499,9 @@ describe("[D-8] guard --check says on the grade line when a refuse fails open or
   const FAILS_OPEN = "fails open on a crash (no onFailure: block)";
   const grades = async (src: string, strip: boolean) => {
     const { checkGuards, renderGuardReport } = await import("../../guard/check.js");
-    const { ast } = scaffold("claude-code", src);
+    const { ast, files } = scaffold("claude-code", src);
+    // A gate's check script stub grades none (it checks nothing): write each, as a user would, so the hooks are graded.
+    for (const f of files) if (f.stub === "gate") fs.writeFileSync(at(f.path), "#!/usr/bin/env bash\nexit 0\n");
     if (strip) {
       const p = at(".claude/settings.json");
       const settings = JSON.parse(fs.readFileSync(p, "utf8"));

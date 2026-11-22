@@ -23,10 +23,11 @@ import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
-import { validate } from "../parser/validator.js";
+import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
 import { BindingRefusal } from "../bindings/types.js";
 import { isStubContent, STUB_MARKER } from "../bindings/lib/stub.js";
+import { plannedStubs, stubKindCounts, stubKindLine, stubPlanLines, stubsOf } from "../scaffold/stubs.js";
 import { syncFromPlatform } from "../sync/index.js";
 import type { PlatformFile } from "../sync/index.js";
 import { generateVisualization } from "../visualizer/index.js";
@@ -457,9 +458,12 @@ function cmdValidateJson(filePath: string, inventory: string, dir: string | unde
     console.log(JSON.stringify({ schema: 1, file: name, error: err.message + "." }, null, 2));
     process.exit(1);
   }
+  const stubTarget = target ?? "claude-code";
+  const plan = plannedStubs(ast, stubTarget, dir ? path.resolve(dir) : undefined);
+  const stubs = plan ? { target: stubTarget, files: plan.files, total: plan.stubs.length, byKind: stubKindCounts(plan.stubs) } : null;
   console.log(
     JSON.stringify(
-      { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows },
+      { schema: 1, file: name, errors: checked.errors, warnings: checked.warnings, missing: r.missing.length, ownedKeys: drift.ownedKeys, drift: drift.rows, stubs },
       null,
       2,
     ),
@@ -516,6 +520,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     console.log("");
   }
   const drifted = !!drift && drift.rows.length > 0;
+  printStubPlan(ast, target, dir);
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -533,6 +538,20 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     process.exit(1);
   }
   if (drifted) process.exit(3);
+}
+
+/**
+ * How many of the files scaffold would write are stubs, by kind, for the
+ * target given (claude-code when none is): the binding's own output, so
+ * validate and scaffold cannot disagree. Changes no exit code.
+ */
+function printStubPlan(ast: TopologyAST, target: string | undefined, dir: string | undefined): void {
+  const t = target ?? "claude-code";
+  const plan = plannedStubs(ast, t, dir ? path.resolve(dir) : undefined);
+  const lines = plan ? stubPlanLines(plan, t) : [];
+  if (lines.length === 0) return;
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+  console.log("");
 }
 
 function printFindings(results: ReturnType<typeof validateResult>["results"], errorCount: number, warningCount: number): void {
@@ -578,6 +597,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     const results = [...checked.results, ...ccExtra];
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
+    printStubPlan(ast, target, dir);
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;
@@ -690,6 +710,17 @@ function printRuleNotice(notice: RuleNotice): void {
   for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
 }
 
+/**
+ * The errors that stop scaffold and guard --target: validated for the target,
+ * so V135 is judged per target, but without the Codex rows (CX*). The codex
+ * binding prints those itself as warnings while it writes, and they never
+ * stopped a build (0.12.4); `validate --target codex` still reports an
+ * error-level one (CX8) as an error.
+ */
+function buildErrors(ast: TopologyAST, targetName: string) {
+  return validate(ast, { target: targetName }).filter((r) => r.level === "error" && !r.rule.startsWith("CX"));
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
@@ -720,8 +751,11 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // vanish silently in the output. --allow-invalid compiles the nodes the
   // errors do not touch, never the files the whole topology shares, and exits
   // 1 while errors remain. It used to be --force, which also overwrites kept
-  // files: one flag, two risks.
-  const errors = validate(ast).filter((r) => r.level === "error");
+  // files: one flag, two risks. Validated for this target, as `validate
+  // --target` is: a rule about another target's hooks (V135 on cursor, or
+  // after the entry agent on codex) does not stop this one, nor does a Codex
+  // row (CX*), which the binding prints as a warning.
+  const errors = buildErrors(ast, targetName);
   let scope: InvalidScope | null = null;
   if (errors.length > 0) {
     const say = allowInvalid ? console.log : console.error;
@@ -969,8 +1003,10 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // Stub summary: count and list any generated files that are unimplemented
   // stubs. We detect them by the AGENTOPOLOGY_STUB marker (see
   // src/bindings/lib/stub.ts). The summary goes to stderr so CI scripts can
-  // capture it without polluting stdout.
-  const stubFiles = files.filter((f) => isStubContent(f.content) && !skipped.includes(f.path));
+  // capture it without polluting stdout. A stub path that holds the user's own
+  // file (kept, never written over) is not a stub; the count is by kind, as
+  // validate prints it (src/scaffold/stubs.ts).
+  const { stubs: stubFiles } = stubsOf(files.filter((f) => !skipped.includes(f.path)), basePath);
   if (stubFiles.length > 0) {
     console.error("");
     console.error(
@@ -978,6 +1014,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         `  ${c.bold(`${stubFiles.length}`)} stub(s) need implementation before this topology can run:`,
       ),
     );
+    console.error(`    by kind: ${stubKindLine(stubFiles)}`);
     for (const f of stubFiles) {
       console.error(`    ${c.yellow("·")} ${f.path}`);
     }
@@ -1342,7 +1379,9 @@ function cmdPlan(
     process.exit(1);
   }
 
-  const results = validate(ast);
+  // Interpreted mode: the executing agent places each gate and runs it, so a
+  // rule about generated hooks (V135) does not hold the plan back.
+  const results = validate(ast).filter((r) => ruleAppliesTo(r, "interpreted"));
   const errors = results.filter((r) => r.level === "error");
 
   // Record the source-tree revision so mid-run drift is detectable. Best
@@ -1733,7 +1772,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
-  const errors = validate(ast).filter((r) => r.level === "error");
+  const errors = buildErrors(ast, targetName);
   if (errors.length > 0) {
     console.error(c.red(`  ${errors.length} validation error(s). Nothing was written.`));
     for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);

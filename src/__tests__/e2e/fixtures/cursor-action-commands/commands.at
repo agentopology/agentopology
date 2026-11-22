@@ -1,0 +1,92 @@
+# commands.at: one action of each kind that names commands, and one of each
+# kind that names none. Used by cursor-action-commands.test.ts (in its own
+# folder, so the scaffold golden, which reads fixtures/*.at, is unchanged).
+
+topology cursor-commands : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "An action's commands run on cursor whatever its kind"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [report-run, decision-run, external-run, inline-run, git-run, report-bare, decision-bare, external-bare, inline-bare, git-bare]
+  }
+
+  action report-run {
+    kind: report
+    description: "A report that runs real commands"
+    commands: ["echo report-one", "echo report-two"]
+  }
+
+  action decision-run {
+    kind: decision
+    description: "A decision that runs real commands"
+    commands: ["echo decision-one"]
+  }
+
+  action external-run {
+    kind: external
+    source: "feed"
+    description: "An external action that runs real commands"
+    commands: ["echo external-one"]
+  }
+
+  action inline-run {
+    kind: inline
+    description: "An inline action that runs real commands"
+    commands: ["echo inline-one"]
+  }
+
+  action git-run {
+    kind: git
+    description: "A git action that runs real commands"
+    commands: ["echo git-one"]
+  }
+
+  action report-bare {
+    kind: report
+    description: "A report with no commands"
+  }
+
+  action decision-bare {
+    kind: decision
+    description: "A decision with no commands"
+  }
+
+  action external-bare {
+    kind: external
+    source: "feed"
+    description: "An external action with no commands"
+  }
+
+  action inline-bare {
+    kind: inline
+    description: "An inline action with no commands"
+  }
+
+  action git-bare {
+    kind: git
+    description: "A git action with no commands"
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Writes the draft"
+    prompt { Write the draft. }
+  }
+
+  flow {
+    report-run -> decision-run
+    decision-run -> external-run
+    external-run -> inline-run
+    inline-run -> git-run
+    git-run -> writer
+    writer -> report-bare
+    report-bare -> decision-bare
+    decision-bare -> external-bare
+    external-bare -> inline-bare
+    inline-bare -> git-bare
+  }
+}

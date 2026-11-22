@@ -40,6 +40,8 @@ export interface FlowReport {
   /** Agents on disk in the flow, and those no source wires. */
   wired: string[];
   unwired: string[];
+  /** The entry agent (settings.json `agent`) when no source wires it: the session itself, not imported as manual. */
+  entry?: string;
   /** Possible handoffs from reads/writes. Not in the flow: for a person to confirm. */
   suggested: Array<{ from: string; to: string; via: string }>;
   /** Values an agent file holds that the language cannot carry: dropped, named here. */
@@ -190,13 +192,16 @@ export function buildFlowReport(
 /** The report as plain lines: the CLI prints them and the .at opens with them. */
 export function flowReportLines(report: FlowReport): string[] {
   const lines: string[] = [];
-  const total = report.wired.length + report.unwired.length;
+  const total = report.wired.length + report.unwired.length + (report.entry ? 1 : 0);
   for (const s of report.sources) lines.push(`Flow: ${s.edges} edges from ${s.path} (${s.sharedAgents} agents match)`);
   if (report.skillEdges > 0) lines.push(`Flow: ${report.skillEdges} edges from a topology skill`);
   if (report.sources.length === 0 && report.skillEdges === 0 && total > 0) {
     lines.push("Flow: none found. Nothing on disk records one, so none was invented.");
   }
   lines.push(`Flow: ${report.wired.length} of ${total} agents wired`);
+  if (report.entry) {
+    lines.push(`Entry agent: ${report.entry} (settings.json agent; the session itself, so it needs no flow edge)`);
+  }
   if (report.unwired.length > 0) {
     lines.push(`Flow unknown for: ${report.unwired.join(", ")} (imported as invocation: manual)`);
   }

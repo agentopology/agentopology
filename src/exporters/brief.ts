@@ -13,7 +13,7 @@
 import type { TopologyAST } from "../parser/ast.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import type { Exporter } from "./types.js";
-import { validate } from "../parser/validator.js";
+import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { buildExecutionBrief } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 
@@ -23,8 +23,9 @@ export const briefExporter: Exporter = {
   extension: ".brief.md",
 
   export(ast: TopologyAST): GeneratedFile[] {
+    // Interpreted mode: a rule about generated hooks (V135) does not apply.
     const errors = validate(ast)
-      .filter((r) => r.level === "error")
+      .filter((r) => r.level === "error" && ruleAppliesTo(r, "interpreted"))
       .map((r) => ({ rule: r.rule, message: r.message, node: r.node }));
 
     const brief = buildExecutionBrief(ast, {

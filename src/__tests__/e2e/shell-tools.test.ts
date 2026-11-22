@@ -85,7 +85,7 @@ describe("[0.11.1] before-action.sh is wired on every shell tool", () => {
   it("[0.11.1] the PreToolUse entry's matcher is Bash|Monitor|PowerShell, onFailure block", () => {
     expect(actionEntry()).toEqual({
       matcher: "Bash|Monitor|PowerShell",
-      hooks: [{ type: "command", command: `bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"`, onFailure: "block" }],
+      hooks: [{ type: "command", command: `bash "$CLAUDE_PROJECT_DIR/${SCRIPT}"`, timeout: 120, onFailure: "block" }],
     });
     for (const tool of ["Bash", "Monitor", "PowerShell"]) expect(matcherMatches("PreToolUse", actionEntry().matcher, tool), tool).toBe(true);
     expect(matcherMatches("PreToolUse", actionEntry().matcher, "Write")).toBe(false);

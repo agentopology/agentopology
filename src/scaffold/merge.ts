@@ -13,6 +13,7 @@ import {
   CLAUDE_CODE_STRUCTURAL_HEADINGS,
 } from "../sync/index.js";
 import { hashContent } from "./manifest.js";
+import { projectWord } from "../parser/run.js";
 import { AGENTS_MD_BEGIN, AGENTS_MD_END } from "../bindings/codex.js";
 import { fenceSpan } from "../bindings/lib/prompt-fence.js";
 
@@ -294,9 +295,25 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-/** A command with the project-dir prefix, quotes and "./" removed, blanks folded. */
+/**
+ * A command with the project-dir prefix, quotes and "./" removed, blanks
+ * folded. A word that opens with `$CLAUDE_PROJECT_DIR` in any shape the run
+ * reader reads as a path (projectWord: `"$CLAUDE_PROJECT_DIR"/x`,
+ * `"${CLAUDE_PROJECT_DIR}/x"`, `"${CLAUDE_PROJECT_DIR:-.}/x"`) is first
+ * written as the `./x` it names, so a hand-built hook and the command the
+ * binding compiles for it are one hook. A longer name (`$CLAUDE_PROJECT_DIR_OLD`)
+ * is another variable and stays.
+ */
 function normalCommand(command: string): string {
-  return command.replace(/"?\$CLAUDE_PROJECT_DIR\/?/g, "").replace(/["']/g, "").replace(/(^|\s)\.\//g, "$1").replace(/\s+/g, " ").trim();
+  return command
+    .split(/(\s+)/)
+    .map(projectWord)
+    .join("")
+    .replace(/"?\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])\/?/g, "")
+    .replace(/["']/g, "")
+    .replace(/(^|\s)\.\//g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

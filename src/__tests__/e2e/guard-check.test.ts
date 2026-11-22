@@ -38,6 +38,9 @@ beforeEach(() => {
   // copy-check runs the user's own python script; give it one.
   fs.mkdirSync(at("docs/tools"), { recursive: true });
   fs.writeFileSync(at("docs/tools/check.py"), "print('ok')\n");
+  // brief-check's script is scaffolded as a stub, which grades none (it checks
+  // nothing); write it, as a user would, so the wiring is what is graded.
+  fs.writeFileSync(at(`${SCRIPTS}/brief-check.sh`), "#!/usr/bin/env bash\ntest -s brief.json\n");
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -49,11 +52,17 @@ describe("guard --check on a freshly scaffolded project", () => {
     expect(g.where).toContain("drafter");
   });
 
-  it("[N31] [GC1] a gate before an agent refuses by the before-agent guard; its unwritten script is reported as blocking every run", () => {
+  it("[N31] [GC1] a gate before an agent refuses by the before-agent guard; while its script is still a stub it is graded none, not counted missing", () => {
     const g = item("brief-check");
     expect(g).toMatchObject({ kind: "gate", strength: "refuse", by: "hook" });
     expect(g.where).toContain("PreToolUse");
-    expect(g.notes.join(" ")).toMatch(/stub.*blocks every run/);
+    // The stub scaffold wrote, put back: it checks nothing, so the gate is none.
+    const stub = claudeCodeBinding.scaffold(ast).find((f) => f.path === `${SCRIPTS}/brief-check.sh`)!;
+    fs.writeFileSync(at(stub.path), stub.content);
+    const s = item("brief-check");
+    expect(s).toMatchObject({ kind: "gate", strength: "none", by: "hook", stub: true });
+    expect(s.notes.join(" ")).toMatch(/stub: it checks nothing and blocks every run/);
+    expect(checkGuards(ast, root).missing).toBe(0);
   });
 
   it("[N31] [GC1] a human step before an agent refuses by asking in the session, and says -p denies it", () => {
@@ -183,7 +192,9 @@ describe("guard --check from the CLI", () => {
  */
 // release and voice carry no commands: the binding compiles no hook for a gate
 // before them, so only the cited guard can credit it. (With commands, such a
-// gate is guarded by before-action.sh: see action-guard.test.ts.)
+// gate is guarded by before-action.sh: see action-guard.test.ts.) lock-voice's
+// edge cites a hook with no strength, so nothing refuses it and it says
+// strength: hope (V135 refuses a gate meant to refuse that no hook runs).
 const CITED = `topology cited : [pipeline] {
   meta {
     version: "1.0.0"
@@ -244,6 +255,7 @@ const CITED = `topology cited : [pipeline] {
       before: voice
       run: "scripts/lock-voice.sh"
       on-fail: halt
+      strength: hope
     }
     gate doctrine {
       after: owner-yes

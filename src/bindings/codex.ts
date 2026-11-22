@@ -728,7 +728,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push("");
       }
       sections.push(`- **Type:** Human pause point — requires manual input or approval`);
-      const targets = approvalTargets(ast, human);
+      const targets = approvalTargets(ast, human, CODEX_GUARDS);
       if (targets.length > 0) {
         // R-11, F-10: AGENTS.md is loaded into the model's context, so the record is described for the
         // person in words (file, fields, meaning) and no line here writes it.
@@ -1175,6 +1175,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       // F-25: in the language of the interpreter codexGateCommand runs it with.
       content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
+      stub: "gate",
       executable: true,
       ...(project ? { createOnly: true } : {}),
     });
@@ -1206,6 +1207,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
       path: project ? script.replace(/^\.\//, "") : `.codex/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
+      stub: "tool",
       executable: true,
       ...(project ? { createOnly: true } : {}),
     });

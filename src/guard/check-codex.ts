@@ -20,11 +20,11 @@ import { gateAnchors } from "../parser/ast.js";
 import { scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, CODEX_GUARDS, LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { gateLedger } from "../parser/ledger.js";
-import { buildCodexHooks, codexGateHold } from "../bindings/lib/codex-hooks.js";
+import { buildCodexHooks, codexGateHold, codexGateScript } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { VERIFIED_ON, installedMark as codexInstalledMark, verifiedOnLine as codexVerifiedOnLine } from "../conformance/codex.js";
 import type { GuardItem, GuardReport } from "./check.js";
-import { CITED_NOTE, citationProblem, citedGrade } from "./check.js";
+import { CITED_NOTE, citationProblem, citedGrade, countsMissing, soleStub, stubCheckProblem } from "./check.js";
 
 interface Handler { type?: string; command?: string }
 interface Entry { matcher?: string; hooks?: Handler[] }
@@ -82,10 +82,12 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         const script = readText(join(root, dir, "before-action.sh"));
         if (script !== null && !script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
         if (scriptNameFromRun(gate.run) && readText(join(root, dir, wrapper)) === null) problems.push(`${dir}/${wrapper} is missing`);
+        const stub = gate.run && scriptNameFromRun(gate.run) ? stubCheckProblem(root, codexGateScript(gate.run)) : null;
+        if (stub) problems.push(stub);
         const where = `PreToolUse on Bash running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
         // F-4: its check reads a ledger the agent can write; the grade says so.
         const note = gateLedger(ast, gate) ? { gradeNote: LEDGER_WRITABLE_NOTE } : {};
-        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED], ...note });
+        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED], ...note });
         break;
       }
       case "spawn": {
@@ -93,8 +95,10 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         const script = readText(join(root, dir, "before-agent.sh"));
         if (script !== null && !script.includes(wrapper)) problems.push(`before-agent.sh does not run ${wrapper}`);
         if (readText(join(root, dir, wrapper)) === null) problems.push(`${dir}/${wrapper} is missing`);
+        const stub = gate.run ? stubCheckProblem(root, codexGateScript(gate.run)) : null;
+        if (stub) problems.push(stub);
         const where = `PreToolUse on collaborationspawn_agent launching ${hold.agents.join(", ")} → before-agent.sh`;
-        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
+        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
         break;
       }
     }
@@ -113,7 +117,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     if (bad || item.strength === "hope" || item.strength === "none") {
       // 0.12.4: a citation alone is the file's claim: cited, as on Claude Code (it read unverified).
       const strength = bad ? "none" : citedGrade(gate);
-      Object.assign(item, { strength, by, where: `${by} at ${gate.at}`, notes, structural: false, gradeNote: undefined, ...(bad ? {} : { citation: "cited" }) });
+      Object.assign(item, { strength, by, where: `${by} at ${gate.at}`, notes, structural: false, gradeNote: undefined, stub: undefined, ...(bad ? {} : { citation: "cited" }) });
     } else {
       // Its own generated hook holds it: the citation is wired.
       item.notes.push(...notes.map((n) => `also ${n}`));
@@ -126,7 +130,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     if (node.type !== "human") continue;
     const human = node as HumanNode;
     const base = { kind: "human" as const, id: human.id };
-    const targets = approvalTargets(ast, human);
+    const targets = approvalTargets(ast, human, CODEX_GUARDS);
     if (targets.length === 0) {
       items.push({ ...base, strength: "hope", by: "prose", where: "no agent follows it, so no spawn to hold; the playbook asks", notes: [] });
       continue;
@@ -156,7 +160,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
+    missing: items.filter(countsMissing).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
     platform: { label: "Codex CLI", line: codexVerifiedOnLine(), mark: codexInstalledMark(), config: ".codex/hooks.json" },

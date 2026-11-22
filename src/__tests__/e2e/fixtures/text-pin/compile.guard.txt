@@ -18,15 +18,15 @@ enforcement: 0 of 3 steps refuse · checked against Claude Code 2.1.323
 --- exit 1
 guard --check src/__tests__/e2e/fixtures/compile.at (project: proj)
 
-  gate brief-check         refuse                                        by: hook      PreToolUse on launching drafter → before-agent.sh
-                           ⚠ its check script .claude/skills/compile/scripts/brief-check.sh is still a stub, so it blocks every run until it is written
-  gate copy-check          refuse, a stop event: it cannot block a call  by: hook      SubagentStop on drafter → gate-copy-check.sh
-                           ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
-                           ⚠ its check script docs/tools/check.py is still a stub, so it blocks every run until it is written
-  human approve            refuse                                        by: hook      PreToolUse on launching drafter → ask
+  gate brief-check         none        by: hook      PreToolUse on launching drafter → before-agent.sh
+                           ⚠ its check script .claude/skills/compile/scripts/brief-check.sh is still a stub: it checks nothing and blocks every run until it is written
+  gate copy-check          none        by: hook      SubagentStop on drafter → gate-copy-check.sh
+                           ⚠ its check script docs/tools/check.py is still a stub: it checks nothing and blocks every run until it is written
+  human approve            refuse      by: hook      PreToolUse on launching drafter → ask
                            ⚠ Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied
-  deny mcp__notes__delete  refuse                                        by: settings  permissions.deny in .claude/settings.json
-  ask Bash(git push:*)     refuse                                        by: settings  permissions.ask in .claude/settings.json
+  deny mcp__notes__delete  refuse      by: settings  permissions.deny in .claude/settings.json
+  ask Bash(git push:*)     refuse      by: settings  permissions.ask in .claude/settings.json
 
-enforcement: 3 of 3 steps refuse · checked against Claude Code 2.1.323
+enforcement: 1 of 3 steps refuse · checked against Claude Code 2.1.323
+2 gate(s) graded none because their check script is still a stub: it checks nothing and blocks every run; write it and remove its AGENTOPOLOGY_STUB line
 --- exit 0

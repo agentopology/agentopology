@@ -7,7 +7,7 @@
  */
 
 import type { AgentNode, HumanNode, TopologyAST } from "../../parser/ast.js";
-import { approvalTargets } from "./guards.js";
+import { approvalTargets, CODEX_GUARDS } from "./guards.js";
 
 /** Permission words that mean "never ask": Codex `never`. */
 export const NEVER_ASK = new Set(["never", "unrestricted", "full-auto", "bypassPermissions"]);
@@ -110,7 +110,7 @@ export function projectSandboxMode(ast: TopologyAST): string | null {
  * "never"`, nothing stops the model from writing that line itself.
  */
 export function humanGateForgeable(ast: TopologyAST): string | null {
-  const humans = ast.nodes.filter((n) => n.type === "human" && approvalTargets(ast, n as HumanNode).length > 0);
+  const humans = ast.nodes.filter((n) => n.type === "human" && approvalTargets(ast, n as HumanNode, CODEX_GUARDS).length > 0);
   if (humans.length === 0) return null;
   const agents = ast.nodes.filter((n) => n.type === "agent") as AgentNode[];
   const sandbox = projectSandboxMode(ast);

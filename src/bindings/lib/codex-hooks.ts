@@ -28,7 +28,8 @@ import {
   generateBeforeEditScript,
   generateGateWrapperScripts,
   getDelegationMode,
-  spawnHeldAgents, MATCH_FUNCTIONS, CANON_FUNCTION } from "./guards.js";
+  spawnHeldAgents, MATCH_FUNCTIONS, RESOLVE_FUNCTIONS, GUARD_OPTIONS, CANON_FUNCTION,
+  beforeActionBudgetSum, durationSeconds, gateWorstCase } from "./guards.js";
 
 /** Codex events for the language's universal names; `Error` has no Codex event. */
 const UNIVERSAL_EVENTS: Record<string, string | null> = {
@@ -297,15 +298,18 @@ function q(word: string): string {
 function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   const run = hook.run.trim();
   if (isShellCommand(run)) return { kind: "shell", command: run };
-  const { interpreter, script, args } = runParts(run);
-  const interp = interpreterFor(script, interpreter);
+  const { interpreter, flags = [], script, args } = runParts(run);
+  // The stub is in the interpreter's language; the command runs it with its flags (`python3 -I -B`).
+  const language = interpreterFor(script, interpreter);
+  const interp = [language, ...flags].join(" ");
   if (script.startsWith("/")) return { kind: "script", interp, rel: script, args };
   if (isProjectPath(script)) {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
       path: rel,
-      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
       category: "script",
+      stub: "hook",
       executable: true,
       createOnly: true,
     };
@@ -318,8 +322,9 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   used.set(name, script);
   const file: GeneratedFile = {
     path: `.codex/scripts/${name}`,
-    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
     category: "script",
+    stub: "hook",
     executable: true,
   };
   return { kind: "script", interp, rel: `.codex/scripts/${name}`, args, file };
@@ -382,9 +387,9 @@ export function ifFilterScript(): GeneratedFile {
       "  # glob test still holds. A refuse hook that cannot read the command treats it as a match.",
       '  case "$values" in $glob) matched=1 ;; esac',
       "  CMD=${values//$'\\\n'/}",
-      ...MATCH_FUNCTIONS.map((l) => "  " + l),
+      ...[...MATCH_FUNCTIONS, ...(GUARD_OPTIONS.resolveLeadingAssignments ? RESOLVE_FUNCTIONS : [])].map((l) => "  " + l),
       "  set -f",
-      '  SEGS=$(strip_redir "$CMD")',
+      GUARD_OPTIONS.resolveLeadingAssignments ? '  SEGS=$(strip_redir "$(at_resolve "$CMD")")' : '  SEGS=$(strip_redir "$CMD")',
       "  for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
       '  read -ra GW <<< "$glob"',
       '  key=""; rest=""',
@@ -440,23 +445,7 @@ export const DEADLINE_KILL = 2;
 /** Seconds added to a gate's worst case for jq, the ledger read and process start-up. */
 export const HOOK_MARGIN = 30;
 
-/** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
-export function durationSeconds(d: string | undefined): number | null {
-  const m = /^(\d+)([smhd])$/.exec(d ?? "");
-  return m ? Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"] : null;
-}
-
-/**
- * The longest a gate's check can run: its timeout once per attempt, plus a
- * one-second pause between attempts. Null when the gate has no timeout (the
- * guard's deadline is then the only bound).
- */
-export function gateWorstCase(gate: GateNode): number | null {
-  const t = durationSeconds(gate.timeout);
-  if (t === null) return null;
-  const retry = gate.retry != null && gate.retry > 0 ? gate.retry : 0;
-  return t * (retry + 1) + retry;
-}
+export { durationSeconds, gateWorstCase };
 
 /** The hook timeout for a guard that may run these gates: never below GUARD_TIMEOUT, always above their worst case. */
 export function guardHookTimeout(gates: GateNode[]): number {
@@ -469,9 +458,12 @@ function guardCommand(ast: TopologyAST, file: string, timeout: number): string {
   return launchCommand("bash", `${CODEX_GUARDS.scriptsDir(ast.topology.name)}/${file}`, [], true, timeout - DEADLINE_MARGIN);
 }
 
-/** A guard handler: the command, with a deadline under the hook timeout, and that timeout. */
-function guardHandler(ast: TopologyAST, file: string, gates: GateNode[]): Record<string, unknown> {
-  const timeout = guardHookTimeout(gates);
+/**
+ * A guard handler: the command, with a deadline under the hook timeout, and that timeout. `atLeast`
+ * raises the timeout (before-action.sh: the sum of its gate budgets, plus the deadline margin).
+ */
+function guardHandler(ast: TopologyAST, file: string, gates: GateNode[], atLeast = 0): Record<string, unknown> {
+  const timeout = Math.max(guardHookTimeout(gates), atLeast);
   return { type: "command", command: guardCommand(ast, file, timeout), timeout };
 }
 
@@ -483,10 +475,16 @@ function runGates(ast: TopologyAST, keep: (g: GateNode) => boolean): GateNode[] 
 /** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
 export function codexGateCommand(run: string, _topology: string): string {
   if (isShellCommand(run)) return run.trim();
-  const { interpreter, script, args } = runParts(run);
+  const { interpreter, flags = [], script, args } = runParts(run);
   const interp = interpreterFor(script, interpreter);
-  const where = script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
-  return [interp, where, ...args].join(" ");
+  // its flags run with it (`python3 -I -B`)
+  return [interp, ...flags, codexGateScript(run), ...args].join(" ");
+}
+
+/** The file a gate's `run:` script is on Codex: absolute as written, a project path as written, else under .codex/scripts/. */
+export function codexGateScript(run: string): string {
+  const { script } = runParts(run);
+  return script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
 }
 
 /**
@@ -506,7 +504,7 @@ export function codexGateHold(ast: TopologyAST, gate: GateNode): CodexGateHold {
   if (gate.behavior === "advisory") return { kind: "advisory" };
   if (checkableActionGate(ast, gate)) return { kind: "action" };
   if (!gate.run || !scriptNameFromRun(gate.run)) return { kind: "prose" };
-  const wiring = gateWiring(ast, gate);
+  const wiring = gateWiring(ast, gate, CODEX_GUARDS);
   const agents = spawnHeldAgents(ast, gate, CODEX_GUARDS);
   if (agents.length > 0) return { kind: "spawn", agents };
   if (wiring.kind === "subagent-stop") return { kind: "none", anchors: wiring.anchors };
@@ -529,7 +527,8 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
   if (beforeAction) {
     scripts.push(beforeAction);
     const gates = runGates(ast, (g) => checkableActionGate(ast, g));
-    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates)] } });
+    // before-action.sh runs each gate check once, for at most its budget (a gate with no timeout: 60 s).
+    entries.push({ event: "PreToolUse", entry: { matcher: "Bash", hooks: [guardHandler(ast, "before-action.sh", gates, beforeActionBudgetSum(ast) + HOOK_MARGIN + DEADLINE_MARGIN)] } });
   }
   // F-4: an apply_patch that adds, updates, deletes or moves to a gate's ledger is refused.
   const beforeEdit = generateBeforeEditScript(ast, CODEX_GUARDS);
@@ -544,7 +543,7 @@ export function buildCodexGuards(ast: TopologyAST): { scripts: GeneratedFile[]; 
       if (node.type !== "gate") continue;
       const gate = node as GateNode;
       if (!scriptNameFromRun(gate.run) || gate.behavior === "advisory") continue;
-      if (checkableActionGate(ast, gate) || gateWiring(ast, gate).kind !== "subagent-stop") continue;
+      if (checkableActionGate(ast, gate) || gateWiring(ast, gate, CODEX_GUARDS).kind !== "subagent-stop") continue;
       for (const anchor of gateAnchors(gate, "after")) {
         entries.push({ event: "SubagentStop", entry: { matcher: anchor, hooks: [guardHandler(ast, `gate-${gate.id}.sh`, [gate])] } });
       }

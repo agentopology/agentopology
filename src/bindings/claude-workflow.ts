@@ -779,6 +779,17 @@ export const claudeWorkflowBinding: BindingTarget = {
     const { file, humanNode, phasesEmitted } = generateWorkflowScript(ast, ledger);
     if (file) files.push(file);
 
+    // meta { entry }: the agent the launching session starts as. A workflow
+    // script is run by that session and cannot choose it; the host writes it.
+    if (ast.topology.entry) {
+      ledger.add({
+        severity: "UNREPRESENTABLE",
+        primitive: "entry",
+        scope: ast.topology.entry,
+        reason: `The entry agent is the agent the launching Claude Code session starts as. The Workflow script runs inside that session and cannot choose it. The host (claude-code binding) writes it as the \`agent\` key in .claude/settings.json.`,
+      });
+    }
+
     // Human-split README (UNREPRESENTABLE human boundary).
     if (humanNode) {
       files.push(generateHumanSplitReadme(ast, humanNode));

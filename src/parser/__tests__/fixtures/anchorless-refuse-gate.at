@@ -1,0 +1,41 @@
+topology t : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "a refusing gate that no hook runs: before a report step, no after"
+  }
+  orchestrator {
+    model: opus
+    handles: [intake, finish]
+  }
+  action intake {
+    kind: inline
+    description: "Take the request"
+  }
+  agent writer {
+    model: sonnet
+    description: "Writes the report"
+    prompt {
+      Write the report.
+    }
+  }
+  action finish {
+    kind: report
+    description: "Hand the result back to the user, nothing further to run"
+  }
+  flow {
+    intake -> writer
+    writer -> finish
+  }
+  gates {
+    gate numbers-need-a-source {
+      before: finish
+      description: "A number in a report must match a command's output printed in the same turn"
+      run: "bash tools/numbers-need-a-source.sh"
+      strength: refuse
+      by: hook
+      on-fail: halt
+      at: "tools/checks.py"
+      match: "def numbers"
+    }
+  }
+}

@@ -13,6 +13,8 @@ Validating script-agent-pipeline.at (script-agent-demo v1.0.0)
       skill:story  (.claude/skills/story/SKILL.md)
     not scaffolded (8): scaffold would write these and they are not on disk; rerun scaffold
 
+  stubs (claude-code): 1 of 8 generated files are stubs: 1 tool script
+
   All validation rules passed.
 
 <version line>

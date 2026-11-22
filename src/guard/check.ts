@@ -10,7 +10,11 @@
  * - `refuse`: a hook or a settings rule stops the step, and it is on disk.
  * - `none`: the binding compiles it to a hook or rule, but the project is
  *   missing it (or names it by a relative path, which is skipped once Claude
- *   changes directory). Nothing stops the step.
+ *   changes directory). Nothing stops the step. A gate whose check script is
+ *   still a scaffold stub is none too: the stub checks nothing. It blocks
+ *   every run until it is written, so nothing goes through: it is said on its
+ *   own line and is not counted missing (the exit code is unchanged), but
+ *   only when the stub is its sole problem (soleStub).
  * - `hope`: the binding has no hook for it (an advisory gate, inline
  *   delegation, or a gate with no agent on either side); only the playbook's
  *   prose asks for it.
@@ -26,12 +30,13 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
-import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
+import { runParts, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
-import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
+import { BLOCKING_EVENTS, installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
 import { topLevelPermissionLines } from "./top-level-permissions.js";
 
@@ -72,6 +77,8 @@ export interface GuardItem {
   notes: string[];
   /** A gate that cites code (at:): "wired" when its own generated hook refuses it, else "cited" (0.12.4). */
   citation?: "cited" | "wired";
+  /** Graded none only because its check script is still a scaffold stub (its sole problem): said on its own line, not counted missing (countsMissing). */
+  stub?: boolean;
 }
 
 export interface GuardReport {
@@ -115,15 +122,47 @@ function findHooks(settings: Record<string, any> | null, event: string, file: st
   return entries.filter((e) => matcher(e.matcher)).flatMap((e) => (e.hooks ?? []).filter((h) => h.type === "command" && h.command?.includes(file)));
 }
 
-/** Notes on the check script a gate's `run:` names: unwritten or missing scripts block every run. */
+/** Notes on the check script a gate's `run:` names: a missing script blocks every run. */
 function checkScriptNotes(root: string, scriptsDir: string, run: string): string[] {
-  const { script } = runParts(run);
-  const path = script.startsWith("/") ? script : isProjectPath(script) ? join(root, script.replace(/^\.\//, "")) : join(root, scriptsDir, script.replace(/^.*\//, ""));
+  const file = checkScriptFile(scriptsDir, run);
+  const path = file.startsWith("/") ? file : join(root, file);
   const text = readText(path);
   const shown = path.startsWith(root) ? path.slice(root.length + 1) : path;
   if (text === null) return [`its check script ${shown} is missing, so it blocks every run`];
-  if (isStubContent(text)) return [`its check script ${shown} is still a stub, so it blocks every run until it is written`];
   return [];
+}
+
+/**
+ * The problem with a gate whose check script (at `file`, under the project
+ * root) is still a scaffold stub, or null. A stub checks nothing: it blocks
+ * every run until it is written, so the gate is graded none, not refuse.
+ */
+export function stubCheckProblem(root: string, file: string): string | null {
+  const shown = stubShown(root, file);
+  return shown === null ? null : `its check script ${shown} is still a stub: it checks nothing and blocks every run until it is written`;
+}
+
+/**
+ * The stub mark for a gate graded none: set only when the stub is its sole
+ * problem. With any other problem (a hook entry gone, a wrapper deleted) the
+ * stub never runs, nothing stops the step, and the gate counts missing.
+ */
+export function soleStub(stub: string | null, problems: string[]): { stub?: true } {
+  return stub && problems.length === 1 ? { stub: true } : {};
+}
+
+/** The project-relative path of `file` when it is a scaffold stub on disk, else null. */
+function stubShown(root: string, file: string): string | null {
+  const path = file.startsWith("/") ? file : join(root, file);
+  const text = readText(path);
+  if (text === null || !isStubContent(text)) return null;
+  return path.startsWith(root) ? path.slice(root.length + 1) : path;
+}
+
+/** Where the claude-code binding puts a gate's check script: the run:'s own path, or the topology's scripts folder. */
+function checkScriptFile(scriptsDir: string, run: string): string {
+  const { script } = runParts(run);
+  return script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `${scriptsDir}/${script.replace(/^.*\//, "")}`;
 }
 
 /** How many lines either side of a cited line the match text may sit. */
@@ -170,9 +209,6 @@ function noteGrade(item: GuardItem, note: string, first = false): void {
   if (item.gradeNote?.includes(note)) return;
   item.gradeNote = item.gradeNote ? (first ? `${note}, ${item.gradeNote}` : `${item.gradeNote}, ${note}`) : note;
 }
-
-/** Claude Code events whose hook can stop the call it runs before (exit 2). */
-const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
 
 /**
  * D-3: why a cited hook that declares strength: refuse cannot refuse, or null when it can: a
@@ -237,6 +273,25 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     return { ok: true, notes };
   };
 
+  // The agent the session runs as: what the .at compiles to, and what the
+  // settings.json on disk says (which decides).
+  const atSession = sessionAgentId(ast);
+  const fileSession = sessionAgentFromFile(ast, settings?.agent);
+  // The file starts every session as another agent than the .at compiles
+  // for: that agent is never launched, so nothing after or before it runs.
+  const staleSession = fileSession && fileSession !== atSession ? fileSession : undefined;
+  const staleWhy = staleSession
+    ? `settings.json agent is ${JSON.stringify(settings!.agent)}, so the session runs as ${staleSession} (${atSession ? `the .at's entry is ${atSession}` : "the .at states no entry"})`
+    : "";
+  const STALE_NOTE = `delete "agent" from .claude/settings.json, or set it to the entry, and scaffold again`;
+  /** Launch targets less the file's session agent, and a note when it was taken out. */
+  const launchable = (targets: string[]): { targets: string[]; notes: string[] } => {
+    if (!staleSession || !targets.includes(staleSession)) return { targets, notes: [] };
+    return {
+      targets: targets.filter((t) => t !== staleSession),
+      notes: [`not before ${staleSession}: ${staleWhy}, and it is never launched`, STALE_NOTE],
+    };
+  };
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
@@ -263,10 +318,12 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       if (script === null) problems.push(`${scriptsDir}/before-action.sh is missing`);
       else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
+      const stub = gate.run && scriptNameFromRun(gate.run) ? stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run)) : null;
+      if (stub) problems.push(stub);
       const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
       const indirect = "a step named through a variable, an alias, a function or a script that calls it is not seen (bash -c and eval with the step written out are)";
       if (problems.length) {
-        items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect] });
+        items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect], ...soleStub(stub, problems) });
       } else {
         const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
         items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
@@ -278,13 +335,31 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       items.push({ ...base, strength: "hope", by: "prose", where: "its run: names no script", notes: [] });
       continue;
     }
+    // The settings.json on disk decides which agent the session runs as. When
+    // it names another agent than the .at does (an entry removed or changed
+    // since the file was written, or set by hand), a gate after that agent
+    // never runs on SubagentStop, whatever the .at compiles to.
+    if (staleSession && gateAnchors(gate, "after").includes(staleSession)) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `after ${staleSession}: ${staleWhy}, and SubagentStop never fires for it; the playbook runs it`, notes: [STALE_NOTE] });
+      continue;
+    }
     const wiring = gateWiring(ast, gate);
     if (wiring.kind === "none") {
+      const session = atSession;
+      if (session && gateAnchors(gate, "after").includes(session)) {
+        items.push({ ...base, strength: "hope", by: "prose", where: `after ${session}, the entry agent: the entry agent is the session, so SubagentStop never fires for it; the playbook runs it`, notes: [] });
+        continue;
+      }
+      if (session && gateAnchors(gate, "before").includes(session)) {
+        items.push({ ...base, strength: "hope", by: "prose", where: `before ${session}, the entry agent: the entry agent is the session and is never launched, so no hook runs it; the playbook runs it`, notes: [] });
+        continue;
+      }
       const anchors = [...gateAnchors(gate, "after"), ...gateAnchors(gate, "before")].join(", ") || "nothing";
       items.push({ ...base, strength: "hope", by: "prose", where: `no Claude Code event marks its moment (between ${anchors}); the playbook runs it`, notes: [] });
       continue;
     }
     const scriptNotes = checkScriptNotes(root, scriptsDir, gate.run);
+    const stub = stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run));
     if (wiring.kind === "subagent-stop") {
       const file = `gate-${gate.id}.sh`;
       const problems: string[] = [];
@@ -294,28 +369,50 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
         else { const bad = commandProblem(hooks[0].command); if (bad) problems.push(bad); }
       }
       if (readText(join(root, scriptsDir, file)) === null) problems.push(`${scriptsDir}/${file} is missing`);
+      if (stub) problems.push(stub);
       const where = `SubagentStop on ${wiring.anchors.join(", ")} → ${file}`;
       items.push(problems.length
-        ? { ...base, strength: "none", by: "hook", where, notes: problems }
-        : { ...base, strength: "refuse", by: "hook", where, notes: ["exit 2 keeps the agent working until the gate passes; a call it already made is not undone", ...scriptNotes], gradeNote: STOP_EVENT_NOTE });
+        ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) }
+        : { ...base, strength: "refuse", by: "hook", where, notes: [
+          "exit 2 keeps the agent working until the gate passes; a call it already made is not undone",
+          ...(wiring.skipped ? [`not after ${wiring.skipped.join(", ")}: ${wiring.skipped.join(", ")} is the entry agent, the session itself, so SubagentStop never fires for it`] : []),
+          ...scriptNotes,
+        ], gradeNote: STOP_EVENT_NOTE });
       continue;
     }
-    // before-agent
-    const where = `PreToolUse on launching ${wiring.agents.join(", ")} → before-agent.sh`;
+    // before-agent (less the file's session agent, which is never launched)
+    const launch = launchable(wiring.agents);
+    if (launch.targets.length === 0) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${staleSession}: ${staleWhy}, and it is never launched; the playbook runs it`, notes: [STALE_NOTE] });
+      continue;
+    }
+    const where = `PreToolUse on launching ${launch.targets.join(", ")} → before-agent.sh`;
     const entry = guardEntry();
     const problems = entry.ok ? [] : entry.notes;
     if (entry.ok && !beforeAgent!.includes(`gate-${gate.id}.sh`)) problems.push(`before-agent.sh does not run gate-${gate.id}.sh`);
     if (readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
+    if (stub) problems.push(stub);
     items.push(problems.length
-      ? { ...base, strength: "none", by: "hook", where, notes: problems }
-      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...scriptNotes] });
+      ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) }
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...launch.notes, ...scriptNotes] });
   }
 
   for (const node of ast.nodes) {
     if (node.type !== "human") continue;
     const human = node as HumanNode;
     const base = { kind: "human" as const, id: human.id };
-    const targets = approvalTargets(ast, human);
+    const asked = approvalTargets(ast, human);
+    const launch = launchable(asked);
+    if (asked.length > 0 && launch.targets.length === 0) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${staleSession}: ${staleWhy}, and it is never launched, so there is no launch to ask before; the playbook asks`, notes: [STALE_NOTE] });
+      continue;
+    }
+    const targets = launch.targets;
+    const nextIsSession = atSession !== undefined && ast.edges.some((e) => e.from === human.id && !e.isError && e.to === atSession);
+    if (targets.length === 0 && nextIsSession) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${atSession}, the entry agent: the entry agent is the session and is never launched, so there is no launch to ask before; the playbook asks`, notes: [] });
+      continue;
+    }
     if (targets.length === 0) {
       items.push({ ...base, strength: "hope", by: "prose", where: "no agent follows it, so no launch to ask before; the playbook asks", notes: [] });
       continue;
@@ -326,7 +423,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if (entry.ok && !beforeAgent!.includes(`# approval step ${human.id}`)) problems.push(`before-agent.sh does not ask for ${human.id}`);
     items.push(problems.length
       ? { ...base, strength: "none", by: "hook", where, notes: problems }
-      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...launch.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
   }
 
   // Session agents: the spawn guard and the talk guard. Both are PreToolUse
@@ -405,7 +502,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const notes = bad ? [bad] : [CITED_NOTE, ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
       if (item.strength !== "refuse" || bad) {
         // 0.12.4: a citation alone is the file's claim: cited, never refuse.
-        Object.assign(item, { strength: bad ? "none" : citedGrade(gate), by, where: `${by} at ${gate.at}`, notes, ...(bad ? {} : { citation: "cited" }) });
+        Object.assign(item, { strength: bad ? "none" : citedGrade(gate), by, where: `${by} at ${gate.at}`, notes, stub: undefined, ...(bad ? {} : { citation: "cited" }) });
       } else {
         // Its own generated hook refuses it: the citation is wired.
         item.notes.push(...notes.map((n) => `also ${n}`));
@@ -441,6 +538,13 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
           }
           if (hook.strength === "refuse" && (hook.type ?? "command") !== "command") {
             Object.assign(item, { strength: "unverified", by: "hook", where, notes: [`${g} is a ${hook.type} hook; only a command hook is graded refuse here`, ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
+            break;
+          }
+          // The hook's script where the binding writes it: a stub there checks nothing. A
+          // bash stub exits 1, which does not block, so the step goes through: missing, not set apart.
+          const stubbed = (hook.strength === "refuse" || hook.strength === "detect") && !isShellCommand(hook.run) ? stubShown(root, checkScriptFile(scriptsDir, hook.run)) : null;
+          if (stubbed) {
+            Object.assign(item, { strength: "none", by: "hook", where, notes: [`${g}'s script ${stubbed} is still a stub: it checks nothing, so it credits no refusal until it is written`] });
             break;
           }
           if (hook.strength === "refuse" || hook.strength === "detect") {
@@ -493,11 +597,21 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   return {
     items,
     enforcement: { refuse: steps.filter((i) => i.strength === "refuse").length, of: steps.length },
-    missing: items.filter((i) => i.strength === "none" && !i.declared && !i.structural).length,
+    missing: items.filter(countsMissing).length,
     unattributed,
     verifiedOn: VERIFIED_ON,
     ...(topLevel.length ? { topLevel } : {}),
   };
+}
+
+/**
+ * Whether an item counts as missing (marked ✗, exit 1): graded none because a
+ * hook, rule or cited code is not there. Not when the file declares none, the
+ * host has no event to block on, or the check script is a stub: a stub blocks
+ * every run (it lets nothing through), so it is said on its own line.
+ */
+export function countsMissing(i: GuardItem): boolean {
+  return i.strength === "none" && !i.declared && !i.structural && !i.stub;
 }
 
 /** The report as terminal lines. */
@@ -511,7 +625,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
     lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
-    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${i.strength === "none" && !i.declared && !i.structural ? "✗" : "⚠"} ${n}`);
+    for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${countsMissing(i) ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");
   // D-6: the count says how many refusals rest on a ledger the agent can write (F-4).
@@ -535,6 +649,8 @@ export function renderGuardReport(report: GuardReport): string[] {
     for (const u of report.unattributed) lines.push(`  ${u.length > 110 ? u.slice(0, 107) + "..." : u}`);
   }
   if (report.missing) lines.push(`${report.missing} item(s) are missing or their citation no longer holds: rerun scaffold, fix the citation, or fix the project by hand`);
+  const stubbed = report.items.filter((i) => i.stub && i.strength === "none").length;
+  if (stubbed) lines.push(`${stubbed} gate(s) graded none because their check script is still a stub: it checks nothing and blocks every run; write it and remove its AGENTOPOLOGY_STUB line`);
   const graded = mark ? lines.map((l) => (/refus/i.test(l) ? `${l} · ${mark}` : l)) : lines;
   // How a cited gate comes to count, on Claude Code (Codex grades its own hooks unverified): after the mark.
   const how = cited && !report.platform ? [`${cited} gate(s) cite code that no hook of their own runs; to count one, ${CITED_HOW}`] : [];

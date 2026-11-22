@@ -26,7 +26,7 @@ import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { STUB_MARKER } from "../../bindings/lib/stub.js";
 import type { PlatformFile } from "../../sync/index.js";
 // @ts-expect-error plain JavaScript module
-import { RT_COMMANDS } from "./differential/fable-sequences.mjs";
+import { RT_COMMANDS, RT_PROJECT_DIR_FORMS } from "./differential/fable-sequences.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runs = JSON.parse(fs.readFileSync(join(here, "differential/runs-0112.json"), "utf-8")) as { rows: Array<{ kind: string; run: string | null; source: string }> };
@@ -36,6 +36,7 @@ const DET0 = ["./bin/guard","bin/guard --x","./node_modules/.bin/tool --check","
 
 const CORPUS: string[] = [...new Set<string>([
   ...(RT_COMMANDS as string[]),
+  ...(RT_PROJECT_DIR_FORMS as string[]),
   ...DET0,
   ...runs.rows.filter((r) => r.kind === "hook" && typeof r.run === "string").map((r) => r.run as string),
 ])];
@@ -93,13 +94,24 @@ describe("[I-0113] import → scaffold never stubs a command that ran, unless im
 
   it("names the ruled shapes with the ruled error text", () => {
     for (const command of [
-      'python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "python -c 'import sys'", "python3 -m mypkg.guard",
-      "bash -c 'exit 2'", "sh -c 'exit 2'", "zsh -c 'exit 2'", "node --x tools/a.mjs", "node -e '1'", "node -r ts-node/register x.ts",
+      "python -c 'import sys'", "python3 -m mypkg.guard",
+      "bash -c 'exit 2'", "sh -c 'exit 2'", "zsh -c 'exit 2'", "node -e '1'", "node -r ts-node/register x.ts",
       'bun run "$CLAUDE_PROJECT_DIR/x.ts"', "deno run x.ts", 'powershell -File "$CLAUDE_PROJECT_DIR/x.ps1"', "pwsh -Command Get-Date",
+      // an unlisted long flag may take the next word as its value, so no script is read after it
+      "node --x tools/a.mjs", "node --unhandled-rejections strict tools/x.js", "node --eval=1 tools/x.js",
     ]) {
       const { report } = importClaudeCodeWithReport(harness(command), "t");
       expect(errorsOf(report), command).toHaveLength(1);
       expect(errorsOf(report)[0].message, command).toContain("this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script");
+    }
+  });
+
+  it("an interpreter's flags before a project script compile faithfully: no error, no stub", () => {
+    // These were ruled shapes while a flag after the interpreter named a stub after the interpreter.
+    for (const command of ['python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "node --no-warnings tools/a.mjs", "node --max-old-space-size=4096 tools/a.mjs"]) {
+      const r = importThenScaffold(command);
+      expect(r, command).not.toBeNull();
+      expect(r!.stubbed, command).toEqual([]);
     }
   });
 

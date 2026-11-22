@@ -1,0 +1,131 @@
+# routing.at: actions with no commands: of each kind and with no kind, and
+# decision, report and inline actions that do name commands. Used by routing-actions.test.ts (in its own
+# folder, so the scaffold golden, which reads fixtures/*.at, is unchanged).
+
+topology routing : [pipeline] {
+
+  meta {
+    version: "1.0.0"
+    description: "Conversational routing steps are no stubs"
+  }
+
+  orchestrator {
+    model: sonnet
+    handles: [pick, accept, finish, chat, pull, tag, choose-run, report-run, muse, chat-run]
+  }
+
+  action pick {
+    kind: decision
+    description: "The orchestrator picks the next station in conversation"
+  }
+
+  action accept {
+    kind: decision
+    description: "The orchestrator accepts the station's result"
+  }
+
+  action finish {
+    kind: report
+    description: "The orchestrator reports to the user"
+  }
+
+  action chat {
+    kind: inline
+    description: "The orchestrator talks it through"
+  }
+
+  action pull {
+    kind: external
+    source: "github-pr"
+    description: "Names no command, so its script is a stub"
+  }
+
+  action tag {
+    kind: git
+    description: "Names no command, so its script is a stub"
+  }
+
+  action choose-run {
+    kind: decision
+    description: "A decision that runs real commands"
+    commands: ["./tools/choose --next"]
+  }
+
+  action report-run {
+    kind: report
+    description: "A report that runs real commands"
+    commands: ["./tools/report --weekly"]
+  }
+
+  action muse {
+    description: "No kind and no commands: done in conversation"
+  }
+
+  action chat-run {
+    kind: inline
+    description: "An inline action that runs real commands"
+    commands: ["./tools/chat --summary"]
+  }
+
+  agent writer {
+    model: sonnet
+    description: "Writes the draft"
+    prompt { Write the draft. }
+  }
+
+  flow {
+    pick -> writer
+    writer -> accept
+    accept -> finish
+    finish -> chat
+    chat -> pull
+    pull -> tag
+    tag -> choose-run
+    choose-run -> report-run
+    report-run -> muse
+    muse -> chat-run
+  }
+
+  gates {
+    gate ready {
+      after: writer
+      before: accept
+      run: "scripts/ready.sh"
+    }
+  }
+
+  schedule {
+    job nightly-finish {
+      cron: "0 3 * * *"
+      action: finish
+    }
+    job nightly-pick {
+      cron: "0 4 * * *"
+      action: pick
+    }
+    job nightly-choose {
+      cron: "0 5 * * *"
+      action: choose-run
+    }
+    job nightly-pull {
+      cron: "0 6 * * *"
+      action: pull
+    }
+    job nightly-write {
+      cron: "0 7 * * *"
+      agent: writer
+    }
+    job nightly-chat {
+      cron: "0 8 * * *"
+      action: chat
+    }
+    job nightly-muse {
+      cron: "0 9 * * *"
+      action: muse
+    }
+    job nightly-chat-run {
+      cron: "0 10 * * *"
+      action: chat-run
+    }
+  }
+}

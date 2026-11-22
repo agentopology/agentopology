@@ -33,7 +33,10 @@ import { isClaudeModelName } from "../conformance/codex.js";
 import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
-import { checkableActionGate, stepMatchWords } from "../bindings/lib/guards.js";
+import { checkableActionGate, hooklessGateReason, stepMatchWords } from "../bindings/lib/guards.js";
+import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/hook-blocks.js";
+import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
+import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
@@ -80,6 +83,8 @@ export interface ValidationResult {
   node?: string;
   /** Source line number where the issue was found (1-based), if available. */
   line?: number;
+  /** For a result relayed from an imported file (V8): the rule it came from there. */
+  via?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +429,9 @@ function v4NoOrphans(ast: TopologyAST): ValidationResult[] {
     if (!isAgent(node)) continue;
     if (node.invocation === "manual") continue;
     if (gMembers.has(node.id)) continue;
+    // The entry agent is the session itself (V134); it needs no flow edge.
+    // An entry V134 refuses is not the session, so it is not exempt.
+    if (node.id === ast.topology.entry && !entryProblem(ast)) continue;
     if (!flowNodes.has(node.id)) {
       results.push({
         rule: "V4",
@@ -534,7 +542,7 @@ function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationRe
   if (!filePath) {
     return [...results, { rule: "V8", level: "warning", message: "imports not checked" }];
   }
-  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack, opts.importCache)];
+  return [...results, ...checkImports(ast, filePath, parseSource, validate, opts.importStack, opts.importCache, opts.target)];
 }
 
 /** V9: Every action referenced in flow must appear in orchestrator.handles. */
@@ -4138,6 +4146,9 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v131LostStructure(ast),
     ...v132PermissionWords(ast, opts),
     ...v133McpServerFrom(ast),
+    ...v134EntryAgent(ast, opts),
+    ...v135HooklessRefuseGate(ast, opts),
+    ...v136ScheduledRoutingAction(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4317,6 +4328,35 @@ function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/**
+ * V136: a schedule job that runs a decision, report or inline action, or an
+ * action with no kind, that has no `commands:` does nothing. Such an action is
+ * done by the orchestrator in conversation, so its script has nothing to run,
+ * and a job that runs it (headless, with no orchestrator) passes without doing
+ * the work. A warning on every target, naming the job, the action and its kind.
+ * The kinds are the ones the claude-code binding writes "nothing to run" for
+ * (ROUTING_KINDS in claude-code.ts); external and git actions with no commands
+ * are stubs that fail until written, so they are not reported.
+ */
+const V136_ROUTING_KINDS = new Set(["decision", "report", "inline"]);
+function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (!j.action) continue;
+    const action = ast.nodes.find((n) => n.id === j.action && n.type === "action") as ActionNode | undefined;
+    if (!action || (action.kind && !V136_ROUTING_KINDS.has(action.kind))) continue;
+    if (action.commands && action.commands.length > 0) continue;
+    const what = !action.kind
+      ? "an action with no kind and no commands"
+      : `${action.kind === "inline" ? "an" : "a"} ${action.kind} action with no commands`;
+    results.push({
+      rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+    });
+  }
+  return results;
+}
+
 /** V125 (L-2): a job carried by a session cannot outlive it. */
 function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -4433,6 +4473,205 @@ function v133McpServerFrom(ast: TopologyAST): ValidationResult[] {
       level: "error",
       message: `mcp-servers ${key}: from: ${String(config.from)} is not an accepted form; write from: plugin "<plugin-name>" (a server a Claude Code plugin provides), or remove from: for a project server.`,
     });
+  }
+  return results;
+}
+
+/** The targets whose generated hooks V135 is about: both wire gates the same way (gateWiring, before-action.sh). */
+export const V135_TARGETS: readonly string[] = ["claude-code", "codex"];
+
+/**
+ * Whether a validation result applies to a command's output. V135 is about
+ * the hooks claude-code and codex generate, so it does not hold back `plan`
+ * and the brief (target "interpreted"), where the executing agent places a
+ * gate by its anchors and runs it itself. A V135 relayed from an imported
+ * file (V8, `via: "V135"`) is judged the same way. Commands that know their
+ * target pass it to validate(), where V135 judges it itself.
+ */
+export function ruleAppliesTo(result: Pick<ValidationResult, "rule" | "via">, target: string): boolean {
+  const rule = result.via ?? result.rule;
+  return rule !== "V135" || V135_TARGETS.includes(target);
+}
+
+/**
+ * Whether a hook the topology declares refuses for a gate with none of its
+ * own (N33, as guard --check credits it): an edge from one of its `after:` to
+ * one of its `before:` cites, in `guard:`, a hook with `strength: refuse` that
+ * can block on the platform (hookCanRefuse: a command hook, not async, on an
+ * event in that platform's blocking list, the one guard --check reads), or
+ * another gate a generated hook runs. A cited gate (`at:`) takes no
+ * edge credit since 0.12.4.
+ */
+function edgeGuardRefuses(ast: TopologyAST, gate: GateNode, p: GuardPlatform): boolean {
+  if (gate.at) return false;
+  const afters = gateAnchors(gate, "after");
+  const befores = gateAnchors(gate, "before");
+  const hooks = new Map((ast.hooks ?? []).map((h) => [h.name, h]));
+  const gates = new Map(ast.nodes.filter((n) => n.type === "gate").map((n) => [n.id, n as GateNode]));
+  return ast.edges.some((e) => afters.includes(e.from) && befores.includes(e.to) && (e.guard ?? []).some((g) => {
+    const hook = hooks.get(g);
+    if (hook) return hookCanRefuse(hook, p.id);
+    const other = gates.get(g);
+    return !!other && other !== gate && other.behavior !== "advisory" && !!scriptNameFromRun(other.run) && hooklessGateReason(ast, other, p) === null;
+  }));
+}
+
+/**
+ * V135: a gate meant to refuse that no generated hook runs. A gate whose
+ * `run:` names a script, not advisory, with strength refuse or none written,
+ * is meant to refuse. Claude Code and Codex run it from a hook only when its
+ * moment is marked (hooklessGateReason): every `after:` a subagent
+ * (SubagentStop), a subagent in `before:` (before-agent.sh), or a script step
+ * in `before:` (before-action.sh); inline delegation leaves only the last.
+ * Otherwise scaffold wrote the wrapper script, warned, and wired nothing,
+ * while validate passed: a gate that looked like it refused and never ran. An
+ * edge guard citing a refusing hook credits it (edgeGuardRefuses), and so
+ * does a declared refusing hook that runs the gate's own command
+ * (sameCommandHook, whitespace aside). A
+ * citation (`at:`) does not change that: since 0.12.4 only the gate's own
+ * generated hook makes it refuse. `strength: hope` (or detect, none) says the
+ * playbook runs it, and is not reported. Only with no target, claude-code or
+ * codex: Cursor writes a hook for every gate, and claude-workflow leaves a
+ * host gate to the claude-code binding.
+ */
+function v135HooklessRefuseGate(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (opts.target && !V135_TARGETS.includes(opts.target)) return results;
+  const inline = ast.nodes.some((n) => n.type === "orchestrator" && (n as OrchestratorNode).delegation === "inline");
+  // Codex has no entry agent: a gate after it stays a SubagentStop gate there.
+  const p = opts.target === "codex" ? CODEX_GUARDS : CLAUDE_CODE_GUARDS;
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.strength !== undefined && gate.strength !== "refuse") continue;
+    const reason = hooklessGateReason(ast, gate, p);
+    if (!reason) continue;
+    if (edgeGuardRefuses(ast, gate, p)) continue;
+    // A declared refusing hook that runs this gate's own command runs its check:
+    // no error. It runs only on the calls its matcher and if: select, and
+    // guard --check grades the gate hope, so validate says so.
+    const same = sameCommandHook(ast, gate, p.id);
+    if (same) {
+      results.push({
+        rule: "V135",
+        level: "warning",
+        node: gate.id,
+        line: lookupLine(ast, gate.id),
+        // guard --check: no hook of its own, so hope; with a holding at:, cited (0.12.4). Never refuse.
+        message: `Gate "${gate.id}" is run only by hook "${same.name}" ${describeHook(same)}, which runs its command; guard --check grades it ${gate.at ? "cited (by its at:), not refuse" : "hope"}.`,
+      });
+      continue;
+    }
+    const fix = inline
+      ? "With delegation inline, only a script step (an action with commands:) in before: gets a hook"
+      : "Give it a subagent in after: or before:, or a script step (an action with commands:) in before:";
+    results.push({
+      rule: "V135",
+      level: "error",
+      node: gate.id,
+      line: lookupLine(ast, gate.id),
+      message:
+        `Gate "${gate.id}" would refuse, but has ${reason}, so no hook runs it: scaffold writes its wrapper script and nothing calls it. ` +
+        `${fix}; or, if a playbook runs it by hand, write strength: hope.` +
+        (gate.at ? " Its at: citation does not make it refuse: only its own generated hook does. If the cited code is the claim, drop run: and keep the citation." : ""),
+    });
+  }
+  return results;
+}
+
+/**
+ * V134: `meta { entry }` names the agent every session starts as, which
+ * Claude Code reads from the settings.json `agent` key: a subagent's name. An
+ * error when the entry is not a declared node, is not an agent (an action,
+ * gate, human, group or orchestrator), or is an agent the claude-code binding
+ * does not write as a subagent (`runs: inline` / `fork` become skills; an
+ * `execution: workflow` agent belongs to the workflow script), and when the
+ * value is not one agent id (empty, or a list).
+ *
+ * Warnings, when compiling for Claude Code (no target, or claude-code):
+ * - `extensions { claude-code { agent } }` names a different agent: the
+ *   extension is the more specific and is written.
+ * - that extension value names a declared node Claude Code cannot start: it
+ *   is not written. A name the topology does not declare is left alone.
+ * - a gate after the session's agent: SubagentStop never fires for the
+ *   session's own agent (MEASURED 19 Nov with `claude --agent`; the settings
+ *   key is the same mechanism, INFERRED from the sub-agents doc), so the
+ *   SubagentStop entry is not written.
+ * - the session's agent has a tools list without Agent (or Task) while the
+ *   topology has other agents for it to start: its tools are the session's.
+ */
+function v134EntryAgent(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const entry = ast.topology.entry;
+  const at = (node: string) => ({ node, line: lookupLine(ast, node) });
+  if (entry !== undefined) {
+    const problem = entryProblem(ast);
+    if (problem) {
+      const declared = ast.nodes.some((n) => n.id === entry);
+      results.push({
+        rule: "V134",
+        level: "error",
+        message: `meta entry "${entry}" ${problem}.`,
+        ...(declared ? at(entry) : {}),
+      });
+      return results;
+    }
+  }
+  if (opts.target && opts.target !== "claude-code") return results;
+  const warn = (message: string, node?: string) => results.push({ rule: "V134", level: "warning", ...(node ? at(node) : {}), message });
+
+  const ext = extensionAgent(ast);
+  const extNode = ext !== undefined ? nodeForAgentName(ast, ext) : undefined;
+  const extProblem = extNode ? agentProblem(extNode) : null;
+  if (ext !== undefined && extNode && extProblem) {
+    const written = settingsAgent(ast);
+    const instead = written ? `; settings.json gets the entry "${written.value}" instead.` : ", so settings.json gets no agent.";
+    warn(`extensions { claude-code { agent: ${ext} } } names "${extNode.id}", which ${extProblem}; it is not written${instead}`, extNode.id);
+  }
+  if (entry !== undefined && ext !== undefined && !extProblem) {
+    const entryNode = ast.nodes.find((n) => n.id === entry) as AgentNode;
+    if (ext !== entry && ext !== agentFileName(entryNode)) {
+      warn(`meta entry is "${entry}" but extensions { claude-code { agent: ${ext} } } names "${ext}"; settings.json gets agent: "${ext}" (the extension is the more specific). Remove one so they agree.`, entry);
+    }
+  }
+
+  const session = sessionAgentId(ast);
+  if (!session) return results;
+
+  // A gate after the session's agent: the session is not a subagent.
+  if (getDelegationMode(ast) !== "inline") {
+    for (const n of ast.nodes) {
+      if (n.type !== "gate") continue;
+      const gate = n as GateNode;
+      const wiring = gateWiring(ast, gate);
+      if (gateAnchors(gate, "after").includes(session)) {
+        const instead = wiring.kind === "before-agent" ? ` It runs before ${wiring.agents.join(", ")} launches instead.`
+          : wiring.kind === "subagent-stop" ? ` Its other anchors (${wiring.anchors.join(", ")}) keep their SubagentStop hook.` : "";
+        warn(`gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, so SubagentStop never fires for it; anchor the gate on a subagent or a script step.${instead}`, gate.id);
+      } else if (wiring.kind !== "subagent-stop" && gateAnchors(gate, "before").includes(session)) {
+        warn(`gate "${gate.id}" is before "${session}", the entry agent: the entry agent is the session and is never launched, so no hook runs the gate before it; anchor the gate on a subagent or a script step.`, gate.id);
+      }
+    }
+    // A human step before the session's agent: there is no launch to ask before.
+    for (const n of ast.nodes) {
+      if (n.type !== "human") continue;
+      const next = ast.edges.filter((e) => e.from === n.id && !e.isError).map((e) => e.to);
+      if (next.includes(session)) {
+        warn(`human step "${n.id}" is before "${session}", the entry agent: the entry agent is the session and is never launched, so its approval is never asked; put the step before a subagent, or have the session's prompt ask.`, n.id);
+      }
+    }
+  }
+
+  // The session's agent's tools are the session's tools.
+  const lead = ast.nodes.find((n) => n.id === session) as AgentNode;
+  if (lead.tools && lead.tools.length > 0 && !toolsCanStartAgents(lead.tools)) {
+    const startable = (id: string) => id !== session && isRegisteredSubagentType(ast, id);
+    const flowTargets = [...new Set(ast.edges.filter((e) => e.from === session).map((e) => e.to))].filter(startable);
+    const others = ast.nodes.map((n) => n.id).filter(startable);
+    const targets = flowTargets.length > 0 ? flowTargets : others;
+    if (targets.length > 0) {
+      warn(`agent "${session}" is the entry agent, so its tools are the whole session's tools, and they have no Agent: the session cannot start ${targets.join(", ")}. Add Agent to its tools, or Agent(${targets.join(", ")}) to allow only those.`, session);
+    }
   }
   return results;
 }
@@ -4620,6 +4859,12 @@ function stepPlaceholderWarnings(ast: TopologyAST): ValidationResult[] {
 export function codexWarnings(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const warn = (rule: string, node: string, message: string) => results.push({ rule, level: "warning", node, message: `[codex] ${message}` });
+  // Codex's config.toml has no key that picks the primary session's agent:
+  // the agents.* keys declare roles for spawned subagents only
+  // (learn.chatgpt.com/docs/config-file/config-reference).
+  if (ast.topology.entry) {
+    warn("CX5-entry", ast.topology.entry, `meta entry "${ast.topology.entry}": Codex has no setting that starts a session as a named agent, so nothing is written for it. The agent is still written as a spawnable agent.`);
+  }
   for (const [key, config] of Object.entries(ast.mcpServers ?? {})) {
     const p = pluginMcpServer(key, config);
     if (p) warn("CX5-mcp-plugin", key, `MCP server "${key}" comes from the Claude Code plugin "${p.plugin}"; Codex has no Claude Code plugins, so no [mcp_servers.${key}] table is written. Declare the server's command or url for Codex.`);

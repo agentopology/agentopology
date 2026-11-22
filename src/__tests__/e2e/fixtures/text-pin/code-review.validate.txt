@@ -1,5 +1,7 @@
 Validating code-review.at (code-review v1.0.0)
 
+  stubs (claude-code): 3 of 15 generated files are stubs: 1 gate check script, 1 hook script, 1 action script
+
   All validation rules passed.
 
 checked against Claude Code 2.1.323 (supports 2.1.295 and later)

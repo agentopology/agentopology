@@ -33,10 +33,12 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
   approvalTargets,
+  beforeActionHookTimeout,
   checkableActionGate,
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
@@ -44,11 +46,13 @@ import {
   generateBeforeEditScript as buildBeforeEditScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
+  hooklessGateReason,
   isRegisteredSubagentType,
   runsAsSkill,
   shellQuote,
   stepMatchWords,
 } from "./lib/guards.js";
+import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -597,6 +601,20 @@ function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
   ];
 }
 
+/**
+ * Action kinds that, with no `commands:`, the orchestrator does in
+ * conversation: talking it through (inline), choosing where to go next
+ * (decision), telling the user (report). Their script says so and is no stub.
+ * An external or git action with no commands names work a script must do, so
+ * it stays a stub until it is written.
+ */
+const ROUTING_KINDS = new Set(["inline", "decision", "report"]);
+
+/** An action with no commands whose kind is done in conversation (or has no kind). */
+function isRoutingAction(action: ActionNode): boolean {
+  return !action.kind || ROUTING_KINDS.has(action.kind);
+}
+
 /** Generate script stubs for each ActionNode. */
 function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -629,7 +647,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
     if (action.commands && action.commands.length > 0) {
       lines.push(...actionGateCheck(ast, action));
       lines.push(...action.commands);
-    } else if (!action.kind || action.kind === "inline") {
+    } else if (isRoutingAction(action)) {
       // Done by the orchestrator in conversation (the playbook says how).
       lines.push(`# Performed by the orchestrator in conversation; nothing to run.`);
     } else {
@@ -646,6 +664,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
       path: `.claude/skills/${name}/scripts/action-${action.id}.sh`,
       content: lines.join("\n"),
       category: "script",
+      stub: "action",
     });
   }
 
@@ -1555,6 +1574,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.onFail) sections.push(`On fail: ${gate.onFail}`);
       if (gate.retry) sections.push(`Retry: ${gate.retry}`);
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
+      // Read back by import, so a gate written strength: hope (V135) stays one.
+      if (gate.strength) sections.push(`Strength: ${gate.strength}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
         sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
@@ -2095,6 +2116,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
       // F-25: in the language of the interpreter hookCommand runs it with.
       content: scriptStub(`Gate: ${gate.id} — ${gate.run}`, interpreterFor(script, interpreter), { fail: true }),
       category: "script",
+      stub: "gate",
       ...(project ? { createOnly: true } : {}),
     });
   }
@@ -2309,6 +2331,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""))
         : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
       category: "script",
+      stub: "hook",
       executable: true,
       // A run that names its own path names the user's script: a stub only
       // fills the gap until it exists. --force used to overwrite it.
@@ -2351,6 +2374,7 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
           "",
         ].join("\n"),
         category: "script",
+        stub: "hook",
       });
     }
   }
@@ -2381,9 +2405,10 @@ export function skillScriptPath(topologyName: string, file: string): string {
  */
 export function hookCommand(run: string, topologyName: string): string {
   if (isShellCommand(run)) return run.trim();
-  const { interpreter: named, script: first, args: rest } = runParts(run);
+  const { interpreter: named, flags = [], script: first, args: rest } = runParts(run);
   // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
-  const interpreter = interpreterFor(first, named);
+  // Its flags (`python3 -I -B`) run with it.
+  const interpreter = [interpreterFor(first, named), ...flags].join(" ");
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");
     return [interpreter, skillScriptPath(topologyName, base), ...rest].join(" ");
@@ -2486,41 +2511,50 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // in its own session context. SubagentStop hooks would be dead config in
   // this mode, so we skip emitting them entirely (still generate the wrapper
   // script). The gate must be invoked from the playbook at the right step.
-  const delegationMode = getDelegationMode(ast);
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   for (const gate of gates) {
     if (!scriptNameFromRun(gate.run)) continue; // no run, or V96 prose
     if (gate.behavior === "advisory") continue; // advisory gates stay in markdown only
 
-    if (delegationMode === "inline") {
+    // SubagentStop matcher must be a registered subagent_type. A gate after an
+    // action or a human runs before its next agent instead (before-agent.sh),
+    // and a gate before a script step from before-action.sh (both wired
+    // below, and before-action.sh under inline delegation too). With nothing
+    // to mark its moment, warn and skip so we don't ship dead config that
+    // never fires. The reason is V135's, which refuses the gate when it would
+    // refuse (strength refuse or unset).
+    const hookless = hooklessGateReason(ast, gate);
+    if (hookless) {
+      const inline = getDelegationMode(ast) === "inline";
+      const same = sameCommandHook(ast, gate, "claude-code");
+      if (same) {
+        console.warn(
+          `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook of its own runs it; ` +
+            `hook "${same.name}" ${describeHook(same)} runs the same command, so the check runs there, on the calls that hook matches.`,
+        );
+        continue;
+      }
       console.warn(
-        `[claude-code] Gate "${gate.id}" — orchestrator.delegation is "inline", ` +
-          `so no subagent ever runs. SubagentStop hook not emitted; invoke ` +
-          `.claude/skills/${topologyName}/scripts/gate-${gate.id}.sh from your ` +
-          `orchestrator playbook at the right step.`,
+        `[claude-code] Gate "${gate.id}" has ${hookless}, so no hook runs it — SubagentStop hook not emitted ` +
+          (inline ? "" : "(matcher must be an agent node id). ") +
+          `The gate wrapper script is still generated; invoke ` +
+          `.claude/skills/${topologyName}/scripts/gate-${gate.id}.sh from your orchestrator playbook ` +
+          `or a slash command at the right step.`,
       );
       continue;
     }
-
-    // SubagentStop matcher must be a registered subagent_type. A gate after an
-    // action or a human runs before its next agent instead (before-agent.sh,
-    // wired below); with no agent on either side, warn and skip so we don't
-    // ship dead config that never fires.
+    if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
     const anchors = gateAnchors(gate, "after");
     const wiring = gateWiring(ast, gate);
-    if (wiring.kind === "before-agent") continue;
-    if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
-    if (wiring.kind !== "subagent-stop") {
-      const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
-      const targetDesc = anchors.length
-        ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
-        : "no after: target";
+    if (wiring.kind !== "subagent-stop") continue; // before-agent.sh runs it
+
+    // An anchor that is the entry agent (the session) is left out; the
+    // subagents beside it keep their hook (V134 warns about the entry agent).
+    if (wiring.skipped) {
       console.warn(
-        `[claude-code] Gate "${gate.id}" has ${targetDesc} — SubagentStop hook not emitted ` +
-          `(matcher must be an agent node id). The gate wrapper script is still generated; ` +
-          `invoke it from your orchestrator playbook or a slash command at the right step.`,
+        `[claude-code] Gate "${gate.id}" is after ${wiring.skipped.map((s) => `"${s}"`).join(", ")}, the entry agent: the entry agent is the session, ` +
+          `so SubagentStop never fires for it. No SubagentStop hook for it; the other anchors keep theirs.`,
       );
-      continue;
     }
 
     const eventName = "SubagentStop";
@@ -2533,7 +2567,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     // land in settings.json, type-check clean through Record<string, unknown>,
     // and the hook would simply never fire. Silent, and the gate would look
     // wired while doing nothing.
-    const hookEntries: Array<Record<string, unknown>> = anchors.map((anchor) => ({
+    const hookEntries: Array<Record<string, unknown>> = wiring.anchors.map((anchor) => ({
       matcher: anchor,
       hooks: [
         {
@@ -2572,7 +2606,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       // Every tool that runs a shell command (0.11.1): a Bash-only matcher never
       // fires for PowerShell, and fires for Monitor only from Claude Code 2.1.314.
       matcher: "Bash|Monitor|PowerShell",
-      hooks: [{ type: "command", command: beforeActionCommand(ast), onFailure: "block" }],
+      // A command hook's default timeout is 600 s, and a PreToolUse hook that times out lets the call
+      // through unless onFailure is "block" (https://code.claude.com/docs/en/hooks). The script runs each
+      // gate check once, for at most its budget, so this timeout is the sum of the budgets plus a margin.
+      hooks: [{ type: "command", command: beforeActionCommand(ast), timeout: beforeActionHookTimeout(ast), onFailure: "block" }],
     });
   }
 
@@ -2633,10 +2670,34 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Defaults and observability are documented in the CLAUDE.md context file,
   // not in settings.json (Claude Code doesn't recognize these keys).
 
+  // meta { entry }: the subagent every session starts as (the `agent` key).
+  // An extensions { claude-code { agent } } below is more specific and wins
+  // (V134 warns when they differ). An entry Claude Code cannot start (V134
+  // error) is not written under --allow-invalid.
+  // Claude Code resolves the key by the agent file's `name`, so the value is
+  // the name the binding writes there (the claude-code name extension, or
+  // the id).
+  // The value comes from settingsAgent, the one rule V134, the gate wiring
+  // and guard --check also read.
+  if (ast.topology.entry !== undefined) {
+    const problem = entryProblem(ast);
+    if (problem) console.warn(`[claude-code] meta entry "${ast.topology.entry}" ${problem}; agent not written to settings.json.`);
+  }
+  const extAgent = extensionAgent(ast);
+  if (extAgent !== undefined) {
+    const node = nodeForAgentName(ast, extAgent);
+    const problem = node ? agentProblem(node) : null;
+    if (node && problem) console.warn(`[claude-code] extensions: agent "${extAgent}" names "${node.id}", which ${problem}; not written to settings.json.`);
+  }
+  const written = settingsAgent(ast);
+  if (written) settings.agent = written.value;
+
   // Topology extensions for claude-code: each key at its documented path and
   // type (`defaultMode` lands under permissions). V130 refuses what has no
   // place; under --allow-invalid it is skipped here with a warning.
   for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    // agent (a string) is written above, from settingsAgent.
+    if (k === "agent" && typeof v === "string") continue;
     const where = resolveSettingsKey(k);
     const value = where && (!where.row || (where.row.projectFile && !where.row.removed)) ? coerceCcValue(where.row, v) : undefined;
     if (!where || !value || !value.ok) {
@@ -2787,6 +2848,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     path: "scripts/collect-metrics.sh",
     content: lines.join("\n"),
     category: "script",
+    stub: "metering",
   };
 }
 
@@ -2811,6 +2873,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
         : `.claude/skills/${name}/scripts/${base || `${tool.id}.${ext}`}`,
       content: lines.join("\n"),
       category: "script",
+      stub: "tool",
       ...(project ? { createOnly: true } : {}),
     });
   }
@@ -3285,6 +3348,7 @@ function generateWorkflowLaunchArtifacts(ast: TopologyAST): GeneratedFile[] {
       path: `.claude/skills/${name}/scripts/launch-${label}-workflow.sh`,
       content: body,
       category: "script",
+      stub: "workflow",
       executable: true,
     });
   }
@@ -3424,6 +3488,7 @@ function generateObserveBlackboardScript(ast: TopologyAST): GeneratedFile | null
     path: hook.scriptPath,
     content: body,
     category: "script",
+    stub: "hook",
     executable: true,
   };
 }

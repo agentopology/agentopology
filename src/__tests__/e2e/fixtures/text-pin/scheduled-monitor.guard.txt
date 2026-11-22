@@ -11,10 +11,10 @@ enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
 --- exit 1
 guard --check examples/scheduled-monitor.at (project: proj)
 
-  gate metric-validation  refuse, a stop event: it cannot block a call  by: hook      SubagentStop on collector → gate-metric-validation.sh
-                          ⚠ exit 2 keeps the agent working until the gate passes; a call it already made is not undone
-                          ⚠ its check script .claude/skills/scheduled-monitor/scripts/validate-metrics.sh is still a stub, so it blocks every run until it is written
-  deny Edit               refuse                                        by: settings  permissions.deny in .claude/settings.json
+  gate metric-validation  none        by: hook      SubagentStop on collector → gate-metric-validation.sh
+                          ⚠ its check script .claude/skills/scheduled-monitor/scripts/validate-metrics.sh is still a stub: it checks nothing and blocks every run until it is written
+  deny Edit               refuse      by: settings  permissions.deny in .claude/settings.json
 
-enforcement: 1 of 1 steps refuse · checked against Claude Code 2.1.323
+enforcement: 0 of 1 steps refuse · checked against Claude Code 2.1.323
+1 gate(s) graded none because their check script is still a stub: it checks nothing and blocks every run; write it and remove its AGENTOPOLOGY_STUB line
 --- exit 0

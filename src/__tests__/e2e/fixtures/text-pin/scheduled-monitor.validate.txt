@@ -1,5 +1,7 @@
 Validating scheduled-monitor.at (scheduled-monitor v1.0)
 
+  stubs (claude-code): 4 of 21 generated files are stubs: 1 gate check script, 1 hook script, 1 action script, 1 metering script
+
   WARN  [V130] line 43: agent "collector" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (collector)
   WARN  [V130] line 56: agent "analyzer" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (analyzer)
   WARN  [V130] line 56: agent "analyzer" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel. (analyzer)

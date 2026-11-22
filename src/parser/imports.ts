@@ -19,11 +19,13 @@ export interface ImportResult {
   level: "error" | "warning";
   message: string;
   node?: string;
+  /** An error from inside the imported file: the rule it broke there, so a caller can scope it (V135). */
+  via?: string;
 }
 
 type Parse = (src: string) => TopologyAST;
-type Result = { rule: string; level: "error" | "warning"; message: string };
-type Validate = (ast: TopologyAST, opts?: { filePath?: string; importStack?: string[]; importCache?: ImportCache }) => Result[];
+type Result = { rule: string; level: "error" | "warning"; message: string; via?: string };
+type Validate = (ast: TopologyAST, opts?: { filePath?: string; importStack?: string[]; importCache?: ImportCache; target?: string }) => Result[];
 
 /** What was learned about one resolved file; shared by every import that reaches it. */
 type Loaded = { bytes: Buffer; parseError?: string; errors: Result[] } | { missing: true };
@@ -39,6 +41,8 @@ const FRAGMENT_RULES = new Set(["V1", "V2", "V8", "V12", "V23", "V24", "V89", "V
 /**
  * Check every local import of `ast`, which was read from `filePath`.
  * `stack` holds the files already being resolved (for cycle detection).
+ * `bindingTarget` is the binding the caller validates for: an imported file is
+ * checked for the same one, so a target-scoped rule (V135) scopes there too.
  */
 export function checkImports(
   ast: TopologyAST,
@@ -47,6 +51,7 @@ export function checkImports(
   validate: Validate,
   stack: string[] = [],
   cache: ImportCache = new Map(),
+  bindingTarget?: string,
 ): ImportResult[] {
   const results: ImportResult[] = [];
   const self = resolve(filePath);
@@ -79,7 +84,7 @@ export function checkImports(
         }
         let errors: Result[] = [];
         if (sub) {
-          const all = validate(sub, { filePath: target, importStack: chain, importCache: cache }).filter((r) => r.level === "error");
+          const all = validate(sub, { filePath: target, importStack: chain, importCache: cache, ...(bindingTarget ? { target: bindingTarget } : {}) }).filter((r) => r.level === "error");
           errors = sub.isFragment ? all.filter((r) => FRAGMENT_RULES.has(r.rule)) : all;
         }
         cached = { bytes, parseError, errors };
@@ -104,7 +109,7 @@ export function checkImports(
       continue;
     }
     for (const r of loaded.errors) {
-      results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: [${r.rule}] ${r.message}` });
+      results.push({ rule: "V8", level: "error", node: imp.alias, message: `${imp.source}: [${r.rule}] ${r.message}`, via: r.via ?? r.rule });
     }
   }
   return results;
