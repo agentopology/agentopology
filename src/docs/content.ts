@@ -392,7 +392,7 @@ action NAME {
 
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
-- **V136**: warning, a schedule job runs a decision or report action with no \`commands:\`: the job does nothing
+- **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
 
 ## Example
 
@@ -2817,7 +2817,7 @@ schedule {
 
 - **V20**: \`cron\` and \`every\` are mutually exclusive -- use one or the other
 - **V20**: Job must reference a declared agent or action node
-- **V136**: warning, a job runs a decision or report action with no \`commands:\` (done in conversation, so the job does nothing)
+- **V136**: warning, a job runs a decision, report or inline action, or one with no kind, with no \`commands:\` (done in conversation, so the job does nothing)
 
 ## Example
 
@@ -3387,7 +3387,7 @@ A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` 
 **Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim.
 
 ### V136: Scheduled Routing Action (warning)
-A schedule job runs a \`decision\` or \`report\` action with no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. Every target.
+A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an action with no \`kind:\`, that has no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. The warning names the job, the action and its kind (or "no kind"). Every target; an \`external\` or \`git\` action with no commands is a stub, not reported.
 
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
