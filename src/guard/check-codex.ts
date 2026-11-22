@@ -24,7 +24,7 @@ import { buildCodexHooks, codexGateHold, codexGateScript } from "../bindings/lib
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
 import { VERIFIED_ON, installedMark as codexInstalledMark, verifiedOnLine as codexVerifiedOnLine } from "../conformance/codex.js";
 import type { GuardItem, GuardReport } from "./check.js";
-import { CITED_NOTE, citationProblem, citedGrade, countsMissing, stubCheckProblem } from "./check.js";
+import { CITED_NOTE, citationProblem, citedGrade, countsMissing, soleStub, stubCheckProblem } from "./check.js";
 
 interface Handler { type?: string; command?: string }
 interface Entry { matcher?: string; hooks?: Handler[] }
@@ -87,7 +87,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         const where = `PreToolUse on Bash running ${gateAnchors(gate, "before").join(", ")} → before-action.sh`;
         // F-4: its check reads a ledger the agent can write; the grade says so.
         const note = gateLedger(ast, gate) ? { gradeNote: LEDGER_WRITABLE_NOTE } : {};
-        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...(stub ? { stub: true } : {}) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED], ...note });
+        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED], ...note });
         break;
       }
       case "spawn": {
@@ -98,7 +98,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
         const stub = gate.run ? stubCheckProblem(root, codexGateScript(gate.run)) : null;
         if (stub) problems.push(stub);
         const where = `PreToolUse on collaborationspawn_agent launching ${hold.agents.join(", ")} → before-agent.sh`;
-        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...(stub ? { stub: true } : {}) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
+        items.push(problems.length ? { ...base, strength: "none", by: "hook", where, notes: problems, ...soleStub(stub, problems) } : { ...base, strength: "unverified", by: "hook", where, notes: [UNVERIFIED] });
         break;
       }
     }

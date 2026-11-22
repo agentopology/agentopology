@@ -291,6 +291,9 @@ describe("a stub never hides missing wiring, and never credits a refusal", () =>
     expect(g.strength).toBe("none");
     expect(g.notes.join(" ")).toContain(`${hold} is still a stub`);
     expect(r.enforcement.refuse).toBe(0);
+    // A bash hook stub exits 1, which does not block: the step goes through, so it counts missing.
+    expect(g.stub).toBeFalsy();
+    expect(r.missing).toBe(1);
     // Once the hook's script is written, the edge credits the refusal as before.
     fs.writeFileSync(join(tmp, hold), "#!/usr/bin/env bash\nexit 0\n");
     r = checkGuards(heldAst, tmp);
