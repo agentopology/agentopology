@@ -313,6 +313,16 @@ describe("a word that can set a variable anywhere in the command, or a $ that is
     ["$@", `ab=x; echo "$@"; ${X} enter $ab`],
     ["$#, $!, $-", `ab=x; echo $# $! $-; ${X} enter $ab`],
     ["an upper-case name assigned beside it", `ab=x; T=y; echo $T; ${X} enter $ab`],
+    // the command as read is checked again: a read part that spells another read name
+    ["a read part that spells another read name", `ab=x; q=b; ${X} enter a$q $ab`],
+    // a setter written so that only the shell sees it as one
+    ["a setter with a backslash in it", `ab=x; q=b; r\\ead a$q <<< accept; ${X} enter $ab`],
+    ["a setter by a path", `ab=x; q=b; /x/read a$q <<< accept; ${X} enter $ab`],
+    ["wait -p behind jobs -x", `ab=x; q=b; jobs -x wait -n -p a$q; ${X} enter $ab`],
+    ["fc -s", `ab=x; fc -s; ${X} enter $ab`],
+    ["bind -x", `ab=x; bind -x '"a": read ab'; ${X} enter $ab`],
+    ["a ~ word", `ab=x; echo ~q; ${X} enter $ab`],
+    ["--opt=$ab: a $ in a word with =", `ab=x; ${X} enter --opt=$ab`],
   ];
   for (const [shape, command] of doubted) {
     it(`doubted: ${shape}`, () => {
