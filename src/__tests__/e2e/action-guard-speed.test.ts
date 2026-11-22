@@ -249,6 +249,36 @@ describe.skipIf(!hasJq)("a gate check is bounded by its budget inside before-act
     expect(bad.stderr).not.toContain("took over");
   });
 
+  it("with no hook timeout around it (a Claude Code that ignores onFailure), the script alone stops a doubted command's slow check at its budget", () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), "at-budget-alone-"));
+    try {
+      scaffoldInto(dir, topology("\n      timeout: 1s"));
+      // the ledger gate holds, so the run: gate is the one that decides
+      fs.mkdirSync(join(dir, "logs"), { recursive: true });
+      fs.writeFileSync(join(dir, "logs/trace.jsonl"), JSON.stringify({ step: "open", ok: true, at: "2026-01-01T00:00:00Z" }) + "\n");
+      // the check outlives the wrapper's own `timeout 1s` (TERM ignored), so only before-action.sh's budget (1 + 2 s) holds
+      fs.writeFileSync(join(dir, ".claude/skills/ship/scripts/check.sh"), "#!/usr/bin/env bash\ntrap '' TERM\nsleep 26.75\nexit 0\n", { mode: 0o755 });
+      const t0 = performance.now();
+      // no spawnSync timeout: nothing outside the script cuts it
+      const r = spawnSync("bash", [join(dir, SCRIPT)], {
+        cwd: dir,
+        input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: `T=/x ${X} enter $T` } }),
+        env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+        encoding: "utf8",
+      });
+      const ms = performance.now() - t0;
+      console.log(`[budget] doubted command, gate timeout 1s, script alone: ${Math.round(ms)} ms, exit ${r.status}`);
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toContain("gate accept-ready refuses this command");
+      expect(r.stderr).toContain("its check took over 3 s, so the step is blocked; raise the gate's timeout: if it needs longer");
+      expect(ms).toBeGreaterThanOrEqual(3000);
+      expect(ms).toBeLessThan(6000);
+      expect(spawnSync("/bin/sh", ["-c", "pgrep -f 'slee[p] 26.75' || true"], { encoding: "utf8" }).stdout.trim()).toBe("");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("a gate with no timeout: gets the 60 s default budget", () => {
     const dir = fs.mkdtempSync(join(os.tmpdir(), "at-budget-default-"));
     try {
