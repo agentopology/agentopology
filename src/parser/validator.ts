@@ -4329,22 +4329,29 @@ function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
- * V136: a schedule job that runs a decision or report action with no
- * `commands:` does nothing. Such an action is done by the orchestrator in
- * conversation, so its script has nothing to run, and a job that runs it
- * (headless, with no orchestrator) passes without doing the work. A warning on
- * every target, naming the job and the action.
+ * V136: a schedule job that runs a decision, report or inline action, or an
+ * action with no kind, that has no `commands:` does nothing. Such an action is
+ * done by the orchestrator in conversation, so its script has nothing to run,
+ * and a job that runs it (headless, with no orchestrator) passes without doing
+ * the work. A warning on every target, naming the job, the action and its kind.
+ * The kinds are the ones the claude-code binding writes "nothing to run" for
+ * (ROUTING_KINDS in claude-code.ts); external and git actions with no commands
+ * are stubs that fail until written, so they are not reported.
  */
+const V136_ROUTING_KINDS = new Set(["decision", "report", "inline"]);
 function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const j of ast.schedules ?? []) {
     if (!j.action) continue;
     const action = ast.nodes.find((n) => n.id === j.action && n.type === "action") as ActionNode | undefined;
-    if (!action || (action.kind !== "decision" && action.kind !== "report")) continue;
+    if (!action || (action.kind && !V136_ROUTING_KINDS.has(action.kind))) continue;
     if (action.commands && action.commands.length > 0) continue;
+    const what = !action.kind
+      ? "an action with no kind and no commands"
+      : `${action.kind === "inline" ? "an" : "a"} ${action.kind} action with no commands`;
     results.push({
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
-      message: `Schedule job "${j.id}" runs action "${action.id}", a ${action.kind} action with no commands: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+      message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
   }
   return results;
