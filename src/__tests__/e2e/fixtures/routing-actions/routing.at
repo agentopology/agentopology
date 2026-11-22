@@ -1,5 +1,5 @@
-# routing.at: actions with no commands: of each kind, and decision and report
-# actions that do name commands. Used by routing-actions.test.ts (in its own
+# routing.at: actions with no commands: of each kind and with no kind, and
+# decision, report and inline actions that do name commands. Used by routing-actions.test.ts (in its own
 # folder, so the scaffold golden, which reads fixtures/*.at, is unchanged).
 
 topology routing : [pipeline] {
@@ -11,7 +11,7 @@ topology routing : [pipeline] {
 
   orchestrator {
     model: sonnet
-    handles: [pick, accept, finish, chat, pull, tag, choose-run, report-run]
+    handles: [pick, accept, finish, chat, pull, tag, choose-run, report-run, muse, chat-run]
   }
 
   action pick {
@@ -57,6 +57,16 @@ topology routing : [pipeline] {
     commands: ["./tools/report --weekly"]
   }
 
+  action muse {
+    description: "No kind and no commands: done in conversation"
+  }
+
+  action chat-run {
+    kind: inline
+    description: "An inline action that runs real commands"
+    commands: ["./tools/chat --summary"]
+  }
+
   agent writer {
     model: sonnet
     description: "Writes the draft"
@@ -72,6 +82,8 @@ topology routing : [pipeline] {
     pull -> tag
     tag -> choose-run
     choose-run -> report-run
+    report-run -> muse
+    muse -> chat-run
   }
 
   gates {
@@ -102,6 +114,18 @@ topology routing : [pipeline] {
     job nightly-write {
       cron: "0 7 * * *"
       agent: writer
+    }
+    job nightly-chat {
+      cron: "0 8 * * *"
+      action: chat
+    }
+    job nightly-muse {
+      cron: "0 9 * * *"
+      action: muse
+    }
+    job nightly-chat-run {
+      cron: "0 10 * * *"
+      action: chat-run
     }
   }
 }

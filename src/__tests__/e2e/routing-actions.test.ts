@@ -10,8 +10,9 @@
  * - a gate before such an action is no script-step gate: the action's script
  *   holds no gate check, and every action script a generated file runs is written.
  * - codex, cursor and claude-workflow: no action stub for these kinds.
- * - V136: a schedule job that runs such an action does nothing, so validate
- *   warns, naming the job and the action.
+ * - V136: a schedule job that runs such an action, or an inline or kindless
+ *   one with no commands, does nothing, so validate warns, naming the job,
+ *   the action and its kind.
  * - guard --check and the stub line never read such an action as a gate, a
  *   check, a refuse or a stub.
  */
@@ -110,29 +111,42 @@ describe("claude-code: a decision or report action with no commands is routing, 
   });
 });
 
-describe("V136: a schedule that runs a decision or report action with no commands does nothing", () => {
+describe("V136: a schedule that runs a decision, report, inline or kindless action with no commands does nothing", () => {
   const v136 = () => validate(ast).filter((r) => r.rule === "V136");
+  const WARNED = ["nightly-finish", "nightly-pick", "nightly-chat", "nightly-muse"];
 
-  it("warns once per such job, naming the job and the action", () => {
+  it("warns once per such job, naming the job, the action and its kind", () => {
     const found = v136();
-    expect(found.map((r) => [r.level, r.node])).toEqual([["warning", "nightly-finish"], ["warning", "nightly-pick"]]);
+    expect(found.map((r) => [r.level, r.node])).toEqual(WARNED.map((j) => ["warning", j]));
     expect(found[0].message).toContain('Schedule job "nightly-finish"');
     expect(found[0].message).toContain('action "finish"');
-    expect(found[0].message).toContain("report");
+    expect(found[0].message).toContain("a report action with no commands");
     expect(found[1].message).toContain('Schedule job "nightly-pick"');
     expect(found[1].message).toContain('action "pick"');
-    expect(found[1].message).toContain("decision");
+    expect(found[1].message).toContain("a decision action with no commands");
+    expect(found[2].message).toContain('Schedule job "nightly-chat"');
+    expect(found[2].message).toContain('action "chat"');
+    expect(found[2].message).toContain("an inline action with no commands");
+    expect(found[3].message).toContain('Schedule job "nightly-muse"');
+    expect(found[3].message).toContain('action "muse"');
+    expect(found[3].message).toContain("an action with no kind and no commands");
   });
 
-  it("is silent for a decision with commands, an external stub and an agent job", () => {
+  it("is silent for a decision or inline action with commands, an external stub and an agent job", () => {
     const named = v136().map((r) => r.node);
-    for (const job of ["nightly-choose", "nightly-pull", "nightly-write"]) expect(named).not.toContain(job);
+    for (const job of ["nightly-choose", "nightly-chat-run", "nightly-pull", "nightly-write"]) expect(named).not.toContain(job);
   });
 
   it("warns on every target, since the job does nothing on any of them", () => {
     for (const target of ["claude-code", "codex", "cursor", "claude-workflow"]) {
-      expect(validate(ast, { target }).filter((r) => r.rule === "V136").map((r) => r.node)).toEqual(["nightly-finish", "nightly-pick"]);
+      expect(validate(ast, { target }).filter((r) => r.rule === "V136").map((r) => r.node)).toEqual(WARNED);
     }
+  });
+
+  it("the kindless action's script says nothing to run, as an inline one's does", () => {
+    const script = ccScript("muse");
+    expect(isStubContent(script.content)).toBe(false);
+    expect(body(script)).toEqual(body(ccScript("chat")));
   });
 
   it("validate prints it as a warning", () => {
