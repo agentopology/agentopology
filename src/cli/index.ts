@@ -710,6 +710,17 @@ function printRuleNotice(notice: RuleNotice): void {
   for (const line of notice.lines) console.log(`  ${c.yellow(line)}`);
 }
 
+/**
+ * The errors that stop scaffold and guard --target: validated for the target,
+ * so V135 is judged per target, but without the Codex rows (CX*). The codex
+ * binding prints those itself as warnings while it writes, and they never
+ * stopped a build (0.12.4); `validate --target codex` still reports an
+ * error-level one (CX8) as an error.
+ */
+function buildErrors(ast: TopologyAST, targetName: string) {
+  return validate(ast, { target: targetName }).filter((r) => r.level === "error" && !r.rule.startsWith("CX"));
+}
+
 function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outputDir?: string, force?: boolean, prune?: boolean, allowInvalid?: boolean): void {
   const source = readFile(filePath);
 
@@ -742,8 +753,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
   // 1 while errors remain. It used to be --force, which also overwrites kept
   // files: one flag, two risks. Validated for this target, as `validate
   // --target` is: a rule about another target's hooks (V135 on cursor, or
-  // after the entry agent on codex) does not stop this one.
-  const errors = validate(ast, { target: targetName }).filter((r) => r.level === "error");
+  // after the entry agent on codex) does not stop this one, nor does a Codex
+  // row (CX*), which the binding prints as a warning.
+  const errors = buildErrors(ast, targetName);
   let scope: InvalidScope | null = null;
   if (errors.length > 0) {
     const say = allowInvalid ? console.log : console.error;
@@ -1760,7 +1772,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
-  const errors = validate(ast, { target: targetName }).filter((r) => r.level === "error");
+  const errors = buildErrors(ast, targetName);
   if (errors.length > 0) {
     console.error(c.red(`  ${errors.length} validation error(s). Nothing was written.`));
     for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
