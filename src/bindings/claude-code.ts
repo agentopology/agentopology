@@ -38,6 +38,7 @@ import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
   approvalTargets,
+  beforeActionHookTimeout,
   checkableActionGate,
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
@@ -2590,7 +2591,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       // Every tool that runs a shell command (0.11.1): a Bash-only matcher never
       // fires for PowerShell, and fires for Monitor only from Claude Code 2.1.314.
       matcher: "Bash|Monitor|PowerShell",
-      hooks: [{ type: "command", command: beforeActionCommand(ast), onFailure: "block" }],
+      // A command hook's default timeout is 600 s, and a PreToolUse hook that times out lets the call
+      // through unless onFailure is "block" (https://code.claude.com/docs/en/hooks). The script runs each
+      // gate check once, for at most its budget, so this timeout is the sum of the budgets plus a margin.
+      hooks: [{ type: "command", command: beforeActionCommand(ast), timeout: beforeActionHookTimeout(ast), onFailure: "block" }],
     });
   }
 

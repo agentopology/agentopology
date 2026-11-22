@@ -414,6 +414,57 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
 }
 
+/** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
+export function durationSeconds(d: string | undefined): number | null {
+  const m = /^(\d+)([smhd])$/.exec(d ?? "");
+  return m ? Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"] : null;
+}
+
+/**
+ * The longest a gate's check can run: its timeout once per attempt, plus a
+ * one-second pause between attempts. Null when the gate has no timeout (the
+ * guard's deadline is then the only bound).
+ */
+export function gateWorstCase(gate: GateNode): number | null {
+  const t = durationSeconds(gate.timeout);
+  if (t === null) return null;
+  const retry = gate.retry != null && gate.retry > 0 ? gate.retry : 0;
+  return t * (retry + 1) + retry;
+}
+
+/** Seconds before-action.sh gives a gate check that declares no timeout. */
+export const GATE_BUDGET_DEFAULT = 60;
+/** Seconds past a declared timeout before before-action.sh stops a check: the wrapper's own `timeout` reports first. */
+export const GATE_BUDGET_SLACK = 2;
+/** Seconds a before-action hook timeout leaves above the gate budgets: jq, the ledger reads, start-up. */
+export const BEFORE_ACTION_MARGIN = 30;
+/** The least hook timeout a before-action hook gets, in seconds. */
+export const BEFORE_ACTION_MIN_TIMEOUT = 120;
+
+/** How long before-action.sh lets a gate's check run: its worst case plus the slack, or the default. */
+export function inlineGateBudget(gate: GateNode): number {
+  const worst = gateWorstCase(gate);
+  return worst === null ? GATE_BUDGET_DEFAULT : worst + GATE_BUDGET_SLACK;
+}
+
+/** The gates whose check script before-action.sh runs, each once. */
+export function beforeActionGates(ast: TopologyAST): GateNode[] {
+  return [...new Set(actionGuards(ast).flatMap(({ gates }) => gates))].filter((g) => !!scriptNameFromRun(g.run));
+}
+
+/**
+ * The hook timeout for before-action.sh: each gate check runs at most once per command, for at most its
+ * budget, so the sum of the budgets plus a margin bounds the script. Never below {@link BEFORE_ACTION_MIN_TIMEOUT}.
+ */
+export function beforeActionHookTimeout(ast: TopologyAST): number {
+  return Math.max(BEFORE_ACTION_MIN_TIMEOUT, beforeActionBudgetSum(ast) + BEFORE_ACTION_MARGIN);
+}
+
+/** The sum of the budgets of the gate checks before-action.sh may run in one command. */
+export function beforeActionBudgetSum(ast: TopologyAST): number {
+  return beforeActionGates(ast).reduce((s, g) => s + inlineGateBudget(g), 0);
+}
+
 /** A placeholder word in a step's command: ALL-CAPS (`EP`, `PID`, `OUT.mp4`), or holding < > { } [ ] (E-3). */
 export function isPlaceholderWord(word: string): boolean {
   return /^[A-Z0-9_]*[A-Z][A-Z0-9_]*(\.[A-Za-z0-9]+)*$/.test(word) || /[<>{}[\]]/.test(word);
@@ -674,6 +725,227 @@ const AT_NAMES_FUNCTIONS: string[] = [
   "}",
 ];
 
+/**
+ * The variables bash sets or reads itself (bash(1), Shell Variables), and `_`: never read as the literal a
+ * command assigns, since bash may change them between the assignment and the use ($_ is the last word of
+ * the command before, REPLY is select's answer, PWD changes with cd). at_resolve reads lower-case names
+ * only, which already leaves all of these out; the list holds anyway. Any BASH_* or COMP_* name is left out too.
+ */
+export const BASH_SET_NAMES: string[] = [
+  "_", "BASH", "BASHOPTS", "BASHPID", "CDPATH", "CHILD_MAX", "COLUMNS", "COMPREPLY", "COPROC", "DIRSTACK", "EMACS",
+  "ENV", "EPOCHREALTIME", "EPOCHSECONDS", "EUID", "EXECIGNORE", "FCEDIT", "FIGNORE", "FUNCNAME", "FUNCNEST", "GLOBIGNORE",
+  "GLOBSORT", "GROUPS", "HISTCMD", "HISTCONTROL", "HISTFILE", "HISTFILESIZE", "HISTIGNORE", "HISTSIZE", "HISTTIMEFORMAT",
+  "HOME", "HOSTFILE", "HOSTNAME", "HOSTTYPE", "IFS", "IGNOREEOF", "INPUTRC", "INSIDE_EMACS", "LANG", "LC_ALL",
+  "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME", "LINENO", "LINES", "MACHTYPE", "MAIL", "MAILCHECK",
+  "MAILPATH", "MAPFILE", "OLDPWD", "OPTARG", "OPTERR", "OPTIND", "OSTYPE", "PATH", "PIPESTATUS", "POSIXLY_CORRECT",
+  "PPID", "PROMPT_COMMAND", "PROMPT_DIRTRIM", "PS0", "PS1", "PS2", "PS3", "PS4", "PWD", "RANDOM", "READLINE_ARGUMENT",
+  "READLINE_LINE", "READLINE_MARK", "READLINE_POINT", "REPLY", "SECONDS", "SHELL", "SHELLOPTS", "SHLVL", "SRANDOM",
+  "TIMEFORMAT", "TMOUT", "TMPDIR", "UID",
+];
+
+/**
+ * The longest command at_resolve reads, in characters, and the most assignments at its start. Past either the
+ * command is left as written (doubt), so the reading's cost has a bound: at the limit at_resolve itself takes
+ * under 40 ms on its costliest shapes, and the whole hook about 0.12 s (measured, action-guard-assign.test.ts).
+ */
+/**
+ * Programs that can start a child with a changed environment, or a shell that expands text the parent left
+ * alone (`env a""b=x bash -c '... $ab'`): a command that runs one, by any path, keeps its expansions doubted.
+ * An interpreter given code on its command line (python -c, node -e, perl -e) is caught apart, in at_resolve.
+ */
+export const CHILD_PROGRAMS: string[] = [
+  "env", "sudo", "doas", "su", "runuser", "pkexec", "docker", "podman", "nerdctl", "kubectl", "ssh", "xargs", "nohup",
+  "time", "command", "exec", "nice", "ionice", "chrt", "taskset", "setsid", "stdbuf", "unbuffer", "timeout", "chroot",
+  "unshare", "nsenter", "flock", "watch", "script", "parallel", "rush", "xe", "xjobs", "make", "npx", "npm", "pnpm",
+  "yarn", "just", "bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "tcsh", "csh", "busybox", "pwsh", "powershell",
+];
+
+/**
+ * Words that can set a variable or change the folder, or run another builtin that can (jobs -x, builtin,
+ * command): a command with one anywhere, as any of its words, is not read by at_resolve.
+ */
+export const SETTER_WORDS: string[] = [
+  "eval", "source", ".", "read", "declare", "typeset", "local", "export", "readonly", "mapfile", "readarray", "getopts",
+  "let", "printf", "unset", "trap", "alias", "command", "builtin", "exec", "enable", "coproc", "wait", "function", "[[",
+  "select", "test", "[", "compgen", "cd", "pushd", "popd", "dirs", "shopt", "fc", "history", "bind", "jobs", "caller",
+];
+
+/** An ERE that finds one of `words` as a whole word of a text, by any path and with or without .exe; `extra` adds alternatives. */
+function wordAlternation(words: string[], extra = ""): string {
+  const alt = words.map((w) => w.replace(/[.[\]\\^$*+?(){}|]/g, "\\$&")).join("|") + extra;
+  return `(^|[[:space:]]|/)(${alt})(\\.[Ee][Xx][Ee])?([[:space:]]|$)`;
+}
+
+export const RESOLVE_MAX_LENGTH = 1024;
+export const RESOLVE_MAX_NAMES = 16;
+
+/**
+ * at_resolve CMD (MATCH_FUNCTIONS): the literal assignments that open a command, read into their uses
+ * (`t=/x; tool open $t` is read as `tool open /x`). Needs strip_redir, norm and AT_LEAD.
+ */
+const RESOLVE_FUNCTIONS: string[] = [
+  "# at_resolve CMD: CMD with the literal assignments at its start read into their uses. NAME=VALUE opens the",
+  "# command, alone, followed by ; && or a newline (one after another, before any other command), and VALUE",
+  "# is one plain word (letters, digits and _ . / : @ % + , -). Its uses $NAME and ${NAME} then read as VALUE",
+  "# when NAME is lower case (bash's own names are upper case or _, and none of AT_BASH_VARS is read either),",
+  "# NAME appears nowhere else in the command, every $ in it is such a use, no word in it can set a variable",
+  "# or the folder (AT_SETS) or start a child (AT_CHILD), no program in it is an expansion, and IFS is not",
+  "# named. A command with arithmetic, an array subscript, a ${...} with more than a name, a $'...' string, a",
+  "# backtick, a here-doc, a function definition, a word with $ and =, a glob or a brace list, longer than",
+  "# AT_RESOLVE_MAX characters, or with more than AT_RESOLVE_NAMES assignments at its start, is not read this",
+  "# way; nor is one that fails any of these once read. Anything else is left as written: its expansions stay doubt.",
+  `AT_SETS=" ${SETTER_WORDS.join(" ")} "`,
+  `AT_BASH_VARS=" ${BASH_SET_NAMES.join(" ")} "`,
+  `AT_RESOLVE_MAX=${RESOLVE_MAX_LENGTH}; AT_RESOLVE_NAMES=${RESOLVE_MAX_NAMES}`,
+  "# Programs that can start a child with a changed environment, or a shell that expands its own text: a",
+  "# command that runs one is not read this way (the child may see another value under the same name).",
+  `AT_CHILD=" ${CHILD_PROGRAMS.join(" ")} "`,
+  "# The words of AT_SETS and AT_CHILD (and a shell with a version in its name), as one word of a text: by any",
+  "# path, with or without .exe. One regex over the whole command instead of one test per word.",
+  `AT_SETS_RE=${shellQuote(wordAlternation(SETTER_WORDS))}`,
+  `AT_CHILD_RE=${shellQuote(wordAlternation(CHILD_PROGRAMS, "|(bash|sh|zsh|dash|ksh|mksh|ash|yash|posh|fish|tcsh|csh|busybox)[0-9.-]+"))}`,
+  "# at_subst TEXT MAP: TEXT with each $NAME and ${NAME} the shell itself expands, whose NAME is in MAP",
+  "# (\" NAME=VALUE ...\"), written as VALUE. A use inside single quotes or after a backslash (also inside",
+  "# double quotes) is kept as written; $NAMEX is another name, and is kept. One pass, from one quote, backslash",
+  "# or $ to the next.",
+  "at_subst() {",
+  "  local s=$1 map=$2 out='' q=0 c pre r n v k i nl=$'\\n' LC_ALL=C",
+  "  local -a parts",
+  "  if [[ $s != *[\\'\\\\]* ]]; then",
+  "    # no single quote and no backslash: every $ is the shell's own; one pass over the words after each $",
+  "    parts=()",
+  "    IFS='$' read -r -d '' -a parts <<< \"$s\" || true",
+  "    out=${parts[0]-}",
+  "    for ((i=1; i<${#parts[@]}; i++)); do",
+  "      r=${parts[i]}; k=0",
+  "      if [[ $r == '{'* ]]; then r=${r#?}; k=1; fi",
+  "      n=${r%%[!A-Za-z0-9_]*}",
+  "      if [ -n \"$n\" ] && [[ $map == *\" $n=\"* ]] && { [ \"$k\" = 0 ] || [ \"${r:${#n}:1}\" = '}' ]; }; then",
+  "        v=${map#*\" $n=\"}; out+=\"${v%% *}${r:${#n}+k}\"",
+  "      else",
+  "        out+=\"\\$${parts[i]}\"",
+  "      fi",
+  "    done",
+  "    # the here-string added one newline at the end",
+  "    printf '%s' \"${out%$nl}\"",
+  "    return 0",
+  "  fi",
+  "  while [ -n \"$s\" ]; do",
+  "    if [ \"$q\" = 1 ]; then",
+  "      # inside '...': nothing is expanded up to the closing quote",
+  "      if [[ $s == *\"'\"* ]]; then out+=\"${s%%\"'\"*}'\"; s=${s#*\"'\"}; q=0; else out+=$s; s=''; fi",
+  "      continue",
+  "    fi",
+  "    pre=${s%%[\\'\\\"\\\\\\$]*}; out+=$pre; s=${s:${#pre}}",
+  "    [ -n \"$s\" ] || break",
+  "    c=${s:0:1}; s=${s:1}",
+  "    case $c in",
+  "      \"'\") out+=$c; [ \"$q\" = 2 ] || q=1 ;;",
+  "      '\"') out+=$c; if [ \"$q\" = 2 ]; then q=0; else q=2; fi ;;",
+  "      '\\') out+=$c${s:0:1}; s=${s:1} ;;",
+  "      *)",
+  "        # $ outside single quotes: a use of a name in MAP; ${NAME} must close right after the name",
+  "        r=$s; k=0",
+  "        if [[ $r == '{'* ]]; then r=${r#?}; k=1; fi",
+  "        n=${r%%[!A-Za-z0-9_]*}",
+  "        if [ -n \"$n\" ] && [[ $map == *\" $n=\"* ]] && { [ \"$k\" = 0 ] || [ \"${r:${#n}:1}\" = '}' ]; }; then",
+  "          v=${map#*\" $n=\"}; out+=${v%% *}; s=${r:${#n}+k}",
+  "        else",
+  "          out+=$c",
+  "        fi ;;",
+  "    esac",
+  "  done",
+  "  printf '%s' \"$out\"",
+  "}",
+  "# at_resolve_map CMD: when CMD may be read this way, prints the length of its leading assignments, a space,",
+  "# and the names it reads with their values (\" NAME=VALUE ...\"); returns 1 otherwise.",
+  "at_resolve_map() {",
+  "  # LC_ALL=C: [a-z] is the 26 letters, in any locale",
+  "  local t=$1 rest=$1 head='' segs seg x n i j k dq others empty='' map='' nl=$'\\n' re rb br LC_ALL=C",
+  "  local -a ws names vals parts",
+  "  names=(); vals=(); parts=()",
+  "  # a long command is not read this way",
+  "  [ \"${#t}\" -le \"$AT_RESOLVE_MAX\" ] || return 1",
+  String.raw`  re="^([[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./:@%+,-]+)[[:space:]]*(;|&&|$nl))(.*)\$"`,
+  "  while [ \"${#names[@]}\" -le \"$AT_RESOLVE_NAMES\" ] && [[ $rest =~ $re ]]; do",
+  "    names+=(\"${BASH_REMATCH[2]}\"); vals+=(\"${BASH_REMATCH[3]}\"); head+=${BASH_REMATCH[1]}; rest=${BASH_REMATCH[5]}",
+  "  done",
+  "  { [ \"${#names[@]}\" -gt 0 ] && [ \"${#names[@]}\" -le \"$AT_RESOLVE_NAMES\" ]; } || return 1",
+  String.raw`  rb='(^|[^A-Za-z0-9_])IFS([^A-Za-z0-9_]|$)'`,
+  "  [[ ! $t =~ $rb ]] || return 1",
+  "  # arithmetic ((...)) $((...)) $[...], an array subscript, a ${...} that is more than a name (an offset is",
+  "  # arithmetic too), a $'...' or $\"...\" string, a function definition, a backtick (a word made at run time)",
+  "  if [[ $t == *'(('* || $t == *'$['* || $t == *\"\\$'\"* || $t == *'$\"'* || $t == *'`'* ]]; then return 1; fi",
+  String.raw`  rb='\$\{([^A-Za-z_]|[A-Za-z_][A-Za-z0-9_]*([^A-Za-z0-9_}]|$))|[A-Za-z0-9_]\[|\([[:space:]]*\)'`,
+  "  [[ ! $t =~ $rb ]] || return 1",
+  "  # a here-doc (<< or <<-, not the here-string <<<): its body may be fed to a program that expands it",
+  "  rb='(^|[^<])<<([^<]|$)'",
+  "  [[ ! $t =~ $rb ]] || return 1",
+  "  # lower case only, and never a name bash sets itself",
+  "  for ((i=0; i<${#names[@]}; i++)); do",
+  "    [[ ${names[i]} =~ ^[a-z][a-z0-9_]*$ ]] || continue",
+  "    [[ \"$AT_BASH_VARS\" != *\" ${names[i]} \"* && ${names[i]} != BASH_* && ${names[i]} != COMP_* ]] || continue",
+  "    empty+=\" ${names[i]}= \"",
+  "  done",
+  "  [ -n \"$empty\" ] || return 1",
+  "  # every $ in the command starts a use $name or ${name} of one of these names: any other $ ($HOME, $1, $?,",
+  "  # $$, $@, $(...), an upper-case name) is not read this way",
+  "  IFS='$' read -r -d '' -a parts <<< \"$t\" || true",
+  "  for ((i=1; i<${#parts[@]}; i++)); do",
+  "    x=${parts[i]}; k=0",
+  "    if [[ $x == '{'* ]]; then x=${x#?}; k=1; fi",
+  "    n=${x%%[!A-Za-z0-9_]*}",
+  "    [ -n \"$n\" ] && [[ $empty == *\" $n= \"* ]] && { [ \"$k\" = 0 ] || [ \"${x:${#n}:1}\" = '}' ]; } || return 1",
+  "  done",
+  "  # every word of every segment, quotes and backslashes dropped (as norm does, without a process per segment)",
+  "  segs=$(strip_redir \"$t\")",
+  "  for x in '&' '|' ';' '(' ')'; do segs=${segs//\"$x\"/$'\\n'}; done",
+  "  segs=${segs//\\\"/}; segs=${segs//\\'/}; segs=${segs//\\\\/}",
+  "  # any word that can set a variable or the folder (AT_SETS), wherever it stands (jobs -x, builtin and command",
+  "  # run the next word as a builtin), or start a child with another environment or a shell (AT_CHILD)",
+  "  [[ ! $segs =~ $AT_SETS_RE && ! $segs =~ $AT_CHILD_RE ]] || return 1",
+  "  # an interpreter given code in the same segment (-c, -e, -, --eval)",
+  "  rb=\"(^|[[:space:]]|/)(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|php|deno|bun)[[:space:]]([^$nl]*[[:space:]])?(-|-[A-Za-z]*[ceEpr][^[:space:]]*|--eval[^[:space:]]*|--print[^[:space:]]*)([[:space:]]|\\$)\"",
+  "  [[ ! $segs =~ $rb ]] || return 1",
+  "  # a $ in a word with = (a name built at run time: a$q=x), a glob, a brace list, or a ~ at a word's start:",
+  "  # the word bash runs may be another (ev?l, {e,}val)",
+  "  rb='[^[:space:]]*(\\$[^[:space:]]*=|=[^[:space:]]*\\$)|[*?[]|(^|[[:space:]])~|\\{[^{}]*(,|\\.\\.)[^{}]*\\}'",
+  "  [[ ! $segs =~ $rb ]] || return 1",
+  "  # each program: no expansion",
+  "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+  "    read -ra ws <<< \"$seg\"",
+  "    i=0",
+  "    while [ \"$i\" -lt \"${#ws[@]}\" ] && [[ ${ws[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*= || \"$AT_LEAD\" == *\" ${ws[i]} \"* ]]; do i=$((i+1)); done",
+  "    if [ \"$i\" -lt \"${#ws[@]}\" ] && [[ ${ws[i]} == *'$'* ]]; then return 1; fi",
+  "  done <<< \"$segs\"",
+  "  # the rest with quotes and backslashes dropped as well: a\"\"b=x and a\\b=x name ab for a program",
+  "  dq=${rest//[\\\"\\'\\\\]/}",
+  "  for ((i=0; i<${#names[@]}; i++)); do",
+  "    [[ $empty == *\" ${names[i]}= \"* ]] || continue",
+  "    others=''",
+  "    for ((j=0; j<${#names[@]}; j++)); do [ \"$j\" = \"$i\" ] || others+=\" ${names[j]}=${vals[j]}\"; done",
+  "    # the name anywhere but its uses $name and ${name} (a second assignment, read t, t+=x, {t}>f) is doubt",
+  "    rb=\"(^|^[{]|[^A-Za-z0-9_\\${]|[^\\$][{])${names[i]}([^A-Za-z0-9_]|\\$)\"",
+  "    x=\"$others $rest\"",
+  "    [[ $x =~ $rb || $dq =~ $rb ]] && continue",
+  "    map+=\" ${names[i]}=${vals[i]} \"",
+  "  done",
+  "  [ -n \"$map\" ] || return 1",
+  "  printf '%s %s' \"${#head}\" \"$map\"",
+  "}",
+  "at_resolve() {",
+  "  local t=$1 m m2 n s LC_ALL=C",
+  "  m=$(at_resolve_map \"$t\") || { printf '%s' \"$t\"; return 0; }",
+  "  n=${m%% *}; m=${m#* }",
+  "  s=${t:0:n}$(at_subst \"${t:n}\" \"$m\")",
+  "  # the command as read must pass every check again, with the same names and values: a name or a setter",
+  "  # made from a read part (a$q= with q=b) is seen there",
+  "  m2=$(at_resolve_map \"$s\") || { printf '%s' \"$t\"; return 0; }",
+  "  [ \"${m2#* }\" = \"$m\" ] || { printf '%s' \"$t\"; return 0; }",
+  "  printf '%s' \"$s\"",
+  "}",
+];
+
 /** at_reads_only BASE WORD...: the program reads its arguments only (MATCH_FUNCTIONS, the no-jq glob check). */
 const READS_ONLY_FUNCTION: string[] = [
   "# at_runs_args BASE: the program reads its arguments only (no word of the segment makes it run one).",
@@ -719,6 +991,7 @@ export const MATCH_FUNCTIONS: string[] = [
   String.raw`  local re='\{[^{}]*(,|\.\.)[^{}]*\}'`,
   "  [[ $1 =~ $re ]]",
   "}",
+  ...RESOLVE_FUNCTIONS,
   ...AT_NAMES_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
   ...STDIN_JQ_FUNCTIONS,
@@ -767,7 +1040,11 @@ export const MATCH_FUNCTIONS: string[] = [
   "  local key=$2 kl n p i j k base",
   "  local -a w r cand",
   "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
-  "  n=${#w[@]}; SEG_N=0; kl=$(letters \"$key\"); cand=()",
+  "  # the tool's letters, kept for the next call with the same tool (AT_KLS: \" KEY=LETTERS ...\"), since",
+  "  # one command reads every segment for every tool",
+  "  kl=${AT_KLS-}",
+  "  if [[ $kl == *\" $key=\"* ]]; then kl=${kl#*\" $key=\"}; kl=${kl%% *}; else kl=$(letters \"$key\"); AT_KLS=\"${AT_KLS-} $key=$kl \"; fi",
+  "  n=${#w[@]}; SEG_N=0; cand=()",
   "  p=0",
   "  while [ \"$p\" -lt \"$n\" ]; do",
   "    if [[ ${w[p]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then",
@@ -1158,6 +1435,37 @@ export function stepKey(command: string): { key: string; rest: string } {
   return { key: base(words[i] ?? ""), rest: words.slice(i + 1).join(" ").toLowerCase() };
 }
 
+/**
+ * at_gate (before-action.sh): a gate's check script, run once per command and for at most its budget
+ * ({@link inlineGateBudget}). A watchdog in bash, not the `timeout` program, which stock macOS lacks; it
+ * stops the check and every process it started (pgrep -P). The check writes to a temp file, so a process
+ * left behind cannot hold the hook's output open. bash 3.2 safe. Needs deny and $DIR.
+ */
+const GATE_BUDGET_FUNCTIONS: string[] = [
+  "# at_gate ID SECONDS FIX: run gate ID's check script once per command, for at most SECONDS. Past that, the",
+  "# check and every process it started are stopped and the step is blocked (a hook that runs past its own",
+  "# timeout could let the call through). FIX says what to change.",
+  "AT_GATES_OK=' '",
+  "at_kill() { local c; for c in $(pgrep -P \"$1\" 2>/dev/null); do at_kill \"$c\"; done; kill -KILL \"$1\" 2>/dev/null || true; }",
+  "at_gate() {",
+  "  local id=$1 s=$2 rc=0 late=0 p w o",
+  "  [[ $AT_GATES_OK != *\" $id \"* ]] || return 0",
+  "  o=$(mktemp) || deny \"$id\" \"no temp file could be made for its check\"",
+  "  bash \"$DIR/gate-$id.sh\" </dev/null >\"$o\" 2>&1 & p=$!",
+  "  # the watchdog: past SECONDS it stops the check (exit 3); stopped first, it ends with its sleep (exit 0)",
+  "  ( z=''; trap '[ -z \"$z\" ] || kill \"$z\" 2>/dev/null; exit 0' TERM; sleep \"$s\" & z=$!; wait \"$z\" || true; trap '' TERM",
+  "    kill -0 \"$p\" 2>/dev/null || exit 0; at_kill \"$p\"; exit 3 ) </dev/null >/dev/null 2>&1 & w=$!",
+  "  wait \"$p\" || rc=$?",
+  "  kill \"$w\" 2>/dev/null || true",
+  "  if wait \"$w\"; then :; else [ \"$?\" != 3 ] || late=1; fi",
+  "  cat \"$o\" >&2; rm -f \"$o\"",
+  "  [ \"$late\" = 0 ] || deny \"$id\" \"its check took over $s s, so the step is blocked; $3\"",
+  "  [ \"$rc\" = 0 ] || deny \"$id\" \"its check script failed\"",
+  "  AT_GATES_OK=\"$AT_GATES_OK$id \"",
+  "}",
+  "",
+];
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -1231,6 +1539,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "",
     "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
     "",
+    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
     "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
@@ -1276,7 +1585,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "CMD_SUBST=0",
     "[[ $CMD == *'$('* || $CMD == *'`'* ]] && CMD_SUBST=1",
     "set -f",
-    "SEGS=$(strip_redir \"$CMD\")",
+    "# A literal assignment that opens the command (T=/x; tool open $T) is read into its uses (at_resolve).",
+    ...(p.powershellTool
+      ? ['if [ "$PWSH" = 1 ]; then SEGS=$(strip_redir "$CMD"); else SEGS=$(strip_redir "$(at_resolve "$CMD")"); fi']
+      : ['SEGS=$(strip_redir "$(at_resolve "$CMD")")']),
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
@@ -1320,7 +1632,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
           }
         }
         if (scriptNameFromRun(gate.run)) {
-          out.push(`${indent}bash "$DIR/gate-${gate.id}.sh" </dev/null >&2 || deny ${sq(gate.id)} "its check script failed"`);
+          const fix = gateWorstCase(gate) === null ? "declare a timeout: on the gate if it needs longer" : "raise the gate's timeout: if it needs longer";
+          out.push(`${indent}at_gate ${sq(gate.id)} ${inlineGateBudget(gate)} ${sq(fix)}`);
         }
       }
       return out;
