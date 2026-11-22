@@ -102,4 +102,81 @@ describe("the merge never makes one hook of two different commands", () => {
     const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
     expect(commandsOf(deepMergeSettingsJson(user, at))).toEqual([first, second, "bash .claude/hooks/stop.sh"]);
   });
+
+  // a word that is only the variable, with or without a trailing slash, in any spelling, is an argument
+  it.each([
+    ['rsync -a "$CLAUDE_PROJECT_DIR/" /b', "rsync -a /b"],
+    ["rsync -a $CLAUDE_PROJECT_DIR/ /b", "rsync -a /b"],
+    ['bash x.sh "$CLAUDE_PROJECT_DIR"', "bash x.sh"],
+    ["bash x.sh $CLAUDE_PROJECT_DIR", "bash x.sh"],
+    ['bash x.sh "${CLAUDE_PROJECT_DIR}"', "bash x.sh"],
+    ['bash x.sh "${CLAUDE_PROJECT_DIR:-.}"', "bash x.sh"],
+    ['ls "$CLAUDE_PROJECT_DIR"/', "ls /"],
+    // the folder with and without its trailing slash are two arguments (rsync reads them apart)
+    ['rsync -a "$CLAUDE_PROJECT_DIR/" /b', 'rsync -a "$CLAUDE_PROJECT_DIR" /b'],
+  ])("two user hooks %s  and  %s (only the variable as a word) stay two", (first, second) => {
+    const user = settingsWith(first, second);
+    const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
+    expect(commandsOf(deepMergeSettingsJson(user, at))).toEqual([first, second, "bash .claude/hooks/stop.sh"]);
+  });
+
+  it("a generated `ls /` under another matcher leaves the user's `ls \"$CLAUDE_PROJECT_DIR\"/` alone", () => {
+    const user = settingsWith('ls "$CLAUDE_PROJECT_DIR"/');
+    const at = JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Edit", hooks: [{ type: "command", command: "ls /" }] }] } }, null, 2);
+    expect(commandsOf(deepMergeSettingsJson(user, at))).toEqual(['ls "$CLAUDE_PROJECT_DIR"/', "ls /"]);
+  });
+
+  // every spelling of the variable as a word reads as one argument
+  it.each([
+    ['bash x.sh "$CLAUDE_PROJECT_DIR"', "bash x.sh ${CLAUDE_PROJECT_DIR}"],
+    ['rsync -a "$CLAUDE_PROJECT_DIR"/ /b', 'rsync -a "${CLAUDE_PROJECT_DIR:-.}/" /b'],
+  ])("%s  and  %s are one hook", (user, at) => {
+    expect(commandsOf(deepMergeSettingsJson(settingsWith(user), settingsWith(at)))).toEqual([user]);
+  });
+});
+
+describe("an entry the topology wrote for a script it no longer generates is removed, in every project-dir spelling", () => {
+  const script = ".claude/skills/t/scripts/before-action.sh";
+  const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
+  it.each([
+    `bash "$CLAUDE_PROJECT_DIR/${script}"`,
+    `bash "\${CLAUDE_PROJECT_DIR}/${script}"`,
+    `bash "$CLAUDE_PROJECT_DIR"/${script}`,
+    `bash "\${CLAUDE_PROJECT_DIR:-.}/${script}"`,
+    `bash \${CLAUDE_PROJECT_DIR:-.}/${script}`,
+  ])("%s", (command) => {
+    const existing = settingsWith(command);
+    expect(commandsOf(deepMergeSettingsJson(existing, at, [script]))).toEqual(["bash .claude/hooks/stop.sh"]);
+    expect(keptHookCommands(existing, at, [script])).toEqual([]);
+  });
+
+  it("a user's program taking the script as an argument stays, with its kept line", () => {
+    const command = `./wrap.sh "$CLAUDE_PROJECT_DIR"/${script}`;
+    const existing = settingsWith(command);
+    expect(commandsOf(deepMergeSettingsJson(existing, at, [script]))).toEqual([command, "bash .claude/hooks/stop.sh"]);
+    expect(keptHookCommands(existing, at, [script]).map((k) => k.command)).toEqual([command]);
+  });
+
+  // as in 0.11.2 (the merge differential's f2 controls): a first word through the variable is left as written
+  it("a hand-built `\"$CLAUDE_PROJECT_DIR\"/<script> --a` as the first word stays", () => {
+    const command = `"$CLAUDE_PROJECT_DIR"/${script} --a`;
+    expect(commandsOf(deepMergeSettingsJson(settingsWith(command), at, [script]))).toEqual([command, "bash .claude/hooks/stop.sh"]);
+  });
+});
+
+describe("import refuses a quoted script word holding a blank, so scaffold never writes a broken second entry", () => {
+  it.each([
+    'python3 "$CLAUDE_PROJECT_DIR/tools/my a.py"',
+    'bash "$CLAUDE_PROJECT_DIR/tools/my tool.sh" --check',
+    'python3 "tools/my a.py"',
+  ])("%s", (command) => {
+    const { report } = importClaudeCodeWithReport(harness(command), "t");
+    const errors = (report as { errors?: Array<{ command: string }> }).errors ?? [];
+    expect(errors.map((e) => e.command)).toEqual([command]);
+  });
+
+  it("a quoted script word without a blank still imports clean", () => {
+    const { report } = importClaudeCodeWithReport(harness('python3 "$CLAUDE_PROJECT_DIR/tools/a.py"'), "t");
+    expect((report as { errors?: unknown[] }).errors ?? []).toEqual([]);
+  });
 });

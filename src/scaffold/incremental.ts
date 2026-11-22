@@ -123,7 +123,10 @@ export function computeIncrementalPlan(
 
   // Everything this topology writes or wrote: hooks whose command names one of
   // these paths belong to it; every other hook in settings.json is the user's.
-  const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
+  // A createOnly file (a stub at a path the user named in `run:`) is the
+  // user's, never the topology's: a hook running it is kept, and said.
+  const userPaths = [...new Set(generatedFiles.filter((f) => f.createOnly).map((f) => f.path))];
+  const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})].filter((p) => !userPaths.includes(p));
 
   // Process each generated file
   for (const file of generatedFiles) {
@@ -238,12 +241,12 @@ export function computeIncrementalPlan(
         }
       }
       const merged = isSettings
-        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
+        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths, userPaths)
         : deepMergeJson(existingContent, file.content);
       // A hook command the .at does not generate is never removed; one that
       // sits with the topology's hooks or names its script is said.
       const notes = isSettings && existingContent.trim() !== ""
-        ? keptHookCommands(existingContent, file.content, ownedPaths).map(
+        ? keptHookCommands(existingContent, file.content, ownedPaths, userPaths).map(
             (k) => `${file.path} hooks.${k.event}: kept a command the .at does not generate: ${k.command}`,
           )
         : [];

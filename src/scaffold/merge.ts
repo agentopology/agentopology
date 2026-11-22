@@ -202,7 +202,8 @@ export function deepMergeJson(existingRaw: string, generatedRaw: string): string
  *
  * @param existingRaw - Current settings.json content on disk (JSON string, or empty string)
  * @param generatedRaw - Freshly generated settings.json content (JSON string)
- * @param ownedPaths - Paths this topology writes or wrote (generated + manifest)
+ * @param ownedPaths - Paths this topology writes or wrote (generated + manifest), never a createOnly file
+ * @param userPaths - The user's own files a `run:` names (createOnly): a hook running one is kept, and said
  * @returns Merged JSON string
  * @throws {Error} if existingRaw is non-empty and is invalid JSON
  */
@@ -210,6 +211,7 @@ export function deepMergeSettingsJson(
   existingRaw: string,
   generatedRaw: string,
   ownedPaths: string[] = [],
+  userPaths: string[] = [],
 ): string {
   // Empty existing means first scaffold — return generated unchanged
   if (existingRaw.trim() === "") {
@@ -271,7 +273,7 @@ export function deepMergeSettingsJson(
   }
 
   // --- hooks: replace the topology's own groups, keep the user's ---
-  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths);
+  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths, [], userPaths);
   if (mergedHooks) {
     merged.hooks = mergedHooks;
   } else {
@@ -295,6 +297,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/** A word that is only `$CLAUDE_PROJECT_DIR`, in any spelling, with any trailing slashes inside or after its quotes. */
+const PROJECT_DIR_WORD = /^"?\$(?:CLAUDE_PROJECT_DIR|\{CLAUDE_PROJECT_DIR(?::-[^}"]*)?\})(\/*)"?(\/*)$/;
+
 /**
  * A command with the project-dir prefix, quotes and "./" removed, blanks
  * folded. A word that opens with `$CLAUDE_PROJECT_DIR` in any shape the run
@@ -303,13 +308,21 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * written as the `./x` it names, so a hand-built hook and the command the
  * binding compiles for it are one hook. A longer name (`$CLAUDE_PROJECT_DIR_OLD`)
  * is another variable and stays.
+ *
+ * A word that is only the variable (`"$CLAUDE_PROJECT_DIR"`, `$CLAUDE_PROJECT_DIR/`,
+ * `"${CLAUDE_PROJECT_DIR:-.}"/`) names the folder itself: an argument, which
+ * stays in the identity, one spelling for all, its trailing slash kept apart
+ * (`rsync -a dir/` and `rsync -a dir` copy different things).
  */
 function normalCommand(command: string): string {
   return command
     .split(/(\s+)/)
-    .map(projectWord)
+    .map((w) => {
+      const bare = w.match(PROJECT_DIR_WORD);
+      if (bare) return bare[1] || bare[2] ? "$CLAUDE_PROJECT_DIR/" : "$CLAUDE_PROJECT_DIR";
+      return projectWord(w).replace(/"?\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])\/?/g, "");
+    })
     .join("")
-    .replace(/"?\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])\/?/g, "")
     .replace(/["']/g, "")
     .replace(/(^|\s)\.\//g, "$1")
     .replace(/\s+/g, " ")
@@ -344,7 +357,10 @@ function hookGroupKey(group: unknown): string {
 /** Whether a hook entry's command runs (or names) a script this topology owns. */
 function namesOwnedScript(h: unknown, scripts: string[]): boolean {
   if (!isPlainObject(h) || typeof h.command !== "string") return false;
-  const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
+  // A word after the first through the project-dir variable is read as the `./x` it
+  // names, in every spelling the identity reads (`bash "$CLAUDE_PROJECT_DIR"/x`,
+  // `bash "${CLAUDE_PROJECT_DIR:-.}/x"`). The first word is left as written, as in 0.11.2.
+  const tokens = h.command.split(/\s+/).map((t, i) => (i > 0 ? projectWord(t) : t).replace(/^\.\//, ""));
   if (tokens.some((t) => scripts.includes(t))) return true;
   // R-8: a Codex command names its script after a root expression,
   // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
@@ -389,7 +405,14 @@ const ANCHOR = /^\$\{?(?:CLAUDE_PROJECT_DIR|AT_ROOT)\}?\//;
  * and the last four were removed with no line.
  */
 function writesTopologyScript(command: string, scripts: string[]): boolean {
-  const raw = command.replace(/["']/g, "").trim().split(/\s+/);
+  // Each word after the first through projectWord, so every project-dir spelling
+  // the identity reads after an interpreter is the topology's the same way
+  // (`bash "$CLAUDE_PROJECT_DIR"/x`). The first word is left as written: a
+  // hand-built `"$CLAUDE_PROJECT_DIR"/x` stays the user's, as in 0.11.2.
+  const raw = command
+    .trim()
+    .split(/\s+/)
+    .map((w, i) => (i > 0 ? projectWord(w) : w).replace(/["']/g, ""));
   const words = raw.map((w) => w.replace(ANCHOR, "").replace(/^\.\//, ""));
   const first = words[0] ?? "";
   if (scripts.includes(first)) return true;
@@ -421,6 +444,7 @@ export function keptHookCommands(
   existingRaw: string,
   generatedRaw: string,
   ownedPaths: string[] = [],
+  userPaths: string[] = [],
 ): KeptHookCommand[] {
   let existing: unknown;
   let generated: unknown;
@@ -432,7 +456,7 @@ export function keptHookCommands(
   }
   if (!isPlainObject(existing) || !isPlainObject(generated)) return [];
   const kept: KeptHookCommand[] = [];
-  mergeHooks(existing.hooks, generated.hooks, ownedPaths, kept);
+  mergeHooks(existing.hooks, generated.hooks, ownedPaths, kept, userPaths);
   return kept;
 }
 
@@ -446,22 +470,49 @@ export function keptHookCommands(
  * writesTopologyScript). The topology's entries that changed
  * are replaced by the generated ones; every other entry stays where it is,
  * and each one that sits in a group with the topology's hooks, or names one
- * of its scripts, is reported in `kept`.
+ * of its scripts, is reported in `kept`. An entry naming one of `userPaths`
+ * (the user's own files a `run:` names) is never the topology's by that
+ * name; it is kept and reported too.
  */
 function mergeHooks(
   existingHooks: unknown,
   generatedHooks: unknown,
   ownedPaths: string[],
   kept: KeptHookCommand[] = [],
+  userPaths: string[] = [],
 ): Record<string, unknown[]> | undefined {
   // Config files are never hook scripts; matching them would claim a user hook
   // that merely mentions CLAUDE.md.
   const scripts = ownedPaths
     .filter((p) => !/\.(md|json)$/.test(p))
     .map((p) => p.replace(/^\.\//, ""));
+  const userScripts = userPaths.map((p) => p.replace(/^\.\//, ""));
+  const namesScript = (h: unknown) => namesOwnedScript(h, scripts) || namesOwnedScript(h, userScripts);
   const ex = isPlainObject(existingHooks) ? existingHooks : {};
   const gen = isPlainObject(generatedHooks) ? generatedHooks : {};
   const out: Record<string, unknown[]> = {};
+  const writes = (h: unknown, list: string[]) =>
+    list.length > 0 && namesOwnedScript(h, list) && isPlainObject(h) && typeof h.command === "string" && writesTopologyScript(h.command, list);
+
+  // A user's own file a `run:` names is the topology's to replace only by
+  // place: under the event and matcher where the .at generates its hook (an
+  // edited copy there is the topology's, as in 0.11.2). Elsewhere a hook
+  // running it is the user's, kept and said, except the exact command the .at
+  // generates for it, which is an old copy left behind when the hook moved.
+  const userPlaces = new Set<string>();
+  const userGenIds = new Set<string>();
+  for (const [event, groups] of Object.entries(gen)) {
+    for (const g of (Array.isArray(groups) ? groups : []) as unknown[]) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        for (const s of userScripts) {
+          if (!namesOwnedScript(h, [s])) continue;
+          userPlaces.add(JSON.stringify([event, g.matcher ?? "", s]));
+          userGenIds.add(hookId(h));
+        }
+      }
+    }
+  }
 
   for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
     const genGroups = (Array.isArray(gen[event]) ? gen[event] : []) as unknown[];
@@ -481,9 +532,11 @@ function mergeHooks(
     const placed = new Map<string, number>();
     // Only an entry naming one of the topology's scripts can be removed (a
     // hook on a project path the user owns stays, as in 0.11.x).
-    const ours = (h: unknown) =>
+    const ours = (h: unknown, matcher: unknown) =>
       genIds.has(hookId(h)) ||
-      (namesOwnedScript(h, scripts) && isPlainObject(h) && typeof h.command === "string" && writesTopologyScript(h.command, scripts));
+      writes(h, scripts) ||
+      writes(h, userScripts.filter((s) => userPlaces.has(JSON.stringify([event, matcher ?? "", s])))) ||
+      (userGenIds.has(hookId(h)) && namesOwnedScript(h, userScripts));
 
     const groups: unknown[] = [];
     for (const g of (Array.isArray(ex[event]) ? ex[event] : []) as unknown[]) {
@@ -491,8 +544,8 @@ function mergeHooks(
         groups.push(g);
         continue;
       }
-      const owned = g.hooks.some(ours);
-      if (!owned && !isOwnedHookGroup(g, scripts)) {
+      const owned = g.hooks.some((h) => ours(h, g.matcher));
+      if (!owned && !isOwnedHookGroup(g, scripts) && !isOwnedHookGroup(g, userScripts)) {
         groups.push(g);
         continue;
       }
@@ -509,9 +562,9 @@ function mergeHooks(
           }
           continue;
         }
-        if (ours(h)) continue; // the topology's, no longer generated: removed
+        if (ours(h, g.matcher)) continue; // the topology's, no longer generated: removed
         keep.push(h);
-        if (owned || namesOwnedScript(h, scripts)) {
+        if (owned || namesScript(h)) {
           const command = isPlainObject(h) && typeof h.command === "string" ? h.command : JSON.stringify(h);
           kept.push({ event, command });
         }

@@ -31,6 +31,17 @@ export function compilesToStub(run: string): boolean {
   return !!script && !script.startsWith("/") && !isProjectPath(script);
 }
 
+/**
+ * Whether a script word opens a quote it does not close: the quoted path
+ * holds a blank (`"$CLAUDE_PROJECT_DIR/tools/my a.py"`), which the run reader
+ * splits into two words, so scaffold would write a broken command beside the
+ * harness's own. A .at string's `\"` counts as the quote it stands for.
+ */
+function quotesABlank(script: string): boolean {
+  const plain = script.replace(/\\"/g, '"');
+  return (plain.split('"').length - 1) % 2 === 1 || (plain.split("'").length - 1) % 2 === 1;
+}
+
 /** A first line that runs the file with a shell: `#!/bin/bash`, `#!/usr/bin/env sh`, ... */
 const SHELL_SHEBANG = /^#!\s*\S*\/(?:env\s+)?(?:ba|z|da|k)?sh(?:\s|$)/;
 
@@ -50,6 +61,7 @@ export function compilesUnfaithfully(run: string, read: (path: string) => string
   if (compilesToStub(run)) return true;
   if (!run.trim() || isShellCommand(run) || proseInRun(run)) return false;
   const { interpreter, script } = runParts(run);
+  if (quotesABlank(script)) return true;
   if (interpreter || !script || interpreterFor(script) !== "bash" || /\.(?:sh|bash)$/.test(script)) return false;
   if (script.startsWith("/")) return true;
   if (!isProjectPath(script)) return false;
