@@ -75,13 +75,12 @@ topology fixme : [pipeline] {
       run: "scripts/approval.sh"
     }
 
-    # Cited, strength written: the citation does not make it refuse.
-    gate cited {
+    # strength: refuse written, but no hook runs it.
+    gate claimed {
       after: finish
-      run: "scripts/cited.sh"
+      run: "scripts/claimed.sh"
       strength: refuse   # we thought so
       by: hook
-      at: "tools/checks.py"
     }
 
     # No anchor at all.

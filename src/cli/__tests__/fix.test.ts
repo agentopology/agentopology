@@ -28,7 +28,7 @@ function run(args: string[], cwd = root): { out: string; code: number } {
   }
 }
 
-const V135_GATES = ["needs-source", "after-approval", "cited", "orphan-check"];
+const V135_GATES = ["needs-source", "after-approval", "claimed", "orphan-check"];
 const FINE_GATES = ["lint-gate", "draft-ok", "deploy-ok", "style", "by-hand"];
 
 let dir: string;
@@ -128,6 +128,48 @@ describe("agentopology fix --write", () => {
     expect(dry.code).toBe(0);
   });
 
+  it("--write with --dry-run is refused: exit 1, nothing written", () => {
+    const { out, code } = run(["fix", file, "--write", "--dry-run"]);
+    expect(code).toBe(1);
+    expect(out).toMatch(/--write and --dry-run/);
+    expect(readFileSync(file).equals(original)).toBe(true);
+  });
+
+  it("a file that is not valid UTF-8 is refused for --write: exit 1, every byte kept", () => {
+    // A cp1252 e-acute (0xE9) in a comment: decoding and writing back as UTF-8 would turn it into EF BF BD.
+    const bytes = Buffer.concat([Buffer.from("# caf"), Buffer.from([0xe9]), Buffer.from("\n"), original]);
+    writeFileSync(file, bytes);
+    const { out, code } = run(["fix", file, "--write"]);
+    expect(code).toBe(1);
+    expect(out).toContain("not valid UTF-8");
+    expect(readFileSync(file).equals(bytes)).toBe(true);
+  });
+
+  it("keeps a UTF-8 BOM and CRLF line endings", () => {
+    const crlf = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(original.toString("utf8").replace(/\n/g, "\r\n"))]);
+    writeFileSync(file, crlf);
+    const { code } = run(["fix", file, "--write"]);
+    expect(code).toBe(0);
+    const now = readFileSync(file);
+    expect([...now.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const text = now.toString("utf8");
+    expect(text.split("\r\n").length).toBe(crlf.toString("utf8").split("\r\n").length + 3);
+    expect(text.replace(/\r\n/g, "")).not.toContain("\n");
+  });
+
+  it("a gate that cites code (at:) is listed with V135's fix, by hand, and keeps its lines; exit 1 while it remains", () => {
+    writeFileSync(file, original.toString("utf8").replace(`      by: hook\n`, `      by: hook\n      at: "tools/checks.py"\n`));
+    const dry = run(["fix", file]);
+    expect(dry.code).toBe(2);
+    expect(dry.out).toMatch(/gate "claimed"[\s\S]*fix: drop run: and keep the citation/);
+    const { out, code } = run(["fix", file, "--write"]);
+    expect(code).toBe(1);
+    expect(out).toMatch(/V135 error\(s\) left: claimed/);
+    const now = readFileSync(file, "utf8");
+    expect(now).toContain(`      strength: refuse   # we thought so\n      by: hook\n      at: "tools/checks.py"\n`);
+    expect(now.split("\n").filter((l) => l === "      strength: hope")).toHaveLength(4);
+  });
+
   it("a gate it cannot edit in place is left as written and exits 1", () => {
     const src = original.toString("utf8").replace(
       `    gate orphan-check {\n      run: "scripts/orphan.sh"\n    }`,
@@ -141,5 +183,60 @@ describe("agentopology fix --write", () => {
     expect(now).toContain(`    gate orphan-check { run: "scripts/orphan.sh" }`);
     // by-hand had one already; needs-source and after-approval get theirs.
     expect(now.split("\n").filter((l) => l === "      strength: hope")).toHaveLength(3);
+  });
+});
+
+describe("agentopology fix: a V135 error in an imported file", () => {
+  const parent = `topology p : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "imports a file with V135 gates"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [a]
+  }
+  agent a {
+    model: sonnet
+    description: "d"
+  }
+  import "./shared.at" as shared
+  flow {
+    orchestrator -> a
+  }
+}
+`;
+  let main: string;
+  let shared: string;
+  beforeEach(() => {
+    main = join(dir, "main.at");
+    shared = join(dir, "shared.at");
+    writeFileSync(main, parent);
+    copyFileSync(FIXTURE, shared);
+  });
+
+  it("the dry run counts it: exit 2, names the imported file, writes nothing", () => {
+    const { out, code } = run(["fix", "main.at"], dir);
+    expect(code).toBe(2);
+    expect(out).toContain("4 V135 error(s) in imported files: run fix on shared.at");
+    expect(out).not.toContain("Nothing to fix");
+    expect(readFileSync(main, "utf8")).toBe(parent);
+    expect(readFileSync(shared).equals(original)).toBe(true);
+  });
+
+  it("--write exits 1 while it remains and never edits the imported file", () => {
+    const { out, code } = run(["fix", "main.at", "--write"], dir);
+    expect(code).toBe(1);
+    expect(out).not.toContain("no V135 error left");
+    expect(out).toContain("run fix on shared.at");
+    expect(readFileSync(main, "utf8")).toBe(parent);
+    expect(readFileSync(shared).equals(original)).toBe(true);
+  });
+
+  it("after fix on the imported file, the importer has nothing to fix", () => {
+    expect(run(["fix", "shared.at", "--write"], dir).code).toBe(0);
+    const { out, code } = run(["fix", "main.at"], dir);
+    expect(code).toBe(0);
+    expect(out).toContain("Nothing to fix");
   });
 });

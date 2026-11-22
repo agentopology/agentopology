@@ -9,8 +9,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
@@ -22,13 +23,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(here, "fixtures/v135-fix.at");
 const source = readFileSync(FIXTURE, "utf8");
 
-const V135_GATES = ["needs-source", "after-approval", "cited", "orphan-check"];
+const V135_GATES = ["needs-source", "after-approval", "claimed", "orphan-check"];
 
 /** The fixture with exactly the edits fix makes, written out by hand. */
 const expected = source
   .replace(`      run: "scripts/source.sh"   # checks the citations\n`, `$&      strength: hope\n`)
   .replace(`      run: "scripts/approval.sh"\n`, `$&      strength: hope\n`)
-  .replace(`      strength: refuse   # we thought so\n`, `      strength: hope   # we thought so\n`)
+  .replace(`      strength: refuse   # we thought so\n`, `      strength: hope   # we thought so\n`) // gate claimed
   .replace(`      run: "scripts/orphan.sh"\n`, `$&      strength: hope\n`);
 
 const v135Errors = (src: string, target?: string) =>
@@ -70,7 +71,7 @@ describe("fix: plan (dry run)", () => {
     expect(byGate["needs-source"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
     expect(byGate["after-approval"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
     expect(byGate["orphan-check"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
-    expect(byGate["cited"].edit).toMatchObject({ kind: "replace", text: "hope" });
+    expect(byGate["claimed"].edit).toMatchObject({ kind: "replace", text: "hope" });
   });
 
   it("suggests an anchor from the flow that would make the gate refuse, never one the topology lacks", () => {
@@ -79,8 +80,8 @@ describe("fix: plan (dry run)", () => {
     expect(byGate["needs-source"].join("\n")).toContain("after: reviewer");
     // after-approval is after: approve; reviewer is the subagent right after approve.
     expect(byGate["after-approval"].join("\n")).toContain("before: reviewer");
-    // cited is after: finish; deploy is the script step right after finish.
-    expect(byGate["cited"].join("\n")).toContain("before: deploy");
+    // claimed is after: finish; deploy is the script step right after finish.
+    expect(byGate["claimed"].join("\n")).toContain("before: deploy");
     // orphan-check names no anchor: nothing next to it in the flow.
     expect(byGate["orphan-check"]).toEqual([]);
   });
@@ -146,6 +147,28 @@ describe("fix: apply (--write)", () => {
     expect(out).toBe(expected.replace(/\n/g, "\r\n"));
   });
 
+  it("a gate whose run: shares the header line is reported for a hand edit", () => {
+    const shared = source.replace(
+      `    gate orphan-check {\n      run: "scripts/orphan.sh"\n    }`,
+      `    gate orphan-check { run: "scripts/orphan.sh"\n    }`,
+    );
+    const orphan = planV135Fixes(shared).fixes.find((f) => f.gate === "orphan-check")!;
+    expect(orphan.edit).toBeUndefined();
+    expect(orphan.manual).toMatch(/by hand/);
+  });
+
+  it("a gate that cites code (at:) gets V135's fix, drop run: and keep the citation, by hand; no strength: hope next to it", () => {
+    const cited = source.replace(`      by: hook\n`, `      by: hook\n      at: "tools/checks.py"\n`);
+    const plan = planV135Fixes(cited);
+    const gate = plan.fixes.find((f) => f.gate === "claimed")!;
+    expect(gate.edit).toBeUndefined();
+    expect(gate.manual).toMatch(/drop run: and keep the citation/);
+    expect(gate.manual).toMatch(/by hand/);
+    const out = applyV135Fixes(cited, plan);
+    expect(out).toContain(`      strength: refuse   # we thought so\n      by: hook\n      at: "tools/checks.py"\n`);
+    expect(v135Errors(out).map((r) => r.node)).toEqual(["claimed"]);
+  });
+
   it("a gate written on one line is reported for a hand edit, not rewritten", () => {
     const oneLine = source.replace(
       `    gate orphan-check {\n      run: "scripts/orphan.sh"\n    }`,
@@ -158,5 +181,40 @@ describe("fix: apply (--write)", () => {
     const out = applyV135Fixes(oneLine, plan);
     expect(out).toContain(`    gate orphan-check { run: "scripts/orphan.sh" }`);
     expect(v135Errors(out).map((r) => r.node)).toEqual(["orphan-check"]);
+  });
+});
+
+describe("fix: a V135 error in an imported file", () => {
+  const parent = `topology p : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "imports a file with V135 gates"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [a]
+  }
+  agent a {
+    model: sonnet
+    description: "d"
+  }
+  import "./shared.at" as shared
+  flow {
+    orchestrator -> a
+  }
+}
+`;
+  it("is reported as relayed, with the imported file named, and never planned as an edit of the importer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "at-fix-unit-"));
+    try {
+      writeFileSync(join(dir, "shared.at"), source);
+      const plan = planV135Fixes(parent, { filePath: join(dir, "p.at") });
+      expect(plan.fixes).toEqual([]);
+      expect(plan.relayed.length).toBe(V135_GATES.length);
+      expect(plan.relayedFiles).toEqual([join(dir, "shared.at")]);
+      expect(applyV135Fixes(parent, plan)).toBe(parent);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
