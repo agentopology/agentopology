@@ -93,13 +93,22 @@ describe("[I-0113] import → scaffold never stubs a command that ran, unless im
 
   it("names the ruled shapes with the ruled error text", () => {
     for (const command of [
-      'python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "python -c 'import sys'", "python3 -m mypkg.guard",
-      "bash -c 'exit 2'", "sh -c 'exit 2'", "zsh -c 'exit 2'", "node --x tools/a.mjs", "node -e '1'", "node -r ts-node/register x.ts",
+      "python -c 'import sys'", "python3 -m mypkg.guard",
+      "bash -c 'exit 2'", "sh -c 'exit 2'", "zsh -c 'exit 2'", "node -e '1'", "node -r ts-node/register x.ts",
       'bun run "$CLAUDE_PROJECT_DIR/x.ts"', "deno run x.ts", 'powershell -File "$CLAUDE_PROJECT_DIR/x.ps1"', "pwsh -Command Get-Date",
     ]) {
       const { report } = importClaudeCodeWithReport(harness(command), "t");
       expect(errorsOf(report), command).toHaveLength(1);
       expect(errorsOf(report)[0].message, command).toContain("this hook can't be compiled faithfully; keep it as a hand-written hook or rewrite it as a topology script");
+    }
+  });
+
+  it("an interpreter's flags before a project script compile faithfully: no error, no stub", () => {
+    // These were ruled shapes while a flag after the interpreter named a stub after the interpreter.
+    for (const command of ['python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"', "node --x tools/a.mjs"]) {
+      const r = importThenScaffold(command);
+      expect(r, command).not.toBeNull();
+      expect(r!.stubbed, command).toEqual([]);
     }
   });
 

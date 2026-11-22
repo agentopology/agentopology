@@ -15,7 +15,14 @@
  * Claude Code, Codex, Cursor and claude-workflow a digest of every generated
  * file that changes (gate wrapper bodies, agent files, cursor hooks); for a
  * gate, what `step check` reports. Byte-identical where 0.11.2 resolved,
- * refused where it refused, with no exception.
+ * refused where it refused.
+ *
+ * One named exception, read as a path (differential/read-as-path.ts): after an
+ * interpreter, a script word through `$CLAUDE_PROJECT_DIR` (quoted or not) is
+ * the project path it names, and the interpreter's flags (`python3 -u x.py`)
+ * are skipped to find its script. A row that moved is held to its twin, the
+ * same run with that word written `./path` and the flags left out (twinOf,
+ * twinDiffs), and the number of moved rows is pinned (MOVED).
  */
 
 import { beforeAll, describe, it, expect } from "vitest";
@@ -24,6 +31,11 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error plain JavaScript module, shared with freeze.mjs
 import { TARGETS, baselinesFor, compileRun, loadLib } from "./differential/compile-runs.mjs";
+import { runParts } from "../../parser/run.js";
+import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
+
+/** The rows read as a path that compile differently from 0.11.2, each held to its twin, per kind. */
+const MOVED: Record<ReadAsPathKind, number> = { "project-dir": 103, flags: 0, both: 3 };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(here, "../../../dist");
@@ -50,6 +62,8 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
   let lib: unknown;
   let baselines: unknown;
   let asserted = 0;
+  const moved: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
+  const outside: string[] = [];
   beforeAll(async () => {
     lib = await loadLib(DIST);
     baselines = baselinesFor(lib);
@@ -63,30 +77,84 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
       asserted++;
       const now = compileRun(lib, row.kind, row.run, baselines, { lit: row.lit, crlf: row.crlf }) as Row;
       const label = `${row.kind} ${row.lit ?? JSON.stringify(row.run)}${row.crlf ? " (CRLF)" : ""} (${row.source})`;
-      if (row.refused) {
-        if (!now.refused) diffs.push(`${label}: 0.11.2 refused it; now resolves to ${JSON.stringify(now["claude-code"]?.command)}`);
+      const rowDiffs = diffsFrom0112(label, row, now);
+      // Read as a path: a moved row is held to its twin instead (see read-as-path.ts).
+      const read = rowDiffs.length && row.run !== null && !row.lit && !row.crlf ? readAsPath(row.run) : null;
+      if (read === null) {
+        if (rowDiffs.length) outside.push(label);
+        diffs.push(...rowDiffs);
         continue;
       }
-      if (now.refused) {
-        diffs.push(`${label}: 0.11.2 resolved it; now refused`);
-        continue;
-      }
-      for (const target of ["claude-code", "codex"] as const) {
-        const was = row[target]!;
-        const is = now[target]!;
-        if (was.refused !== is.refused) diffs.push(`${label} [${target}]: refused ${was.refused} -> ${is.refused}`);
-        if (was.command !== is.command) diffs.push(`${label} [${target}]: ${JSON.stringify(was.command)} -> ${JSON.stringify(is.command)}`);
-        if (JSON.stringify(was.stubs) !== JSON.stringify(is.stubs)) diffs.push(`${label} [${target}]: stubs ${JSON.stringify(was.stubs)} -> ${JSON.stringify(is.stubs)}`);
-      }
-      for (const target of TARGETS as string[]) {
-        if (row.files?.[target] !== now.files?.[target]) diffs.push(`${label} [${target}]: generated files differ`);
-      }
-      if (row.step !== now.step) diffs.push(`${label}: step check ${JSON.stringify(row.step)} -> ${JSON.stringify(now.step)}`);
+      moved[read.kind].push(`${row.kind} ${row.run}`);
+      diffs.push(...twinDiffs(label, row, now, read.twin));
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 40).join("\n")}`).toEqual([]);
   }, 120_000);
 
+  /** Every difference between 0.11.2's row and what this build compiles. */
+  function diffsFrom0112(label: string, row: Row, now: Row): string[] {
+    const diffs: string[] = [];
+    if (row.refused) {
+      if (!now.refused) diffs.push(`${label}: 0.11.2 refused it; now resolves to ${JSON.stringify(now["claude-code"]?.command)}`);
+      return diffs;
+    }
+    if (now.refused) return [`${label}: 0.11.2 resolved it; now refused`];
+    for (const target of ["claude-code", "codex"] as const) {
+      const was = row[target]!;
+      const is = now[target]!;
+      if (was.refused !== is.refused) diffs.push(`${label} [${target}]: refused ${was.refused} -> ${is.refused}`);
+      if (was.command !== is.command) diffs.push(`${label} [${target}]: ${JSON.stringify(was.command)} -> ${JSON.stringify(is.command)}`);
+      if (JSON.stringify(was.stubs) !== JSON.stringify(is.stubs)) diffs.push(`${label} [${target}]: stubs ${JSON.stringify(was.stubs)} -> ${JSON.stringify(is.stubs)}`);
+    }
+    for (const target of TARGETS as string[]) {
+      if (row.files?.[target] !== now.files?.[target]) diffs.push(`${label} [${target}]: generated files differ`);
+    }
+    if (row.step !== now.step) diffs.push(`${label}: step check ${JSON.stringify(row.step)} -> ${JSON.stringify(now.step)}`);
+    return diffs;
+  }
+
+  /**
+   * A moved row against its twin: refused alike, and on Claude Code and Codex the same
+   * stubs and the same command, read with the run's interpreter flags left out and a
+   * `\"` read as `"` (the twin has no flags; its arguments keep 0.11.2's `\"`). Codex's
+   * command is a digest, so it is compared only when neither applies. The generated
+   * files and step check name the run itself, so they are not compared. When the
+   * corpus holds the twin, the twin must still compile as 0.11.2 compiled it.
+   */
+  function twinDiffs(label: string, row: Row, now: Row, twin: string): string[] {
+    const tw = compileRun(lib, row.kind, twin, baselines) as Row;
+    const at = `${label} (twin ${JSON.stringify(twin)})`;
+    const flags = runParts(row.run!).flags ?? [];
+    const quoted = runParts(twin).args.some((a) => a.includes('"'));
+    const read = (c: string | null | undefined) => (c ?? "").replace(flags.length ? ` ${flags.join(" ")}` : "", "").replace(/\\"/g, '"');
+    const diffs: string[] = [];
+    if (now.refused !== tw.refused) diffs.push(`${at}: refused ${now.refused}, twin ${tw.refused}`);
+    if (!now.refused && !tw.refused) {
+      for (const target of ["claude-code", "codex"] as const) {
+        const is = now[target]!;
+        const t = tw[target]!;
+        if (is.refused !== t.refused) diffs.push(`${at} [${target}]: refused ${is.refused}, twin ${t.refused}`);
+        const digest = target === "codex" && (flags.length > 0 || quoted);
+        if (!digest && read(is.command) !== read(t.command)) diffs.push(`${at} [${target}]: ${JSON.stringify(is.command)}, twin ${JSON.stringify(t.command)}`);
+        // the flags run with the script (an agent's hook runs its skill script by bash, as 0.11.2 did)
+        if (!digest && flags.length && row.kind !== "agent-hook" && !(is.command ?? "").includes(` ${flags.join(" ")} `)) diffs.push(`${at} [${target}]: ${JSON.stringify(is.command)} lost its flags`);
+        if (JSON.stringify(is.stubs) !== JSON.stringify(t.stubs)) diffs.push(`${at} [${target}]: stubs ${JSON.stringify(is.stubs)}, twin ${JSON.stringify(t.stubs)}`);
+      }
+    }
+    const frozenTwin = frozen.rows.find((r) => r.kind === row.kind && r.run === twin && !r.lit && !r.crlf);
+    if (frozenTwin) diffs.push(...diffsFrom0112(`${at}: the twin`, frozenTwin, tw));
+    return diffs;
+  }
+
   it("asserted every frozen row", () => {
     expect(asserted).toBe(frozen.rows.length);
+  });
+
+  it("no row outside the two read-as-path kinds differs from 0.11.2", () => {
+    expect(outside, `${outside.length} rows differ that are not read as a path:\n${outside.slice(0, 20).join("\n")}`).toEqual([]);
+  });
+
+  it("moved only the rows read as a path, each held to its twin, counted per kind", () => {
+    expect({ "project-dir": moved["project-dir"].length, flags: moved.flags.length, both: moved.both.length }).toEqual(MOVED);
   });
 });

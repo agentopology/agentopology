@@ -2405,9 +2405,10 @@ export function skillScriptPath(topologyName: string, file: string): string {
  */
 export function hookCommand(run: string, topologyName: string): string {
   if (isShellCommand(run)) return run.trim();
-  const { interpreter: named, script: first, args: rest } = runParts(run);
+  const { interpreter: named, flags = [], script: first, args: rest } = runParts(run);
   // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
-  const interpreter = interpreterFor(first, named);
+  // Its flags (`python3 -I -B`) run with it.
+  const interpreter = [interpreterFor(first, named), ...flags].join(" ");
   if (!isProjectPath(first)) {
     const base = first.replace(/^.*\//, "");
     return [interpreter, skillScriptPath(topologyName, base), ...rest].join(" ");

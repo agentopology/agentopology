@@ -298,14 +298,16 @@ function q(word: string): string {
 function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   const run = hook.run.trim();
   if (isShellCommand(run)) return { kind: "shell", command: run };
-  const { interpreter, script, args } = runParts(run);
-  const interp = interpreterFor(script, interpreter);
+  const { interpreter, flags = [], script, args } = runParts(run);
+  // The stub is in the interpreter's language; the command runs it with its flags (`python3 -I -B`).
+  const language = interpreterFor(script, interpreter);
+  const interp = [language, ...flags].join(" ");
   if (script.startsWith("/")) return { kind: "script", interp, rel: script, args };
   if (isProjectPath(script)) {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
       path: rel,
-      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
       category: "script",
       stub: "hook",
       executable: true,
@@ -320,7 +322,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   used.set(name, script);
   const file: GeneratedFile = {
     path: `.codex/scripts/${name}`,
-    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
     category: "script",
     stub: "hook",
     executable: true,
@@ -473,9 +475,10 @@ function runGates(ast: TopologyAST, keep: (g: GateNode) => boolean): GateNode[] 
 /** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
 export function codexGateCommand(run: string, _topology: string): string {
   if (isShellCommand(run)) return run.trim();
-  const { interpreter, script, args } = runParts(run);
+  const { interpreter, flags = [], script, args } = runParts(run);
   const interp = interpreterFor(script, interpreter);
-  return [interp, codexGateScript(run), ...args].join(" ");
+  // its flags run with it (`python3 -I -B`)
+  return [interp, ...flags, codexGateScript(run), ...args].join(" ");
 }
 
 /** The file a gate's `run:` script is on Codex: absolute as written, a project path as written, else under .codex/scripts/. */

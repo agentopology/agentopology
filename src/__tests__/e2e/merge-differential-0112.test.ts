@@ -15,6 +15,14 @@
  * settings.json must be byte-identical, except for the stub rulings
  * (differential/stub-rulings.mjs): the stub summary is compared out, and a
  * gate whose check script is a stub is graded none.
+ *
+ * One named exception, read as a path (differential/read-as-path.ts): an rt
+ * harness whose hook command runs a script through `$CLAUDE_PROJECT_DIR` after
+ * an interpreter, or with interpreter flags, which 0.11.2 did not compile
+ * (import refused it, or scaffold did), now imports, validates and scaffolds
+ * with exit 0, and settings.json keeps the harness's own entry after every
+ * step: no second entry, nothing rewritten. The number of such sequences is
+ * pinned (READ_AS_PATH).
  */
 
 import { describe, it, expect } from "vitest";
@@ -27,9 +35,13 @@ import { runSequence } from "./differential/merge-sequences.mjs";
 import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 // @ts-expect-error plain JavaScript module
 import { ruledSides } from "./differential/stub-rulings.mjs";
+import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
+
+/** The rt sequences read as a path, per kind: 0.11.2 did not compile their command; now every step exits 0, as its twin's does. */
+const READ_AS_PATH: Record<ReadAsPathKind, number> = { "project-dir": 8, flags: 0, both: 1 };
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 /**
@@ -54,6 +66,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
   // seconds (one 120-s loop tripped vitest's 60-s RPC timeout). The last test
   // counts the steps asserted.
   let asserted = 0;
+  const readAsPathSeqs: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
   const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
 
   it.each(indexed)("exit code, output and settings.json are byte-identical after every step: %s", async (_name, i) => {
@@ -67,6 +80,27 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
       asserted += now.length;
       const was = frozen.sequences[i].steps;
       const rt = seq.name.startsWith("rt ");
+      // Read as a path: 0.11.2 did not compile this command (import refused it, or scaffold did).
+      const command = rt ? seq.name.slice(seq.name.indexOf(": ") + 2) : "";
+      const read = rt ? readAsPath(command) : null;
+      if (read && (rtImport.get(seq.name)?.code === 2 || was[2]?.code !== 0)) {
+        readAsPathSeqs[read.kind].push(seq.name);
+        // its twin (the harness holding the written-out command) runs the same steps with the same exit codes
+        const twinSeq = { ...seq, setup: { ...(seq as unknown as { setup: Record<string, string> }).setup, ".claude/settings.json": JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: read.twin }] }] } }, null, 2) } };
+        const twinSteps = runSequence(CLI, twinSeq) as Step[];
+        now.forEach((step, n) => {
+          const at = `${seq.name}, step ${n + 1} (${step.args})`;
+          if (step.code !== 0) diffs.push(`${at}: exit ${step.code}, read as a path it compiles`);
+          if (step.code !== twinSteps[n]?.code) diffs.push(`${at}: exit ${step.code}, its twin ${JSON.stringify(read.twin)} exits ${twinSteps[n]?.code}`);
+          if (step.settings !== now[0].settings) diffs.push(`${at}: settings.json changed\n--- the harness's\n${now[0].settings}\n--- now\n${step.settings}`);
+        });
+        const hooks = JSON.parse(now[0].settings ?? "{}").hooks?.PreToolUse ?? [];
+        if (JSON.stringify(hooks.flatMap((g: { hooks: Array<{ command: string }> }) => g.hooks.map((h) => h.command))) !== JSON.stringify([command])) {
+          diffs.push(`${seq.name}: settings.json does not hold the harness's one command`);
+        }
+        expect(diffs, `${diffs.length} differences:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
+        return;
+      }
       now.forEach((step, n) => {
         const w = was[n];
         const at = `${seq.name}, step ${n + 1} (${step.args})`;
@@ -98,5 +132,9 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
 
   it("asserted every frozen step", () => {
     expect(asserted).toBe(frozen.sequences.reduce((n, s) => n + s.steps.length, 0));
+  });
+
+  it("held only the rt sequences read as a path to the read-as-path rule, counted per kind", () => {
+    expect({ "project-dir": readAsPathSeqs["project-dir"].length, flags: readAsPathSeqs.flags.length, both: readAsPathSeqs.both.length }).toEqual(READ_AS_PATH);
   });
 });

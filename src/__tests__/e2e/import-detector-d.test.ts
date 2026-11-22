@@ -100,7 +100,8 @@ describe("P2: how import says it", () => {
   });
 
   it("[P2-2] the flagged command is printed exactly as the harness wrote it", () => {
-    const command = 'python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py"';
+    // python3 -u "$CLAUDE_PROJECT_DIR/tools/guard.py" was the example until interpreter flags were read; it now compiles faithfully
+    const command = 'bun run "$CLAUDE_PROJECT_DIR/tools/guard.ts"';
     const r = importCmd(command);
     expect(r.code).toBe(2);
     expect(r.all.split("\n").some((l) => l.trim() === command)).toBe(true);

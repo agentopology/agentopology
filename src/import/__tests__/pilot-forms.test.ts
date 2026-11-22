@@ -113,12 +113,21 @@ describe("S-01: hook commands with quotes and variables survive import exactly",
     expect(first.hooks.map((h) => h.run)).toEqual(commands.map(as0112));
   });
 
-  it("0.11.3 resolves runs as 0.11.2 did, so V96 refuses the project-dir forms as 0.11.2 did (S-11 is 0.12)", () => {
-    // The import keeps each command exactly (above); a binding that compiles a
-    // quoted project-dir path is 0.12's, with S-11. validate says so, and
-    // `import` exits 2, instead of scaffold writing a broken command.
-    const refused = errors(importAt([settingsWith(entries)])).filter((e) => e.startsWith("V96"));
-    expect(refused).toHaveLength(6);
+  it("after an interpreter, a quoted project-dir script path is the project path; as the first word V96 still refuses it", () => {
+    // Until the script word through $CLAUDE_PROJECT_DIR was read as a path,
+    // V96 refused all six project-dir forms (their basename kept a quote).
+    const source = importAt([settingsWith(entries)]);
+    const refused = errors(source).filter((e) => e.startsWith("V96"));
+    expect(refused).toHaveLength(2);
+    expect(refused.join("\n")).toContain('its first word "\\"$CLAUDE_PROJECT_DIR\\"/.claude/hooks/guard-main.sh"');
+    expect(refused.join("\n")).toContain('its first word "\\"${CLAUDE_PROJECT_DIR}/.claude/hooks/pre-commit.sh\\""');
+    const hooks = parse(source).hooks;
+    expect([0, 3, 4, 5].map((i) => hookCommand(hooks[i].run, "pilot"))).toEqual([
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/guard.mjs"',
+      'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/check.sh" --strict',
+      'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/guard_edit.py" --protect-lockfiles',
+      '/bin/sh "$CLAUDE_PROJECT_DIR/scripts/tooling/dispatch.sh"',
+    ]);
   });
 });
 
