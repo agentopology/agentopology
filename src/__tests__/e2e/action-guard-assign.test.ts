@@ -418,8 +418,10 @@ describe("resolution has a size limit: a longer command stays doubted", () => {
       let runs = 0;
       for (let i = 0; i < 5 && best >= 300; i++) {
         if (i > 0) spawnSync("sleep", ["0.3"]);
-        const r = spawnSync("bash", ["-c", `${[...MATCH_FUNCTIONS, ...RESOLVE_FUNCTIONS].join("\n")}\nTIMEFORMAT=%3R; time at_resolve "$1" >/dev/null`, "at", cmd], { encoding: "utf8" });
-        best = Math.min(best, Number(r.stderr.trim().split("\n").pop()) * 1000);
+        // CPU time (user + system), as cpuMs: it does not grow when other work loads the machine
+        const r = spawnSync("bash", ["-c", `${[...MATCH_FUNCTIONS, ...RESOLVE_FUNCTIONS].join("\n")}\nTIMEFORMAT='%3U %3S'; time at_resolve "$1" >/dev/null`, "at", cmd], { encoding: "utf8" });
+        const [user, sys] = r.stderr.trim().split("\n").pop()!.split(" ").map(Number);
+        best = Math.min(best, (user + sys) * 1000);
         runs = i + 1;
       }
       const row = `[cap] at_resolve alone, ${shape}, ${cmd.length} characters: ${Math.round(best)} ms (best of ${runs})`;
