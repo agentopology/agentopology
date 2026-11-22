@@ -226,12 +226,7 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
   let home: string;
   beforeAll(() => { home = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-home-")); });
   // Retries: ENOTEMPTY on <home>/.tmp was seen under load, a codex process still syncing its plugins there.
-  // Removing the scratch home is cleanup, not a check: codex or npm may still be writing its caches, so a
-  // folder that will not empty in time is left for the OS to clear rather than failing the file.
-  afterAll(() => {
-    try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
-    catch (e) { console.warn(`[cleanup] ${home} not removed: ${(e as Error).message}`); }
-  });
+  afterAll(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   const withRules = CORPUS.map((f) => ({ f, files: scaffoldCodex(f) })).filter((x) => x.files.some((y) => y.path.endsWith(".rules")));
 
