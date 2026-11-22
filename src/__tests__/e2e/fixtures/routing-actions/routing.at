@@ -87,5 +87,21 @@ topology routing : [pipeline] {
       cron: "0 3 * * *"
       action: finish
     }
+    job nightly-pick {
+      cron: "0 4 * * *"
+      action: pick
+    }
+    job nightly-choose {
+      cron: "0 5 * * *"
+      action: choose-run
+    }
+    job nightly-pull {
+      cron: "0 6 * * *"
+      action: pull
+    }
+    job nightly-write {
+      cron: "0 7 * * *"
+      agent: writer
+    }
   }
 }
