@@ -225,7 +225,8 @@ const sealed = (home: string) => ({ ...process.env, HOME: home, CODEX_HOME: home
 tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() : "not installed: skipped"})`, () => {
   let home: string;
   beforeAll(() => { home = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-home-")); });
-  afterAll(() => fs.rmSync(home, { recursive: true, force: true }));
+  // Retries: ENOTEMPTY on <home>/.tmp was seen under load, a codex process still syncing its plugins there.
+  afterAll(() => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   const withRules = CORPUS.map((f) => ({ f, files: scaffoldCodex(f) })).filter((x) => x.files.some((y) => y.path.endsWith(".rules")));
 
@@ -293,8 +294,11 @@ tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() :
     const sources = CORPUS.filter((f) => pick.some((p) => f.endsWith(p)));
     expect(sources.length).toBe(pick.length);
     const run = (ws: string) => {
+      // SIGTERM, not SIGKILL: `codex` is a node launcher that forwards TERM to the native binary and exits
+      // after it. SIGKILL killed only the launcher, and the orphaned binary went on writing <home>/.tmp/plugins
+      // while afterAll removed <home> (ENOTEMPTY). With TERM, spawnSync returns once that binary is gone.
       fs.writeFileSync(join(home, "config.toml"), `[projects."${ws}"]\ntrust_level = "trusted"\n\n[model_providers.deadp]\nname = "dead"\nbase_url = "http://127.0.0.1:9/v1"\n`);
-      return spawnSync("codex", ["exec", "--strict-config", "-c", "model_provider=deadp", "--skip-git-repo-check", "hello"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 6000, killSignal: "SIGKILL" });
+      return spawnSync("codex", ["exec", "--strict-config", "-c", "model_provider=deadp", "--skip-git-repo-check", "hello"], { cwd: ws, encoding: "utf8", env: sealed(home), timeout: 6000, killSignal: "SIGTERM" });
     };
     for (const f of sources) {
       const ws = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-strict-"));
