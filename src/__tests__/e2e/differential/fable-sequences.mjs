@@ -133,6 +133,18 @@ export const RT_COMMANDS = [
   'echo "tab\there"', "echo é", 'echo "é ✓"', '  bash "$CLAUDE_PROJECT_DIR/x.sh"  ', 'bash  "$CLAUDE_PROJECT_DIR/x.sh"   --two  spaces',
   'echo "a: b, [c] | d"', "echo a:b", "printf '%s\\n' \"x\"", 'echo \\"x\\"',
 ];
+/**
+ * More round-trip commands: a hook script through `$CLAUDE_PROJECT_DIR` after
+ * an interpreter, in each shape the run reader reads as a path. 0.11.2 had
+ * no reading for them, so they are kept out of RT_SEQUENCES (frozen against
+ * 0.11.2) and checked by the import invariant and by
+ * scaffold/__tests__/project-dir-identity.test.ts (one settings.json entry
+ * after import then scaffold).
+ */
+export const RT_PROJECT_DIR_FORMS = [
+  'python3 "$CLAUDE_PROJECT_DIR"/tools/a.py hook', 'python3 -I -B "${CLAUDE_PROJECT_DIR}/tools/b.py" hook',
+  'python3 "${CLAUDE_PROJECT_DIR:-.}/tools/c.py"', "python3 ${CLAUDE_PROJECT_DIR}/tools/d.py",
+];
 export const RT_SEQUENCES = RT_COMMANDS.map((cmd, i) => ({
   name: `rt ${i + 1}: ${cmd}`,
   setup: {
