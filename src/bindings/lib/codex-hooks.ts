@@ -15,7 +15,7 @@
 
 import type { AgentNode, GateNode, HookDef, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
-import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
+import { interpreterFor, isOutsidePath, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../../parser/run.js";
 import { BLOCKING_EVENTS, HOOK_EVENTS, NO_MATCHER_EVENTS, RUNNING_HANDLERS } from "../../conformance/codex.js";
 import type { GeneratedFile } from "../types.js";
 import { scriptStub } from "./stub.js";
@@ -62,7 +62,7 @@ export const REPO_ROOT = '"$(git rev-parse --show-toplevel 2>/dev/null || pwd)"'
  */
 export function launchCommand(interp: string, rel: string, args: string[], guard: boolean, deadline?: number): string {
   const tail = args.length ? " " + args.join(" ") : "";
-  const abs = rel.startsWith("/");
+  const abs = isOutsidePath(rel);
   const file = abs ? rel : `$AT_ROOT/${rel}`;
   const find = abs
     ? []
@@ -298,14 +298,16 @@ function q(word: string): string {
 function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   const run = hook.run.trim();
   if (isShellCommand(run)) return { kind: "shell", command: run };
-  const { interpreter, script, args } = runParts(run);
-  const interp = interpreterFor(script, interpreter);
-  if (script.startsWith("/")) return { kind: "script", interp, rel: script, args };
+  const { interpreter, flags = [], script, args } = runParts(run);
+  // The stub is in the interpreter's language; the command runs it with its flags (`python3 -I -B`).
+  const language = interpreterFor(script, interpreter);
+  const interp = [language, ...flags].join(" ");
+  if (isOutsidePath(script)) return { kind: "script", interp, rel: script, args };
   if (isProjectPath(script)) {
     const rel = script.replace(/^\.\//, "");
     const stub: GeneratedFile = {
       path: rel,
-      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+      content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
       category: "script",
       stub: "hook",
       executable: true,
@@ -320,7 +322,7 @@ function planCommand(hook: HookDef, used: Map<string, string>): ScriptPlan {
   used.set(name, script);
   const file: GeneratedFile = {
     path: `.codex/scripts/${name}`,
-    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+    content: scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, language, { fail: hook.strength === "refuse" }),
     category: "script",
     stub: "hook",
     executable: true,
@@ -473,15 +475,17 @@ function runGates(ast: TopologyAST, keep: (g: GateNode) => boolean): GateNode[] 
 /** The shell command that runs a gate's `run:`; the guard scripts have changed to the project root first. */
 export function codexGateCommand(run: string, _topology: string): string {
   if (isShellCommand(run)) return run.trim();
-  const { interpreter, script, args } = runParts(run);
+  const { interpreter, flags = [], script, args } = runParts(run);
   const interp = interpreterFor(script, interpreter);
-  return [interp, codexGateScript(run), ...args].join(" ");
+  const file = codexGateScript(run);
+  // its flags run with it (`python3 -I -B`); a path through a variable (`$HOME/x`) is quoted
+  return [interp, ...flags, file.startsWith("$") ? `"${file}"` : file, ...args].join(" ");
 }
 
-/** The file a gate's `run:` script is on Codex: absolute as written, a project path as written, else under .codex/scripts/. */
+/** The file a gate's `run:` script is on Codex: outside the project as written, a project path as written, else under .codex/scripts/. */
 export function codexGateScript(run: string): string {
   const { script } = runParts(run);
-  return script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
+  return isOutsidePath(script) ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `.codex/scripts/${scriptNameFromRun(run) ?? script}`;
 }
 
 /**
@@ -595,7 +599,7 @@ export function buildCodexHooks(ast: TopologyAST): CodexHooksOutput {
         // filter's launcher sets $AT_ROOT, so the hook's own script is found from a nested repository too.
         const inner = plan.kind === "shell"
           ? `sh -c ${q(plan.command)}`
-          : [plan.interp, plan.rel.startsWith("/") ? plan.rel : `"$AT_ROOT/${plan.rel}"`, ...plan.args].join(" ");
+          : [plan.interp, plan.rel.startsWith("/") ? plan.rel : isOutsidePath(plan.rel) ? `"${plan.rel}"` : `"$AT_ROOT/${plan.rel}"`, ...plan.args].join(" ");
         command = launchCommand("bash", IF_FILTER_PATH, [...(refuse ? ["--refuse"] : []), q(cond.tool), q(cond.glob), inner], refuse, deadline);
       } else if (plan.kind === "shell") {
         // An inline command has no script to find; a refuse hook still turns any failure into a block.

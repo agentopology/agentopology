@@ -25,7 +25,7 @@ import { spawnSync } from "node:child_process";
 import type { TopologyAST } from "../parser/ast.js";
 import { claudeCodeBinding } from "../bindings/claude-code.js";
 import { codexBinding } from "../bindings/codex.js";
-import { runParts, isProjectPath } from "../parser/run.js";
+import { runParts, isOutsidePath, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
 import { sessionAgentsOf } from "../bindings/lib/session.js";
 
@@ -372,7 +372,7 @@ function pointers(ast: TopologyAST): MissingPointer[] {
   const run = (r: string | undefined, from: string) => {
     if (!r) return;
     const { script } = runParts(r);
-    if (script && isProjectPath(script) && !script.startsWith("/") && !script.startsWith("~")) add(script, from);
+    if (script && isProjectPath(script) && !isOutsidePath(script) && !script.startsWith("~")) add(script, from);
   };
   for (const n of ast.nodes) {
     add(n.file, `${n.type} ${n.id} file:`);

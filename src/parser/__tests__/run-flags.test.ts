@@ -88,19 +88,36 @@ describe("a script word through a variable is a path, named by its basename with
     '"$CLAUDE_PROJECT_DIR"/tools/x.py',
     "${HOME}/bin/x.sh",
     '"$HOME/bin/x.sh"',
-    "$SCRIPT",
+    "$CLAUDE_PROJECT_DIR/scripts/x.sh",
   ])("isProjectPath(%s)", (word) => {
     expect(isProjectPath(word)).toBe(true);
+  });
+
+  it("a variable alone, with no path after it, is not a path (as before)", () => {
+    expect(isProjectPath("$SCRIPT")).toBe(false);
   });
 
   it.each([
     [RUN, "check.py"],
     ['python3 "${CLAUDE_PROJECT_DIR}/tools/x.py"', "x.py"],
     ['bash "$HOME/bin/x.sh" --a', "x.sh"],
-    ['"$CLAUDE_PROJECT_DIR/tools/x.sh" a', "x.sh"],
+    // a first word through a variable is left as written: V96 refuses it, as before
+    ['"$CLAUDE_PROJECT_DIR/tools/x.sh" a', null],
     ["bash -c 'exit 2'", "bash"],
   ])("scriptNameFromRun(%s) = %s", (run, name) => {
     expect(scriptNameFromRun(run)).toBe(name);
+  });
+
+  it("in a .at string's form, the arguments' \\\" are read as quotes too, so the command is the one the harness ran", () => {
+    const run = 'python3 \\"$CLAUDE_PROJECT_DIR/tools/guard.py\\" --re \\"a\\\\d+\\"';
+    expect(runParts(run)).toEqual({ interpreter: "python3", script: "./tools/guard.py", args: ["--re", '"a\\\\d+"'] });
+    expect(hookCommand(run, "t")).toBe('python3 "$CLAUDE_PROJECT_DIR/tools/guard.py" --re "a\\\\d+"');
+  });
+
+  it("after a word that is not an interpreter (`cd`), a variable path is left as written and names no script, as before", () => {
+    const run = 'cd \\"$CLAUDE_PROJECT_DIR/web\\" && npm test';
+    expect(runParts(run)).toEqual({ interpreter: "cd", script: '\\"$CLAUDE_PROJECT_DIR/web\\"', args: ["&&", "npm", "test"] });
+    expect(scriptNameFromRun(run)).toBeNull();
   });
 
   it("validate reads the flagged form as a command, also as a .at string holds it", () => {
@@ -118,7 +135,7 @@ describe("the flags travel to the command the binding writes", () => {
   it.each([
     [RUN, 'python3 -I -B "$CLAUDE_PROJECT_DIR/tools/check.py" hook Stop'],
     ["node -r ts-node/register tools/a.ts", 'node -r ts-node/register "$CLAUDE_PROJECT_DIR/tools/a.ts"'],
-    ["bash -eu scripts/x.sh a", "bash -eu .claude/skills/t/scripts/x.sh a"],
+    ["bash -eu scripts/x.sh a", 'bash -eu "$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/x.sh" a'],
     ['bash "$HOME/bin/x.sh" --a', 'bash "$HOME/bin/x.sh" --a'],
   ])("claude-code hookCommand(%s)", (run, command) => {
     expect(hookCommand(run, "t")).toBe(command);

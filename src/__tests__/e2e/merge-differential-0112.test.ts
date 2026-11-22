@@ -15,6 +15,14 @@
  * settings.json must be byte-identical, except for the stub rulings
  * (differential/stub-rulings.mjs): the stub summary is compared out, and a
  * gate whose check script is a stub is graded none.
+ *
+ * One named exception, read as a path (differential/read-as-path.ts): an rt
+ * harness whose hook command runs a script through `$CLAUDE_PROJECT_DIR` after
+ * an interpreter, or with interpreter flags, which 0.11.2 did not compile
+ * (import refused it, or scaffold did), now imports, validates and scaffolds
+ * with exit 0, and settings.json keeps the harness's own entry after every
+ * step: no second entry, nothing rewritten. The number of such sequences is
+ * pinned (READ_AS_PATH).
  */
 
 import { describe, it, expect } from "vitest";
@@ -27,9 +35,13 @@ import { runSequence } from "./differential/merge-sequences.mjs";
 import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 // @ts-expect-error plain JavaScript module
 import { ruledSides } from "./differential/stub-rulings.mjs";
+import { twinOf } from "./differential/read-as-path.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
+
+/** The rt sequences read as a path: 0.11.2 did not compile their command; now every step exits 0. */
+const READ_AS_PATH = 9;
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 /**
@@ -54,6 +66,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
   // seconds (one 120-s loop tripped vitest's 60-s RPC timeout). The last test
   // counts the steps asserted.
   let asserted = 0;
+  const readAsPath: string[] = [];
   const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
 
   it.each(indexed)("exit code, output and settings.json are byte-identical after every step: %s", async (_name, i) => {
@@ -67,6 +80,22 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
       asserted += now.length;
       const was = frozen.sequences[i].steps;
       const rt = seq.name.startsWith("rt ");
+      // Read as a path: 0.11.2 did not compile this command (import refused it, or scaffold did).
+      const command = rt ? seq.name.slice(seq.name.indexOf(": ") + 2) : "";
+      if (rt && twinOf(command) !== null && (rtImport.get(seq.name)?.code === 2 || was[2]?.code !== 0)) {
+        readAsPath.push(seq.name);
+        now.forEach((step, n) => {
+          const at = `${seq.name}, step ${n + 1} (${step.args})`;
+          if (step.code !== 0) diffs.push(`${at}: exit ${step.code}, read as a path it compiles`);
+          if (step.settings !== now[0].settings) diffs.push(`${at}: settings.json changed\n--- the harness's\n${now[0].settings}\n--- now\n${step.settings}`);
+        });
+        const hooks = JSON.parse(now[0].settings ?? "{}").hooks?.PreToolUse ?? [];
+        if (JSON.stringify(hooks.flatMap((g: { hooks: Array<{ command: string }> }) => g.hooks.map((h) => h.command))) !== JSON.stringify([command])) {
+          diffs.push(`${seq.name}: settings.json does not hold the harness's one command`);
+        }
+        expect(diffs, `${diffs.length} differences:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
+        return;
+      }
       now.forEach((step, n) => {
         const w = was[n];
         const at = `${seq.name}, step ${n + 1} (${step.args})`;
@@ -98,5 +127,9 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
 
   it("asserted every frozen step", () => {
     expect(asserted).toBe(frozen.sequences.reduce((n, s) => n + s.steps.length, 0));
+  });
+
+  it("held only the rt sequences read as a path to the read-as-path rule", () => {
+    expect(readAsPath.length, readAsPath.join("\n")).toBe(READ_AS_PATH);
   });
 });
