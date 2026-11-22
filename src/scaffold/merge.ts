@@ -295,6 +295,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/** A word that is only `$CLAUDE_PROJECT_DIR`, in any spelling, with any trailing slashes inside or after its quotes. */
+const PROJECT_DIR_WORD = /^"?\$(?:CLAUDE_PROJECT_DIR|\{CLAUDE_PROJECT_DIR(?::-[^}"]*)?\})(\/*)"?(\/*)$/;
+
 /**
  * A command with the project-dir prefix, quotes and "./" removed, blanks
  * folded. A word that opens with `$CLAUDE_PROJECT_DIR` in any shape the run
@@ -303,13 +306,21 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * written as the `./x` it names, so a hand-built hook and the command the
  * binding compiles for it are one hook. A longer name (`$CLAUDE_PROJECT_DIR_OLD`)
  * is another variable and stays.
+ *
+ * A word that is only the variable (`"$CLAUDE_PROJECT_DIR"`, `$CLAUDE_PROJECT_DIR/`,
+ * `"${CLAUDE_PROJECT_DIR:-.}"/`) names the folder itself: an argument, which
+ * stays in the identity, one spelling for all, its trailing slash kept apart
+ * (`rsync -a dir/` and `rsync -a dir` copy different things).
  */
 function normalCommand(command: string): string {
   return command
     .split(/(\s+)/)
-    .map(projectWord)
+    .map((w) => {
+      const bare = w.match(PROJECT_DIR_WORD);
+      if (bare) return bare[1] || bare[2] ? "$CLAUDE_PROJECT_DIR/" : "$CLAUDE_PROJECT_DIR";
+      return projectWord(w).replace(/"?\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])\/?/g, "");
+    })
     .join("")
-    .replace(/"?\$CLAUDE_PROJECT_DIR(?![A-Za-z0-9_])\/?/g, "")
     .replace(/["']/g, "")
     .replace(/(^|\s)\.\//g, "$1")
     .replace(/\s+/g, " ")
