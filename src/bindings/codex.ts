@@ -728,7 +728,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
         sections.push("");
       }
       sections.push(`- **Type:** Human pause point — requires manual input or approval`);
-      const targets = approvalTargets(ast, human);
+      const targets = approvalTargets(ast, human, CODEX_GUARDS);
       if (targets.length > 0) {
         // R-11, F-10: AGENTS.md is loaded into the model's context, so the record is described for the
         // person in words (file, fields, meaning) and no line here writes it.

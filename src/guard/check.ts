@@ -29,6 +29,7 @@ import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
@@ -237,6 +238,25 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     return { ok: true, notes };
   };
 
+  // The agent the session runs as: what the .at compiles to, and what the
+  // settings.json on disk says (which decides).
+  const atSession = sessionAgentId(ast);
+  const fileSession = sessionAgentFromFile(ast, settings?.agent);
+  // The file starts every session as another agent than the .at compiles
+  // for: that agent is never launched, so nothing after or before it runs.
+  const staleSession = fileSession && fileSession !== atSession ? fileSession : undefined;
+  const staleWhy = staleSession
+    ? `settings.json agent is ${JSON.stringify(settings!.agent)}, so the session runs as ${staleSession} (${atSession ? `the .at's entry is ${atSession}` : "the .at states no entry"})`
+    : "";
+  const STALE_NOTE = `delete "agent" from .claude/settings.json, or set it to the entry, and scaffold again`;
+  /** Launch targets less the file's session agent, and a note when it was taken out. */
+  const launchable = (targets: string[]): { targets: string[]; notes: string[] } => {
+    if (!staleSession || !targets.includes(staleSession)) return { targets, notes: [] };
+    return {
+      targets: targets.filter((t) => t !== staleSession),
+      notes: [`not before ${staleSession}: ${staleWhy}, and it is never launched`, STALE_NOTE],
+    };
+  };
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
@@ -278,8 +298,25 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       items.push({ ...base, strength: "hope", by: "prose", where: "its run: names no script", notes: [] });
       continue;
     }
+    // The settings.json on disk decides which agent the session runs as. When
+    // it names another agent than the .at does (an entry removed or changed
+    // since the file was written, or set by hand), a gate after that agent
+    // never runs on SubagentStop, whatever the .at compiles to.
+    if (staleSession && gateAnchors(gate, "after").includes(staleSession)) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `after ${staleSession}: ${staleWhy}, and SubagentStop never fires for it; the playbook runs it`, notes: [STALE_NOTE] });
+      continue;
+    }
     const wiring = gateWiring(ast, gate);
     if (wiring.kind === "none") {
+      const session = atSession;
+      if (session && gateAnchors(gate, "after").includes(session)) {
+        items.push({ ...base, strength: "hope", by: "prose", where: `after ${session}, the entry agent: the entry agent is the session, so SubagentStop never fires for it; the playbook runs it`, notes: [] });
+        continue;
+      }
+      if (session && gateAnchors(gate, "before").includes(session)) {
+        items.push({ ...base, strength: "hope", by: "prose", where: `before ${session}, the entry agent: the entry agent is the session and is never launched, so no hook runs it; the playbook runs it`, notes: [] });
+        continue;
+      }
       const anchors = [...gateAnchors(gate, "after"), ...gateAnchors(gate, "before")].join(", ") || "nothing";
       items.push({ ...base, strength: "hope", by: "prose", where: `no Claude Code event marks its moment (between ${anchors}); the playbook runs it`, notes: [] });
       continue;
@@ -297,25 +334,45 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       const where = `SubagentStop on ${wiring.anchors.join(", ")} → ${file}`;
       items.push(problems.length
         ? { ...base, strength: "none", by: "hook", where, notes: problems }
-        : { ...base, strength: "refuse", by: "hook", where, notes: ["exit 2 keeps the agent working until the gate passes; a call it already made is not undone", ...scriptNotes], gradeNote: STOP_EVENT_NOTE });
+        : { ...base, strength: "refuse", by: "hook", where, notes: [
+          "exit 2 keeps the agent working until the gate passes; a call it already made is not undone",
+          ...(wiring.skipped ? [`not after ${wiring.skipped.join(", ")}: ${wiring.skipped.join(", ")} is the entry agent, the session itself, so SubagentStop never fires for it`] : []),
+          ...scriptNotes,
+        ], gradeNote: STOP_EVENT_NOTE });
       continue;
     }
-    // before-agent
-    const where = `PreToolUse on launching ${wiring.agents.join(", ")} → before-agent.sh`;
+    // before-agent (less the file's session agent, which is never launched)
+    const launch = launchable(wiring.agents);
+    if (launch.targets.length === 0) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${staleSession}: ${staleWhy}, and it is never launched; the playbook runs it`, notes: [STALE_NOTE] });
+      continue;
+    }
+    const where = `PreToolUse on launching ${launch.targets.join(", ")} → before-agent.sh`;
     const entry = guardEntry();
     const problems = entry.ok ? [] : entry.notes;
     if (entry.ok && !beforeAgent!.includes(`gate-${gate.id}.sh`)) problems.push(`before-agent.sh does not run gate-${gate.id}.sh`);
     if (readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
     items.push(problems.length
       ? { ...base, strength: "none", by: "hook", where, notes: problems }
-      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...scriptNotes] });
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...launch.notes, ...scriptNotes] });
   }
 
   for (const node of ast.nodes) {
     if (node.type !== "human") continue;
     const human = node as HumanNode;
     const base = { kind: "human" as const, id: human.id };
-    const targets = approvalTargets(ast, human);
+    const asked = approvalTargets(ast, human);
+    const launch = launchable(asked);
+    if (asked.length > 0 && launch.targets.length === 0) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${staleSession}: ${staleWhy}, and it is never launched, so there is no launch to ask before; the playbook asks`, notes: [STALE_NOTE] });
+      continue;
+    }
+    const targets = launch.targets;
+    const nextIsSession = atSession !== undefined && ast.edges.some((e) => e.from === human.id && !e.isError && e.to === atSession);
+    if (targets.length === 0 && nextIsSession) {
+      items.push({ ...base, strength: "hope", by: "prose", where: `before ${atSession}, the entry agent: the entry agent is the session and is never launched, so there is no launch to ask before; the playbook asks`, notes: [] });
+      continue;
+    }
     if (targets.length === 0) {
       items.push({ ...base, strength: "hope", by: "prose", where: "no agent follows it, so no launch to ask before; the playbook asks", notes: [] });
       continue;
@@ -326,7 +383,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if (entry.ok && !beforeAgent!.includes(`# approval step ${human.id}`)) problems.push(`before-agent.sh does not ask for ${human.id}`);
     items.push(problems.length
       ? { ...base, strength: "none", by: "hook", where, notes: problems }
-      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
+      : { ...base, strength: "refuse", by: "hook", where, notes: [...entry.notes, ...launch.notes, "Claude Code asks the person in the session; in claude -p there is no one to ask, so it is denied"] });
   }
 
   // Session agents: the spawn guard and the talk guard. Both are PreToolUse

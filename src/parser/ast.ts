@@ -1023,6 +1023,12 @@ export interface TopologyMeta {
   timeout?: string;
   /** Node id for catch-all error handler. */
   errorHandler?: string;
+  /**
+   * The agent every session starts as (`meta { entry: <agent-id> }`). Claude
+   * Code: the settings.json `agent` key. Must name an agent Claude Code can
+   * start as the main thread (V134).
+   */
+  entry?: string;
   /** Whether durable execution is enabled. */
   durable?: boolean;
 }

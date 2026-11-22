@@ -418,6 +418,9 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
 
   if (fields.timeout) result.timeout = fields.timeout;
   if (fields["error-handler"]) result.errorHandler = fields["error-handler"];
+  // Kept as written, an empty value included: V134 reports one that is not an agent id.
+  if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
+  else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.durable) result.durable = fields.durable === "true";
 
   return result;
@@ -2562,6 +2565,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.domain ? { domain: metaFields.domain } : {}),
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
+    ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
   };
 

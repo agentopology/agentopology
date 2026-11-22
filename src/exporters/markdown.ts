@@ -79,6 +79,7 @@ function renderHeader(ast: TopologyAST): string {
   if (t.timeout) extra.push(`**Timeout:** ${t.timeout}`);
   if (t.durable) extra.push(`**Durable:** Yes`);
   if (t.errorHandler) extra.push(`**Error Handler:** \`${t.errorHandler}\``);
+  if (t.entry) extra.push(`**Entry:** \`${t.entry}\``);
   if (extra.length > 0) {
     for (const e of extra) lines.push(`> ${e}`);
     lines.push("");

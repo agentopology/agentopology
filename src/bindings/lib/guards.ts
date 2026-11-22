@@ -22,6 +22,7 @@ import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
+import { sessionAgentId } from "./entry.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -163,8 +164,15 @@ export function runsAsSkill(agent: AgentNode): boolean {
   return agent.runs === "inline" || agent.runs === "fork";
 }
 
-export function isRegisteredSubagentType(ast: TopologyAST, name: string | undefined): boolean {
+export function isRegisteredSubagentType(ast: TopologyAST, name: string | undefined, p: GuardPlatform = CLAUDE_CODE_GUARDS): boolean {
   if (!name) return false;
+  // In Claude Code the entry agent (settings.json `agent`) is the session
+  // itself, not a subagent: SubagentStop never fires for it and it is never
+  // launched with the Agent tool. MEASURED 19 Nov with `claude --agent
+  // manager`: Stop fired with agent_type "manager", SubagentStop did not. The
+  // settings key is the same mechanism as --agent (the sub-agents doc: the
+  // flag overrides the setting): INFERRED. Codex has no entry agent.
+  if (p.id === "claude-code" && name === sessionAgentId(ast)) return false;
   return ast.nodes.some(
     (n) => (n.type === "group" || (n.type === "agent" && !runsAsSkill(n as AgentNode))) && n.id === name,
   );
@@ -198,17 +206,23 @@ export function getDelegationMode(ast: TopologyAST): "subagent" | "inline" {
  *   agent on either side); the playbook runs the gate script.
  */
 export type GateWiring =
-  | { kind: "subagent-stop"; anchors: string[] }
+  /** `skipped`: `after:` anchors left out because they are the entry agent (the session). */
+  | { kind: "subagent-stop"; anchors: string[]; skipped?: string[] }
   | { kind: "before-agent"; agents: string[] }
   | { kind: "none" };
 
-export function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
+export function gateWiring(ast: TopologyAST, gate: GateNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): GateWiring {
   if (getDelegationMode(ast) === "inline") return { kind: "none" };
   const afters = gateAnchors(gate, "after");
-  if (afters.length > 0 && afters.every((a) => isRegisteredSubagentType(ast, a))) {
-    return { kind: "subagent-stop", anchors: afters };
+  // The entry agent (Claude Code) is the session: it is left out of the
+  // anchors, and the others that are subagents are still wired.
+  const session = p.id === "claude-code" ? sessionAgentId(ast) : undefined;
+  const live = afters.filter((a) => a !== session);
+  const skipped = afters.filter((a) => a === session);
+  if (live.length > 0 && live.every((a) => isRegisteredSubagentType(ast, a, p))) {
+    return { kind: "subagent-stop", anchors: live, ...(skipped.length > 0 ? { skipped } : {}) };
   }
-  const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b));
+  const agents = gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b, p));
   return agents.length > 0 ? { kind: "before-agent", agents } : { kind: "none" };
 }
 
@@ -218,23 +232,23 @@ export function gateWiring(ast: TopologyAST, gate: GateNode): GateWiring {
  * registered agents in a subagent-stop gate's `before:` (R-1).
  */
 export function spawnHeldAgents(ast: TopologyAST, gate: GateNode, p: GuardPlatform): string[] {
-  const wiring = gateWiring(ast, gate);
+  const wiring = gateWiring(ast, gate, p);
   if (wiring.kind === "before-agent") return wiring.agents;
   if (wiring.kind === "subagent-stop" && !p.stopCanBlock) {
-    return gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b));
+    return gateAnchors(gate, "before").filter((b) => isRegisteredSubagentType(ast, b, p));
   }
   return [];
 }
 
-function hasHuman(ast: TopologyAST): boolean {
-  return ast.nodes.some((n) => n.type === "human" && approvalTargets(ast, n as HumanNode).length > 0);
+function hasHuman(ast: TopologyAST, p: GuardPlatform): boolean {
+  return ast.nodes.some((n) => n.type === "human" && approvalTargets(ast, n as HumanNode, p).length > 0);
 }
 
 /** Agents a human approval step stands before: its direct flow successors. */
-export function approvalTargets(ast: TopologyAST, human: HumanNode): string[] {
+export function approvalTargets(ast: TopologyAST, human: HumanNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): string[] {
   if (getDelegationMode(ast) === "inline") return [];
   const out = ast.edges.filter((e) => e.from === human.id && !e.isError).map((e) => e.to);
-  return [...new Set(out)].filter((id) => isRegisteredSubagentType(ast, id));
+  return [...new Set(out)].filter((id) => isRegisteredSubagentType(ast, id, p));
 }
 
 /**
@@ -263,7 +277,7 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     if (node.type !== "human") continue;
     const human = node as HumanNode;
     const reason = `Approval step "${human.id}"${human.description ? `: ${human.description}` : ""}`;
-    for (const agent of approvalTargets(ast, human)) {
+    for (const agent of approvalTargets(ast, human, p)) {
       // A platform with no "ask" decision holds with exit 2 until an approval record exists (CX-11).
       add(agent, p.supportsAsk
         ? [`    # approval step ${human.id}`, `    ask ${shellQuote(reason)}`]
@@ -303,7 +317,7 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
           "ask() { ASK=\"${ASK:+$ASK; }$1\"; }",
           "",
         ]
-      : hasHuman(ast)
+      : hasHuman(ast, p)
         ? [
             `APPROVALS="${p.stateDir}/approvals.jsonl"`,
             "# approved STEP: the last record for STEP in the approvals file must have ok: true. Any error reads as not approved.",
@@ -963,7 +977,7 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     const rec = gateLedger(ast, node as GateNode);
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
-  if (!p.supportsAsk && hasHuman(ast)) paths.push(`${p.stateDir}/approvals.jsonl`);
+  if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
   return [...new Set(paths)].map((path) => {
     const base = path.replace(/^.*\//, "");
     const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1328,7 +1342,7 @@ export function generateGateWrapperScripts(
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
 
     const inlineMode = getDelegationMode(ast) === "inline";
-    const wiring = gateWiring(ast, gate);
+    const wiring = gateWiring(ast, gate, p);
     const wiredAsHook = wiring.kind === "subagent-stop";
     const held = spawnHeldAgents(ast, gate, p);
     let enforcementNote: string;
@@ -1351,8 +1365,15 @@ export function generateGateWrapperScripts(
         ? `#              The SubagentStop hook on "${gateAnchors(gate, "after").join('", "')}" only reports: ${p.label} cannot block a stop.`
         : `#              Invoke this script from your orchestrator playbook before the next step.`;
     } else if (wiredAsHook) {
-      enforcementNote = `# Enforcement: SubagentStop hook on agent "${gateAnchors(gate, "after").join('", "')}". Exit 2 blocks the subagent`;
+      enforcementNote = `# Enforcement: SubagentStop hook on agent "${wiring.anchors.join('", "')}". Exit 2 blocks the subagent`;
       enforcementNote2 = `#              from stopping (${p.label} prevents stop and surfaces stderr to ${p.modelName}).`;
+      if (wiring.skipped) {
+        enforcementNote2 += `\n#              Not after ${wiring.skipped.join(", ")}: ${wiring.skipped.join(", ")} is the entry agent, the session itself, so SubagentStop never fires for it.`;
+      }
+    } else if (p.id === "claude-code" && sessionAgentId(ast) !== undefined && gateAnchors(gate, "after").includes(sessionAgentId(ast)!)) {
+      const session = sessionAgentId(ast)!;
+      enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${session} is the entry agent, the session itself, so SubagentStop never fires for it).`;
+      enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;
     } else {
       enforcementNote = `# Enforcement: NOT wired as a SubagentStop hook (after: ${gateAnchors(gate, "after").join(", ") || "<unset>"} is not an agent).`;
       enforcementNote2 = `#              Invoke this script from your orchestrator playbook or a /command at the right step.`;

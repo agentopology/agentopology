@@ -126,7 +126,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     if (node.type !== "human") continue;
     const human = node as HumanNode;
     const base = { kind: "human" as const, id: human.id };
-    const targets = approvalTargets(ast, human);
+    const targets = approvalTargets(ast, human, CODEX_GUARDS);
     if (targets.length === 0) {
       items.push({ ...base, strength: "hope", by: "prose", where: "no agent follows it, so no spawn to hold; the playbook asks", notes: [] });
       continue;

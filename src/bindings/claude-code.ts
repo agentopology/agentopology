@@ -33,6 +33,7 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
@@ -2511,6 +2512,16 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (wiring.kind === "before-agent") continue;
     if (checkableActionGate(ast, gate)) continue; // before-action.sh runs it
     if (wiring.kind !== "subagent-stop") {
+      const session = sessionAgentId(ast);
+      if (session && anchors.includes(session)) {
+        // The entry agent is the session, not a subagent (V134).
+        console.warn(
+          `[claude-code] Gate "${gate.id}" is after "${session}", the entry agent: the entry agent is the session, ` +
+            `so SubagentStop never fires for it. SubagentStop hook not emitted; the gate wrapper script is still ` +
+            `generated. Anchor the gate on a subagent or a script step.`,
+        );
+        continue;
+      }
       const bad = anchors.filter((a) => !isRegisteredSubagentType(ast, a));
       const targetDesc = anchors.length
         ? `non-agent target ${bad.map((b) => `"${b}"`).join(", ")}`
@@ -2523,6 +2534,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
       continue;
     }
 
+    // An anchor that is the entry agent (the session) is left out; the
+    // subagents beside it keep their hook (V134 warns about the entry agent).
+    if (wiring.skipped) {
+      console.warn(
+        `[claude-code] Gate "${gate.id}" is after ${wiring.skipped.map((s) => `"${s}"`).join(", ")}, the entry agent: the entry agent is the session, ` +
+          `so SubagentStop never fires for it. No SubagentStop hook for it; the other anchors keep theirs.`,
+      );
+    }
+
     const eventName = "SubagentStop";
     if (!hooksByEvent[eventName]) hooksByEvent[eventName] = [];
 
@@ -2533,7 +2553,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     // land in settings.json, type-check clean through Record<string, unknown>,
     // and the hook would simply never fire. Silent, and the gate would look
     // wired while doing nothing.
-    const hookEntries: Array<Record<string, unknown>> = anchors.map((anchor) => ({
+    const hookEntries: Array<Record<string, unknown>> = wiring.anchors.map((anchor) => ({
       matcher: anchor,
       hooks: [
         {
@@ -2633,10 +2653,34 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // Defaults and observability are documented in the CLAUDE.md context file,
   // not in settings.json (Claude Code doesn't recognize these keys).
 
+  // meta { entry }: the subagent every session starts as (the `agent` key).
+  // An extensions { claude-code { agent } } below is more specific and wins
+  // (V134 warns when they differ). An entry Claude Code cannot start (V134
+  // error) is not written under --allow-invalid.
+  // Claude Code resolves the key by the agent file's `name`, so the value is
+  // the name the binding writes there (the claude-code name extension, or
+  // the id).
+  // The value comes from settingsAgent, the one rule V134, the gate wiring
+  // and guard --check also read.
+  if (ast.topology.entry !== undefined) {
+    const problem = entryProblem(ast);
+    if (problem) console.warn(`[claude-code] meta entry "${ast.topology.entry}" ${problem}; agent not written to settings.json.`);
+  }
+  const extAgent = extensionAgent(ast);
+  if (extAgent !== undefined) {
+    const node = nodeForAgentName(ast, extAgent);
+    const problem = node ? agentProblem(node) : null;
+    if (node && problem) console.warn(`[claude-code] extensions: agent "${extAgent}" names "${node.id}", which ${problem}; not written to settings.json.`);
+  }
+  const written = settingsAgent(ast);
+  if (written) settings.agent = written.value;
+
   // Topology extensions for claude-code: each key at its documented path and
   // type (`defaultMode` lands under permissions). V130 refuses what has no
   // place; under --allow-invalid it is skipped here with a warning.
   for (const [k, v] of Object.entries(ast.extensions?.["claude-code"] ?? {})) {
+    // agent (a string) is written above, from settingsAgent.
+    if (k === "agent" && typeof v === "string") continue;
     const where = resolveSettingsKey(k);
     const value = where && (!where.row || (where.row.projectFile && !where.row.removed)) ? coerceCcValue(where.row, v) : undefined;
     if (!where || !value || !value.ok) {
