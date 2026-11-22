@@ -783,9 +783,8 @@ export const RESOLVE_MAX_NAMES = 16;
  * Switches for the generated step guard. `resolveLeadingAssignments` (off by default): read the literal
  * assignments that open a command into their uses (RESOLVE_FUNCTIONS) before the command is cut into
  * steps. Off, any expansion among a gated tool's words is doubt and the step's gate checks run; the
- * generated scripts then carry none of the RESOLVE_FUNCTIONS. Another shell (zsh, which Claude Code uses
- * when it is the user's $SHELL) can read the same use as another word, so the reading stays off until it
- * can be made sound for every shell the command may run in. Tests turn it on to keep the code covered.
+ * generated scripts then carry none of the RESOLVE_FUNCTIONS. The reading stays off until it is proven
+ * for every shell the command may run in. Tests turn it on to keep the code covered.
  */
 export const GUARD_OPTIONS: { resolveLeadingAssignments: boolean } = { resolveLeadingAssignments: false };
 
