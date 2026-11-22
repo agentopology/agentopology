@@ -1,0 +1,162 @@
+/**
+ * `agentopology fix`: the V135 errors of a topology, each with the edit that
+ * grades the gate honestly (`strength: hope`) and, when the flow has one, the
+ * anchor that would make it refuse (a suggestion, never applied).
+ *
+ * The edit is minimal: one inserted line per gate (after its `run:` line), or
+ * the word `refuse` replaced in a `strength: refuse` line. Every other byte of
+ * the file stays as written.
+ */
+
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse } from "../../parser/index.js";
+import { validate } from "../../parser/validator.js";
+import type { GateNode } from "../../parser/ast.js";
+import { hooklessGateReason } from "../../bindings/lib/guards.js";
+import { planV135Fixes, applyV135Fixes } from "../v135.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = resolve(here, "fixtures/v135-fix.at");
+const source = readFileSync(FIXTURE, "utf8");
+
+const V135_GATES = ["needs-source", "after-approval", "cited", "orphan-check"];
+
+/** The fixture with exactly the edits fix makes, written out by hand. */
+const expected = source
+  .replace(`      run: "scripts/source.sh"   # checks the citations\n`, `$&      strength: hope\n`)
+  .replace(`      run: "scripts/approval.sh"\n`, `$&      strength: hope\n`)
+  .replace(`      strength: refuse   # we thought so\n`, `      strength: hope   # we thought so\n`)
+  .replace(`      run: "scripts/orphan.sh"\n`, `$&      strength: hope\n`);
+
+const v135Errors = (src: string, target?: string) =>
+  validate(parse(src), target ? { target } : {}).filter((r) => r.rule === "V135" && r.level === "error");
+
+describe("fix: plan (dry run)", () => {
+  it("the fixture is what it claims: four V135 errors and one V135 warning", () => {
+    expect(v135Errors(source).map((r) => r.node)).toEqual(V135_GATES);
+    const warn = validate(parse(source)).filter((r) => r.rule === "V135" && r.level === "warning");
+    expect(warn.map((r) => r.node)).toEqual(["lint-gate"]);
+    expect(expected).not.toBe(source);
+  });
+
+  it("lists exactly the gates V135 errors on, in source order", () => {
+    const plan = planV135Fixes(source);
+    expect(plan.applies).toBe(true);
+    expect(plan.fixes.map((f) => f.gate)).toEqual(V135_GATES);
+  });
+
+  it("does not list the V135 warning (a declared hook runs the gate's command), nor fine gates", () => {
+    const gates = planV135Fixes(source).fixes.map((f) => f.gate);
+    for (const fine of ["lint-gate", "draft-ok", "deploy-ok", "style", "by-hand"]) expect(gates).not.toContain(fine);
+  });
+
+  it("gives V135's own reason and line for each gate", () => {
+    const ast = parse(source);
+    const errors = v135Errors(source);
+    for (const fix of planV135Fixes(source).fixes) {
+      const gate = ast.nodes.find((n) => n.id === fix.gate) as GateNode;
+      expect(fix.reason).toBe(hooklessGateReason(ast, gate));
+      const err = errors.find((e) => e.node === fix.gate)!;
+      expect(fix.line).toBe(err.line);
+      expect(fix.message).toBe(err.message);
+    }
+  });
+
+  it("the edit is an inserted strength: hope line, or refuse replaced by hope", () => {
+    const byGate = Object.fromEntries(planV135Fixes(source).fixes.map((f) => [f.gate, f]));
+    expect(byGate["needs-source"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
+    expect(byGate["after-approval"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
+    expect(byGate["orphan-check"].edit).toMatchObject({ kind: "insert", text: "      strength: hope\n" });
+    expect(byGate["cited"].edit).toMatchObject({ kind: "replace", text: "hope" });
+  });
+
+  it("suggests an anchor from the flow that would make the gate refuse, never one the topology lacks", () => {
+    const byGate = Object.fromEntries(planV135Fixes(source).fixes.map((f) => [f.gate, f.suggestions]));
+    // needs-source is before: finish; reviewer is the subagent right before finish.
+    expect(byGate["needs-source"].join("\n")).toContain("after: reviewer");
+    // after-approval is after: approve; reviewer is the subagent right after approve.
+    expect(byGate["after-approval"].join("\n")).toContain("before: reviewer");
+    // cited is after: finish; deploy is the script step right after finish.
+    expect(byGate["cited"].join("\n")).toContain("before: deploy");
+    // orphan-check names no anchor: nothing next to it in the flow.
+    expect(byGate["orphan-check"]).toEqual([]);
+  });
+
+  it("every suggestion, applied by hand, would leave no V135 error on that gate", () => {
+    const ast = parse(source);
+    for (const fix of planV135Fixes(source).fixes) {
+      const gate = ast.nodes.find((n) => n.id === fix.gate) as GateNode;
+      for (const s of fix.anchors) {
+        expect(hooklessGateReason(ast, { ...gate, ...s })).toBeNull();
+      }
+    }
+  });
+
+  it("does not touch the source", () => {
+    const copy = String(source);
+    planV135Fixes(copy);
+    expect(copy).toBe(source);
+  });
+
+  it("V135 does not apply to cursor or claude-workflow: nothing to fix", () => {
+    for (const target of ["cursor", "claude-workflow"]) {
+      const plan = planV135Fixes(source, { target });
+      expect(plan.applies).toBe(false);
+      expect(plan.fixes).toEqual([]);
+    }
+  });
+
+  it("judges codex as V135 does", () => {
+    expect(planV135Fixes(source, { target: "codex" }).fixes.map((f) => f.gate))
+      .toEqual(v135Errors(source, "codex").map((r) => r.node));
+  });
+});
+
+describe("fix: apply (--write)", () => {
+  it("changes only the inserted lines and the replaced word", () => {
+    expect(applyV135Fixes(source, planV135Fixes(source))).toBe(expected);
+  });
+
+  it("the result has no V135 error, and every fixed gate reads strength: hope", () => {
+    const out = applyV135Fixes(source, planV135Fixes(source));
+    expect(v135Errors(out)).toEqual([]);
+    const ast = parse(out);
+    for (const id of V135_GATES) expect((ast.nodes.find((n) => n.id === id) as GateNode).strength).toBe("hope");
+  });
+
+  it("the result validates as cleanly as the fixture did, less the V135 errors", () => {
+    const before = validate(parse(source)).filter((r) => r.level === "error" && r.rule !== "V135");
+    const after = validate(parse(applyV135Fixes(source, planV135Fixes(source)))).filter((r) => r.level === "error");
+    expect(after).toEqual(before);
+  });
+
+  it("running it twice is a no-op", () => {
+    const once = applyV135Fixes(source, planV135Fixes(source));
+    const plan = planV135Fixes(once);
+    expect(plan.fixes).toEqual([]);
+    expect(applyV135Fixes(once, plan)).toBe(once);
+  });
+
+  it("keeps CRLF line endings: the inserted line ends as its neighbours do", () => {
+    const crlf = source.replace(/\n/g, "\r\n");
+    const out = applyV135Fixes(crlf, planV135Fixes(crlf));
+    expect(out).toBe(expected.replace(/\n/g, "\r\n"));
+  });
+
+  it("a gate written on one line is reported for a hand edit, not rewritten", () => {
+    const oneLine = source.replace(
+      `    gate orphan-check {\n      run: "scripts/orphan.sh"\n    }`,
+      `    gate orphan-check { run: "scripts/orphan.sh" }`,
+    );
+    const plan = planV135Fixes(oneLine);
+    const orphan = plan.fixes.find((f) => f.gate === "orphan-check")!;
+    expect(orphan.edit).toBeUndefined();
+    expect(orphan.manual).toMatch(/by hand/);
+    const out = applyV135Fixes(oneLine, plan);
+    expect(out).toContain(`    gate orphan-check { run: "scripts/orphan.sh" }`);
+    expect(v135Errors(out).map((r) => r.node)).toEqual(["orphan-check"]);
+  });
+});
