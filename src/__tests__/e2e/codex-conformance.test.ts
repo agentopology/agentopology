@@ -220,7 +220,10 @@ describe.skipIf(!hasJq)("[CX-15] [C] a deny payload gives exit 2", () => {
 // Tier D: platform tools. Skipped, with the message above, when codex is absent.
 // ---------------------------------------------------------------------------
 const tierD = hasCodex ? describe : describe.skip;
-const sealed = (home: string) => ({ ...process.env, HOME: home, CODEX_HOME: home }) as Record<string, string>;
+// npm's cache lives outside the scratch home: codex's background work fills it after a call returns, and
+// it is npm's, not a codex leftover. The home's own cleanup below still fails the file on a leftover writer.
+const npmCache = fs.mkdtempSync(join(os.tmpdir(), "at-cx15-npm-"));
+const sealed = (home: string) => ({ ...process.env, HOME: home, CODEX_HOME: home, npm_config_cache: npmCache }) as Record<string, string>;
 
 tierD(`[CX-15] [D] platform tools (codex ${hasCodex ? codexProbe.stdout.trim() : "not installed: skipped"})`, () => {
   let home: string;
