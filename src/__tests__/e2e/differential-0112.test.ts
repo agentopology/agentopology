@@ -32,10 +32,10 @@ import { fileURLToPath } from "node:url";
 // @ts-expect-error plain JavaScript module, shared with freeze.mjs
 import { TARGETS, baselinesFor, compileRun, loadLib } from "./differential/compile-runs.mjs";
 import { runParts } from "../../parser/run.js";
-import { twinOf } from "./differential/read-as-path.js";
+import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
 
-/** The rows read as a path that compile differently from 0.11.2, each held to its twin. */
-const MOVED = 106;
+/** The rows read as a path that compile differently from 0.11.2, each held to its twin, per kind. */
+const MOVED: Record<ReadAsPathKind, number> = { "project-dir": 103, flags: 0, both: 3 };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(here, "../../../dist");
@@ -62,7 +62,8 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
   let lib: unknown;
   let baselines: unknown;
   let asserted = 0;
-  const moved: string[] = [];
+  const moved: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
+  const outside: string[] = [];
   beforeAll(async () => {
     lib = await loadLib(DIST);
     baselines = baselinesFor(lib);
@@ -77,14 +78,15 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
       const now = compileRun(lib, row.kind, row.run, baselines, { lit: row.lit, crlf: row.crlf }) as Row;
       const label = `${row.kind} ${row.lit ?? JSON.stringify(row.run)}${row.crlf ? " (CRLF)" : ""} (${row.source})`;
       const rowDiffs = diffsFrom0112(label, row, now);
-      // Read as a path: a moved row is held to its twin instead (see twinOf).
-      const twin = rowDiffs.length && row.run !== null && !row.lit && !row.crlf ? twinOf(row.run) : null;
-      if (twin === null) {
+      // Read as a path: a moved row is held to its twin instead (see read-as-path.ts).
+      const read = rowDiffs.length && row.run !== null && !row.lit && !row.crlf ? readAsPath(row.run) : null;
+      if (read === null) {
+        if (rowDiffs.length) outside.push(label);
         diffs.push(...rowDiffs);
         continue;
       }
-      moved.push(`${row.kind} ${row.run}`);
-      diffs.push(...twinDiffs(label, row, now, twin));
+      moved[read.kind].push(`${row.kind} ${row.run}`);
+      diffs.push(...twinDiffs(label, row, now, read.twin));
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 40).join("\n")}`).toEqual([]);
   }, 120_000);
@@ -148,7 +150,11 @@ describe("[D-0112] every hook and gate run resolves as 0.11.2 did", () => {
     expect(asserted).toBe(frozen.rows.length);
   });
 
-  it("moved only the rows read as a path, each held to its twin", () => {
-    expect(moved.length).toBe(MOVED);
+  it("no row outside the two read-as-path kinds differs from 0.11.2", () => {
+    expect(outside, `${outside.length} rows differ that are not read as a path:\n${outside.slice(0, 20).join("\n")}`).toEqual([]);
+  });
+
+  it("moved only the rows read as a path, each held to its twin, counted per kind", () => {
+    expect({ "project-dir": moved["project-dir"].length, flags: moved.flags.length, both: moved.both.length }).toEqual(MOVED);
   });
 });
