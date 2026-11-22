@@ -228,6 +228,53 @@ describe("names bash sets itself, and commands that can change a variable withou
   }
 });
 
+describe("a use the parent shell does not expand, or a child that can see another value, stays doubted", () => {
+  const doubted: [string, string][] = [
+    // a child shell expands $ab from an environment the command sets under another spelling
+    ["env a\"\"b=... bash -c '... $ab'", `ab=x; env a""b=accept bash -c '${X} enter $ab'`],
+    ["env a''b=... bash -c '... $ab'", `ab=x; env a''b=accept bash -c '${X} enter $ab'`],
+    ["env a\\b=... bash -c '... $ab'", `ab=x; env a\\b=accept bash -c '${X} enter $ab'`],
+    ["env a\"\"b=... sh -c '... ${ab}'", `ab=x; env a""b=accept sh -c '${X} enter \${ab}'`],
+    ["a here-doc with a quoted delimiter fed to bash", `ab=x; env a""b=accept bash <<'EOF'\n${X} enter $ab\nEOF`],
+    ["sudo VAR=... sh -c", `ab=x; sudo a""b=accept sh -c '${X} enter $ab'`],
+    ["\\$ab inside double quotes fed to bash -c", `ab=x; env a""b=accept bash -c "${X} enter \\$ab"`],
+    ["docker -e", `ab=x; docker run -e a""b=accept img sh -c '${X} enter $ab'`],
+    // the parent never expands these uses
+    ["$ab inside single quotes", `ab=x; ${X} enter '$ab'`],
+    ["\\$ab", `ab=x; ${X} enter \\$ab`],
+    ["\\$ab inside double quotes", `ab=x; ${X} enter "\\$ab"`],
+    ["double quotes inside single quotes", `ab=x; ${X} enter '"$ab"'`],
+    ["a here-doc anywhere", `ab=x; ${X} enter $ab <<EOF\nz\nEOF`],
+    // a child that can run a shell, or code given on the command line
+    ["find -exec with a shell spelled apart", `ab=x; find . -exec s""h -c '${X} enter $ab' \\;`],
+    ["busybox sh", `ab=x; busybox sh -c '${X} enter $ab'`],
+    ["xargs", `ab=x; echo accept | xargs -I{} ${X} enter $ab`],
+    ["nohup", `ab=x; nohup ${X} enter $ab`],
+    ["time", `ab=x; time ${X} enter $ab`],
+    ["python3 -c", `ab=x; python3 -c "import os; os.system('${X} enter $ab')"`],
+    ["node -e", `ab=x; node -e "require('child_process').execSync('${X} enter $ab')"`],
+    ["perl -e", `ab=x; perl -e 'system("${X} enter $ab")'`],
+    ["a name spelled apart in a prefix assignment", `ab=x; a""b=accept ${X} enter $ab`],
+  ];
+  for (const [shape, command] of doubted) {
+    it(`doubted: ${shape}`, () => {
+      const r = run(command);
+      expect(r.gateRan).toBe(true);
+    });
+  }
+
+  const resolved: [string, string][] = [
+    ["single quotes elsewhere in the command", `t=/x; ${X} enter $t 'q r'`],
+    ["the interpreter of the step itself, with a flag", `t=/x; python3 -u tools/runstate.py enter $t`],
+  ];
+  for (const [shape, command] of resolved) {
+    it(`still resolved: ${shape}`, () => {
+      const r = run(command);
+      expect(r.gateRan).toBe(false);
+    });
+  }
+});
+
 describe("resolution has a size limit: a longer command stays doubted", () => {
   /** `t=/x; tool enter $t $t ...`, padded with uses (and one filler) to exactly `len` characters. */
   const ofLength = (len: number) => {
