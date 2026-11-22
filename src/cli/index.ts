@@ -120,7 +120,11 @@ ${c.bold("Usage:")}
                        nothing, exits 2 when there is something to fix, 0 when not.
                        --write adds only the strength: hope lines (the rest of the file
                        is kept byte for byte), then validates again: exit 0 when no V135
-                       error is left, 1 when one is (a gate it cannot edit in place).
+                       error is left, 1 when one is (a gate it cannot edit in place, or
+                       one in an imported file: run fix on that file). A gate that cites
+                       code (at:) is listed with V135's fix, drop run: and keep the
+                       citation, for a hand edit. --write refuses --dry-run and a file
+                       that is not valid UTF-8 (exit 1, nothing written).
   agentopology inventory [<project-dir>] [--at <file.at>] [--user]
                        Print the project's live things (the .claude tree, settings hooks,
                        .mcp.json servers, package.json scripts) as JSON. Writes nothing.
@@ -1875,16 +1879,35 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
  * errors on `strength: hope`. Exit 0: nothing (left) to fix. Exit 2: a dry
  * run found gates to fix and wrote nothing (2, not 1, so a script can tell
  * "there is work" from "the command failed"). Exit 1: no file, a parse
- * error, an unknown target, or a V135 error left after --write.
+ * error, an unknown target, --write with --dry-run, --write on a file that
+ * is not valid UTF-8, or a V135 error left after --write. A V135 error in an
+ * imported file counts in both verdicts; it is fixed in that file.
  */
-function cmdFix(filePath: string, target: string | undefined, write: boolean): void {
+function cmdFix(filePath: string, target: string | undefined, write: boolean, dryRun: boolean): void {
+  if (write && dryRun) {
+    console.error(c.red("Error: --write and --dry-run cannot be used together; fix without --write is the dry run. Nothing written."));
+    process.exit(1);
+  }
   if (target && !bindings[target]) {
     console.error(c.red(`Error: unknown target "${target}". Available: ${Object.keys(bindings).join(", ")}`));
     process.exit(1);
   }
   const resolved = path.resolve(filePath);
-  const source = readFile(filePath);
+  if (!fs.existsSync(resolved)) {
+    console.error(c.red(`Error: file not found: ${resolved}`));
+    process.exit(1);
+  }
+  const bytes = fs.readFileSync(resolved);
+  const source = bytes.toString("utf-8");
   const name = path.basename(filePath);
+  // Writing the decoded text back would turn each byte that is not UTF-8
+  // into U+FFFD (EF BF BD), changing bytes outside the edited lines.
+  if (write && !Buffer.from(source, "utf-8").equals(bytes)) {
+    console.error(c.red(`Error: ${name} is not valid UTF-8, so --write would change bytes outside the lines it edits. Nothing written; save it as UTF-8 first, or add strength: hope by hand.`));
+    process.exit(1);
+  }
+  const importLine = (p: { relayed: unknown[]; relayedFiles: string[] }) =>
+    `${p.relayed.length} V135 error(s) in imported files: run fix on ${p.relayedFiles.map((f) => path.relative(process.cwd(), f) || f).join(", ")}`;
   const on = target ? `--target ${target}` : "no target";
   let plan;
   try {
@@ -1897,12 +1920,11 @@ function cmdFix(filePath: string, target: string | undefined, write: boolean): v
     console.log(`V135 does not apply to --target ${target}: nothing to fix in ${name}.`);
     process.exit(0);
   }
-  for (const r of plan.relayed) console.log(c.yellow(`  From an import (fix it in that file): ${r.message}`));
-  if (plan.fixes.length === 0) {
+  if (plan.fixes.length === 0 && plan.relayed.length === 0) {
     console.log(c.green(`Nothing to fix in ${name} (V135, ${on}).`));
     process.exit(0);
   }
-  console.log(`${c.bold(name)}: ${plan.fixes.length} gate(s) meant to refuse that no generated hook runs (V135, ${on}):`);
+  if (plan.fixes.length > 0) console.log(`${c.bold(name)}: ${plan.fixes.length} gate(s) meant to refuse that no generated hook runs (V135, ${on}):`);
   for (const f of plan.fixes) {
     console.log("");
     console.log(`  gate "${f.gate}"${f.line !== undefined ? ` (line ${f.line})` : ""}`);
@@ -1917,20 +1939,30 @@ function cmdFix(filePath: string, target: string | undefined, write: boolean): v
     if (f.suggestions.length === 0) console.log(`    to make it refuse: no subagent or script step next to it in the flow; anchor it yourself`);
     for (const s of f.suggestions) console.log(`    to make it refuse (a suggestion, not applied): ${s}`);
   }
-  console.log("");
+  if (plan.fixes.length > 0) console.log("");
+  if (plan.relayed.length > 0) console.log(c.yellow(importLine(plan)));
   const editable = plan.fixes.filter((f) => f.edit).length;
   if (!write) {
-    console.log(`Dry run: Nothing written. Run with --write to add strength: hope to ${editable} gate(s).`);
+    console.log(editable > 0
+      ? `Dry run: Nothing written. Run with --write to add strength: hope to ${editable} gate(s).`
+      : "Dry run: Nothing written; nothing here that --write can edit.");
     process.exit(2);
   }
-  if (editable > 0) fs.writeFileSync(resolved, applyV135Fixes(source, plan), "utf-8");
-  console.log(`Wrote ${name}: strength: hope on ${editable} gate(s); nothing else changed.`);
+  if (editable > 0) {
+    fs.writeFileSync(resolved, applyV135Fixes(source, plan), "utf-8");
+    console.log(`Wrote ${name}: strength: hope on ${editable} gate(s); nothing else changed.`);
+  } else {
+    console.log(`Nothing written to ${name}: no gate here that fix can edit.`);
+  }
   const after = planV135Fixes(fs.readFileSync(resolved, "utf-8"), { target, filePath: resolved });
-  if (after.fixes.length === 0) {
+  if (after.fixes.length === 0 && after.relayed.length === 0) {
     console.log(c.green(`validate: no V135 error left (${on}).`));
     process.exit(0);
   }
-  console.error(c.red(`validate: ${after.fixes.length} V135 error(s) left: ${after.fixes.map((f) => f.gate).join(", ")}. Edit them by hand.`));
+  if (after.fixes.length > 0) {
+    console.error(c.red(`validate: ${after.fixes.length} V135 error(s) left: ${after.fixes.map((f) => f.gate).join(", ")}. Edit them by hand.`));
+  }
+  if (after.relayed.length > 0) console.error(c.red(`validate: ${importLine(after)}.`));
   process.exit(1);
 }
 
@@ -2013,7 +2045,7 @@ function main(): void {
         usage();
         process.exit(1);
       }
-      cmdFix(args.file, args.target, args.write);
+      cmdFix(args.file, args.target, args.write, args.dryRun);
       break;
 
     case "inventory":

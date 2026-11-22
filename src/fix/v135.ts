@@ -14,11 +14,15 @@
  * `refuse` replaced in a written `strength: refuse`. Every other byte of the
  * file is kept, comments and spacing included. A gate whose `run:` line also
  * holds a brace of the gate block (a gate on one line) is left for a hand
- * edit.
+ * edit, and so is a gate that cites code (`at:`): V135's fix for it is to
+ * drop `run:` and keep the citation. A V135 error relayed from an imported
+ * file is reported with that file's path; it is fixed there, never from the
+ * importer.
  *
  * @module
  */
 
+import { dirname, resolve as resolvePath } from "node:path";
 import { parse } from "../parser/index.js";
 import type { GateNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
@@ -63,6 +67,8 @@ export interface V135FixPlan {
   fixes: V135Fix[];
   /** V135 errors relayed from an imported file (V8): fixed in that file. */
   relayed: ValidationResult[];
+  /** The imported files those errors are in, resolved against the importer's folder. */
+  relayedFiles: string[];
 }
 
 export interface V135FixOptions {
@@ -74,7 +80,7 @@ export interface V135FixOptions {
 /** The V135 errors of `source`, each with its edit and suggestions. */
 export function planV135Fixes(source: string, opts: V135FixOptions = {}): V135FixPlan {
   const { target } = opts;
-  if (target && !V135_TARGETS.includes(target)) return { applies: false, target, fixes: [], relayed: [] };
+  if (target && !V135_TARGETS.includes(target)) return { applies: false, target, fixes: [], relayed: [], relayedFiles: [] };
   const ast = parse(source);
   const results = validate(ast, { ...(target ? { target } : {}), ...(opts.filePath ? { filePath: opts.filePath } : {}) });
   const p = target === "codex" ? CODEX_GUARDS : CLAUDE_CODE_GUARDS;
@@ -83,7 +89,11 @@ export function planV135Fixes(source: string, opts: V135FixOptions = {}): V135Fi
     if (r.rule !== "V135" || r.level !== "error" || !r.node) continue;
     const gate = ast.nodes.find((n) => n.type === "gate" && n.id === r.node) as GateNode | undefined;
     if (!gate) continue;
-    const located = strengthEdit(source, gate.id);
+    // A cited gate: V135's fix is to drop run: and keep the citation, not to
+    // grade it hope next to a claim about code. Left for a hand edit.
+    const located: { edit: GateEdit } | { manual: string } = gate.at
+      ? { manual: `drop run: and keep the citation (at: "${gate.at}"), so the cited code is the claim; edit it by hand (fix writes no strength: hope next to a citation)` }
+      : strengthEdit(source, gate.id);
     const anchors = anchorSuggestions(ast, gate, p);
     fixes.push({
       gate: gate.id,
@@ -96,7 +106,10 @@ export function planV135Fixes(source: string, opts: V135FixOptions = {}): V135Fi
     });
   }
   const relayed = results.filter((r) => r.rule === "V8" && r.via === "V135" && r.level === "error");
-  return { applies: true, ...(target ? { target } : {}), fixes, relayed };
+  // V8 writes the import's source first: `<source>: [V135] <message>`.
+  const base = opts.filePath ? dirname(opts.filePath) : process.cwd();
+  const relayedFiles = [...new Set(relayed.map((r) => resolvePath(base, r.message.slice(0, r.message.indexOf(": [")))))];
+  return { applies: true, ...(target ? { target } : {}), fixes, relayed, relayedFiles };
 }
 
 /** `source` with the plan's edits applied; a gate with no edit is left as written. */
@@ -173,10 +186,10 @@ function strengthEdit(source: string, id: string): { edit: GateEdit } | { manual
     return { edit: { kind: "replace", offset, remove: "refuse".length, text: "hope", line: lineOf(source, offset) } };
   }
   const run = lines.filter((l) => /^\s*run\s*:/.test(l.masked)).pop();
-  // The run: line must be a line of its own: not the gate's header line, and
-  // not holding the closing brace.
-  const headerLine = source.lastIndexOf("\n", body.start - 1) + 1;
-  if (!run || run.start <= headerLine || run.end >= body.end) {
+  // The run: line must be a line of its own: not on the gate's header line
+  // (the body's first line starts right after its brace), and not holding
+  // the closing brace.
+  if (!run || run.start === body.start || run.end >= body.end) {
     return { manual: `gate "${id}" is written on one line; add strength: hope to it by hand` };
   }
   const indent = /^\s*/.exec(source.slice(run.start, run.end))![0];
