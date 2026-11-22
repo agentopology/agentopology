@@ -80,7 +80,12 @@ describe("a flag that takes inline code, or one the table does not know, still n
   });
 });
 
-describe("a script word through a variable is a path, named by its basename without quotes", () => {
+describe("a $CLAUDE_PROJECT_DIR script word is a project path, named by its basename without quotes", () => {
+  it("a word through any other variable is left as written, as before", () => {
+    expect(runParts('bash "$HOME/bin/x.sh" --a')).toEqual({ interpreter: "bash", script: '"$HOME/bin/x.sh"', args: ["--a"] });
+    expect(runParts("bash $HOME/bin/x.sh")).toEqual({ interpreter: "bash", script: "$HOME/bin/x.sh", args: [] });
+  });
+
   it.each([
     "$CLAUDE_PROJECT_DIR/tools/x.py",
     '"$CLAUDE_PROJECT_DIR/tools/x.py"',
@@ -100,7 +105,8 @@ describe("a script word through a variable is a path, named by its basename with
   it.each([
     [RUN, "check.py"],
     ['python3 "${CLAUDE_PROJECT_DIR}/tools/x.py"', "x.py"],
-    ['bash "$HOME/bin/x.sh" --a', "x.sh"],
+    // a variable other than CLAUDE_PROJECT_DIR is left as written: V96 refuses it, as before
+    ['bash "$HOME/bin/x.sh" --a', null],
     // a first word through a variable is left as written: V96 refuses it, as before
     ['"$CLAUDE_PROJECT_DIR/tools/x.sh" a', null],
     ["bash -c 'exit 2'", "bash"],
@@ -136,7 +142,6 @@ describe("the flags travel to the command the binding writes", () => {
     [RUN, 'python3 -I -B "$CLAUDE_PROJECT_DIR/tools/check.py" hook Stop'],
     ["node -r ts-node/register tools/a.ts", 'node -r ts-node/register "$CLAUDE_PROJECT_DIR/tools/a.ts"'],
     ["bash -eu scripts/x.sh a", 'bash -eu "$CLAUDE_PROJECT_DIR/.claude/skills/t/scripts/x.sh" a'],
-    ['bash "$HOME/bin/x.sh" --a', 'bash "$HOME/bin/x.sh" --a'],
   ])("claude-code hookCommand(%s)", (run, command) => {
     expect(hookCommand(run, "t")).toBe(command);
   });

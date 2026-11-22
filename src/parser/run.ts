@@ -166,16 +166,14 @@ export function projectWord(word: string): string {
 
 /**
  * The script word as a path: a backslash before a quote is dropped (a .at
- * string keeps `\"` as written), a `$CLAUDE_PROJECT_DIR` path becomes the
- * project-relative `./x` it names, and another variable's path loses its
- * double quotes (`"$HOME/x.sh"` is `$HOME/x.sh`). Any other word is unchanged.
+ * string keeps `\"` as written) and a `$CLAUDE_PROJECT_DIR` path becomes the
+ * project-relative `./x` it names. Any other word, a path through any other
+ * variable (`"$HOME/x.sh"`) included, is unchanged, as before.
  */
 function scriptWord(word: string): string {
   const plain = word.replace(/\\"/g, '"');
-  if (!/^"?\$/.test(plain)) return word;
   const project = projectWord(plain);
-  if (project !== plain) return project;
-  return (plain.match(/"/g) ?? []).length % 2 === 0 ? plain.replace(/"/g, "") : word;
+  return project !== plain ? project : word;
 }
 
 /**
@@ -189,8 +187,9 @@ function scriptWord(word: string): string {
  * the script, as before flags were read. `flags` is present only when there
  * are some, so a run without flags splits as it always did.
  *
- * A script word through a variable after an interpreter is read as a path
- * (see scriptWord): `$CLAUDE_PROJECT_DIR/x` is the project path `./x`. When
+ * A script word through `$CLAUDE_PROJECT_DIR` after an interpreter is read
+ * as the project path it names (see scriptWord): `./x`; a word through any
+ * other variable is left as written. When
  * that word was quoted the way a .at string keeps it
  * (`\"$CLAUDE_PROJECT_DIR/x.py\"`), the arguments' `\"` are read as `"` too,
  * so the command is the one the harness ran. Such a run named no script file
@@ -236,22 +235,13 @@ function decodedArgs(script: string, args: string[]): string[] {
 /**
  * Whether a script word names a file in the project (run where it is) rather
  * than one in the topology skill's scripts/ folder (scaffolded by basename).
- * `./x`, `/x`, a path through a variable (`$CLAUDE_PROJECT_DIR/x`,
- * `"${HOME}/x"`) and any path with a folder count, except the historical
+ * `./x`, `/x` and any path with a folder count (a path through a variable,
+ * `$CLAUDE_PROJECT_DIR/x` or `"${HOME}/x"`, among them), except the historical
  * `scripts/x.sh`, which has always meant the skill's own scripts folder.
  */
 export function isProjectPath(script = ""): boolean {
-  if (script.startsWith(".") || script.startsWith("/") || /^(?:\\?")?\$(?:\{[A-Za-z_]\w*[^}]*\}|[A-Za-z_]\w*)(?:\\?")?\//.test(script)) return true;
+  if (script.startsWith(".") || script.startsWith("/")) return true;
   return script.includes("/") && !script.startsWith("scripts/");
-}
-
-/**
- * Whether a script word (as runParts gives it) names a file outside the
- * project, run as written and never stubbed: an absolute path, or a path
- * through a variable other than `$CLAUDE_PROJECT_DIR` (`$HOME/x.sh`).
- */
-export function isOutsidePath(script = ""): boolean {
-  return script.startsWith("/") || script.startsWith("$");
 }
 
 /**

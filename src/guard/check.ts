@@ -30,7 +30,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
-import { runParts, isOutsidePath, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
+import { runParts, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
@@ -162,7 +162,7 @@ function stubShown(root: string, file: string): string | null {
 /** Where the claude-code binding puts a gate's check script: the run:'s own path, or the topology's scripts folder. */
 function checkScriptFile(scriptsDir: string, run: string): string {
   const { script } = runParts(run);
-  return isOutsidePath(script) ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `${scriptsDir}/${script.replace(/^.*\//, "")}`;
+  return script.startsWith("/") ? script : isProjectPath(script) ? script.replace(/^\.\//, "") : `${scriptsDir}/${script.replace(/^.*\//, "")}`;
 }
 
 /** How many lines either side of a cited line the match text may sit. */

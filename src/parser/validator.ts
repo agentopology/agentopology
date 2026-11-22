@@ -22,7 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
-import { isOutsidePath, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
+import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
@@ -1158,7 +1158,7 @@ function v91RequiredFieldPlaceholder(ast: TopologyAST): ValidationResult[] {
 function unsafeScriptPath(run: string): string | null {
   if (isShellCommand(run)) return null;
   const { interpreter, script } = runParts(run);
-  if (!script || isOutsidePath(script) || !isProjectPath(script)) return null;
+  if (!script || script.startsWith("/") || !isProjectPath(script)) return null;
   const why = unsafePathReason(script.replace(/^\.\//, ""));
   // P2: `lintme 2>/dev/null || true` reads as lintme running the script
   // "2>/dev/null"; name the command, not the redirect.

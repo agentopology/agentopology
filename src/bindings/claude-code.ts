@@ -64,7 +64,7 @@ import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
-import { interpreterFor, isOutsidePath, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2106,7 +2106,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!scriptName) continue;
     const { script, interpreter } = runParts(gate.run!);
     // The user's own script, outside the project: never stubbed.
-    if (isOutsidePath(script)) continue;
+    if (script.startsWith("/")) continue;
     // A project path names the user's script: a stub only fills the gap until
     // it exists, and is never written over it.
     const project = isProjectPath(script);
@@ -2314,7 +2314,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
     if (proseInRun(runPath)) continue; // V96: prose in run names no script
     const { script, interpreter } = runParts(runPath);
     // An absolute script is the user's own, outside the project: never stubbed.
-    if (isOutsidePath(script)) continue;
+    if (script.startsWith("/")) continue;
     // F-24: a script run by anything but bash gets a stub in that interpreter's language.
     const interp = interpreterFor(script, interpreter).replace(/^.*\//, "");
     const scoped = scriptNameFromRun(script);
@@ -2413,12 +2413,9 @@ export function hookCommand(run: string, topologyName: string): string {
     const base = first.replace(/^.*\//, "");
     return [interpreter, skillScriptPath(topologyName, base), ...rest].join(" ");
   }
-  // An absolute path is kept as written; a path through another variable (`$HOME/x`) is quoted.
   const where = first.startsWith("/")
     ? first
-    : isOutsidePath(first)
-      ? `"${first}"`
-      : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
+    : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
   return [interpreter, where, ...rest].join(" ");
 }
 
@@ -2867,7 +2864,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     // project path is the user's script (create-only); an absolute one is never
     // touched; a bare name lives in the skill's scripts folder.
     const script = tool.script ? runParts(tool.script).script : "";
-    if (isOutsidePath(script)) continue;
+    if (script.startsWith("/")) continue;
     const project = isProjectPath(script);
     const base = script.replace(/^.*\//, "");
     files.push({

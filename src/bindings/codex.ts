@@ -48,7 +48,7 @@ import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
 import { CODEX_GUARDS, LEDGER_WRITABLE_NOTE, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
-import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isOutsidePath, isProjectPath, interpreterFor } from "../parser/run.js";
+import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath, interpreterFor } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -1165,7 +1165,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (!scriptName) continue;
     const { script, interpreter } = runParts(gate.run);
     // The user's own script, outside the project: never stubbed.
-    if (isOutsidePath(script)) continue;
+    if (script.startsWith("/")) continue;
     // F-22: the stub goes where the gate wrapper runs it (codexGateCommand): a project path names the
     // user's script, created once and never written over; any other name is under .codex/scripts/.
     const project = isProjectPath(script);
@@ -1200,7 +1200,7 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
     // E-4: the stub goes where the tool's script: says, as on Claude Code: a project path is the
     // user's script (create-only), an absolute one is never touched, a bare name lives in .codex/scripts/.
     const script = tool.script ? runParts(tool.script).script : "";
-    if (isOutsidePath(script)) continue;
+    if (script.startsWith("/")) continue;
     const project = isProjectPath(script);
     const base = script.replace(/^.*\//, "");
     files.push({
