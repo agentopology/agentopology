@@ -287,6 +287,41 @@ describe("a use the parent shell does not expand, or a child that can see anothe
   }
 });
 
+describe("a word that can set a variable anywhere in the command, or a $ that is not a read name, stays doubted", () => {
+  const doubted: [string, string][] = [
+    // a setter behind a builtin that runs another builtin, the name built from a read part
+    ["jobs -x eval a$q=", `ab=x; q=b; jobs -x eval a$q=accept; ${X} enter $ab`],
+    ["jobs -x read a$q", `ab=x; q=b; jobs -x read a$q <<< accept; ${X} enter $ab`],
+    ["jobs -x printf -v a$q", `ab=x; q=b; jobs -x printf -v a$q accept; ${X} enter $ab`],
+    ["jobs -x eval a$q= joined with &&", `ab=x && q=b && jobs -x eval a$q=accept && ${X} enter $ab`],
+    ["builtin eval a$q=", `ab=x; q=b; builtin eval a$q=accept; ${X} enter $ab`],
+    ["command read a$q", `ab=x; q=b; command read a$q <<< accept; ${X} enter $ab`],
+    ["caller before eval a$q=", `ab=x; q=b; caller eval a$q=accept; ${X} enter $ab`],
+    ["a$q= with no wrapper", `ab=x; q=b; a$q=accept; ${X} enter $ab`],
+    ["jobs -x with the dot command", `ab=x; jobs -x . ./env.sh; ${X} enter $ab`],
+    ["a setter word as a later argument", `ab=x; ${X} enter $ab; echo read`],
+    // a setter or a name built at run time
+    ["backticks that build eval and the name", "ab=x; `printf %s%s ev al` a`printf b`=accept; " + `${X} enter $ab`],
+    ["$(...) that builds eval and the name", `ab=x; $(printf eval) a$(printf b)=accept; ${X} enter $ab`],
+    ["a glob that can match eval", `ab=x; ev?l a?=accept; ${X} enter $ab`],
+    ["a brace list that makes eval", `ab=x; {e,}val a{b,}=accept; ${X} enter $ab`],
+    // a $ that is not a use of a read name, in another segment than the step
+    ["a name not assigned in the command", `ab=x; echo $HOME; ${X} enter $ab`],
+    ["a positional", `ab=x; echo $1; ${X} enter $ab`],
+    ["$?", `ab=x; echo $?; ${X} enter $ab`],
+    ["$$", `ab=x; echo $$; ${X} enter $ab`],
+    ["$@", `ab=x; echo "$@"; ${X} enter $ab`],
+    ["$#, $!, $-", `ab=x; echo $# $! $-; ${X} enter $ab`],
+    ["an upper-case name assigned beside it", `ab=x; T=y; echo $T; ${X} enter $ab`],
+  ];
+  for (const [shape, command] of doubted) {
+    it(`doubted: ${shape}`, () => {
+      const r = run(command);
+      expect(r.gateRan).toBe(true);
+    });
+  }
+});
+
 describe("resolution has a size limit: a longer command stays doubted", () => {
   /** `t=/x; tool enter $t $t ...`, padded with uses (and one filler) to exactly `len` characters. */
   const ofLength = (len: number) => {
