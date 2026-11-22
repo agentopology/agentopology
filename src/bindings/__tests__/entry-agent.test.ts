@@ -364,6 +364,55 @@ describe("entry removed between two scaffolds", () => {
   });
 });
 
+describe("entry removed: a gate before, and a human step before, the file's session agent", () => {
+  const build = (entry: string, before: string) => withGates(topo(entry), `gates {
+    gate check {
+      after: intake
+      before: ${before}
+      run: "scripts/check.sh"
+    }
+  }`)
+    .replace("  gates {", `  human approver {
+    description: "Approves"
+  }
+  gates {`)
+    .replace("intake -> lead", "intake -> approver\n    approver -> lead");
+
+  const grade = (before: string) => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), "at-entry-removed-before-"));
+    try {
+      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(build("entry: lead", before)))).out);
+      const without = build("", before);
+      writeInto(root, quiet(() => claudeCodeBinding.scaffold(parse(without))).out);
+      expect(JSON.parse(fs.readFileSync(join(root, ".claude/settings.json"), "utf-8")).agent).toBe("lead");
+      return checkGuards(parse(without), root);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  it("grades both hope, naming the file's agent: lead is never launched (enforcement 0 of 2)", () => {
+    const report = grade("lead");
+    const gate = report.items.find((i) => i.kind === "gate" && i.id === "check")!;
+    const human = report.items.find((i) => i.kind === "human" && i.id === "approver")!;
+    for (const item of [gate, human]) {
+      expect(item.strength).toBe("hope");
+      expect(item.where).toMatch(/settings\.json agent is "lead"/);
+      expect(item.where).toMatch(/never launched/);
+      expect(item.notes.join(" ")).toMatch(/delete "agent" from \.claude\/settings\.json/);
+    }
+    expect(report.enforcement).toEqual({ refuse: 0, of: 2 });
+  });
+
+  it("a gate before lead and worker keeps worker, with a note naming lead", () => {
+    const gate = grade("[lead, worker]").items.find((i) => i.kind === "gate" && i.id === "check")!;
+    expect(gate.strength).toBe("refuse");
+    expect(gate.where).toMatch(/launching worker/);
+    expect(gate.where).not.toMatch(/lead/);
+    expect(gate.notes.join(" ")).toMatch(/settings\.json agent is "lead"/);
+  });
+});
+
 describe("the extension names an agent Claude Code cannot start, beside an entry", () => {
   const src = withGates(topo("entry: lead", `extensions {
     claude-code {
