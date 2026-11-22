@@ -103,3 +103,32 @@ describe("the merge never makes one hook of two different commands", () => {
     expect(commandsOf(deepMergeSettingsJson(user, at))).toEqual([first, second, "bash .claude/hooks/stop.sh"]);
   });
 });
+
+describe("an entry the topology wrote for a script it no longer generates is removed, in every project-dir spelling", () => {
+  const script = ".claude/skills/t/scripts/before-action.sh";
+  const at = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "bash .claude/hooks/stop.sh" }] }] } }, null, 2);
+  it.each([
+    `bash "$CLAUDE_PROJECT_DIR/${script}"`,
+    `bash "\${CLAUDE_PROJECT_DIR}/${script}"`,
+    `bash "$CLAUDE_PROJECT_DIR"/${script}`,
+    `bash "\${CLAUDE_PROJECT_DIR:-.}/${script}"`,
+    `bash \${CLAUDE_PROJECT_DIR:-.}/${script}`,
+  ])("%s", (command) => {
+    const existing = settingsWith(command);
+    expect(commandsOf(deepMergeSettingsJson(existing, at, [script]))).toEqual(["bash .claude/hooks/stop.sh"]);
+    expect(keptHookCommands(existing, at, [script])).toEqual([]);
+  });
+
+  it("a user's program taking the script as an argument stays, with its kept line", () => {
+    const command = `./wrap.sh "$CLAUDE_PROJECT_DIR"/${script}`;
+    const existing = settingsWith(command);
+    expect(commandsOf(deepMergeSettingsJson(existing, at, [script]))).toEqual([command, "bash .claude/hooks/stop.sh"]);
+    expect(keptHookCommands(existing, at, [script]).map((k) => k.command)).toEqual([command]);
+  });
+
+  // as in 0.11.2 (the merge differential's f2 controls): a first word through the variable is left as written
+  it("a hand-built `\"$CLAUDE_PROJECT_DIR\"/<script> --a` as the first word stays", () => {
+    const command = `"$CLAUDE_PROJECT_DIR"/${script} --a`;
+    expect(commandsOf(deepMergeSettingsJson(settingsWith(command), at, [script]))).toEqual([command, "bash .claude/hooks/stop.sh"]);
+  });
+});

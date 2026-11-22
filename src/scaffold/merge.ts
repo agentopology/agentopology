@@ -344,7 +344,10 @@ function hookGroupKey(group: unknown): string {
 /** Whether a hook entry's command runs (or names) a script this topology owns. */
 function namesOwnedScript(h: unknown, scripts: string[]): boolean {
   if (!isPlainObject(h) || typeof h.command !== "string") return false;
-  const tokens = h.command.split(/\s+/).map((t) => t.replace(/^\.\//, ""));
+  // A word after the first through the project-dir variable is read as the `./x` it
+  // names, in every spelling the identity reads (`bash "$CLAUDE_PROJECT_DIR"/x`,
+  // `bash "${CLAUDE_PROJECT_DIR:-.}/x"`). The first word is left as written, as in 0.11.2.
+  const tokens = h.command.split(/\s+/).map((t, i) => (i > 0 ? projectWord(t) : t).replace(/^\.\//, ""));
   if (tokens.some((t) => scripts.includes(t))) return true;
   // R-8: a Codex command names its script after a root expression,
   // `"$(git rev-parse …)/.codex/scripts/<t>/x.sh"` or `"$AT_ROOT/.codex/…"`, so no
@@ -389,7 +392,14 @@ const ANCHOR = /^\$\{?(?:CLAUDE_PROJECT_DIR|AT_ROOT)\}?\//;
  * and the last four were removed with no line.
  */
 function writesTopologyScript(command: string, scripts: string[]): boolean {
-  const raw = command.replace(/["']/g, "").trim().split(/\s+/);
+  // Each word after the first through projectWord, so every project-dir spelling
+  // the identity reads after an interpreter is the topology's the same way
+  // (`bash "$CLAUDE_PROJECT_DIR"/x`). The first word is left as written: a
+  // hand-built `"$CLAUDE_PROJECT_DIR"/x` stays the user's, as in 0.11.2.
+  const raw = command
+    .trim()
+    .split(/\s+/)
+    .map((w, i) => (i > 0 ? projectWord(w) : w).replace(/["']/g, ""));
   const words = raw.map((w) => w.replace(ANCHOR, "").replace(/^\.\//, ""));
   const first = words[0] ?? "";
   if (scripts.includes(first)) return true;
