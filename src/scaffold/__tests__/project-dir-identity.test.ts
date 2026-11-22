@@ -134,3 +134,20 @@ describe("the merge never makes one hook of two different commands", () => {
     expect(commandsOf(deepMergeSettingsJson(settingsWith(user), settingsWith(at)))).toEqual([user]);
   });
 });
+
+describe("import refuses a quoted script word holding a blank, so scaffold never writes a broken second entry", () => {
+  it.each([
+    'python3 "$CLAUDE_PROJECT_DIR/tools/my a.py"',
+    'bash "$CLAUDE_PROJECT_DIR/tools/my tool.sh" --check',
+    'python3 "tools/my a.py"',
+  ])("%s", (command) => {
+    const { report } = importClaudeCodeWithReport(harness(command), "t");
+    const errors = (report as { errors?: Array<{ command: string }> }).errors ?? [];
+    expect(errors.map((e) => e.command)).toEqual([command]);
+  });
+
+  it("a quoted script word without a blank still imports clean", () => {
+    const { report } = importClaudeCodeWithReport(harness('python3 "$CLAUDE_PROJECT_DIR/tools/a.py"'), "t");
+    expect((report as { errors?: unknown[] }).errors ?? []).toEqual([]);
+  });
+});
