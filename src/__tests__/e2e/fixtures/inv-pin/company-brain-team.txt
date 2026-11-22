@@ -13,8 +13,6 @@ Validating company-brain-team.at (company-brain-team v0.1.0)
       skill:story  (.claude/skills/story/SKILL.md)
     not scaffolded (20): scaffold would write these and they are not on disk; rerun scaffold
 
-  stubs (claude-code): 1 of 20 generated files are stubs: 1 action script
-
   All validation rules passed.
 
 <version line>

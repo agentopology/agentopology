@@ -17,7 +17,7 @@ Validating simple-pipeline.at (simple-pipeline v1.0.0)
     .claude/agents/writer/AGENT.md  tools  at-ahead  .at [Read, Write, Glob]  file (absent)
   scaffold writes at-ahead keys and removes at-removed ones; it keeps file-ahead, conflict and released keys as the file has them (--force takes the .at's value). It never writes a file's text.
 
-  stubs (claude-code): 2 of 12 generated files are stubs: 1 gate check script, 1 action script
+  stubs (claude-code): 1 of 12 generated files are stubs: 1 gate check script
 
   All validation rules passed.
 

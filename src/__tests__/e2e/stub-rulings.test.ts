@@ -198,7 +198,9 @@ describe("[stub rulings] pinned output passes through unchanged but for its stub
   it("the corpus is the one expected", () => {
     expect(all.filter(([n]) => n.startsWith("fixtures/")).length).toBe(34);
     expect(plain.length).toBeGreaterThan(100);
-    expect(validateOnly.length).toBe(18);
+    // 16: company-brain-team's text pin and inventory pin lost their stub line
+    // when a report action with no commands stopped being a stub.
+    expect(validateOnly.length).toBe(16);
   });
 
   it("with no stub line, each side is byte-identical to its input", () => {

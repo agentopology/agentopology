@@ -601,6 +601,20 @@ function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
   ];
 }
 
+/**
+ * Action kinds that, with no `commands:`, the orchestrator does in
+ * conversation: talking it through (inline), choosing where to go next
+ * (decision), telling the user (report). Their script says so and is no stub.
+ * An external or git action with no commands names work a script must do, so
+ * it stays a stub until it is written.
+ */
+const ROUTING_KINDS = new Set(["inline", "decision", "report"]);
+
+/** An action with no commands whose kind is done in conversation (or has no kind). */
+function isRoutingAction(action: ActionNode): boolean {
+  return !action.kind || ROUTING_KINDS.has(action.kind);
+}
+
 /** Generate script stubs for each ActionNode. */
 function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
@@ -633,7 +647,7 @@ function generateActionNodes(ast: TopologyAST): GeneratedFile[] {
     if (action.commands && action.commands.length > 0) {
       lines.push(...actionGateCheck(ast, action));
       lines.push(...action.commands);
-    } else if (!action.kind || action.kind === "inline") {
+    } else if (isRoutingAction(action)) {
       // Done by the orchestrator in conversation (the playbook says how).
       lines.push(`# Performed by the orchestrator in conversation; nothing to run.`);
     } else {

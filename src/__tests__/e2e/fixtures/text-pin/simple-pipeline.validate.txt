@@ -1,6 +1,6 @@
 Validating simple-pipeline.at (simple-pipeline v1.0.0)
 
-  stubs (claude-code): 2 of 12 generated files are stubs: 1 gate check script, 1 action script
+  stubs (claude-code): 1 of 12 generated files are stubs: 1 gate check script
 
   All validation rules passed.
 

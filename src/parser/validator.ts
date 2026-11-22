@@ -4148,6 +4148,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v133McpServerFrom(ast),
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
+    ...v136ScheduledRoutingAction(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4323,6 +4324,28 @@ function v124ScheduleCarrier(ast: TopologyAST): ValidationResult[] {
       results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has carrier "${j.carrier}"; use one of: ${CARRIERS.join(", ")}.` });
     if (j.survives !== undefined && !SURVIVES.includes(j.survives))
       results.push({ rule: "V124", level: "error", node: j.id, line: lookupLine(ast, j.id), message: `Schedule job "${j.id}" has survives "${j.survives}"; use one of: ${SURVIVES.join(", ")}.` });
+  }
+  return results;
+}
+
+/**
+ * V136: a schedule job that runs a decision or report action with no
+ * `commands:` does nothing. Such an action is done by the orchestrator in
+ * conversation, so its script has nothing to run, and a job that runs it
+ * (headless, with no orchestrator) passes without doing the work. A warning on
+ * every target, naming the job and the action.
+ */
+function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (!j.action) continue;
+    const action = ast.nodes.find((n) => n.id === j.action && n.type === "action") as ActionNode | undefined;
+    if (!action || (action.kind !== "decision" && action.kind !== "report")) continue;
+    if (action.commands && action.commands.length > 0) continue;
+    results.push({
+      rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" runs action "${action.id}", a ${action.kind} action with no commands: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+    });
   }
   return results;
 }
