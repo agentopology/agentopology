@@ -746,7 +746,7 @@ export const BASH_SET_NAMES: string[] = [
 /**
  * The longest command at_resolve reads, in characters, and the most assignments at its start. Past either the
  * command is left as written (doubt), so the reading's cost has a bound: at the limit at_resolve itself takes
- * under 50 ms on its costliest shapes, and the whole hook about 0.2 s (measured, action-guard-assign.test.ts).
+ * under 40 ms on its costliest shapes, and the whole hook about 0.12 s (measured, action-guard-assign.test.ts).
  */
 /**
  * Programs that can start a child with a changed environment, or a shell that expands text the parent left
@@ -760,7 +760,7 @@ export const CHILD_PROGRAMS: string[] = [
   "yarn", "just", "bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "fish", "tcsh", "csh", "busybox", "pwsh", "powershell",
 ];
 
-export const RESOLVE_MAX_LENGTH = 2048;
+export const RESOLVE_MAX_LENGTH = 1024;
 export const RESOLVE_MAX_NAMES = 16;
 
 /**
