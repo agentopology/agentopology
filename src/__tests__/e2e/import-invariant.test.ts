@@ -26,7 +26,7 @@ import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { STUB_MARKER } from "../../bindings/lib/stub.js";
 import type { PlatformFile } from "../../sync/index.js";
 // @ts-expect-error plain JavaScript module
-import { RT_COMMANDS } from "./differential/fable-sequences.mjs";
+import { RT_COMMANDS, RT_PROJECT_DIR_FORMS } from "./differential/fable-sequences.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runs = JSON.parse(fs.readFileSync(join(here, "differential/runs-0112.json"), "utf-8")) as { rows: Array<{ kind: string; run: string | null; source: string }> };
@@ -36,6 +36,7 @@ const DET0 = ["./bin/guard","bin/guard --x","./node_modules/.bin/tool --check","
 
 const CORPUS: string[] = [...new Set<string>([
   ...(RT_COMMANDS as string[]),
+  ...(RT_PROJECT_DIR_FORMS as string[]),
   ...DET0,
   ...runs.rows.filter((r) => r.kind === "hook" && typeof r.run === "string").map((r) => r.run as string),
 ])];

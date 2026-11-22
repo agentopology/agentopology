@@ -13,6 +13,8 @@ import { importClaudeCodeWithReport } from "../../import/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import { deepMergeSettingsJson, keptHookCommands } from "../merge.js";
 import type { PlatformFile } from "../../sync/index.js";
+// @ts-expect-error plain JavaScript module
+import { RT_PROJECT_DIR_FORMS } from "../../__tests__/e2e/differential/fable-sequences.mjs";
 
 /** A hand-built harness with one PreToolUse hook running `command`. */
 const settingsWith = (...commands: string[]): string =>
@@ -59,6 +61,12 @@ describe("import then scaffold leaves exactly one entry for a project-dir hook, 
     expect(generated).toContain(canonical);
     // ... and the merge reads both as one hook: the harness's entry stays, alone
     expect(merged).toEqual([command]);
+  });
+});
+
+describe("the round-trip corpus's project-dir forms keep one entry", () => {
+  it("covers every form listed here", () => {
+    expect(RT_PROJECT_DIR_FORMS as string[]).toEqual(PROJECT_DIR_FORMS.map(([command]) => command));
   });
 });
 
