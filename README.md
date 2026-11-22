@@ -642,6 +642,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 
 ```
 agentopology validate <file>              Validate an .at file (136 rules)
+agentopology fix <file> [--target <t>] [--write]  List each V135 gate (meant to refuse, no hook runs it) with the fix; --write adds strength: hope to them and nothing else (dry run exits 2 when there is something to fix)
 agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
 agentopology sync <file> --target <t> --dir <d>  Sync platform files back to .at

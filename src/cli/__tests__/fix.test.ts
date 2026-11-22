@@ -139,6 +139,7 @@ describe("agentopology fix --write", () => {
     expect(out).toContain("by hand");
     const now = readFileSync(file, "utf8");
     expect(now).toContain(`    gate orphan-check { run: "scripts/orphan.sh" }`);
-    expect(now.split("\n").filter((l) => l === "      strength: hope")).toHaveLength(2);
+    // by-hand had one already; needs-source and after-approval get theirs.
+    expect(now.split("\n").filter((l) => l === "      strength: hope")).toHaveLength(3);
   });
 });
