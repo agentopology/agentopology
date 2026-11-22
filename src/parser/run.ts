@@ -177,8 +177,9 @@ export function projectWord(word: string): string {
     path = path.slice(0, -1);
   }
   // `"$CLAUDE_PROJECT_DIR"/` alone names the folder itself, not a file in it: an argument, kept as written
-  if (path === "/") return word;
-  return path.includes('"') ? word : `.${path}`;
+  if (/^\/+$/.test(path)) return word;
+  // `"$CLAUDE_PROJECT_DIR"//x.sh` is `./x.sh`, never the root's `/x.sh`
+  return path.includes('"') ? word : `.${path.replace(/^\/+/, "/")}`;
 }
 
 /**
