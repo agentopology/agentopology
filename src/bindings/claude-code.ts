@@ -31,7 +31,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
-import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE, STUB_BLOCKS_ON, blockingHookStubMessage } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import {
@@ -2165,7 +2165,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
  * refuse` (a logger there looked wired and refused nothing): the regular stub,
  * marked and exiting 1, so the stub count and guard --check see it.
  */
-function observabilityStub(hookName: string, eventName: string, matcherHint: string, strength?: string): string {
+function observabilityStub(hookName: string, eventName: string, matcherHint: string, strength?: string, blocking?: string): string {
   const isFinishEvent = eventName === "SubagentStop" || eventName === "Stop";
   if (isFinishEvent && strength !== "refuse") {
     return [
@@ -2196,10 +2196,22 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
     'PAYLOAD=$(cat)',
     'AGENT_TYPE=$(echo "$PAYLOAD" | jq -r \'.agent_type // "unknown"\')',
     "",
-    `echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`,
-    "exit 1",
+    ...(blocking
+      // A refuse hook on an event exit 2 blocks: unwritten, it blocks (as a gate's stub does).
+      ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+      : [`echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`, "exit 1"]),
     "",
   ].join("\n");
+}
+
+/**
+ * The stderr line of an unwritten refuse hook script that blocks its call, or
+ * undefined: only a `strength: refuse` hook on an event where exit 2 blocks
+ * (STUB_BLOCKS_ON; never Stop or SubagentStop) gets one.
+ */
+function blockingStub(hook: HookDef, path: string): string | undefined {
+  const event = claudeEvent(hook.on);
+  return hook.strength === "refuse" && STUB_BLOCKS_ON.has(event) ? blockingHookStubMessage(hook.name, event, path) : undefined;
 }
 
 /**
@@ -2359,11 +2371,12 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         : null;
     if (!filePath) continue;
 
+    const blocking = blockingStub(hook, filePath);
     files.push({
       path: filePath,
       content: interp === "bash"
-        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""), hook.strength)
-        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""), hook.strength, blocking)
+        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, blocking ? { fail: true, message: blocking } : {}),
       category: "script",
       stub: "hook",
       executable: true,
@@ -2394,8 +2407,10 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
       if (isShellCommand(hook.run)) continue; // run as written: no script to stub
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
+      const path = `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`;
+      const blocking = blockingStub(hook, path);
       files.push({
-        path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
+        path,
         content: [
           "#!/usr/bin/env bash",
           `# Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`,
@@ -2403,8 +2418,9 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
           STUB_MARKER,
           'set -euo pipefail',
           "",
-          `echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`,
-          "exit 1",
+          ...(blocking
+            ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+            : [`echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`, "exit 1"]),
           "",
         ].join("\n"),
         category: "script",

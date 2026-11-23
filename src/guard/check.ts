@@ -540,8 +540,9 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
             Object.assign(item, { strength: "unverified", by: "hook", where, notes: [`${g} is a ${hook.type} hook; only a command hook is graded refuse here`, ...(hook.bypass ? [`bypass: ${hook.bypass}`] : [])] });
             break;
           }
-          // The hook's script where the binding writes it: a stub there checks nothing. A
-          // bash stub exits 1, which does not block, so the step goes through: missing, not set apart.
+          // The hook's script where the binding writes it: a stub there checks nothing. It
+          // lets every call through (exit 1), or, a refuse hook on a blocking event, blocks
+          // every one (exit 2): either way it credits no refusal, so missing, not set apart.
           const stubbed = (hook.strength === "refuse" || hook.strength === "detect") && !isShellCommand(hook.run) ? stubShown(root, checkScriptFile(scriptsDir, hook.run)) : null;
           if (stubbed) {
             Object.assign(item, { strength: "none", by: "hook", where, notes: [`${g}'s script ${stubbed} is still a stub: it checks nothing, so it credits no refusal until it is written`] });
