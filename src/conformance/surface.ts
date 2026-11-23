@@ -109,7 +109,7 @@ function addFrontmatterHooks(add: (area: string, token: string) => void, lines: 
 }
 
 const TOP_PAYLOAD = new Set(["tool_input", "tool_name", "tool_response", "agent_type", "session_id", "transcript_path",
-  "hook_event_name", "cwd", "prompt", "tool_use_id", "permission_mode", "agent_id"]);
+  "hook_event_name", "cwd", "prompt", "tool_use_id", "permission_mode", "agent_id", "last_assistant_message"]);
 const OUTPUT_KEYS = ["hookSpecificOutput", "hookEventName", "permissionDecisionReason", "permissionDecision",
   "updatedInput", "additionalContext"];
 

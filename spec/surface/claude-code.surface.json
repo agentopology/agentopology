@@ -940,6 +940,25 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.last_assistant_message",
+      "area": "hooks.payload",
+      "tokens": [
+        "last_assistant_message"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "output-schema"
+      ],
+      "proof": "src/bindings/__tests__/output-schema-hook.test.ts",
+      "ifBroken": "an agent's output is checked against an empty message",
+      "grade": "refuse"
+    },
+    {
       "id": "cc.hooks.payload.command",
       "area": "hooks.payload",
       "tokens": [
