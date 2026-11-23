@@ -243,9 +243,23 @@
   "scripts/start-sessions.sh": "ce648e3b4689ca1f5820e87c9922aad3acd25db3253e655787b557d9e48b91ff",
   ".claude/skills/session-ops/scripts/spawn-guard.sh": "77f24f28267fd81f2ee04eb0b8f0db246ee428ebcf7d0e992aec4fd5110e4526",
   ".claude/skills/session-ops/scripts/talk-guard.sh": "049530b2308b2180b65ba04727824a23a6a4e66ccfe90bef0d024c492e09e745",
-  ".claude/skills/session-ops/scripts/session-prompt-lane-manager.sh": "77c84797cc8bcd445ad6d731e156c83cd1f5410188d838aafe6109fbfdec9c1b",
+  ".claude/skills/session-ops/scripts/session-prompt-lane-manager.sh": "5f046e599ff0bf376b63882557234a6acf138588e7e0c5e0c541303b637446eb",
   ".claude/settings.json": "085db5f4f5af51d879eab4dea282780180e2aae51098944fed4bfc9ea2ed0102",
   ".claude/rules/session-ops.md": "6b19ef899098fc30502f0562cb65c7149c04ada7ca0a67b9b6fe6622e73948dd"
+ },
+ "src/__tests__/e2e/fixtures/silent-accepts.at": {
+  ".claude/agents/builder/AGENT.md": "0d2d14867904d24bed0680e1eea057356fb33f4b8dc58fa37766085c2fdafc12",
+  ".claude/agents/reviewer/AGENT.md": "ae141e2abf6bb7d27cb3ca461a369afe21908e53357e32a0a4cad541f7ef4135",
+  ".claude/skills/silent-accepts/SKILL.md": "41a56b340b45fa8ecd053006b36b55d7dec96d8f83a9aabe0010a805c1870629",
+  ".claude/skills/silent-accepts/scripts/npm": "89835c6e84891f670cae89ca28654badbc3076ccc6e658352a4cf64bf6882b71",
+  ".claude/skills/silent-accepts/scripts/gate-tests-green.sh": "f3b2dff989e126896a0cdc47b102cdd355912f84650d7f5750d264856670215e",
+  "tools/lift-gate.sh": "ad587fc635ccbd7bc7be9bef3067eb27e4698289a64547af1d46df8e54de58d4",
+  "tools/sub-gate.sh": "fd8ebe6d207eae4033e01fc5f661c9c43e59768fa926739c1179c2f557fcd87d",
+  "tools/stop-log.sh": "9f687d1105aa8b9926ff5412d9657db0dcfe16cf4b3a181c15c0dc5e2b87dfb3",
+  "tools/stop-plain.sh": "38f648ccf355a1c2ca05befc16d46f3f45f0688d25151907e53ac05a1f55bcd1",
+  ".claude/settings.json": "1a2aae342cd02d8c7e04420fa242660f0f2ce9e3d929c688946f40a3eed783ac",
+  "scripts/collect-metrics.sh": "e486a08aeebb62ba9f7a5218e02e769d6f6437c58490c8ff45b441da09cdfbed",
+  ".claude/rules/silent-accepts.md": "ff9b73dbe0d7a123db7f94a7418bb05a326c80c24441dadf4f85ef1c497c508d"
  },
  "inline:action-gate": {
   ".claude/skills/ship/scripts/action-render.sh": "4856d079485408aef2fcea95e2fa7d5daa06e8d398ba2627308f330e85cdbbb1",
