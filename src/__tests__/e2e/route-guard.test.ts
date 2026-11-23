@@ -160,6 +160,60 @@ describe("a when edge that does not compile to a refusal warns", () => {
   });
 });
 
+describe.skipIf(!hasJq)("a script step reached only through when edges is held to its route by before-action.sh", () => {
+  // p10 with status-screen given a command: it is now a script step before-action.sh can refuse.
+  const STEP_SRC = SOURCE.replace('kind: report\n    description: "One measured screen"', 'kind: report\n    description: "One measured screen"\n    commands: ["./tool status"]');
+  let steproot: string;
+  let stepfiles: GeneratedFile[];
+  beforeEach(() => {
+    steproot = fs.mkdtempSync(join(os.tmpdir(), "at-route-step-"));
+    stepfiles = claudeCodeBinding.scaffold(parse(STEP_SRC));
+    for (const f of stepfiles) {
+      const p = join(steproot, f.path);
+      fs.mkdirSync(dirname(p), { recursive: true });
+      fs.writeFileSync(p, f.content);
+      if (f.executable) fs.chmodSync(p, 0o755);
+    }
+  });
+  afterEach(() => fs.rmSync(steproot, { recursive: true, force: true }));
+  const inStep = (script: string, args: string[] = [], stdin = "") => {
+    const r = spawnSync("bash", [join(steproot, SCRIPTS, script), ...args], { input: stdin, env: { ...process.env, CLAUDE_PROJECT_DIR: steproot }, cwd: steproot, encoding: "utf8" });
+    return { code: r.status, err: r.stderr };
+  };
+  const shell = (command: string) => inStep("before-action.sh", [], JSON.stringify({ tool_name: "Bash", tool_input: { command } }));
+
+  it("the step runs after the router recorded the value that leads to it", () => {
+    expect(inStep("route.sh", ["router", "class", "status"]).code).toBe(0);
+    expect(shell("./tool status").code).toBe(0);
+  });
+
+  it("after another value, the step is refused, naming the value and the edge", () => {
+    expect(inStep("route.sh", ["router", "class", "question"]).code).toBe(0);
+    const r = shell("./tool status");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('"question"');
+    expect(r.err).toContain("router.class == status");
+    expect(r.err).toContain("router -> status-screen");
+  });
+
+  it("with no route record the step is refused; another command is not", () => {
+    const r = shell("./tool status");
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/no route record for router\.class/);
+    expect(shell("./tool other").code).toBe(0);
+  });
+
+  it("running the step's own script by hand is held the same way", () => {
+    expect(inStep("action-status-screen.sh").code).toBe(2);
+  });
+
+  it("its edge no longer warns; the same edge to an action with no commands still does", () => {
+    const msgs = (src: string) => routeWarnings(parse(src)).map((r: { message: string }) => r.message).filter((m: string) => m.includes('"router -> status-screen"'));
+    expect(msgs(STEP_SRC)).toEqual([]);
+    expect(msgs(SOURCE)[0]).toContain("no commands");
+  });
+});
+
 describe.skipIf(!hasJq)("p10-router: before-action.sh refuses a shell write of the route record", () => {
   const bash = (command: string) => run("before-action.sh", [], JSON.stringify({ tool_name: "Bash", tool_input: { command } }));
 
