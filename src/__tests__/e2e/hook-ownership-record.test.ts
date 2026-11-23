@@ -204,9 +204,10 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
       expect(out).not.toContain(removedLine(mineToo));
     });
 
-    it(`${target} (c): a user hook equal to the generated one, there before the first scaffold, is kept, said, and never removed`, () => {
+    it(`${target} (c): a user hook equal to the generated one, added after the first scaffold, is kept, said, and never removed`, () => {
       const own = generatedRow(target, OWN);
       const p = project(target);
+      p.scaffold([AUDIT]);
       p.addUser(own);
       const first = p.scaffold([OWN, AUDIT]);
       expect(p.rows().filter((r) => r.command === own.command)).toHaveLength(1);
@@ -222,6 +223,7 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
       const lint = generatedRow(target, LINT);
       const p = project(target);
       const mine: Row = { event: "PreToolUse", matcher: "Edit", command: lint.command };
+      p.scaffold([AUDIT]);
       p.addUser(mine);
       p.scaffold([LINT, AUDIT]);
       expect(has(p.rows(), mine), JSON.stringify(p.rows())).toBe(true);
@@ -251,4 +253,57 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
       expect(dropped).not.toContain(removedLine(edited));
     });
   }
+});
+
+describe("a run with no hook record merges as 0.12.6 did, then records what it wrote", () => {
+  for (const target of TARGETS) {
+    it(`${target}: a hand-built hook in another spelling, no manifest: one entry (0.12.6's), then the topology's`, () => {
+      const lint = generatedRow(target, LINT);
+      const p = project(target);
+      const handBuilt: Row = { event: "PreToolUse", matcher: "Bash", command: "./tools/lint.sh" };
+      p.addUser(handBuilt);
+      const first = p.scaffold([{ ...LINT, run: "tools/lint.sh" }, AUDIT]);
+      expect(first).not.toContain("kept your hook");
+      const lints = () => p.rows().filter((r) => r.command.includes("lint.sh"));
+      expect(lints(), JSON.stringify(p.rows())).toHaveLength(1);
+      // From then on the entry is the topology's: dropping the hook removes it, with the line.
+      const dropped = p.scaffold([AUDIT]);
+      expect(lints(), JSON.stringify(p.rows())).toHaveLength(0);
+      expect(dropped).toContain("- removed generated hook PreToolUse Bash");
+      void lint;
+    });
+  }
+
+  it("claude-code: two .at hooks on one script with different if: merged as 0.12.6 merged them, and the record holds what was written", () => {
+    const p = project("claude-code");
+    const two = [
+      { id: "g1", matcher: "Bash", run: "bash tools/lint.sh" },
+      { id: "g2", matcher: "Bash", run: "bash tools/lint.sh" },
+    ];
+    const withIf = (hs: H[]) => hs.map((h, i) => ({ ...h, run: h.run, _if: i === 0 ? "Bash(rm *)" : "Bash(git push *)" }));
+    const at = join(tmp, "project.at");
+    const src = AT("claude-code", []).replace(
+      "  flow {",
+      `  hooks {\n${withIf(two)
+        .map((h) => hookText(h).replace("      type: command\n", `      type: command\n      if: ${JSON.stringify(h._if)}\n`))
+        .join("\n")}\n  }\n  flow {`,
+    );
+    const run = () => {
+      fs.writeFileSync(at, src);
+      const r = cli(["scaffold", at, "--target", "claude-code", "--output", p.dir]);
+      expect(r.code, r.out).toBe(0);
+      return r.out;
+    };
+    run();
+    const second = run();
+    // 0.12.6: the second run keeps one entry for the two hooks (one matcher, one command).
+    expect(p.rows().filter((r) => r.command.includes("lint.sh")), JSON.stringify(p.rows())).toHaveLength(1);
+    expect(second).not.toContain("removed generated hook");
+    const manifest = JSON.parse(fs.readFileSync(join(p.dir, ".claude/.scaffold-manifest.json"), "utf-8")) as { hooks?: Record<string, Row[]> };
+    expect((manifest.hooks?.[".claude/settings.json"] ?? []).filter((r) => r.command.includes("lint.sh"))).toHaveLength(1);
+    // A third run changes nothing.
+    const before = JSON.stringify(p.rows());
+    run();
+    expect(JSON.stringify(p.rows())).toBe(before);
+  });
 });
