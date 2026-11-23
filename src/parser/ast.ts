@@ -201,6 +201,15 @@ export interface MachineDef {
   os?: string;
 }
 
+/** A secret from the top-level `secrets` block: a path glob only the listed readers may read. */
+export interface SecretDef {
+  id: string;
+  /** Project-relative path glob. */
+  path?: string;
+  /** Agent ids, or "main" for the main session. */
+  readers: string[];
+}
+
 /** An external interface definition (webhook, HTTP, etc.). */
 export interface InterfaceDef {
   /** Interface identifier. */
@@ -611,8 +620,10 @@ export interface AgentNode extends BaseNode {
   reads?: string[];
   /** Memory keys this agent can write. */
   writes?: string[];
-  /** Disallowed tool names (mutually exclusive with `tools`). */
+  /** Disallowed tool names. May be set together with `tools`: Claude Code removes them first, then resolves `tools`. */
   disallowedTools?: string[];
+  /** Path globs this agent may not read (Read, Grep, Glob, and Bash commands naming them). */
+  neverReads?: string[];
   /** Skip condition expression. */
   skip?: string;
   /** Behavior mode (e.g. "advisory", "blocking"). */
@@ -1206,6 +1217,8 @@ export interface TopologyAST {
   sourcePath?: string;
   /** Machines from the top-level `machines` block (T-07). */
   machines?: MachineDef[];
+  /** Secrets from the top-level `secrets` block. */
+  secrets?: SecretDef[];
   /** People from the top-level `person` blocks (T-09). */
   persons?: PersonDef[];
   /** Extra project folders whose files count as live things, from `inventory { roots: [...] }` (T-08). */

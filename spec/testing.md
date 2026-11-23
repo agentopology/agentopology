@@ -118,6 +118,7 @@ Run the live suite before every release, and after any change to a binding.
 | L1 | Real Claude Code loads every scaffolded example: every agent, skill and command registers, and the session succeeds | live/claude-code.live.test.ts |
 | N47 | `package.json` never lists its own name under `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`, so an install does not pull a second copy of the package | packaging.test.ts |
 | VO-323 | `VERIFIED_ON` is 2.1.323; `LIVE_CHECKS` records the three facts measured there on 2026-11-13; `guard --check` grades the talk and spawn guards `refuse` on 2.1.323 and `unverified` on any other version | e2e/vo-323.test.ts |
+| I4 | An agent may set both `tools` and `disallowed-tools` (Claude Code accepts both): V14 no longer refuses it, only warns when a tool is in both, and both keys are written to the agent file | parser/__tests__/walls.test.ts |
 
 ## Open findings (not yet guaranteed)
 
@@ -127,7 +128,6 @@ real test and the row moves to Guarantees. Source: the compile audit,
 
 | Id | Finding | Phase |
 |---|---|---|
-| I4 | V14 refuses an agent with both `tools` and `disallowed-tools`, but Claude Code accepts both, so an honest import of such a hand-built agent has validation errors | later |
 | B3 | Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only | later |
 | B7 | The `observability { }` block is ignored by the claude-code binding | later |
 | N22 | Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked | later |

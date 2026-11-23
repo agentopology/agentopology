@@ -2,6 +2,17 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- Per-agent walls. `never-reads: [<globs>]` on an agent lists paths that agent may not read, and a top-level `secrets { secret <id> { path: "<glob>", readers: [<agents>] } }` block names a path only the listed readers may read (`main` is the main session). On claude-code they compile to one generated PreToolUse hook on `Read|Grep|Glob|Bash` (`before-read.sh`) that refuses the call (exit 2) when the calling agent (`agent_type` in the hook input) reads a walled path. The main session sends no `agent_type`, so a secret is refused there unless `main` is a reader. For Bash the guard reads the words of the command, so a path built in a variable or substitution, reached after `cd`, opened by a script, or searched from a folder above it is not seen.
+- V137 (error): a `secrets` reader is not a declared agent or `main`. V138 (error): a `secrets` entry has no `path`.
+
+### Changed behaviour
+
+- An agent may now set both `tools` and `disallowed-tools`. Claude Code accepts both keys (it applies `disallowed-tools` first, then resolves `tools`), and both are written to the agent file. V14 is now a warning, and only when the same tool is in both lists (Claude Code removes it).
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

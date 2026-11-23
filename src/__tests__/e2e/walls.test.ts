@@ -52,10 +52,11 @@ function scaffold() {
   return files;
 }
 
-function hook(input: object) {
+function hook(input: object, cwd = root) {
   const env = { ...process.env, CLAUDE_PROJECT_DIR: root } as Record<string, string>;
   return spawnSync("/bin/sh", ["-c", `bash "${at(SCRIPT)}"`], {
-    cwd: at("src/deep"), input: JSON.stringify({ hook_event_name: "PreToolUse", ...input }), env, encoding: "utf8", timeout: 20_000,
+    // Relative paths are the session's: the project root, except where a test says otherwise.
+    cwd, input: JSON.stringify({ hook_event_name: "PreToolUse", ...input }), env, encoding: "utf8", timeout: 20_000,
   });
 }
 const read = (file_path: string, agent_type?: string) => hook({ tool_name: "Read", tool_input: { file_path }, ...(agent_type ? { agent_id: "x1", agent_type } : {}) });
@@ -87,7 +88,9 @@ describe.skipIf(!hasJq)("per-agent walls: never-reads", () => {
   beforeEach(() => { scaffold(); });
   it("refuses the agent's own never-reads paths on every tool", () => {
     expect(read(at(".env"), "reviewer").status).toBe(2);
-    expect(read("../../.env", "reviewer").status).toBe(2);
+    // a relative path is the session's own: from a subfolder, ../../.env is the project's .env
+    expect(hook({ tool_name: "Read", tool_input: { file_path: "../../.env" }, agent_type: "reviewer" }, at("src/deep")).status).toBe(2);
+    expect(hook({ tool_name: "Read", tool_input: { file_path: "../../src/ok.ts" }, agent_type: "reviewer" }, at("src/deep")).status).toBe(0);
     expect(read("private/notes.txt", "reviewer").status).toBe(2);
     expect(read("a/b/server.pem", "reviewer").status).toBe(2);
     expect(grep("private", "reviewer").status).toBe(2);

@@ -58,6 +58,7 @@ import type {
   AuthDef,
   StoreNode,
   MachineDef,
+  SecretDef,
   PersonDef,
   NeedsDef,
   RetrievalNode,
@@ -565,6 +566,7 @@ export function parseAgent(
   const reads = parseMultilineList(body, "reads");
   const writes = parseMultilineList(body, "writes");
   const disallowedTools = parseMultilineList(body, "disallowed-tools");
+  const neverReads = parseMultilineList(body, "never-reads");
   const outputs = parseOutputsBlock(body);
 
   const node: AgentNode = {
@@ -608,6 +610,7 @@ export function parseAgent(
   if (reads.length) node.reads = reads;
   if (writes.length) node.writes = writes;
   if (disallowedTools.length) node.disallowedTools = disallowedTools;
+  if (neverReads.length) node.neverReads = neverReads;
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
@@ -2659,6 +2662,33 @@ export function parse(source: string): TopologyAST {
       })
     : undefined;
 
+  // --- Secrets (top-level `secrets { secret <id> { path: "<glob>", readers: [<agents>] } }`) ---
+  // The fields may share one line, separated by commas outside quotes and brackets.
+  const commaLines = (s: string): string => {
+    let out = "", depth = 0, quote = "";
+    for (const ch of s) {
+      if (quote) { if (ch === quote) quote = ""; }
+      else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "[") depth++;
+      else if (ch === "]") depth--;
+      else if (ch === "," && depth === 0) { out += "\n"; continue; }
+      out += ch;
+    }
+    return out;
+  };
+  const secretsBlock = extractBlock(topBody, "secrets");
+  const secrets: SecretDef[] | undefined = secretsBlock
+    ? extractAllBlocks(secretsBlock.body, "secret").filter((b) => b.id).map((b) => {
+        const body = commaLines(b.body);
+        const f = parseFields(body);
+        return {
+          id: b.id as string,
+          ...(f.path ? { path: unquote(f.path) } : {}),
+          readers: parseMultilineList(body, "readers"),
+        };
+      })
+    : undefined;
+
   // --- People (top-level `person <id> { away: "..." }`) ---
   const personBlocks = extractAllBlocks(topBody, "person").filter((b) => b.id);
   const persons: PersonDef[] | undefined = personBlocks.length
@@ -2961,6 +2991,7 @@ export function parse(source: string): TopologyAST {
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(machines ? { machines } : {}),
+    ...(secrets ? { secrets } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),

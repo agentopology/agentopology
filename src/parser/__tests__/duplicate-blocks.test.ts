@@ -108,6 +108,7 @@ const SINGLE: Record<string, (m: string) => string> = {
   artifacts: (m) => `artifacts {\n artifact ${m} { type: document\n path: "${m}.md" }\n }`,
   records: (m) => `records {\n record ${m} { path: "${m}.md" }\n }`,
   machines: (m) => `machines {\n machine ${m} { os: "linux" }\n }`,
+  secrets: (m) => `secrets {\n secret ${m} { path: "${m}/**", readers: [main] }\n }`,
   depth: (m) => `depth {\n factors: [${m}]\n }`,
   memory: (m) => `memory {\n workspace { path: "${m}/" }\n }`,
   batch: (m) => `batch { parallel: true\n per: ${m} }`,

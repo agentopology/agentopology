@@ -1263,18 +1263,19 @@ topology test-v12 : [pipeline] {
     expect(v13[0].message).toContain("nonexistent");
   });
 
-  it("V14: tools AND disallowed-tools on same agent -> error", () => {
-    const ast = minimalAST({
+  it("V14: tools AND disallowed-tools naming the same tool -> warning (different tools are fine)", () => {
+    const mk = (tools: string[], disallowedTools: string[]) => minimalAST({
       nodes: [
         { id: "orchestrator", type: "orchestrator", label: "O", model: "opus", handles: ["intake"] },
         { id: "intake", type: "action", label: "I" },
-        { id: "conflicted", type: "agent", label: "C", model: "opus", tools: ["Read"], disallowedTools: ["Bash"] },
+        { id: "conflicted", type: "agent", label: "C", model: "opus", tools, disallowedTools },
       ],
       edges: [{ from: "intake", to: "conflicted", condition: null, maxIterations: null }],
     });
-    const results = validate(ast);
-    const v14 = results.filter((r) => r.rule === "V14");
+    expect(validate(mk(["Read"], ["Bash"])).filter((r) => r.rule === "V14")).toEqual([]);
+    const v14 = validate(mk(["Read", "Bash"], ["Bash"])).filter((r) => r.rule === "V14");
     expect(v14.length).toBeGreaterThan(0);
+    expect(v14[0].level).toBe("warning");
   });
 
   it("V15: incomplete conditional coverage -> error", () => {
@@ -1971,7 +1972,7 @@ describe("Validation errors", () => {
     expect(v3[0].message).toContain("ghost");
   });
 
-  it("V14 ToolExclusivity: agent with both tools and disallowed-tools", () => {
+  it("V14 ToolExclusivity: a tool in both tools and disallowed-tools is a warning naming the agent", () => {
     const src = `topology t : [pipeline] {
   orchestrator {
     model: opus
@@ -1981,15 +1982,16 @@ describe("Validation errors", () => {
   agent confused {
     model: opus
     tools: [Read, Write]
-    disallowed-tools: [Bash]
+    disallowed-tools: [Write]
   }
   flow { a -> confused }
 }`;
     const ast = parse(src);
     const results = validate(ast);
-    const v14 = results.filter((r) => r.rule === "V14" && r.level === "error");
+    const v14 = results.filter((r) => r.rule === "V14" && r.level === "warning");
     expect(v14.length).toBeGreaterThanOrEqual(1);
     expect(v14[0].message).toContain("confused");
+    expect(results.filter((r) => r.rule === "V14" && r.level === "error")).toEqual([]);
   });
 
   it("V6 LoopBound: back-edge without max N annotation", () => {

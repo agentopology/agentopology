@@ -1137,7 +1137,7 @@ export function noJqWords(t: string, extra = ""): string[] {
  *   tool's letters at all (jq reads any mention it cannot account for as doubt).
  * Anything else runs, with one line on stderr. Needs the FAIL_CLOSED trap; tr and cat only.
  */
-function noJqLines(o: {
+export function noJqLines(o: {
   refuse: string;
   pass: string;
   words?: string[][];
@@ -1843,7 +1843,7 @@ const JQ_NORM = String.raw`gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("\
  * `plugin:` prefix dropped. An empty result (no agent_type, or null) is a
  * default spawn, which no case matches.
  */
-const JQ_AGENT_NORM = String.raw`gsub("\\p{Cf}"; "") | gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("[\\s:;.,!?]+\\z"; "") | sub("\\A.*/"; "") | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
+export const JQ_AGENT_NORM = String.raw`gsub("\\p{Cf}"; "") | gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("[\\s:;.,!?]+\\z"; "") | sub("\\A.*/"; "") | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
 
 function appendLines(p: GuardPlatform): string[] {
   return [

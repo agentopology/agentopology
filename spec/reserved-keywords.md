@@ -16,7 +16,8 @@ agent, action, orchestrator, meta, roles, memory, flow, gates, gate,
 depth, batch, environments, triggers, command, event, level,
 hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
 context, env, extensions, providers, schedule, job, interfaces,
-defaults, schemas, schema, observability, fragment, interface, params
+defaults, schemas, schema, observability, fragment, interface, params,
+secrets, secret
 ```
 
 ---
@@ -26,7 +27,7 @@ defaults, schemas, schema, observability, fragment, interface, params
 These are used as field names or enum values:
 
 ```
-model, tools, disallowed-tools, reads, writes, outputs, skip, retry, isolation,
+model, tools, disallowed-tools, never-reads, readers, reads, writes, outputs, skip, retry, isolation,
 phase, kind, role, version, description, permissions, prompt,
 generates, handles, argument, factors, behavior, invocation, omit,
 when, max, parallel, per, manual, advisory, blocking,

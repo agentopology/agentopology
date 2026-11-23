@@ -35,7 +35,7 @@ const HOOK: BlockSchema = {
 const AGENT: BlockSchema = {
   fields: [
     "file", "role", "model", "permissions", "phase", "description",
-    "tools", "disallowed-tools", "skills", "reads", "writes", "mcp-servers",
+    "tools", "disallowed-tools", "never-reads", "skills", "reads", "writes", "mcp-servers",
     "produces", "consumes", "outputs", "skip", "behavior", "invocation", "runs",
     "independent", "color", "initial-prompt", "omit-claude-md", "retry", "timeout",
     "on-fail", "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
@@ -113,6 +113,7 @@ const TOPOLOGY: BlockSchema = {
     inventory: { fields: ["roots"] },
     needs: { fields: ["memory", "connectors", "user-skills"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
+    secrets: { fields: [], blocks: { secret: { fields: ["path", "readers"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },
     tools: { fields: [], blocks: { tool: NODE_SCHEMAS.tool } },

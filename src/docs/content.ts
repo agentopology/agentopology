@@ -153,7 +153,8 @@ agent NAME {
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
-| disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
+| disallowed-tools | string[] | no | -- | Denied tools; may be set with tools (removed first, then tools is resolved; a tool in both is removed -- V14 warns) |
+| never-reads | string[] | no | -- | Path globs this agent may not read; see the \`secrets\` topic |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
 | writes | string[] | no | -- | Memory keys this agent writes (V11) |
@@ -252,7 +253,7 @@ retry {
 - **V7**: Every agent must have a \`model\` field
 - **V10**: Prompt blocks should not be empty (warning)
 - **V11**: reads/writes must match flow order
-- **V14**: Cannot have both \`tools\` and \`disallowed-tools\`
+- **V14**: warning, a tool is in both \`tools\` and \`disallowed-tools\` (both lists together are allowed)
 - **V4**: Agents must appear in flow or have \`invocation: manual\`
 - **V5**: \`[when x.y == z]\` must reference declared outputs
 - **V22**: Fallback chain models should exist in a provider (warning)
@@ -3045,6 +3046,46 @@ artifacts {
   },
 
   // -------------------------------------------------------------------------
+  // walls (never-reads and secrets)
+  // -------------------------------------------------------------------------
+  secrets: {
+    name: "secrets",
+    description: "Per-agent walls: never-reads on an agent and the top-level secrets block",
+    content: () => `# secrets
+
+Per-agent walls on what can be read. \`never-reads\` on an agent lists path globs that agent may not read. A \`secrets\` entry names a path glob and the readers that may read it.
+
+## Syntax
+
+\`\`\`at
+secrets {
+  secret prod-config { path: "config/prod/**", readers: [deployer, main] }
+}
+agent reviewer {
+  model: sonnet
+  never-reads: [".env", "private/**"]
+}
+\`\`\`
+
+- \`readers\` are agent ids, or \`main\` for the main session. Any other agent, and the main session unless \`main\` is listed, is refused.
+- A glob is project-relative. \`**\` and \`*\` match across folders; a pattern with no \`/\` also matches a file name anywhere.
+
+## What it compiles to (claude-code)
+
+One generated PreToolUse hook on \`Read|Grep|Glob|Bash\` (\`before-read.sh\`) that exits 2 on a match. The calling agent is \`agent_type\` in the hook input: Claude Code sets it when the call comes from a subagent or from a session started with \`--agent\`, and leaves it out in the plain main session.
+
+Checked: Read \`file_path\`, Grep \`path\` and \`glob\`, Glob \`path\` and \`pattern\`, and the words of a Bash command.
+
+Not seen in a Bash command: a path built in a variable or substitution, one reached after \`cd\`, one a script opens itself, a search from a folder above the protected one.
+
+## Validation Rules
+
+- **V137**: a reader must be a declared agent or \`main\`
+- **V138**: a secret needs a \`path\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 31. composition
   // -------------------------------------------------------------------------
   composition: {
@@ -3261,11 +3302,11 @@ Gate \`after\` and \`before\` fields must reference declared nodes.
 **Violation:** \`after: nonexistent-agent\`.
 **Fix:** Reference a declared node.
 
-### V14: Tool Exclusivity (error)
-An agent cannot have both \`tools\` and \`disallowed-tools\`.
+### V14: Tool Exclusivity (warning)
+An agent may set both \`tools\` and \`disallowed-tools\`: Claude Code removes the denied tools first, then resolves \`tools\` against what remains. A tool in both lists is removed, so the agent does not get it.
 
-**Violation:** \`tools: [Read] disallowed-tools: [Bash]\`.
-**Fix:** Use one or the other.
+**Violation:** \`tools: [Read, Bash] disallowed-tools: [Bash]\`.
+**Fix:** Drop \`Bash\` from one list.
 
 ### V15: Exhaustive Conditions (error)
 Conditional edges from a node must cover all declared output values.
@@ -3392,6 +3433,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Secret Readers (error)
+A \`secrets\` reader must be a declared agent, or \`main\` for the main session.
+
+**Violation:** \`secret s { path: "x/**", readers: [ghost] }\` with no agent \`ghost\`.
+**Fix:** Name a declared agent, or \`main\`.
+
+### V138: Secret Path (error)
+A \`secrets\` entry needs a \`path\` glob; with none it guards nothing.
+
+**Violation:** \`secret s { readers: [deployer] }\`.
+**Fix:** Add \`path: "<glob>"\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3409,7 +3462,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V11 | error | Reads/Writes Consistent |
 | V12 | error | Edge Attribute Order |
 | V13 | error | Gate Placement |
-| V14 | error | Tool Exclusivity |
+| V14 | warning | Tool Exclusivity |
 | V15 | error | Exhaustive Conditions |
 | V16 | error | API Key Env Vars |
 | V17 | error | Single Default Provider |
@@ -3429,6 +3482,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Secret Readers |
+| V138 | error | Secret Path |
 `,
   },
 

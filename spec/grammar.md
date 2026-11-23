@@ -367,6 +367,7 @@ agent-field     = 'role' ':' identifier
                 | 'phase' ':' number
                 | 'tools' ':' tool-list
                 | 'disallowed-tools' ':' tool-list
+                | 'never-reads' ':' string-list
                 | 'reads' ':' path-list
                 | 'writes' ':' path-list
                 | 'outputs' ':' typed-map
@@ -409,6 +410,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |
+| `never-reads` | string-list | no | `[]` | Path globs this agent may not read (see 4.32) |
 | `reads` | path-list | no | `[]` | Input artifacts |
 | `writes` | path-list | no | `[]` | Output artifacts |
 | `outputs` | typed-map | no | `{}` | Values that affect flow |
@@ -441,7 +443,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 
 **Per-agent `hooks`:** Hooks defined inside an agent block are scoped to that agent's lifetime. They only fire while the agent is active. The hook sub-block syntax is identical to the global `hooks` section -- same fields (`on`, `matcher`, `run`, `type`, `timeout`), same hook events.
 
-**`tools` vs `disallowed-tools`:** Mutually exclusive. Parser error if both are specified on the same agent. Use `tools` to allowlist (only these). Use `disallowed-tools` to denylist (all except these).
+**`tools` and `disallowed-tools`:** Both may be set on one agent, and both are written. Claude Code applies `disallowed-tools` first, then resolves `tools` against what remains; a tool in both is removed (V14 warns). Use `tools` to allowlist (only these). Use `disallowed-tools` to denylist (all except these).
 
 **Tool list deduplication:** If both an unrestricted tool and a constrained variant appear (e.g., `Bash` and `Bash("pattern")`), the unrestricted form subsumes the constrained. The constrained entry is ignored. No parser error.
 
@@ -1906,6 +1908,26 @@ needs {
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+### 4.32 `secrets` and `never-reads`
+
+```ebnf
+secrets         = 'secrets' '{' secret* '}'
+secret          = 'secret' id '{' 'path' ':' string ','? 'readers' ':' name-list '}'
+```
+
+```agenttopology
+secrets {
+  secret prod-config { path: "config/prod/**", readers: [deployer, main] }
+}
+agent reviewer {
+  never-reads: [".env", "private/**"]
+}
+```
+
+Per-agent walls on what can be read. `never-reads` on an agent lists path globs that agent may not read. A `secret` names a path glob (project-relative; `**` and `*` match across folders, a pattern with no `/` also matches a file name anywhere) and the `readers` that may read it: agent ids, or `main` for the main session. Every other agent, and the main session unless `main` is listed, is refused. A reader that is not a declared agent or `main` is an error (V137); a secret with no `path` is an error (V138).
+
+Claude Code compiles this to one generated PreToolUse hook on `Read|Grep|Glob|Bash` (`before-read.sh`) that exits 2 on a match. The calling agent is `agent_type` in the hook input, which Claude Code sets when the call comes from a subagent or from a session started with `--agent`, and leaves out in the plain main session. The paths checked are Read `file_path`, Grep `path` and `glob`, Glob `path` and `pattern`, and the words of a Bash command. A Bash command can hide a path from this check: one built in a variable or substitution, one reached after `cd`, one a script opens itself, a search from a folder above the protected one. Other targets write nothing for it.
 
 ---
 
