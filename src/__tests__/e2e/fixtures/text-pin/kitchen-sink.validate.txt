@@ -1,19 +1,15 @@
 Validating kitchen-sink.at (incident-response v2.0.0)
 
-  stubs (claude-code): 13 of 50 generated files are stubs: 2 gate check scripts, 5 hook scripts, 1 action script, 4 tool scripts, 1 metering script
+  stubs (claude-code): 13 of 53 generated files are stubs: 2 gate check scripts, 5 hook scripts, 1 action script, 4 tool scripts, 1 metering script
 
   WARN  [V93] line 296: Edge "verifier -> fixer" declares no handoff — "verifier" writes [workspace/verification/] and "fixer" reads [workspace/triage/], which do not overlap. Add a shared path to "fixer" reads, or the receiver runs after the sender with none of its output (fixer)
   WARN  [V130] line 209: agent "detector" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (detector)
   WARN  [V130] line 209: agent "detector" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel. (detector)
   WARN  [V130] line 296: agent "fixer" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (fixer)
   WARN  [V130] settings sandbox: "docker" is not written for Claude Code, which turns its sandbox on or off (sandbox.enabled): write true or false, or set sandbox.* keys in extensions { claude-code }.
-  WARN  [CC-route] Flow edge "detector -> war-room" [when detector.severity == critical] is not enforced on Claude Code: "detector" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (detector)
-  WARN  [CC-route] Flow edge "triager -> fixer" [when triager.route == fix-now] is not enforced on Claude Code: "triager" and "verifier" have no Bash in their tools, so route.sh cannot record the route; it stays a line in the playbook. (triager)
-  WARN  [CC-route] Flow edge "triager -> fixer" [when triager.route == investigate] is not enforced on Claude Code: "triager" and "verifier" have no Bash in their tools, so route.sh cannot record the route; it stays a line in the playbook. (triager)
-  WARN  [CC-route] Flow edge "triager -> wrap-up" [when triager.route == defer] is not enforced on Claude Code: "wrap-up" is an action, and only an agent's launch is guarded; it stays a line in the playbook. (triager)
-  WARN  [CC-route] Flow edge "verifier -> fixer" [when verifier.status == failed] is not enforced on Claude Code: "triager" and "verifier" have no Bash in their tools, so route.sh cannot record the route; it stays a line in the playbook. (verifier)
+  WARN  [CC-route] Flow edge "triager -> wrap-up" [when triager.route == defer] is not enforced on Claude Code: "wrap-up" is an action with no commands: the orchestrator does it in conversation, so there is no step to refuse; it stays a line in the playbook. (triager)
 
-  0 error(s), 10 warning(s)
+  0 error(s), 6 warning(s)
 
   ── how to write it ──────────────────────────────────
 
