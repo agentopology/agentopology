@@ -315,6 +315,11 @@ export function isShellCommand(run: string | undefined): boolean {
   return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
 }
 
+/** Whether `run` is a program's command line to run as written (not yet read). */
+export function isInlineRun(_run: string | undefined): boolean {
+  return false;
+}
+
 /**
  * The interpreter a binding runs a script with (F-25): the one `run:` names,
  * else the one its extension names (`.py` python3, `.js` / `.mjs` / `.cjs`
