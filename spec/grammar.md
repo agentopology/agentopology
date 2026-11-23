@@ -419,7 +419,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `runs` | `subagent` / `session` / `inline` / `fork` | no | `subagent` | How the node runs: its own agent, a skill in the caller's context, or a skill in a fresh forked context (V101). `session` is its own named Claude Code session that can message other sessions |
 | `place` | identifier | no | -- | Where a session agent lives; agents sharing a place run together (V113) |
 | `decides` | list | no | -- | Decisions this agent holds the seat for; one seat per decision (V116) |
-| `permission-mode` | `default` / `acceptEdits` / `plan` / `bypassPermissions` / `auto` | no | -- | Permission mode of a session agent; differing modes across a talk edge warn (V113, V118) |
+| `permission-mode` | `default` / `acceptEdits` / `plan` / `auto` / `dontAsk` / `bypassPermissions` | no | -- | Claude Code permission mode, as written. On a subagent it is the agent file's `permissionMode` (`default` writes none); on a session agent it is the start line's `--permission-mode`. With `permissions:` too, both must map to the same mode (V113). Differing modes across a talk edge warn (V113, V118) |
 | `independent` | boolean | no | `false` | Must not see the author's reasoning: gets only the artifacts it reads; cannot run inline (V101) |
 | `color` | string | no | -- | Display color in the agent list |
 | `initial-prompt` | string | no | -- | First user turn when the agent runs as the main session agent |

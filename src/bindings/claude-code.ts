@@ -489,15 +489,27 @@ function workflowRunLabel(ast: TopologyAST, run: number[]): string {
   return run.length === 1 ? `phase-${run[0]}` : `phases-${run[0]}-${run[run.length - 1]}`;
 }
 
+/** Claude Code's own permissionMode values (sub-agents frontmatter and `--permission-mode`). */
+export const CLAUDE_CODE_PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+
+/**
+ * The frontmatter permissionMode an agent's `permission-mode:` writes: one of
+ * Claude Code's own values, as written; `default` and an unknown value (V113)
+ * write none.
+ */
+export function nativePermissionMode(mode: string): string | undefined {
+  return CLAUDE_CODE_PERMISSION_MODES.includes(mode) && mode !== "default" ? mode : undefined;
+}
+
 /**
  * Map topology permission strings to Claude Code permissionMode values.
  * Returns undefined when the permission mode should be omitted (the session's
  * own mode: default, autonomous, confirm, interactive). `auto` is Claude
  * Code's auto mode, not a short form of `autonomous` (V132).
  */
-function mapPermissionMode(perm: string): string | undefined {
+export function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
-  const nativeValues = ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
+  const nativeValues = CLAUDE_CODE_PERMISSION_MODES;
   if (nativeValues.includes(perm)) {
     // "default" is the default, omit it
     if (perm === "default") return undefined;
@@ -733,6 +745,23 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
             `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
             `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
         );
+      }
+    }
+    // `permission-mode:` is Claude Code's own word, written as is. A session
+    // agent's goes on its start line (--permission-mode) instead. When it and
+    // `permissions:` both map to a mode they agree (V113 refuses a mismatch),
+    // so there is one key.
+    if (agent.permissionMode && agent.runs !== "session") {
+      const mode = nativePermissionMode(agent.permissionMode);
+      if (mode && fm.permissionMode !== mode) {
+        fm.permissionMode = mode;
+        if (LOOSER_MODES.has(mode)) {
+          console.warn(
+            `[claude-code] Agent "${agent.id}" permission-mode: ${agent.permissionMode} compiles to permissionMode ${mode}. ` +
+              `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
+              `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
+          );
+        }
       }
     }
     // thinking is the language's reasoning-effort field; Claude Code calls it effort.

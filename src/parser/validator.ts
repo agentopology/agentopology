@@ -21,7 +21,7 @@
 
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
-import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
+import { CLAUDE_CODE_PERMISSION_MODES, mapPermissionMode, mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
@@ -1306,7 +1306,8 @@ function v101RunMode(ast: TopologyAST): ValidationResult[] {
 // Session agents (V113 - V118)
 // ---------------------------------------------------------------------------
 
-const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions", "auto"];
+// Claude Code's own modes, as its sub-agents frontmatter and --permission-mode take them.
+const PERMISSION_MODES = CLAUDE_CODE_PERMISSION_MODES;
 const MESSAGE_KINDS = ["ticket", "report", "ask"];
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
@@ -1338,6 +1339,12 @@ function v113SessionForms(ast: TopologyAST): ValidationResult[] {
     }
     if (a.permissionMode !== undefined && !PERMISSION_MODES.includes(a.permissionMode)) {
       results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has permission-mode: ${a.permissionMode} — use ${PERMISSION_MODES.join(", ")}.` });
+    } else if (a.permissionMode !== undefined && a.permissions && VALID_PERMISSIONS.has(a.permissions)) {
+      // Both write the agent file's permissionMode: they must say the same mode.
+      const fromPermissions = mapPermissionMode(a.permissions) ?? "default";
+      if (fromPermissions !== a.permissionMode) {
+        results.push({ rule: "V113", level: "error", ...at, message: `Agent "${a.id}" has permissions: ${a.permissions} (permissionMode ${fromPermissions}) and permission-mode: ${a.permissionMode}, which differ — keep one, or make them name the same mode.` });
+      }
     }
   }
   for (const msg of (ast as TopologyAST & { _talkErrors?: string[] })._talkErrors ?? []) {
@@ -1866,15 +1873,17 @@ function v26ActionKindEnum(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** The `permissions:` words V27 knows. */
+const VALID_PERMISSIONS = new Set([
+  "autonomous", "supervised", "interactive", "unrestricted",
+  "plan", "auto", "confirm", "bypass",
+  // Claude Code's own permissionMode values pass through as written.
+  "default", "acceptEdits", "dontAsk", "bypassPermissions",
+]);
+
 /** V27: `agent.permissions` should be one of the known values. */
 function v27AgentPermissionsEnum(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
-  const VALID_PERMISSIONS = new Set([
-    "autonomous", "supervised", "interactive", "unrestricted",
-    "plan", "auto", "confirm", "bypass",
-    // Claude Code's own permissionMode values pass through as written.
-    "default", "acceptEdits", "dontAsk", "bypassPermissions",
-  ]);
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
     if (node.permissions && !VALID_PERMISSIONS.has(node.permissions)) {

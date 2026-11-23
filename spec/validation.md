@@ -786,7 +786,7 @@ through the validator like any other rule.
 | V110 | warning | A gate before an action with `commands:` has neither a ledger (explicit, or the only record) nor `run:`, so there is nothing to check |
 | V111 | error/warning | An action's `unit-from` is not a valid regex, or has no capture group (error); an action with `unit-from` behind a gate whose ledger path has no `{unit}`, so the record's file cannot tell units apart (warning, D-2) |
 | V112 | error | A gate's `ledger:` names no declared record; a record path is unsafe (`{unit}` allowed); or a gate before an action needs a ledger, names none, and several records exist |
-| V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `bypassPermissions` or `auto`; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
+| V113 | error | Session agent forms: a `runs: session` agent id is kebab-case (it is also its session name and message address); `place:` is a plain name; `permission-mode:` is `default`, `acceptEdits`, `plan`, `auto`, `dontAsk` or `bypassPermissions`, and when the agent also sets `permissions:`, the two map to the same mode; an edge's `[message:]` is `ticket`, `report` or `ask`; a `talk: hub` names a session agent |
 | V114 | warning | Two or more session agents and no flow edge between any two of them: `talk not declared: unguarded` |
 | V115 | warning | With the `hub` pattern, a session-to-session edge that does not touch the hub node |
 | V116 | warning | Two agents claim one decision with `decides:`, or a decision listed in the topology's `decisions: [...]` has no agent claiming it |
