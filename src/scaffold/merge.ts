@@ -314,6 +314,18 @@ export function hookLine(r: HookRecord): string {
   return `${r.event} ${showMatcher(r.matcher)} ${r.command}`;
 }
 
+/**
+ * The script a generated command runs, as a project path: the last path
+ * after `$CLAUDE_PROJECT_DIR/` or `$AT_ROOT/` (the forms the bindings write),
+ * else the first word; null when there is none.
+ */
+function scriptOf(command: string): string | null {
+  const anchored = [...command.matchAll(/\$\{?(?:CLAUDE_PROJECT_DIR|AT_ROOT)\}?\/([^\s"'`;|&)]+)/g)].map((m) => m[1]);
+  if (anchored.length > 0) return anchored[anchored.length - 1];
+  const first = command.trim().split(/\s+/)[0]?.replace(/["']/g, "");
+  return first ? first.replace(/^\.\//, "") : null;
+}
+
 function showMatcher(matcher: string | null): string {
   return matcher === null ? "(no matcher)" : matcher;
 }
@@ -729,6 +741,8 @@ function mergeHooksByRecord(
       edited?: string;
       /** The recorded entry this edit stands for, while the .at still generates it. */
       holds?: HookRecord;
+      /** After a rename: the line saying the copy still runs the old script. */
+      stillRuns?: string;
     };
     const entries: Entry[] = [];
     exGroups.forEach((g, gi) => {
@@ -779,6 +793,11 @@ function mergeHooksByRecord(
         edit.edited =
           `hooks.${event}: kept your hook ${showMatcher(edit.matcher)} ${edit.command}: you edited the entry scaffold wrote ` +
           `(${showMatcher(r.matcher)} ${r.command}), so it is yours now`;
+        // The .at renamed the hook's script (it writes a new entry under the
+        // same event and matcher): the copy still runs the old one.
+        const renamed = [...free].some(([place, n]) => n > 0 && (JSON.parse(place) as [string])[0] === (r.matcher ?? ""));
+        const script = scriptOf(r.command);
+        if (renamed && script) edit.stillRuns = `hooks.${event}: your edited copy of ${event} ${showMatcher(r.matcher)} still runs ${script}`;
       }
     }
 
@@ -813,6 +832,7 @@ function mergeHooksByRecord(
           });
         } else if (e.edited) {
           outcome.kept.push({ event, line: e.edited });
+          if (e.stillRuns) outcome.kept.push({ event, line: e.stillRuns });
         } else if (e.state === "user" && (withOurs || namesOwnedScript(h, scripts))) {
           outcome.kept.push({ event, line: `hooks.${event}: kept a command the .at does not generate: ${e.command}` });
         }
