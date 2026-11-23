@@ -223,6 +223,10 @@ export interface MeteringDef {
   format: string;
   /** Pricing model identifier. */
   pricing: string;
+  /** Spend cap in USD (`max-cost:`, or its alias `cap:`). Advisory: written to the metering output, never enforced. */
+  maxCost?: number;
+  /** The value as written, kept when it is not a positive number so V137 can name it. */
+  maxCostRaw?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -689,6 +693,14 @@ export interface AgentNode extends BaseNode {
   description?: string;
   /** Maximum number of agentic turns before stopping. */
   maxTurns?: number;
+  /** Most subagents this agent may have open at once (`max-subagents:`). */
+  maxSubagents?: number;
+  /** The `max-subagents:` value as written, kept when it is not a positive integer (V137). */
+  maxSubagentsRaw?: string;
+  /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */
+  maxCost?: number;
+  /** The `max-cost:` value as written, kept when it is not a positive number (V137). */
+  maxCostRaw?: string;
   /** Sandbox mode override (e.g. "docker", "none", "network-only", true, false). */
   sandbox?: string | boolean;
   /** Model fallback chain (ordered list of model ids to try). */
