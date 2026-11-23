@@ -112,6 +112,7 @@ const TOPOLOGY: BlockSchema = {
     person: { fields: ["away"] },
     inventory: { fields: ["roots"] },
     needs: { fields: ["memory", "connectors", "user-skills"] },
+    ci: { fields: ["provider", "on", "gates"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },

@@ -1072,6 +1072,18 @@ records {
 
 `records { record <id> { path: "<project-relative path>" } }` declares ledgers. `path` may contain `{unit}`. `append-only` and `written-by` are reserved and not implemented.
 
+### `ci`
+
+```agenttopology
+ci {
+  provider: github
+  on: [pull_request, push]
+  gates: [publish-ready]
+}
+```
+
+`ci { provider: github, on: [<event>, ...], gates: [<gate id>, ...] }` runs the gates in CI. Fields sit one per line or, on one line, apart by commas. `provider` is required and must be `github`. `on` lists the events that start the workflow; it defaults to `[pull_request, push]`. `gates` lists declared gates, each with a `before:` step. For the claude-code target, scaffold writes `.github/workflows/agentopology-gates.yml`: it checks out the repo, sets up Node and runs `npx agentopology@<the running version> step check <file.at> <step>` for the step after each listed gate (each step once). Scaffold regenerates the file while it is as scaffold wrote it and keeps it once you edit it. A provider other than `github`, an undeclared gate id, or a gate with no step after it is an error (V137).
+
 **Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
 
 ```json

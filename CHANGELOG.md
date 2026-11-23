@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A top-level `ci { provider: github, on: [pull_request, push], gates: [...] }` block runs the same gates in CI. With the claude-code target, `scaffold` writes `.github/workflows/agentopology-gates.yml`: it checks out the repo, sets up Node and runs `npx agentopology@<the version that wrote it> step check <file.at> <step>` for the step after each listed gate (the gate's `before:`; a step two gates share is checked once). `on` defaults to `pull_request` and `push`. The file is regenerated while it is as scaffold wrote it; once you edit it, scaffold keeps your copy. V137 is a new error: a provider other than github ("only github is supported"), a gate id that is not declared, or a listed gate with no step after it. A topology without a `ci` block is unchanged.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

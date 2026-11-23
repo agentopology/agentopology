@@ -54,6 +54,7 @@ import type {
   ReplayConfig,
   ArtifactDef,
   RecordDef,
+  CiDef,
   PromptVariant,
   AuthDef,
   StoreNode,
@@ -2242,6 +2243,48 @@ export function parseRecords(topBody: string): RecordDef[] {
     .map((b) => ({ id: b.id!, path: unquote(parseFields(b.body).path ?? "") }));
 }
 
+/**
+ * Parse the top-level `ci { provider: github, on: [...], gates: [...] }`
+ * block. Fields sit one per line or, as the one-line form writes them, apart
+ * by commas outside the brackets. `on` defaults to pull_request and push; a
+ * missing provider reads as empty so V137 can name it.
+ */
+export function parseCi(topBody: string): CiDef | undefined {
+  // Only a `ci {` of the topology's own level: a looser match would also read
+  // `circuit-breaker {` or a block nested in an agent.
+  const at = depthZeroText(topBody).search(/(?:^|\n)[ \t]*ci[ \t]*\{/);
+  if (at === -1) return undefined;
+  const block = extractBlock(topBody.slice(at), "ci");
+  if (!block) return undefined;
+  const entries: string[] = [];
+  for (const line of block.body.split("\n")) {
+    let depth = 0;
+    let quote = false;
+    let start = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"' && line[i - 1] !== "\\") quote = !quote;
+      else if (quote) continue;
+      else if (ch === "[") depth++;
+      else if (ch === "]") depth--;
+      else if (ch === "," && depth === 0) { entries.push(line.slice(start, i)); start = i + 1; }
+    }
+    entries.push(line.slice(start));
+  }
+  const fields: Record<string, string> = {};
+  for (const e of entries) {
+    const m = /^\s*([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$/.exec(e);
+    if (m) fields[m[1]] = m[2];
+  }
+  const list = (raw: string | undefined, fallback: string[]) =>
+    raw === undefined ? fallback : parseList(raw).map(unquote).filter((s) => s !== "");
+  return {
+    provider: unquote(fields.provider ?? ""),
+    on: list(fields.on, ["pull_request", "push"]),
+    gates: list(fields.gates, []),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -2832,6 +2875,9 @@ export function parse(source: string): TopologyAST {
   // --- Records ---
   const records = parseRecords(topBody);
 
+  // --- CI ---
+  const ci = parseCi(topBody);
+
   // --- Top-level Extensions ---
   // Only an `extensions` block at the topology's own level. The first one
   // anywhere used to win, so an agent's extensions (effort, color, ...) were
@@ -2958,6 +3004,7 @@ export function parse(source: string): TopologyAST {
     checkpoint,
     artifacts,
     records,
+    ...(ci ? { ci } : {}),
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(machines ? { machines } : {}),

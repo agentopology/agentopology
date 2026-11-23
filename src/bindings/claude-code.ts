@@ -33,6 +33,7 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { generateCiWorkflow } from "./lib/ci.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
@@ -3797,6 +3798,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Mods (type: mod) → a plugin directory; never settings.json
     files.push(...generateModPlugin(ast));
+
+    // ci { } → the GitHub Actions workflow that runs `step check`
+    files.push(...generateCiWorkflow(ast));
 
     // HYBRID: host-side launch directives for the embedded workflow rung(s).
     files.push(...generateWorkflowLaunchArtifacts(ast));

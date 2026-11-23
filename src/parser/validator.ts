@@ -4149,6 +4149,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137CiBlock(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4354,30 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V137: the `ci { }` block. The provider must be github; every id in `gates`
+ * must be a declared gate; and each listed gate needs a step after it (a
+ * `before:`), since the workflow runs `step check` for that step.
+ */
+function v137CiBlock(ast: TopologyAST): ValidationResult[] {
+  const ci = ast.ci;
+  if (!ci) return [];
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V137", level: "error", message });
+  if (ci.provider !== "github") {
+    err(`ci { provider: ${ci.provider || "(none)"} }: only github is supported`);
+  }
+  for (const id of ci.gates) {
+    const gate = ast.nodes.find((n) => n.id === id && n.type === "gate") as GateNode | undefined;
+    if (!gate) {
+      err(`ci { gates } names "${id}", which is not a declared gate`);
+    } else if (gateAnchors(gate, "before").length === 0) {
+      err(`ci { gates } names gate "${id}", which has no step after it (no before:), so there is no step for the workflow to check`);
+    }
   }
   return results;
 }
