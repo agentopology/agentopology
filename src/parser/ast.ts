@@ -902,6 +902,8 @@ export interface NeedsDef {
   connectors?: string[];
   /** Skills expected at `~/.claude/skills/<name>`. */
   userSkills?: string[];
+  /** Plugins expected under `~/.claude/plugins`. */
+  plugins?: string[];
 }
 
 /** Topology-level defaults for sampling params and shared agent config. */
@@ -1031,6 +1033,8 @@ export interface TopologyMeta {
   entry?: string;
   /** Whether durable execution is enabled. */
   durable?: boolean;
+  /** Version range of the agentopology package this file needs (`meta { requires: ">=0.13.0" }`). */
+  requires?: string;
 }
 
 /** Authentication configuration for a provider (OIDC, OAuth2, etc.). */
@@ -1212,6 +1216,21 @@ export interface TopologyAST {
   inventoryRoots?: string[];
   /** What the topology needs from outside the repo, from the top-level `needs` block (L-4). */
   needs?: NeedsDef;
+  /** `inventory { strict: true }`: validate --inventory exits 1 when a live file is unmapped. */
+  inventoryStrict?: boolean;
+  /** Code regions from the top-level `islands` block: files they match count as accounted for. */
+  islands?: IslandDef[];
+}
+
+/** One `island <id> { path, owner, test }` from the top-level `islands` block. */
+export interface IslandDef {
+  id: string;
+  /** Glob of project files the island covers (`*`, `**`, `?`). */
+  path: string;
+  /** A declared person id. */
+  owner: string;
+  /** Command that tests the island; listed by guard --check, never run. */
+  test?: string;
 }
 
 // ---------------------------------------------------------------------------
