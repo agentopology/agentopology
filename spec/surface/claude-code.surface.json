@@ -1025,6 +1025,77 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.file_path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.file_path"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md#pretooluse-input"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "before-edit.sh reads no path from a Write or Edit and refuses every edit (it blocks on input it cannot read); documented for Write, Edit and Read (always absolute)",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.path"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md#pretooluse-input"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "none on the edit tools: before-edit.sh reads it only after file_path and notebook_path; documented for Glob and Grep, not for the tools the hook matches",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.notebook_path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.notebook_path"
+      ],
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "NOT DOCUMENTED: neither hooks.md (PreToolUse input) nor tools-reference.md (NotebookEdit tool behavior) names NotebookEdit's input fields; if the name differs, before-edit.sh reads no path from a NotebookEdit and refuses it (it blocks on input it cannot read)",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.patch",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.patch",
+        "tool_input.input"
+      ],
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "none on Claude Code: not Claude Code fields (hooks.md lists no tool with them); before-edit.sh reads them only when tool_name is apply_patch, Codex's edit tool, which the shared script also handles",
+      "grade": "cosmetic"
+    },
+    {
       "id": "cc.hooks.payload.name",
       "area": "hooks.payload",
       "tokens": [

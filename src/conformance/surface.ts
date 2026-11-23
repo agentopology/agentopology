@@ -122,6 +122,9 @@ function addPayload(add: (area: string, token: string) => void, content: string)
       continue;
     }
     if (/\bjq -nc?\b/.test(line)) continue; // builds a log line, reads no payload
+    // A filter followed by a file operand reads that file (a gate ledger, the route record, the approvals
+    // file), never the hook's stdin: its fields are the record's, not the payload's.
+    if (/\bjq\b[^'|]*'[^']*'\s+"?\$[A-Za-z_]+"?/.test(line)) continue;
     const afterQuote = line.slice(line.indexOf("'"));
     for (const m of afterQuote.matchAll(/(?<![\w$)\]])\.([a-z_]+)\b/g)) {
       const name = m[1];

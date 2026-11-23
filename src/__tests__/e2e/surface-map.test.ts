@@ -81,4 +81,14 @@ describe("[RW-1] surface map, Claude Code", () => {
     const missing = names(unmappedItems(items(), copy));
     expect(missing).toEqual(["hooks.events:PreToolUse"]);
   });
+
+  it("[RW-1] planted negative: an unknown payload field fails; a field read from a record file does not count", () => {
+    const script = (body: string) => [{ path: ".claude/skills/t/scripts/x.sh", content: `#!/usr/bin/env bash\n${body}\n` }];
+    const payload = (body: string) => names(unmappedItems(collectSurface(script(body)), realMap())).filter((n) => n.startsWith("hooks.payload:"));
+    // read from the hook's stdin, piped or not: still a payload field, so an unmapped one fails
+    expect(payload(`X=$(jq -er '.tool_input | (.planted_field // "")') || exit 2`)).toEqual(["hooks.payload:tool_input.planted_field"]);
+    expect(payload(`X=$(printf '%s' "$INPUT" | jq -er '.tool_input | objects | (.planted_two // "") | strings') || exit 2`)).toEqual(["hooks.payload:tool_input.planted_two"]);
+    // read from a file operand (a ledger, the route record): the record's fields, not the payload's
+    expect(payload(`last=$(jq -rs --arg a "$1" '[.[] | select(.agent == $a)] | last | (.planted_rec // "")' "$ROUTES" 2>/dev/null)`)).toEqual([]);
+  });
 });
