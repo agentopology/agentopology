@@ -7,14 +7,20 @@ All notable changes to agentopology are documented here.
 ### Changed behaviour
 
 - A repo's own tool (`tools { tool <id> { ... } }`) is no longer written into a generated agent's `tools:` on claude-code. Claude Code's subagent `tools:` takes Claude Code tool names, MCP entries and `Agent(<type>)`, so `tools: "Read, Bash, run-tests"` named a tool Claude Code does not know. A tool with a `script:` (or the new `command:`) runs through Bash: the agent now gets `Bash` (added once, unless it already has it) and the tool's name is left out, so `tools: [Read, run-tests]` compiles to `tools: Read, Bash`.
-- `.claude/settings.json` gains a permission allow rule for each such tool, after the rules in `settings { allow }`, so the call runs without a prompt: `Bash(<script path> *)` for a script, by its project path (`Bash(.claude/skills/<topology>/scripts/run-tests.sh *)` for `script: "scripts/run-tests.sh"`), and `Bash(<command> *)` for a command. A topology with a script tool and no `settings` block now gets a settings.json, so the generated file count in `validate`'s stub line goes up by one (examples/script-agent-pipeline.at: 1 of 9 generated files, was 1 of 8).
-- A skill's `allowed-tools` naming a repo tool (and a `runs: inline` or `runs: fork` agent's `tools`, written as `allowed-tools`) gets the tool's allow rule in place of its name.
+- `.claude/settings.json` gains a permission allow rule for each `command:` tool, `Bash(<command> *)`, after the rules in `settings { allow }`, so the call runs without a prompt. A `script:` tool is not auto-allowed: the agent can edit the script, so an allow rule on it would let the agent run anything without a prompt, a wider capability than the `.at` gives. A script tool gets `Bash` and prompts as any Bash call does; nothing else is written for it, and its stub is written as before.
+- A skill's `allowed-tools` naming a command tool (and a `runs: inline` or `runs: fork` agent's `tools`, written as `allowed-tools`) gets the tool's allow rule in place of its name; a script tool there is left out, not pre-approved.
 - V14 also refuses a Bash that a repo tool needs and the topology disallows: a skill with `disallowed-tools: [Bash]` (or a `Bash(...)` entry, which removes the whole tool on Claude Code) that names a command or script tool in `scripts:` or `allowed-tools`, and an agent with such `disallowed-tools` whose skill does. The message names the agent, the skill and the tool.
 - V130 warns (claude-code or no target) on a tool with neither `script:` nor `command:`: it compiles to nothing, adds no `Bash` and no allow rule, and its name is left out of an agent's `tools:` (kept only when it is the agent's only tool, since an empty list would give the agent every tool).
 
+### Known limits
+
+- A command tool's allow rule matches the command run as written (`npm test`, `npm test <args>`); the same call run another way (`cd x && npm test`, through a script) still prompts. A script tool always prompts.
+- A tool with neither `script:` nor `command:` keeps its name in an agent's `tools:` when it is the agent's only tool (an empty list would give the agent every tool); V130 warns.
+- A repo tool named in `disallowed-tools` is still written there by its name.
+
 ### Added
 
-- `command:` on a `tool`, as `tool run-tests { command: "npm test" description: "Run the suite" }`: the shell command that runs the tool. It needs no script, and no stub is written for it on any target. On claude-code it compiles to `Bash` in the agent's `tools:` and the allow rule `Bash(npm test *)` (which also matches the bare `npm test`); a command that holds a `*` is written as is. When a tool has both, the command is the allowed call. Codex and Cursor list the tool by name in the agent's instructions, as before.
+- `command:` on a `tool`, as `tool run-tests { command: "npm test" description: "Run the suite" }`: the shell command that runs the tool. It needs no script, and no stub is written for it on any target. On claude-code it compiles to `Bash` in the agent's `tools:` and the allow rule `Bash(npm test *)` (which also matches the bare `npm test`); a command that holds a `*` is written as is. When a tool has both, the command is the allowed call and the script stub is still written. Codex and Cursor list the tool by name in the agent's instructions, as before.
 
 ## [0.12.6] - 2026-11-23
 

@@ -22,7 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
-import { repoTool, toolAllowRule } from "../bindings/lib/repo-tools.js";
+import { repoTool, runsThroughBash } from "../bindings/lib/repo-tools.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
@@ -781,7 +781,7 @@ function v14ToolExclusivity(ast: TopologyAST): ValidationResult[] {
   const bashTools = (skill: { scripts?: string[]; allowedTools?: string[] }) =>
     [...new Set([...(skill.scripts ?? []), ...(skill.allowedTools ?? [])])].filter((id) => {
       const tool = repoTool(ast, id);
-      return tool !== undefined && toolAllowRule(ast, tool) !== null;
+      return tool !== undefined && runsThroughBash(tool);
     });
   for (const skill of ast.skills ?? []) {
     if (!deniesBash(skill.disallowedTools)) continue;
@@ -4852,7 +4852,7 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
   // A repo tool with neither script: nor command: has nothing Claude Code can
   // run: no Bash in an agent's tools and no allow rule (lib/repo-tools.ts).
   for (const t of ast.toolDefs ?? []) {
-    if (toolAllowRule(ast, t) === null)
+    if (!runsThroughBash(t))
       warn(`tool "${t.id}" has neither script: nor command:, so it compiles to nothing on Claude Code: an agent or skill that names it gets no Bash and no allow rule. Give it command: "<shell command>" or script: "<path>".`, t.id);
   }
   const s = ast.settings ?? {};

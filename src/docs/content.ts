@@ -1875,7 +1875,7 @@ tools {
 ## Notes
 
 - Custom tools are referenced by name in agent \`tools\` lists, and in a skill's \`scripts\` and \`allowed-tools\`.
-- On claude-code a tool's name is never written into an agent's \`tools:\` (Claude Code knows no such tool). A tool with \`command:\` or \`script:\` runs through Bash: the agent gets \`Bash\` (added once), and \`.claude/settings.json\` gets the allow rule after \`settings { allow }\`, \`Bash(npm test *)\` for a command (it also matches the bare command) or \`Bash(<script path> *)\` for a script by its project path. A skill's \`allowed-tools\` naming the tool gets that rule in its place.
+- On claude-code a tool's name is never written into an agent's \`tools:\` (Claude Code knows no such tool). A tool with \`command:\` or \`script:\` runs through Bash: the agent gets \`Bash\` (added once). A command tool also gets the allow rule \`Bash(npm test *)\` in \`.claude/settings.json\`, after \`settings { allow }\` (it also matches the bare command); a skill's \`allowed-tools\` naming it gets that rule in its place. A script tool gets no allow rule and prompts: the agent can edit the script, so a rule on it would widen what the agent may run.
 - A tool with neither \`script:\` nor \`command:\` compiles to nothing on claude-code (V130 warns).
 - Never widen: a skill with \`disallowed-tools: [Bash]\` that names a command or script tool, or an agent with it whose skill does, is a V14 error.
 - Codex and Cursor write the tool's name in the agent's instructions, and a stub for a script.

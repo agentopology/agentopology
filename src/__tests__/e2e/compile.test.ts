@@ -86,8 +86,7 @@ describe("MCP and permissions", () => {
 
   it("[N7] MCP names convert whole-server, wildcard and dotted forms, in tools and in permissions", () => {
     expect(drafter).toContain('tools: "Read, mcp__notes, mcp__search__*, mcp__search__find.all"');
-    // 0.13.0: the fixture's script tools (render, count) add their Bash allow rules after settings { allow }.
-    expect(settings.permissions.allow).toEqual(["Read", "mcp__search", "Bash(tools/render.py *)", "Bash(.claude/skills/compile/scripts/count.sh *)"]);
+    expect(settings.permissions.allow).toEqual(["Read", "mcp__search"]);
     expect(settings.permissions.deny).toEqual(["mcp__notes__delete"]);
   });
 

@@ -1,6 +1,6 @@
 Validating script-agent-pipeline.at (script-agent-demo v1.0.0)
 
-  stubs (claude-code): 1 of 9 generated files are stubs: 1 tool script
+  stubs (claude-code): 1 of 8 generated files are stubs: 1 tool script
 
   All validation rules passed.
 

@@ -91,9 +91,9 @@ describe("a repo tool in an agent's tools", () => {
     expect(line).not.toContain("run-tests");
   });
 
-  it("a script tool allows running its script by its project path", () => {
+  it("a script tool gets no allow rule (the agent can edit the script, so a rule would widen)", () => {
     const files = scaffold(P13);
-    expect(allowOf(files)).toContain("Bash(.claude/skills/p13/scripts/run-tests.sh *)");
+    expect(allowOf(files)).toEqual([]);
     // The stub is still written where the script lives.
     expect(file(files, ".claude/skills/p13/scripts/run-tests.sh")).toBeDefined();
   });
