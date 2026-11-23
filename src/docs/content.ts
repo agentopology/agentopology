@@ -750,7 +750,7 @@ An edge \`router -> builder [when router.class == change]\`, where \`class\` is 
 
 - \`before-action.sh\` (PreToolUse on \`Bash|Monitor|PowerShell\`) refuses a shell command that writes the route record (a redirect, \`tee\`, \`cp\`, \`mv\`, \`rm\`), as it does for a gate ledger. Reading it, and running route.sh, pass.
 
-Not enforced, and named by a \`validate\` warning (CC-route): a condition of any other form (\`!=\`, \`>=\`, a value not declared); an edge to an action (no launch to refuse); a router whose \`tools\` leave out Bash (it cannot run route.sh); inline delegation. These edges stay a line in the playbook's Flow list. A route into an agent that a plain edge also reaches is not checked (its launch cannot be told apart) and does not warn. Codex and Cursor get no route check.
+Not enforced, and named by a \`validate\` warning (CC-route): a condition of any other form (\`!=\`, \`>=\`, a value not declared); an edge to an action with no \`commands:\` (done in conversation, so no step to refuse; an action with commands that only routes reach is refused by \`before-action.sh\` the same way);a router whose \`tools\` leave out Bash (it cannot run route.sh); inline delegation. These edges stay a line in the playbook's Flow list. A route into an agent that a plain edge also reaches is not checked (its launch cannot be told apart) and does not warn. Codex and Cursor get no route check.
 
 ## Validation Rules
 

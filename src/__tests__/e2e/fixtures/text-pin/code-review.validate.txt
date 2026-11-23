@@ -4,7 +4,7 @@ Validating code-review.at (code-review v1.0.0)
 
   WARN  [CC-route] Flow edge "reviewer -> reporter" [when reviewer.verdict == approve] is not enforced on Claude Code: "reviewer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (reviewer)
   WARN  [CC-route] Flow edge "reviewer -> reporter" [when reviewer.verdict == request-changes] is not enforced on Claude Code: "reviewer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (reviewer)
-  WARN  [CC-route] Flow edge "reviewer -> create-report" [when reviewer.verdict == reject] is not enforced on Claude Code: "create-report" is an action, and only an agent's launch is guarded; it stays a line in the playbook. (reviewer)
+  WARN  [CC-route] Flow edge "reviewer -> create-report" [when reviewer.verdict == reject] is not enforced on Claude Code: "create-report" is an action with no commands: the orchestrator does it in conversation, so there is no step to refuse; it stays a line in the playbook. (reviewer)
 
   0 error(s), 3 warning(s)
 

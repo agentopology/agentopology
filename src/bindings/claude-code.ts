@@ -53,7 +53,7 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
-import { generateRouteScript, routeInstructions, routeKeys } from "./lib/route.js";
+import { generateRouteScript, routeActionTargets, routeInstructions, routeKeys } from "./lib/route.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -573,7 +573,9 @@ function formatSchemaField(f: SchemaFieldDef): string {
  * step there, never the usage exemption the hook gives a typed command.
  */
 function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
-  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
+  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id))
+    // 0.13.0: a step held by its route checks itself the same way.
+    || routeActionTargets(ast, CLAUDE_CODE_GUARDS).has(action.id);
   if (!gated || !buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) return [];
   const name = ast.topology.name;
   const words = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))];

@@ -24,7 +24,7 @@ import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
 import { isWorkflowSeamAgent } from "./seam.js";
-import { routeCheckFunction, routeCheckLines, routeRecordPath, routeTargets } from "./route.js";
+import { hasRoutes, routeActionCheckLines, routeActionTargets, routeCheckFunction, routeCheckLines, routeRecordPath, routeTargets } from "./route.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -1338,7 +1338,7 @@ function protectedFile(path: string): ProtectedLedger {
 
 /** The route record as a protected file (0.13.0), or null when no launch reads one (lib/route.ts). */
 function protectedRouteRecord(ast: TopologyAST, p: GuardPlatform): ProtectedLedger | null {
-  return routeTargets(ast, p).size > 0 ? protectedFile(routeRecordPath(ast, p)) : null;
+  return hasRoutes(ast, p) ? protectedFile(routeRecordPath(ast, p)) : null;
 }
 
 /**
@@ -1524,13 +1524,15 @@ const GATE_BUDGET_FUNCTIONS: string[] = [
 ];
 
 /** Every action a gate guards, with its gates, in declaration order. */
-function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
+function actionGuards(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
+  // 0.13.0: a script step that only `when` routes reach is guarded too, by its route (lib/route.ts).
+  const routed = routeActionTargets(ast, p);
   const out: Array<{ action: ActionNode; gates: GateNode[] }> = [];
   for (const node of ast.nodes) {
     if (node.type !== "action") continue;
     const mine = gates.filter((g) => guardedActions(ast, g).some((a) => a.id === node.id));
-    if (mine.length > 0) out.push({ action: node as ActionNode, gates: mine });
+    if (mine.length > 0 || routed.has(node.id)) out.push({ action: node as ActionNode, gates: mine });
   }
   return out;
 }
@@ -1548,7 +1550,7 @@ function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: Gate
  * itself with `agentopology step check`.
  */
 export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
-  const guards = actionGuards(ast);
+  const guards = actionGuards(ast, p);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
   // 0.13.0: a topology whose launches read the route record gets the shell check for it too.
@@ -1600,6 +1602,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "",
     "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
     "",
+    ...routeCheckFunction(ast, p, "action"),
     ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
@@ -1688,7 +1691,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
     const names = [...new Set(keys.map((k) => k.key))];
     const gateChecks = (indent: string) => {
-      const out: string[] = [];
+      // 0.13.0: the step's route first, when only `when` routes reach it.
+      const out: string[] = [...routeActionCheckLines(ast, action.id, p, indent)];
       for (const gate of gates) {
         out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
         const ledger = gateLedger(ast, gate);
@@ -1704,7 +1708,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       }
       return out;
     };
-    const unreadable = (why: string, indent: string) => action.unitFrom
+    // A step held only by its route has no gate to name, and its route reads no unit.
+    const byUnit = !!action.unitFrom && gates.length > 0;
+    const unreadable = (why: string, indent: string) => byUnit
       ? [`${indent}deny ${sq(gates[0].id)} "it names ${names.join("/")} in a form this guard cannot read (${why}); write the step as a plain command"`]
       : [`${indent}UNIT=''`, ...gateChecks(indent)];
     lines.push(`# step ${action.id}`);
@@ -1720,7 +1726,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
-    if (action.unitFrom) {
+    if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
       lines.push(
         `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // ""] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,

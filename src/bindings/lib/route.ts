@@ -90,11 +90,41 @@ export function canRecordRoute(ast: TopologyAST, owner: string): boolean {
  * ({@link canRecordRoute}). Empty off Claude Code and under inline delegation.
  */
 export function routeTargets(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): Map<string, RouteNeed[]> {
+  if (p.id !== "claude-code" || getDelegationMode(ast) === "inline") return new Map();
+  return checkedTargets(ast, (t) => isRegisteredSubagentType(ast, t, p));
+}
+
+/** True for an action with `commands:`: a script step before-action.sh can refuse. */
+export function isScriptStep(ast: TopologyAST, id: string): boolean {
+  const node = ast.nodes.find((n) => n.id === id);
+  return node?.type === "action" && (node.commands ?? []).length > 0;
+}
+
+/**
+ * The script steps (actions with `commands:`) checked against the route record
+ * in before-action.sh, by the same rule as {@link routeTargets}. Delegation does
+ * not matter: the step's command is refused wherever it runs in a session.
+ */
+export function routeActionTargets(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): Map<string, RouteNeed[]> {
+  if (p.id !== "claude-code") return new Map();
+  return checkedTargets(ast, (t) => isScriptStep(ast, t));
+}
+
+/** Every checked target, agent or script step. */
+function allTargets(ast: TopologyAST, p: GuardPlatform): Map<string, RouteNeed[]> {
+  return new Map([...routeTargets(ast, p), ...routeActionTargets(ast, p)]);
+}
+
+/** True when anything reads the route record: route.sh, its protection and the check functions are written. */
+export function hasRoutes(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): boolean {
+  return allTargets(ast, p).size > 0;
+}
+
+function checkedTargets(ast: TopologyAST, kind: (target: string) => boolean): Map<string, RouteNeed[]> {
   const out = new Map<string, RouteNeed[]>();
-  if (p.id !== "claude-code" || getDelegationMode(ast) === "inline") return out;
   const routed = new Set(ast.edges.filter((e) => routeOf(ast, e)).map((e) => e.to));
   for (const target of routed) {
-    if (!ID.test(target) || !isRegisteredSubagentType(ast, target, p)) continue;
+    if (!ID.test(target) || !kind(target)) continue;
     const needs: RouteNeed[] = [];
     let all = true;
     for (const e of ast.edges.filter((x) => x.to === target)) {
@@ -118,7 +148,7 @@ export interface RouteKey {
 /** The outputs route.sh records: those a checked launch reads. Empty when nothing is checked. */
 export function routeKeys(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): RouteKey[] {
   const checked = new Set<string>();
-  for (const needs of routeTargets(ast, p).values()) for (const n of needs) checked.add(`${n.agent}.${n.field}`);
+  for (const needs of allTargets(ast, p).values()) for (const n of needs) checked.add(`${n.agent}.${n.field}`);
   const keys: RouteKey[] = [];
   for (const key of checked) {
     const [agent, field] = key.split(".");
@@ -184,9 +214,12 @@ export function generateRouteScript(ast: TopologyAST, p: GuardPlatform = CLAUDE_
   return { path: `${p.scriptsDir(name)}/route.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
-/** The before-agent.sh function that reads the route record; empty when nothing is checked. */
-export function routeCheckFunction(ast: TopologyAST, p: GuardPlatform): string[] {
-  if (routeTargets(ast, p).size === 0) return [];
+/**
+ * The function that reads the route record, for before-agent.sh (`which`
+ * "agent") or before-action.sh ("action"); empty when that script checks nothing.
+ */
+export function routeCheckFunction(ast: TopologyAST, p: GuardPlatform, which: "agent" | "action" = "agent"): string[] {
+  if ((which === "agent" ? routeTargets(ast, p) : routeActionTargets(ast, p)).size === 0) return [];
   const name = ast.topology.name;
   return [
     `ROUTES=${shellQuote(routeRecordPath(ast, p))}`,
@@ -218,18 +251,26 @@ export function routeCheckFunction(ast: TopologyAST, p: GuardPlatform): string[]
 
 /** The before-agent.sh lines for one checked agent, or empty. */
 export function routeCheckLines(ast: TopologyAST, agent: string, p: GuardPlatform): string[] {
-  const needs = routeTargets(ast, p).get(agent);
+  return routeCheckCall(routeTargets(ast, p).get(agent), agent, "    ");
+}
+
+/** The before-action.sh lines for one checked script step, at `indent`, or empty. */
+export function routeActionCheckLines(ast: TopologyAST, action: string, p: GuardPlatform, indent: string): string[] {
+  return routeCheckCall(routeActionTargets(ast, p).get(action), action, indent);
+}
+
+function routeCheckCall(needs: RouteNeed[] | undefined, target: string, indent: string): string[] {
   if (!needs) return [];
   const args = needs.map((n) => `${shellQuote(`${n.agent}.${n.field}=${n.value}`)} ${shellQuote(n.from)}`).join(" ");
   return [
-    `    # route: ${needs.map((n) => `${n.from} -> ${agent} [when ${n.agent}.${n.field} == ${n.value}]`).join(", ")}`,
-    `    route_check ${shellQuote(agent)} ${args}`,
+    `${indent}# route: ${needs.map((n) => `${n.from} -> ${target} [when ${n.agent}.${n.field} == ${n.value}]`).join(", ")}`,
+    `${indent}route_check ${shellQuote(target)} ${args}`,
   ];
 }
 
 /** The section of a router's agent file (or the playbook) that tells it to record its choice. */
 export function routeInstructions(ast: TopologyAST, key: RouteKey, p: GuardPlatform = CLAUDE_CODE_GUARDS): string[] {
-  const checked = [...routeTargets(ast, p).entries()]
+  const checked = [...allTargets(ast, p).entries()]
     .filter(([, needs]) => needs.some((n) => n.agent === key.agent && n.field === key.field))
     .map(([t]) => t);
   return [
@@ -261,7 +302,7 @@ export interface RouteWarning {
  */
 export function routeWarnings(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): RouteWarning[] {
   const out: RouteWarning[] = [];
-  const targets = routeTargets(ast, p);
+  const targets = allTargets(ast, p);
   const inline = getDelegationMode(ast) === "inline";
   const warn = (e: EdgeDef, why: string) => out.push({
     rule: "CC-route",
@@ -280,10 +321,11 @@ export function routeWarnings(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_G
     const into = ast.edges.filter((x) => x.to === e.to);
     const other = [...new Set(into.filter((x) => !routeOf(ast, x)).map((x) => `${x.from} -> ${x.to}`))];
     const mute = [...new Set(into.map((x) => routeOf(ast, x)?.agent).filter((a): a is string => !!a && !canRecordRoute(ast, a)))];
-    if (inline) warn(e, "orchestrator.delegation is inline, so no agent is launched to refuse");
-    else if (node?.type === "action") warn(e, `"${e.to}" is an action, and only an agent's launch is guarded`);
-    else if (!isRegisteredSubagentType(ast, e.to, p)) warn(e, `"${e.to}" is not launched as a subagent, so no launch is guarded`);
-    // A plain edge also leads into the agent: the route is one way in among others, and promises no refusal.
+    const step = isScriptStep(ast, e.to);
+    if (node?.type === "action" && !step) warn(e, `"${e.to}" is an action with no commands: the orchestrator does it in conversation, so there is no step to refuse`);
+    else if (inline && !step) warn(e, "orchestrator.delegation is inline, so no agent is launched to refuse");
+    else if (!step && !isRegisteredSubagentType(ast, e.to, p)) warn(e, `"${e.to}" is not launched as a subagent, so no launch is guarded`);
+    // A plain edge also leads into the target: the route is one way in among others, and promises no refusal.
     else if (other.length > 0) continue;
     else if (mute.length > 0) {
       const who = mute.map((a) => `"${a}"`).join(" and ");
