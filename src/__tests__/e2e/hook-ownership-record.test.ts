@@ -246,8 +246,31 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
       });
       const same = p.scaffold([LINT, AUDIT]);
       expect(has(p.rows(), edited), JSON.stringify(p.rows())).toBe(true);
-      expect(same).toContain(`kept your hook ${edited.matcher} ${edited.command}: you edited the entry scaffold wrote`);
+      // The .at's original is not written again beside the user's copy (ruled P).
+      expect(has(p.rows(), lint), JSON.stringify(p.rows())).toBe(false);
+      const keptLine = `kept your edited copy of ${lint.event} ${lint.matcher}; the generated hook is not added again; delete your copy to get it back`;
+      expect(same).toContain(keptLine);
       expect(same).not.toContain("removed generated hook");
+      // And not on a later run either.
+      expect(p.scaffold([LINT, AUDIT])).toContain(keptLine);
+      expect(has(p.rows(), lint), JSON.stringify(p.rows())).toBe(false);
+      if (target === "claude-code") {
+        // guard --check grades the hook on the user's edited command.
+        const at = join(tmp, "project.at");
+        const check = cli(["guard", at, "--check", "--dir", p.dir]);
+        expect(check.out).toContain(edited.command);
+      }
+      // Deleting the copy brings the generated hook back.
+      p.edit((d) => {
+        for (const g of d.hooks!.PreToolUse) g.hooks = g.hooks.filter((h) => h.command !== edited.command);
+        d.hooks!.PreToolUse = d.hooks!.PreToolUse.filter((g) => g.hooks.length > 0);
+      });
+      p.scaffold([LINT, AUDIT]);
+      expect(has(p.rows(), lint), JSON.stringify(p.rows())).toBe(true);
+      p.edit((d) => {
+        for (const g of d.hooks!.PreToolUse) for (const h of g.hooks) if (h.command === lint.command) h.command = edited.command;
+      });
+      p.scaffold([LINT, AUDIT]);
       const dropped = p.scaffold([AUDIT]);
       expect(has(p.rows(), edited), JSON.stringify(p.rows())).toBe(true);
       expect(dropped).not.toContain(removedLine(edited));
