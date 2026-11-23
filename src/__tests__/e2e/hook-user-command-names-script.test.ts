@@ -216,6 +216,12 @@ describe("an edited copy of the generated command is still the topology's, as in
         expect(now).not.toContain(original);
         expect(now.some((c) => /guard2\.sh/.test(c ?? ""))).toBe(true);
         expect(out).toContain("you edited the entry scaffold wrote");
+        // And says the copy still runs the old script.
+        const old = (/(\.(?:codex|claude)\/[^\s"'\\]*guard\.sh)/.exec(original) ?? [])[1]!;
+        expect(out).toContain(`${HF} hooks.PreToolUse: your edited copy of PreToolUse Bash still runs ${old}`);
+        // Not when the .at drops the hook (nothing renamed).
+        fs.writeFileSync(at, AT(target, AT_CHANGES["the .at drops that hook"]));
+        expect(scaffold().out).not.toContain("still runs");
       });
     }
   }
