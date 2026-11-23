@@ -2524,16 +2524,19 @@ export function parse(source: string): TopologyAST {
 
   // --- Detect fragment vs topology root ---
   // A `fragment x {` line in a prompt, a string or a comment is text.
+  // The name is optional (`fragment { ... }`, as the composition docs write
+  // it): an included fragment is known by its path.
   const sourceMask = maskProse(source);
-  const isFragment = /(?:^|\n)\s*fragment\s+\S+\s*\{/.test(sourceMask);
+  const fragmentHeader = /(?:^|\n)\s*fragment(?:\s+([^\s{]+))?\s*\{/;
+  const isFragment = fragmentHeader.test(sourceMask);
 
   // --- Topology header ---
   let header: { name: string; patterns: string[] };
   if (isFragment) {
-    // Fragment header: fragment <name> { ... }
-    const fm = sourceMask.match(/fragment\s+(\S+)\s*\{/);
+    // Fragment header: fragment <name>? { ... }
+    const fm = sourceMask.match(fragmentHeader);
     if (!fm) throw new Error("Could not find fragment header");
-    header = { name: fm[1], patterns: [] };
+    header = { name: fm[1] ?? "fragment", patterns: [] };
   } else {
     // Use raw source to preserve the topology line (comments already on other lines)
     header = parseTopologyHeader(source);

@@ -5562,6 +5562,14 @@ fragment security-hooks {
       expect(ast.hooks).toHaveLength(1);
       expect(ast.hooks[0].name).toBe("audit-log");
     });
+
+    it("a fragment with no name (`fragment {`, as the composition docs write it) parses", () => {
+      // Until 0.13 this was "Could not find topology header".
+      const ast = parse(`fragment {\n  hooks {\n    hook audit-log {\n      on: AgentStop\n      run: "scripts/audit.sh"\n      type: command\n    }\n  }\n}\n`);
+      expect(ast.isFragment).toBe(true);
+      expect(ast.topology.name).toBe("fragment");
+      expect(ast.hooks.map((h) => h.name)).toEqual(["audit-log"]);
+    });
   });
 
   // ── Backward compatibility ──────────────────────────────────────────────

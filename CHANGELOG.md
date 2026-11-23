@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Fixed
+
+- `include "./f.at"` now keeps what the fragment declares. Until now the include line was parsed and the file never read: a topology whose fragment held a hook validated clean and `scaffold --target claude-code` wrote no `.claude/settings.json` at all, so the hook was gone in silence. The fragment is now read relative to the file that includes it and merged into the topology that `validate`, `scaffold`, `guard --check`, `plan` and `export` see: agents, actions, gates and other nodes, flow edges, hooks, triggers, skills, tools, schedules, schemas, artifacts, records, stores, retrievals, providers, interfaces, machines, persons, `mcp-servers`, `env`, roles, decisions and inventory roots. Paths the fragment writes stay as written, relative to the project. **This changes output:** a topology whose fragments held hooks (or agents, gates and the rest) now gets them generated, for example the fragment's `PreToolUse` hook in `.claude/settings.json`. Each problem is a V8 error that names the include, so `validate` fails and `scaffold` writes nothing: a missing file, a parse error, an include cycle, a file that is a `topology` rather than a `fragment`, a name declared in both the including file and a fragment (or in two fragments), naming both files, and a section include does not merge (`settings`, `defaults`, `depth`, `memory`, `batch`, `environments`, `metering`, `observability`, `checkpoint`, `context`, `extensions`, `params`, `interface`, `needs`, `pin-models`, `import`, and `meta` fields other than `version` and `description`), naming the section and the fragment; write those in the including file. A fragment reached by two includes is merged once. Includes are resolved when the CLI reads a file; the library exports `resolveIncludes(ast, filePath, parse)` for the same.
+- A fragment with no name, `fragment { ... }` as the composition docs write it, parses. It was a parse error (`Could not find topology header`).
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

@@ -532,6 +532,8 @@ function v7ModelRequired(ast: TopologyAST): ValidationResult[] {
 function v8ImportsResolve(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
   const results: ValidationResult[] = [
     ...((ast as TopologyASTWithParseErrors)._importErrors ?? []),
+    // An include that could not be merged (set by resolveIncludes).
+    ...((ast as TopologyASTWithParseErrors)._includeErrors ?? []),
   ];
   for (const imp of ast.imports.filter((i) => i.registry)) {
     results.push({ rule: "V8", level: "warning", node: imp.alias, message: `import "${imp.source}": registry import not checked` });
@@ -714,6 +716,7 @@ interface TopologyASTWithParseErrors extends TopologyAST {
   _blockFieldMisuseWarnings?: ValidationResult[];
   _unknownNameErrors?: ValidationResult[];
   _importErrors?: ValidationResult[];
+  _includeErrors?: ValidationResult[];
   _lostStructure?: ValidationResult[];
   /** Maps node/block IDs to their source line numbers (1-based). */
   _sourceMap?: Record<string, number>;

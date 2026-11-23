@@ -681,7 +681,7 @@ through the validator like any other rule.
 | V5 | error/warning | Every `[when x.y]` must reference a declared output |
 | V6 | error/warning | Every back-edge must have `max N` |
 | V7 | error/warning | Every agent and orchestrator must have a model |
-| V8 | error/warning | A local import is read relative to the importing file: a missing file, a `sha256` that does not match, an import cycle, or an error inside the imported file is an error; validating a string with no file path skips this and warns `imports not checked` |
+| V8 | error/warning | A local import is read relative to the importing file: a missing file, a `sha256` that does not match, an import cycle, or an error inside the imported file is an error; validating a string with no file path skips this and warns `imports not checked`. An `include` of a file the CLI reads is merged (grammar §4.3a) and is an error when the file is missing, does not parse, closes an include cycle, is a `topology` rather than a `fragment`, declares a name the including file (or another fragment) also declares (the message names both files), or declares a section include does not merge (the message names the section and the fragment) |
 | V9 | error/warning | Every action referenced in flow must appear in orchestrator.handles |
 | V10 | error/warning | Prompt content should not be empty if a prompt block is declared |
 | V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
