@@ -23,6 +23,14 @@
  * with exit 0, and settings.json keeps the harness's own entry after every
  * step: no second entry, nothing rewritten. The number of such sequences is
  * pinned (READ_AS_PATH).
+ *
+ * Another named exception, refuse-stub-regenerated (differential/refuse-stub.ts,
+ * approved for 0.13.0): a refuse hook's stub now blocks its call, so adding
+ * `strength: refuse` regenerates the stub, and that scaffold prints one
+ * `(script regenerated)` line and moves one file from unchanged to updated.
+ * A sequence whose only difference is that is held to the class; exit codes
+ * and settings.json are still compared, and any other difference stays red.
+ * The number of such sequences is pinned (REFUSE_STUB_REGENERATED).
  */
 
 import { describe, it, expect } from "vitest";
@@ -36,12 +44,23 @@ import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 // @ts-expect-error plain JavaScript module
 import { ruledSides } from "./differential/stub-rulings.mjs";
 import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
+import { refuseStubRegenerated } from "./differential/refuse-stub.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
 
 /** The rt sequences read as a path, per kind: 0.11.2 did not compile their command; now every step exits 0, as its twin's does. */
 const READ_AS_PATH: Record<ReadAsPathKind, number> = { "project-dir": 8, flags: 0, both: 1 };
+
+/**
+ * The sequences whose scaffold regenerates a refuse hook's stub (approved exception,
+ * differential/refuse-stub.ts): a refuse hook's stub now blocks its call, so adding
+ * `strength: refuse` regenerates it. Five: "topology script: strength refuse added" and
+ * "PATH tool: strength refuse added", each also with "(settings.json edited between)", and
+ * "hk T6 upgrade, .at adds strength: refuse". In the last, the stub list (2 stubs, no
+ * action-done.sh) is main's: since 0.12.5 a report action with no commands is no stub.
+ */
+const REFUSE_STUB_REGENERATED = 5;
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 /**
@@ -67,6 +86,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
   // counts the steps asserted.
   let asserted = 0;
   const readAsPathSeqs: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
+  const refuseStubSeqs = new Set<string>();
   const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
 
   it.each(indexed)("exit code, output and settings.json are byte-identical after every step: %s", async (_name, i) => {
@@ -124,7 +144,10 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         if (w.settings !== step.settings) diffs.push(`${at}: settings.json differs\n--- 0.11.2\n${w.settings}\n--- now\n${step.settings}`);
         // The stub rulings (differential/stub-rulings.mjs): the stub summary and a stubbed gate's grade.
         const [wasOut, nowOut] = ruledSides(hostless(w.output), hostless(step.output));
-        if (wasOut !== nowOut) diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
+        if (wasOut === nowOut) return;
+        // refuse-stub-regenerated (differential/refuse-stub.ts): only the regenerated stub line and the counts it moves.
+        if (!rt && refuseStubRegenerated(wasOut, nowOut, hostless(step.output))) return void refuseStubSeqs.add(seq.name);
+        diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
       });
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
@@ -132,6 +155,10 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
 
   it("asserted every frozen step", () => {
     expect(asserted).toBe(frozen.sequences.reduce((n, s) => n + s.steps.length, 0));
+  });
+
+  it("held only the sequences that regenerate a refuse hook's stub to refuse-stub-regenerated, counted", () => {
+    expect(refuseStubSeqs.size).toBe(REFUSE_STUB_REGENERATED);
   });
 
   it("held only the rt sequences read as a path to the read-as-path rule, counted per kind", () => {
