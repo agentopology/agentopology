@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- On claude-code, an agent's `output-schema` is now checked when the agent finishes. Each such agent gets a `SubagentStop` hook that runs `output-schema-<agent>.sh`. The script reads `last_assistant_message` from the hook input, parses it as JSON (or as the first ```json block in it), and exits 2 naming the first missing or mistyped field, so the agent keeps working. It exits 0 when the output matches. The types checked are string, number, integer, boolean, object, `array of <type>` and enums (a named schema is checked as an object); an optional field may be absent. An agent with no schema gets no hook, and neither does the session agent or a topology with inline delegation. The script needs `jq`. The `## Output Schema` list in the agent file is kept.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

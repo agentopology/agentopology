@@ -548,6 +548,73 @@ function formatSchemaType(t: SchemaType, schemas?: SchemaDef[]): string {
 }
 
 /** Format a SchemaFieldDef to a readable line. */
+/** A jq test of the value `.` against a schema type (a named schema is checked as an object). */
+function jqTypeTest(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      if (t.value === "integer") return `(type == "number" and . == floor)`;
+      return `(type == ${JSON.stringify(t.value)})`;
+    case "array":
+      return `(type == "array" and all(.[]; ${jqTypeTest(t.itemType)}))`;
+    case "enum":
+      return `(. as $v | any((${t.values.map((v) => JSON.stringify(v)).join(", ")}); . == $v))`;
+    case "ref":
+      return `(type == "object")`;
+  }
+}
+
+/** Agents whose output-schema is checked when they finish (a subagent; the session agent never fires SubagentStop). */
+function outputSchemaAgents(ast: TopologyAST): AgentNode[] {
+  const session = sessionAgentId(ast);
+  return ast.nodes.filter(
+    (n): n is AgentNode => n.type === "agent" && !!n.outputSchema && n.outputSchema.length > 0 && n.id !== session,
+  );
+}
+
+/**
+ * The SubagentStop script for one agent's output-schema. SubagentStop's input
+ * carries `last_assistant_message` (hooks reference: "Hooks that need the final
+ * assistant text of the current turn should use `last_assistant_message` on Stop
+ * and SubagentStop instead of reading the transcript"). It is parsed as JSON, or
+ * as the first ```json block in it; exit 2 names the first missing or mistyped
+ * field and keeps the subagent working. A matching output exits 0.
+ */
+function generateOutputSchemaScripts(ast: TopologyAST): GeneratedFile[] {
+  return outputSchemaAgents(ast).map((agent) => {
+    const checks = agent.outputSchema!.map((f) => {
+      const n = JSON.stringify(f.name);
+      const missing = f.optional ? "empty" : JSON.stringify(`field "${f.name}" is missing`);
+      const wrong = JSON.stringify(`field "${f.name}" has the wrong type (expected ${formatSchemaType(f.type)})`);
+      return `(if has(${n}) and .[${n}] != null then (.[${n}] | if ${jqTypeTest(f.type)} then empty else ${wrong} end) else ${missing} end)`;
+    });
+    const program = `if type != "object" then "the output is not a JSON object" else (first(${checks.join(", ")}) // empty) end`;
+    const content = [
+      "#!/usr/bin/env bash",
+      `# Output schema check for agent "${agent.id}" (SubagentStop). Exit 2 keeps the agent working.`,
+      "input=$(cat)",
+      "command -v jq >/dev/null 2>&1 || { echo \"output-schema check: jq is not installed\" >&2; exit 2; }",
+      `msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')`,
+      "# The whole message as JSON, else the first ```json block in it.",
+      "out=$(printf '%s' \"$msg\" | jq -c . 2>/dev/null)",
+      "if [ -z \"$out\" ]; then",
+      "  block=$(printf '%s\\n' \"$msg\" | awk '/^[[:space:]]*```json[[:space:]]*$/{f=1;next} f&&/^[[:space:]]*```[[:space:]]*$/{exit} f')",
+      "  out=$(printf '%s' \"$block\" | jq -c . 2>/dev/null)",
+      "fi",
+      `[ -n "$out" ] || { echo "Output of ${agent.id} is not JSON: reply with the JSON object its output-schema describes." >&2; exit 2; }`,
+      `problem=$(printf '%s' "$out" | jq -r '${program.replace(/'/g, "'\\''")}')`,
+      `if [ -n "$problem" ]; then echo "Output of ${agent.id} does not match its output-schema: $problem" >&2; exit 2; fi`,
+      "exit 0",
+      "",
+    ].join("\n");
+    return {
+      path: `.claude/skills/${ast.topology.name}/scripts/output-schema-${agent.id}.sh`,
+      content,
+      category: "script",
+      executable: true,
+    } as GeneratedFile;
+  });
+}
+
 function formatSchemaField(f: SchemaFieldDef): string {
   const opt = f.optional ? "?" : "";
   return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
@@ -2579,6 +2646,18 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[eventName].push(...hookEntries);
   }
 
+  // An agent's output-schema is checked when it finishes. Inline delegation
+  // spawns no subagent, so SubagentStop would never fire there.
+  if (getDelegationMode(ast) !== "inline") {
+    for (const agent of outputSchemaAgents(ast)) {
+      if (!hooksByEvent.SubagentStop) hooksByEvent.SubagentStop = [];
+      hooksByEvent.SubagentStop.push({
+        matcher: agent.id,
+        hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, `output-schema-${agent.id}.sh`)}` }],
+      });
+    }
+  }
+
   // HYBRID: host-layer concurrent Blackboard observer.
   //
   // The topology's bare-event `hooks { PostToolUse { matcher: "Write" ... } }`
@@ -3778,6 +3857,7 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
+    files.push(...generateOutputSchemaScripts(ast));
     files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, hookCommand));
     const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
