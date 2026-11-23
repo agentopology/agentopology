@@ -2,6 +2,20 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- **`scaffold --target claude-code` output changes for any `.at` with an `observability { }` block: `.claude/settings.json` gains `env` keys.** Until now the block reached only the skill and rules text, so Claude Code exported no telemetry. It now writes the keys Claude Code reads (https://code.claude.com/docs/en/monitoring-usage): `enabled: true` writes `CLAUDE_CODE_ENABLE_TELEMETRY=1`; `exporter: otlp` writes `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=otlp` and `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` for an endpoint on port 4317, `http/protobuf` otherwise); `endpoint` writes `OTEL_EXPORTER_OTLP_ENDPOINT`; `service` and `attributes` write `OTEL_RESOURCE_ATTRIBUTES` (`service.name=<service>` first, values percent-encoded). `enabled: false` writes none of them.
+- Prompt text and tool details stay redacted unless `capture { }` turns them on: `prompts: true` writes `OTEL_LOG_USER_PROMPTS=1` and `tool-args: true` writes `OTEL_LOG_TOOL_DETAILS=1`, each with a scaffold warning that the exported text can carry client content. A capture switch left out or `false` writes nothing.
+- A key you also set in `env { }` keeps your value. When the two values differ, scaffold prints a warning naming the key and both values, and `validate` reports the same as the new warning V137 (no target or claude-code only).
+- `spans { }`, a `sample-rate` other than 1, `capture { completions }`, `capture { tool-results }` and exporters other than `otlp` have no Claude Code key; scaffold now says so in a warning instead of dropping them without a word.
+- Codex and Cursor output is unchanged.
+
+### Added
+
+- `observability { attributes { key: "value" } }`: resource attributes for the telemetry, written after `service.name`. A key may hold dots (`team.id: "platform"`).
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

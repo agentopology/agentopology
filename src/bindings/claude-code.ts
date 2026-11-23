@@ -34,6 +34,7 @@ import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
+import { overrideMessage, telemetryPlan } from "./lib/claude-code-telemetry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
@@ -2667,8 +2668,13 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     }
   }
 
-  // Defaults and observability are documented in the CLAUDE.md context file,
-  // not in settings.json (Claude Code doesn't recognize these keys).
+  // Defaults are documented in the CLAUDE.md context file, not in
+  // settings.json (Claude Code has no keys for them). Observability is
+  // written above, as the telemetry keys in `env` (telemetryPlan); here it
+  // says what it could not write, and which env { } values won.
+  const telemetry = telemetryPlan(ast);
+  for (const o of telemetry.overrides) console.warn(`[claude-code] ${overrideMessage(o)}`);
+  for (const note of telemetry.notes) console.warn(`[claude-code] ${note}`);
 
   // meta { entry }: the subagent every session starts as (the `agent` key).
   // An extensions { claude-code { agent } } below is more specific and wins
@@ -3519,6 +3525,11 @@ function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null 
     if (literal === undefined || literal.includes("${")) continue;
     env[key] = literal;
   }
+
+  // observability { }: the telemetry keys Claude Code reads. A key env { }
+  // sets is the user's (even a reference left to the shell), so the plan
+  // leaves it out.
+  Object.assign(env, telemetryPlan(ast).env);
 
   if (Object.keys(env).length === 0) return null;
   return env;

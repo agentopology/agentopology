@@ -38,6 +38,7 @@ import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/ho
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
+import { overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4149,6 +4150,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137ObservabilityEnv(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4357,6 +4359,32 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/**
+ * V137: observability { } maps to the telemetry env Claude Code reads
+ * (telemetryPlan), and a key the user also writes in env { } with another
+ * value is theirs: the env { } value is written, the mapped one is not. A
+ * warning naming the key and both values, so the override is never silent.
+ * An `attributes { service.name }` next to `service:` is also a warning
+ * (service is written). Only with no target or claude-code: no other target
+ * writes these keys.
+ */
+function v137ObservabilityEnv(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (opts.target && opts.target !== "claude-code") return results;
+  const o = ast.observability;
+  if (!o || !o.enabled) return results;
+  for (const over of telemetryPlan(ast).overrides) {
+    results.push({ rule: "V137", level: "warning", message: overrideMessage(over) });
+  }
+  if (o.service !== undefined && o.attributes && "service.name" in o.attributes) {
+    results.push({
+      rule: "V137", level: "warning",
+      message: `observability sets service: ${JSON.stringify(o.service)} and attributes { service.name: ${JSON.stringify(o.attributes["service.name"])} }: service is written as service.name, the attribute is not.`,
+    });
+  }
+  return results;
+}
+
 /** V125 (L-2): a job carried by a session cannot outlive it. */
 function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -4486,10 +4514,12 @@ export const V135_TARGETS: readonly string[] = ["claude-code", "codex"];
  * and the brief (target "interpreted"), where the executing agent places a
  * gate by its anchors and runs it itself. A V135 relayed from an imported
  * file (V8, `via: "V135"`) is judged the same way. Commands that know their
- * target pass it to validate(), where V135 judges it itself.
+ * target pass it to validate(), where V135 judges it itself. V137 is about
+ * the env keys only claude-code writes to settings.json.
  */
 export function ruleAppliesTo(result: Pick<ValidationResult, "rule" | "via">, target: string): boolean {
   const rule = result.via ?? result.rule;
+  if (rule === "V137") return target === "claude-code";
   return rule !== "V135" || V135_TARGETS.includes(target);
 }
 

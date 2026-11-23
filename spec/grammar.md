@@ -1422,6 +1422,54 @@ metering {
 
 ---
 
+### 4.19a `observability`
+
+Telemetry for the topology's runs. On Claude Code it compiles to the telemetry env keys in `.claude/settings.json` (see the `observability` docs topic for the key table).
+
+```ebnf
+observability       = 'observability' '{' observability-field* '}'
+observability-field = 'enabled' ':' ('true' | 'false')
+                    | 'level' ':' ('debug' | 'info' | 'warn' | 'error')
+                    | 'exporter' ':' ('otlp' | 'langsmith' | 'datadog' | 'stdout' | 'none')
+                    | 'endpoint' ':' string
+                    | 'service' ':' string
+                    | 'sample-rate' ':' number
+                    | 'attributes' '{' attribute-pair* '}'
+                    | 'capture' '{' (('prompts' | 'completions' | 'tool-args' | 'tool-results') ':' ('true' | 'false'))* '}'
+                    | 'spans' '{' (('agents' | 'tools' | 'gates' | 'memory') ':' ('true' | 'false'))* '}'
+attribute-pair      = attribute-key ':' (string | identifier)
+attribute-key       = [A-Za-z0-9_.-]+
+```
+
+```agenttopology
+observability {
+  enabled: true
+  exporter: otlp
+  endpoint: "http://127.0.0.1:4318"
+  service: "my-topology"
+  attributes {
+    team.id: "platform"
+    cost_center: "eng-123"
+  }
+  capture {
+    prompts: false
+    tool-args: false
+  }
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | boolean | no | `true` | `false` writes no telemetry key |
+| `exporter` | enum | no | `otlp` | Backend exporter (V49) |
+| `endpoint` | string | no | -- | Collector endpoint URL |
+| `service` | string | no | -- | Written as the `service.name` resource attribute |
+| `attributes` | block of `key: value` | no | -- | Resource attributes, in file order after `service.name`; a key may hold dots (`team.id`). Added in 0.13.0 |
+| `capture` | block | no | all `false` | What content is logged; a switch left out is off |
+| `spans` | block | no | agents, tools, gates `true`; memory `false` | Span kinds (no Claude Code key) |
+
+---
+
 ### 4.20 `tools`
 
 Topology-level declaration of custom script-based tools. Agents reference these by name in their `tools` field. Any runtime maps them to executable tool definitions.

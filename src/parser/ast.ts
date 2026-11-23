@@ -1254,6 +1254,14 @@ export interface ObservabilityDef {
   endpoint?: string;
   /** Service name for trace attribution. */
   service?: string;
+  /**
+   * Resource attributes (`attributes { key: "value" }`), in file order. Claude
+   * Code gets them in OTEL_RESOURCE_ATTRIBUTES after service.name. Absent when
+   * the block has no `attributes { }`.
+   */
+  attributes?: Record<string, string>;
+  /** Whether the .at wrote a `spans { }` block (the `spans` values are defaults otherwise). */
+  spansWritten?: boolean;
   /** Sampling rate between 0 and 1. */
   sampleRate: number;
   /** Data capture configuration. */
