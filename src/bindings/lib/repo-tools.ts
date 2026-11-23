@@ -38,28 +38,9 @@ export function toolScriptPath(ast: Pick<TopologyAST, "topology">, tool: ToolBlo
 }
 
 /**
- * The script paths whose allow rule the binding writes: every tool allowed by
- * its script (a script and no command). The generator never widens: an allow
- * rule on a file the agent could rewrite would run anything without a prompt,
- * so these paths are protected the way a gate's ledger is (lib/guards.ts:
- * before-edit.sh refuses an edit of one, before-action.sh a Bash write to it),
- * and the claude-code binding writes that protection whenever it writes the rule.
- */
-export function protectedToolScriptPaths(ast: Pick<TopologyAST, "toolDefs" | "topology">): string[] {
-  const paths: string[] = [];
-  for (const t of ast.toolDefs ?? []) {
-    if (t.command) continue;
-    const p = toolScriptPath(ast, t);
-    if (p && !paths.includes(p)) paths.push(p);
-  }
-  return paths;
-}
-
-/**
  * The permission rule that allows a tool's call, or null when the tool has
  * neither a command nor a script. A command wins over a script. A command that
- * already holds a `*` is a pattern and is written as is. A script's rule comes
- * with its protection (protectedToolScriptPaths).
+ * already holds a `*` is a pattern and is written as is.
  */
 export function toolAllowRule(ast: Pick<TopologyAST, "topology">, tool: ToolBlockDef): string | null {
   if (tool.command) return tool.command.includes("*") ? `Bash(${tool.command})` : `Bash(${tool.command} *)`;

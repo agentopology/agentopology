@@ -24,7 +24,6 @@ import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
 import { isWorkflowSeamAgent } from "./seam.js";
-import { protectedToolScriptPaths } from "./repo-tools.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -1315,22 +1314,7 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
   if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
-  return [...new Set(paths)].map(protectedEntry);
-}
-
-/**
- * The repo tool scripts Claude Code is allowed to run without a prompt (a
- * `Bash(<script path> *)` rule, lib/repo-tools.ts), protected as a ledger is:
- * an edit of one, or a Bash command that writes it, is refused. The rule and
- * this protection come together; Codex writes no such rule, so nothing here.
- */
-export function protectedToolScripts(ast: TopologyAST, p: GuardPlatform): ProtectedLedger[] {
-  if (p !== CLAUDE_CODE_GUARDS) return [];
-  return protectedToolScriptPaths(ast).map(protectedEntry);
-}
-
-function protectedEntry(path: string): ProtectedLedger {
-  {
+  return [...new Set(paths)].map((path) => {
     const base = path.replace(/^.*\//, "");
     const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
     // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
@@ -1339,7 +1323,7 @@ function protectedEntry(path: string): ProtectedLedger {
     // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
     const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
     return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
-  }
+  });
 }
 
 /**
@@ -1353,7 +1337,21 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
     "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
-    ...AT_ONLY_READS,
+    "at_only_reads() {",
+    "  local seg x base; local -a ws",
+    "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
+    "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+    "    read -ra ws <<< \"$(lower \"$(norm \"$seg\")\")\"",
+    "    x=0",
+    "    while [ \"$x\" -lt \"${#ws[@]}\" ] && [[ \"$AT_LEAD\" == *\" ${ws[x]} \"* ]]; do x=$((x+1)); done",
+    "    [ \"$x\" -lt \"${#ws[@]}\" ] || continue",
+    "    [[ ${ws[x]} =~ ^[a-z_][a-z0-9_]*= ]] && return 1",
+    "    at_special \"${ws[x]}\" && return 1",
+    "    base=${ws[x]##*/}",
+    "    at_reads_only \"$base\" \"${ws[@]:x+1}\" || return 1",
+    "  done <<< \"$SEGS\"",
+    "  return 0",
+    "}",
     "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
     "ledger_guard() {",
     "  local hit=0 w",
@@ -1370,60 +1368,6 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
 }
 
 /**
- * The before-action.sh lines that refuse a Bash command writing a repo tool script Claude Code may
- * run without a prompt (protectedToolScripts). A command that names one runs when it only reads it,
- * as for a ledger, or when it is the allowed call: one command, the script by its path as the first
- * word (`./` allowed), no redirect, no `tee`, no `$(...)` or backtick. Anything else naming it is
- * refused. Needs MATCH_FUNCTIONS, $CMD, $CMD_L, $CMD_SUBST and $SEGS, and runs under `set -f`.
- */
-function toolScriptGuardLines(tools: ProtectedLedger[], haveLedgers: boolean): string[] {
-  if (tools.length === 0) return [];
-  return [
-    "# A repo tool's script is allowed to run without a prompt (settings.json), so the agent must not",
-    "# rewrite it: a command that names one is refused unless it only reads it or is the run itself.",
-    ...(haveLedgers ? [] : AT_ONLY_READS),
-    "at_one_command() {",
-    "  local s n=0",
-    "  while IFS= read -r s || [ -n \"$s\" ]; do [ -n \"${s//[[:space:]]/}\" ] && n=$((n+1)); done <<< \"$SEGS\"",
-    "  [ \"$n\" -le 1 ]",
-    "}",
-    "# script_guard 'PATTERN' LETTERS PATH: refuse the command when it names the script and neither reads nor runs it.",
-    "script_guard() {",
-    "  local hit=0 w first rest",
-    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
-    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
-    "  [ \"$hit\" = 1 ] || return 0",
-    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
-    "  read -r first rest <<< \"$(norm \"$CMD\")\"",
-    "  if [[ $first == $1 || $first == ./$1 ]] && [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* && $CMD_SUBST = 0 ]] && at_one_command; then return 0; fi",
-    "  echo \"agentopology: the command touches the tool script $3; it is run by its path, never written ($CMD)\" >&2",
-    "  exit 2",
-    "}",
-    ...tools.map((l) => `script_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
-    "",
-  ];
-}
-
-/** at_only_reads: every program in the command only reads its arguments, and it holds no `>` and no `tee` (F-4). */
-const AT_ONLY_READS: string[] = [
-    "at_only_reads() {",
-    "  local seg x base; local -a ws",
-    "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
-    "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
-    "    read -ra ws <<< \"$(lower \"$(norm \"$seg\")\")\"",
-    "    x=0",
-    "    while [ \"$x\" -lt \"${#ws[@]}\" ] && [[ \"$AT_LEAD\" == *\" ${ws[x]} \"* ]]; do x=$((x+1)); done",
-    "    [ \"$x\" -lt \"${#ws[@]}\" ] || continue",
-    "    [[ ${ws[x]} =~ ^[a-z_][a-z0-9_]*= ]] && return 1",
-    "    at_special \"${ws[x]}\" && return 1",
-    "    base=${ws[x]##*/}",
-    "    at_reads_only \"$base\" \"${ws[@]:x+1}\" || return 1",
-    "  done <<< \"$SEGS\"",
-    "  return 0",
-    "}",
-];
-
-/**
  * One PreToolUse hook on the file-edit tools (F-4): an edit whose path, made project-relative, matches
  * a ledger's pattern, or whose file name is a ledger's, is refused (exit 2). Claude Code sends the path
  * in `tool_input.file_path` (`notebook_path` for NotebookEdit); Codex sends apply_patch with the patch
@@ -1432,8 +1376,7 @@ const AT_ONLY_READS: string[] = [
  */
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
-  const tools = protectedToolScripts(ast, p);
-  if (ledgers.length === 0 && tools.length === 0) return null;
+  if (ledgers.length === 0) return null;
   const name = ast.topology.name;
   const v = p.projectDirVar;
   const lines = [
@@ -1453,7 +1396,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
-      inOrder: [...ledgers, ...tools].map(ledgerWords),
+      inOrder: ledgers.map(ledgerWords),
     }),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
@@ -1467,9 +1410,6 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     '[ -n "$PATHS" ] || { echo "agentopology: no file path could be read from the edit, so it is blocked" >&2; exit 2; }',
     ...CANON_FUNCTION,
     "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
-    ...(tools.length > 0
-      ? ["refuse_tool() { echo \"agentopology: the edit touches the tool script $1 ($2), which runs without a prompt; it is not edited by the agent\" >&2; exit 2; }"]
-      : []),
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
@@ -1480,10 +1420,6 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
     if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
-  }
-  for (const l of tools) {
-    lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_tool ${shellQuote(l.path)} "$R"; fi`);
-    if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_tool ${shellQuote(l.path)} "$R"; fi`);
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
@@ -1567,9 +1503,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const guards = actionGuards(ast);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
-  // A repo tool script allowed without a prompt is protected from Bash writes (protectedToolScripts).
-  const toolScripts = protectedToolScripts(ast, p);
-  if (guards.length === 0 && ledgers.length === 0 && toolScripts.length === 0) return null;
+  if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
@@ -1597,7 +1531,6 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       // inline git alias (`V=commit git -calias.x=V x`), which can name a git step in no words of its own
       inOrder: [
         ...ledgers.map(ledgerWords),
-        ...toolScripts.map(ledgerWords),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
       ],
       expansion: stepWords.map((s) => s.key),
@@ -1675,7 +1608,6 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "UNIT=''",
     "",
     ...ledgerGuardLines(ledgers),
-    ...toolScriptGuardLines(toolScripts, ledgers.length > 0),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
