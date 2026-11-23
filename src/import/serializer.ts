@@ -689,7 +689,8 @@ function serializeTools(tools: ToolBlockDef[]): string | null {
   const lines: string[] = ["  tools {"];
   for (const tool of tools) {
     lines.push(`    tool ${tool.id} {`);
-    lines.push(`      script: "${tool.script}"`);
+    if (tool.script || !tool.command) lines.push(`      script: "${tool.script}"`);
+    if (tool.command) lines.push(`      command: ${JSON.stringify(tool.command)}`);
     lines.push(`      description: "${tool.description}"`);
     if (tool.lang) lines.push(`      lang: ${tool.lang}`);
     if (tool.args?.length) lines.push(`      args: ${inlineList(tool.args)}`);

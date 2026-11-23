@@ -1863,7 +1863,7 @@ settings {
     description: "Custom tool definitions -- scripts agents can invoke",
     content: () => `# tools
 
-The \`tools\` block defines custom tools implemented as scripts that agents can invoke.
+The \`tools\` block defines a repo's own tools: a shell command or a script that agents can run.
 
 ## Syntax
 
@@ -1875,6 +1875,10 @@ tools {
     lang: python
     description: "What this tool does"
   }
+  tool OTHER {
+    command: "npm test"
+    description: "What this tool does"
+  }
 }
 \`\`\`
 
@@ -1883,7 +1887,8 @@ tools {
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | id | identifier | yes | -- | Tool identifier (the NAME) |
-| script | string | yes | -- | Path to the implementing script |
+| script | string | one of script, command | -- | Path to the implementing script |
+| command | string | one of script, command | -- | The shell command that runs the tool (no script, no stub) |
 | args | string[] | no | -- | Positional argument names |
 | lang | string | no | "auto" | "bash", "python", "node", "auto" |
 | description | string | yes | -- | Human-readable description |
@@ -1900,8 +1905,7 @@ tools {
   }
 
   tool run-tests {
-    script: "scripts/run-tests.sh"
-    lang: bash
+    command: "npm test"
     description: "Run the test suite and return results"
   }
 }
@@ -1909,7 +1913,11 @@ tools {
 
 ## Notes
 
-- Custom tools are referenced by name in agent \`tools\` lists.
+- Custom tools are referenced by name in agent \`tools\` lists, and in a skill's \`scripts\` and \`allowed-tools\`.
+- On claude-code a tool's name is never written into an agent's \`tools:\` (Claude Code knows no such tool). A tool with \`command:\` or \`script:\` runs through Bash: the agent gets \`Bash\` (added once). A command tool also gets the allow rule \`Bash(npm test *)\` in \`.claude/settings.json\`, after \`settings { allow }\` (it also matches the bare command); a skill's \`allowed-tools\` naming it gets that rule in its place. A script tool gets no allow rule and prompts: the agent can edit the script, so a rule on it would widen what the agent may run.
+- A tool with neither \`script:\` nor \`command:\` compiles to nothing on claude-code (V130 warns).
+- Never widen: a skill with \`disallowed-tools: [Bash]\` that names a command or script tool, or an agent with it whose skill does, is a V14 error.
+- Codex and Cursor write the tool's name in the agent's instructions, and a stub for a script.
 - The \`lang\` field determines how the script is executed. \`auto\` infers from the file extension.
 - Tool scripts receive arguments positionally in the order declared.
 `,

@@ -1193,6 +1193,8 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   for (const tool of ast.toolDefs) {
+    // A tool run by its command: has no script to write.
+    if (tool.command && !tool.script) continue;
     const ext =
       tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
     // E-1: the stub carries the marker and fails until it is written.

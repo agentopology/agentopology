@@ -65,6 +65,7 @@ import {
   type CcSurface, type FrontmatterFields,
 } from "./claude-code-schema.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
+import { compileAgentTools, compileAllowedTools, toolAllowRules } from "./lib/repo-tools.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
@@ -735,7 +736,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       }
     }
     if (agent.maxTurns != null) fm.maxTurns = agent.maxTurns;
-    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(mcpRefs(ast).tool).join(", ");
+    // A repo tool (tools { tool <id> }) is not a Claude Code tool name: it compiles to Bash (lib/repo-tools.ts).
+    if (agent.tools && agent.tools.length > 0) fm.tools = compileAgentTools(ast, agent.tools, mcpRefs(ast).tool).join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     // A plugin's server is left out of mcpServers: its scoped name there is not
     // verified, and the agent's tools (in the plugin form) already reach it
@@ -1444,9 +1446,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
     if (mainSkill.context) fm.context = mainSkill.context;
     if (mainSkill.agent) fm.agent = mainSkill.agent;
-    if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
-      fm["allowed-tools"] = mainSkill.allowedTools.map(mcpRefs(ast).tool).join(", ");
-    }
+    const mainAllowed = compileAllowedTools(ast, mainSkill.allowedTools ?? [], mcpRefs(ast).tool);
+    if (mainAllowed.length > 0) fm["allowed-tools"] = mainAllowed.join(", ");
   }
 
   const sections: string[] = [];
@@ -1834,7 +1835,8 @@ function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
     if (agent.runs === "fork") fm.context = "fork";
     if (agent.model && isClaudeCodeModel(agent.model)) fm.model = agent.model;
     if (agent.thinking && agent.thinking !== "off") fm.effort = agent.thinking;
-    if (agent.tools && agent.tools.length > 0) fm["allowed-tools"] = agent.tools.map(mcpRefs(ast).tool).join(", ");
+    const inlineAllowed = compileAllowedTools(ast, agent.tools ?? [], mcpRefs(ast).tool);
+    if (inlineAllowed.length > 0) fm["allowed-tools"] = inlineAllowed.join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) {
       fm["disallowed-tools"] = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
@@ -1876,9 +1878,8 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     }
     if (skill.context) sfm.context = skill.context;
     if (skill.agent) sfm.agent = skill.agent;
-    if (skill.allowedTools && skill.allowedTools.length > 0) {
-      sfm["allowed-tools"] = skill.allowedTools.map(mcpRefs(ast).tool).join(", ");
-    }
+    const skillAllowed = compileAllowedTools(ast, skill.allowedTools ?? [], mcpRefs(ast).tool);
+    if (skillAllowed.length > 0) sfm["allowed-tools"] = skillAllowed.join(", ");
     if (skill.disallowedTools && skill.disallowedTools.length > 0) {
       sfm["disallowed-tools"] = skill.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
@@ -2717,14 +2718,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   }
 
   // Permissions section from settings block — nested under "permissions" key
+  // A repo tool with a command or a script adds its Bash allow rule after the
+  // rules written in settings { allow } (lib/repo-tools.ts).
   const perms = ast.settings;
-  if (perms) {
+  const toolRules = toolAllowRules(ast);
+  if (perms || toolRules.length > 0) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
-      const rules = perms[key] as string[] | undefined;
+      const rules = perms?.[key] as string[] | undefined;
       if (rules && rules.length > 0) permObj[key] = rules.map(mcpRefs(ast).tool);
     }
+    const extra = toolRules.filter((r) => !(permObj.allow ?? []).includes(r));
+    if (extra.length > 0) permObj.allow = [...(permObj.allow ?? []), ...extra];
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
+  }
+  if (perms) {
 
     // settings { sandbox: true | false } is Claude Code's sandbox switch. Any
     // other value (a Codex sandbox mode) has no Claude Code key: V130 says so.
@@ -2934,6 +2942,8 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
   const name = ast.topology.name;
 
   for (const tool of ast.toolDefs) {
+    // A tool run by its command: has no script to write.
+    if (tool.command && !tool.script) continue;
     const ext = tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
     const lines = [toolStub(tool)];
     // The stub goes where the tool's script: says, not to a copy beside it: a

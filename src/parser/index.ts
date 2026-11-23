@@ -2036,6 +2036,7 @@ export function parseToolsBlock(topBody: string): ToolBlockDef[] {
     const args = parseMultilineList(block.body, "args");
     if (args.length) td.args = args;
     if (tFields.lang) td.lang = tFields.lang;
+    if (tFields.command && unquote(tFields.command).trim()) td.command = unquote(tFields.command).trim();
     toolDefs.push(td);
   }
   return toolDefs;

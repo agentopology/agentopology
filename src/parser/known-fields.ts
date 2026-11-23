@@ -81,7 +81,7 @@ const NODE_SCHEMAS = {
   job: { fields: ["cron", "every", "agent", "action", "enabled", "machine", "carrier", "survives"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
   record: { fields: ["path"] },
-  tool: { fields: ["script", "description", "args", "lang"] },
+  tool: { fields: ["script", "command", "description", "args", "lang"] },
   skill: {
     fields: [
       "description", "scripts", "domains", "references", "prompt", "file", "when-to-use",
