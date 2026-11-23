@@ -103,6 +103,11 @@ export interface HookDef {
   strength?: string;
   /** The declared way around it (an env switch, a flag). */
   bypass?: string;
+  /** Bash commands `guard --test` feeds the hook's script as PreToolUse payloads (V137). */
+  tests?: GateTests;
+  /** Written on a hook, reported by V138: mode and let-go belong to gates. */
+  mode?: string;
+  letGo?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -808,8 +813,24 @@ export interface GateNode extends BaseNode {
    * record uses that record.
    */
   ledger?: string;
+  /** Commands (or, before a subagent, agent names) the generated check must refuse and allow; `guard --test` runs them (V137). */
+  tests?: GateTests;
+  /** `shadow`: the generated check logs what it would refuse to logs/shadow.jsonl and lets the step run. `refuse` (default) refuses (V138). */
+  mode?: string;
+  /** `once`: a human's ledger row lifts one refusal for one run (V138). */
+  letGo?: string;
+  /** The human id whose ledger row lets this gate go (default: the human in `after:`). */
+  lift?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/** The `tests { refuse: [..] allow: [..] }` rows of a gate or a hook. */
+export interface GateTests {
+  /** Each is fed to the guard and must be refused. */
+  refuse: string[];
+  /** Each is fed to the guard and must be allowed. */
+  allow: string[];
 }
 
 /** An MCP server a Claude Code plugin provides: `from: plugin "<plugin>"`, with `server:` (default: the block key). */
