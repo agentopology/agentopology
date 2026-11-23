@@ -32,7 +32,7 @@ import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
-import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { LEDGER_WRITABLE_NOTE, beforeActionGateProblems } from "../bindings/lib/guards.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
@@ -316,7 +316,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       }
       const script = readText(join(root, scriptsDir, "before-action.sh"));
       if (script === null) problems.push(`${scriptsDir}/before-action.sh is missing`);
-      else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
+      else problems.push(...beforeActionGateProblems(ast, gate, script));
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
       const stub = gate.run && scriptNameFromRun(gate.run) ? stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run)) : null;
       if (stub) problems.push(stub);

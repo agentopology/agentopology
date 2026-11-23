@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Fixed
+
+- `guard --check` (Claude Code and Codex) no longer grades a gate before a script step as refusing when the `before-action.sh` on disk has the gate's line but skips one of its checks. A gate with both a `ledger` and a `run:` check is held by both: the generated `before-action.sh` reads the ledger first, then runs the gate's wrapper (`gate-<id>.sh`), and each refusal names which one failed (`... in ledger <path>` or `its check script failed`). A script kept from an older scaffold or edited by hand that reads the ledger but never runs the check (or runs the check but never reads the ledger) was still graded `refuse`; it is now graded `none`, with the note `before-action.sh does not run the run: check of gate <id>` or `before-action.sh does not read the ledger of gate <id>`. A project whose `before-action.sh` relied on the check not running will see that gate drop to `none` until it scaffolds again, after which the check runs on every step command. The scaffolded hook itself is unchanged: it already ran both checks, and its timeout already counts the check's budget.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed
