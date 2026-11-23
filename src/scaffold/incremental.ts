@@ -44,7 +44,11 @@ import {
   deepMergeJson,
   deepMergeSettingsJson,
   keptHookCommands,
+  mergeSettingsByRecord,
+  recordAfterUnrecordedMerge,
+  recordOf,
 } from "./merge.js";
+import type { HookRecord } from "./types.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
 export { unsafePathReason } from "../parser/paths.js";
@@ -125,6 +129,12 @@ export function computeIncrementalPlan(
   // these paths belong to it; every other hook in settings.json is the user's.
   const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
 
+  // The hook entries scaffold wrote to a hooks file: exactly those are the
+  // topology's. With no record for the file (no manifest, a hand-built or
+  // imported harness, or a manifest written by 0.12.x), the file is merged
+  // as 0.12.6 merged it, this once, and what that wrote is recorded.
+  const hookRecordOf = (path: string): HookRecord[] | undefined => manifest?.hooks?.[path];
+
   // Process each generated file
   for (const file of generatedFiles) {
     const unsafe = unsafePathReason(file.path);
@@ -147,6 +157,7 @@ export function computeIncrementalPlan(
 
     const category = file.category ?? "machine";
     const onDisk = existsSync(absPath);
+    const hooksFile = category === "shared-config" && isSettingsPath(file.path);
 
     if (!onDisk) {
       actions.push({
@@ -154,6 +165,7 @@ export function computeIncrementalPlan(
         path: file.path,
         content: file.content,
         ...(file.executable ? { executable: true } : {}),
+        ...(hooksFile ? { hookRecord: recordOf(file.content) } : {}),
       });
       continue;
     }
@@ -180,7 +192,9 @@ export function computeIncrementalPlan(
       }
     }
 
-    if (existingContent === file.content) {
+    // A hooks file always goes through the merge, which tells the entries
+    // scaffold wrote from the user's even when the file equals the .at's.
+    if (existingContent === file.content && !hooksFile) {
       actions.push({ type: "unchanged", path: file.path });
       continue;
     }
@@ -237,17 +251,37 @@ export function computeIncrementalPlan(
           throw new InvalidSettingsJsonError(file.path, `its root is ${kind}`, "is not a JSON object");
         }
       }
-      const merged = isSettings
-        ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
-        : deepMergeJson(existingContent, file.content);
-      // A hook command the .at does not generate is never removed; one that
-      // sits with the topology's hooks or names its script is said.
-      const notes = isSettings && existingContent.trim() !== ""
-        ? keptHookCommands(existingContent, file.content, ownedPaths).map(
-            (k) => `${file.path} hooks.${k.event}: kept a command the .at does not generate: ${k.command}`,
-          )
-        : [];
-      const said = notes.length > 0 ? { notes } : {};
+      const record = isSettings ? hookRecordOf(file.path) : undefined;
+      let merged: string;
+      let notes: string[] = [];
+      let removedHooks: string[] = [];
+      let hookRecord: HookRecord[] | undefined;
+      if (isSettings && record !== undefined) {
+        // By the record: the entries scaffold wrote are its own, every
+        // other entry is the user's.
+        const byRecord = mergeSettingsByRecord(existingContent, file.content, record, ownedPaths);
+        merged = byRecord.content;
+        notes = byRecord.kept.map((k) => `${file.path} ${k.line}`);
+        removedHooks = byRecord.removed;
+        hookRecord = byRecord.record;
+      } else {
+        merged = isSettings
+          ? deepMergeSettingsJson(existingContent, file.content, ownedPaths)
+          : deepMergeJson(existingContent, file.content);
+        // No record (0.12.x wrote the file): 0.12.6's merge. A hook command
+        // the .at does not generate is never removed; one that sits with the
+        // topology's hooks or names its script is said.
+        notes = isSettings && existingContent.trim() !== ""
+          ? keptHookCommands(existingContent, file.content, ownedPaths).map(
+              (k) => `${file.path} hooks.${k.event}: kept a command the .at does not generate: ${k.command}`,
+            )
+          : [];
+        if (isSettings) hookRecord = recordAfterUnrecordedMerge(merged, file.content);
+      }
+      const said = {
+        ...(notes.length > 0 ? { notes } : {}),
+        ...(hookRecord ? { hookRecord } : {}),
+      };
       if (merged === existingContent) {
         actions.push({ type: "unchanged", path: file.path, ...said });
       } else {
@@ -257,6 +291,7 @@ export function computeIncrementalPlan(
           content: merged,
           detail: "config merged",
           ...said,
+          ...(removedHooks.length > 0 ? { removedHooks } : {}),
         });
       }
       continue;
@@ -346,6 +381,24 @@ export function computeIncrementalPlan(
         actions.push({ type: "blocked", path: manifestPath, detail: "symlink — never deleted through" });
         continue;
       }
+      // A hooks file the .at no longer writes: the entries scaffold wrote
+      // there are removed (they would keep firing), every other entry stays.
+      const recorded = isSettingsPath(manifestPath) ? manifest.hooks?.[manifestPath] : undefined;
+      if (recorded && recorded.length > 0) {
+        const gone = removeRecordedHooks(readFileSync(absPath, "utf-8"), recorded, ownedPaths);
+        if (gone) {
+          actions.push({
+            type: "update",
+            path: manifestPath,
+            content: gone.content,
+            detail: "config merged",
+            removedHooks: gone.removed,
+            hookRecord: gone.record,
+            ...(gone.kept.length > 0 ? { notes: gone.kept.map((k) => `${manifestPath} ${k.line}`) } : {}),
+          });
+          continue;
+        }
+      }
       if (hashContent(readFileSync(absPath, "utf-8")) !== entry.hash) {
         actions.push({ type: "blocked", path: manifestPath, detail: "no longer generated, but edited — kept" });
         continue;
@@ -378,6 +431,41 @@ function withRegions(entry: ManifestEntry, onDisk: string | null, generated: str
   if (mine.head === theirs.head) next.head = hashes.head;
   if (mine.outside === theirs.outside) next.outside = hashes.outside;
   return next;
+}
+
+/**
+ * A hooks file with the recorded entries taken out (nothing generated), or
+ * null when it holds none of them or is not a JSON object.
+ */
+function removeRecordedHooks(text: string, record: HookRecord[], ownedPaths: string[]): ReturnType<typeof mergeSettingsByRecord> | null {
+  try {
+    const root = JSON.parse(text) as unknown;
+    if (root === null || typeof root !== "object" || Array.isArray(root)) return null;
+  } catch {
+    return null;
+  }
+  const out = mergeSettingsByRecord(text, "{}", record, ownedPaths);
+  return out.removed.length > 0 ? out : null;
+}
+
+/**
+ * The hook record after a run: per hooks file, the entries scaffold owns as
+ * the file is now on disk. A file this run wrote, or found equal to its
+ * merge, takes the run's record; any other keeps its earlier record (or
+ * stays without one).
+ */
+export function nextManifestHooks(
+  actions: FileAction[],
+  previous: ScaffoldManifest | null,
+  result: ExecuteResult,
+): Record<string, HookRecord[]> {
+  const hooks: Record<string, HookRecord[]> = { ...(previous?.hooks ?? {}) };
+  for (const action of actions) {
+    if (action.type !== "create" && action.type !== "update" && action.type !== "unchanged") continue;
+    if (!action.hookRecord) continue;
+    if (action.type === "unchanged" || result.written.has(action.path)) hooks[action.path] = action.hookRecord;
+  }
+  return hooks;
 }
 
 /** A config file whose hooks are merged by owner. */

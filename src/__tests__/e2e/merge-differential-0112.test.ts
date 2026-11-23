@@ -31,6 +31,13 @@
  * A sequence whose only difference is that is held to the class; exit codes
  * and settings.json are still compared, and any other difference stays red.
  * The number of such sequences is pinned (REFUSE_STUB_REGENERATED).
+ *
+ * A further named exception, hook ownership by record (differential/hook-record.ts,
+ * approved for 0.13.0): scaffold removes a recorded entry the .at no longer
+ * generates, with a line, and keeps every entry it did not write. A sequence
+ * that differs from 0.11.2 only that way is held to one of three classes
+ * (removed-line, generated-removed, user-kept); any other difference stays red.
+ * The number per class is pinned (HOOK_RECORD).
  */
 
 import { describe, it, expect } from "vitest";
@@ -45,6 +52,7 @@ import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 import { ruledSides } from "./differential/stub-rulings.mjs";
 import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
 import { refuseStubRegenerated } from "./differential/refuse-stub.js";
+import { hookRecordKind, type HookRecordKind } from "./differential/hook-record.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -61,6 +69,15 @@ const READ_AS_PATH: Record<ReadAsPathKind, number> = { "project-dir": 8, flags: 
  * action-done.sh) is main's: since 0.12.5 a report action with no commands is no stub.
  */
 const REFUSE_STUB_REGENERATED = 5;
+
+/**
+ * The sequences hook ownership by record changes (approved exception), per
+ * class (differential/hook-record.ts has each class's rule):
+ *   removed-line: settings.json as 0.11.2's; only `- removed generated hook` lines added.
+ *   generated-removed: an entry scaffold wrote and the .at no longer generates is gone, with its line.
+ *   user-kept: an entry the user wrote, which 0.11.2 removed or replaced, is kept and named.
+ */
+const HOOK_RECORD: Record<HookRecordKind, number> = { "removed-line": 19, "generated-removed": 16, "user-kept": 6 };
 
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 /**
@@ -87,6 +104,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
   let asserted = 0;
   const readAsPathSeqs: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
   const refuseStubSeqs = new Set<string>();
+  const hookRecordSeqs: Record<HookRecordKind, string[]> = { "removed-line": [], "generated-removed": [], "user-kept": [] };
   const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
 
   it.each(indexed)("exit code, output and settings.json are byte-identical after every step: %s", async (_name, i) => {
@@ -121,9 +139,11 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         expect(diffs, `${diffs.length} differences:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
         return;
       }
+      const outputs: Array<[string, string]> = [];
       now.forEach((step, n) => {
         const w = was[n];
         const at = `${seq.name}, step ${n + 1} (${step.args})`;
+        if (w) outputs.push(ruledSides(hostless(w.output), hostless(step.output)));
         if (!w) return void diffs.push(`${at}: 0.11.2 has no such step`);
         // C (ruled): rt's import step is held to 0.11.3's reviewed reference (rt-import-0113.json);
         // its validate and scaffold steps to 0.11.2 wherever 0.11.2's import wrote a .at that
@@ -149,6 +169,16 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         if (!rt && refuseStubRegenerated(wasOut, nowOut, hostless(step.output))) return void refuseStubSeqs.add(seq.name);
         diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
       });
+      // Hook ownership by record (differential/hook-record.ts): a sequence that
+      // differs only as the record says is held to its class; any other
+      // difference stays red.
+      if (diffs.length > 0 && !rt) {
+        const kind = hookRecordKind(was, now, outputs);
+        if (kind) {
+          hookRecordSeqs[kind].push(seq.name);
+          return;
+        }
+      }
     }
     expect(diffs, `${diffs.length} differences from 0.11.2:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
   }, 120_000);
@@ -159,6 +189,14 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
 
   it("held only the sequences that regenerate a refuse hook's stub to refuse-stub-regenerated, counted", () => {
     expect(refuseStubSeqs.size).toBe(REFUSE_STUB_REGENERATED);
+  });
+
+  it("held only the sequences hook ownership by record changes to its classes, counted per class", () => {
+    expect({
+      "removed-line": hookRecordSeqs["removed-line"].length,
+      "generated-removed": hookRecordSeqs["generated-removed"].length,
+      "user-kept": hookRecordSeqs["user-kept"].length,
+    }).toEqual(HOOK_RECORD);
   });
 
   it("held only the rt sequences read as a path to the read-as-path rule, counted per kind", () => {

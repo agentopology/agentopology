@@ -50,7 +50,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
 import { echoFields } from "../scaffold/echo.js";
@@ -920,6 +920,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
       case "update":
         console.log(`  ${c.yellow("~")} ${action.path} (${action.detail})`);
+        for (const hook of action.removedHooks ?? []) console.log(`  ${c.red("-")} removed generated hook ${hook}`);
         for (const note of action.notes ?? []) console.log(`  ${c.bold("!")} ${c.yellow(note)}`);
         break;
       case "delete":
@@ -1020,6 +1021,8 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     };
     const fields = nextManifestFields(actions, structure, manifest, result.written);
     if (Object.keys(fields).length > 0) newManifest.fields = fields;
+    const hookRecords = nextManifestHooks(actions, manifest, result);
+    if (Object.keys(hookRecords).length > 0) newManifest.hooks = hookRecords;
     recordNamedRules(newManifest.files, notice.named);
     writeManifest(basePath, targetName, newManifest);
 
@@ -1845,6 +1848,7 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
     if (a.type === "create") console.log(`  ${c.green("+")} ${a.path}`);
     else if (a.type === "update") {
       console.log(`  ${c.yellow("~")} ${a.path} (${a.detail})`);
+      for (const hook of a.removedHooks ?? []) console.log(`  ${c.red("-")} removed generated hook ${hook}`);
       if (dryRun) {
         for (const line of jsonChanges(fs.readFileSync(path.join(root, a.path), "utf-8"), a.content)) console.log(`      ${c.dim(line)}`);
       }
