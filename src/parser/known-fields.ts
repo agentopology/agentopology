@@ -73,7 +73,7 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
     blocks: { extensions: OPAQUE },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "binds"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },

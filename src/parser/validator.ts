@@ -25,7 +25,7 @@ import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
-import { gateLedger, guardedActions } from "./ledger.js";
+import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
@@ -4426,7 +4426,11 @@ function v126AwayWaits(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/** V127 (T-09): `who:` must name a `person`; `away:` and `valid:` must be real `YYYY-MM-DD..YYYY-MM-DD` windows. */
+/**
+ * V127 (T-09): `who:` must name a `person`; `away:` and `valid:` must be real `YYYY-MM-DD..YYYY-MM-DD` windows.
+ * A human's `word:` needs a ledger to write the go to (a gate after it reading a record with no `{unit}`);
+ * `binds:` needs `word:` and holds project paths.
+ */
 function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   const people = new Set((ast.persons ?? []).map((p) => p.id));
@@ -4438,6 +4442,22 @@ function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
     if (n.who && !people.has(n.who))
       results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message: `Human "${n.id}" has who: ${n.who}, which is not a person block.` });
     if (n.valid !== undefined && !parseWindow(n.valid)) bad(n.id, `Human "${n.id}" valid:`, n.valid);
+    const err = (message: string) => results.push({ rule: "V127", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    // The go: a typed word writes a row to the ledger of the gate after the human, bound to the files in binds:.
+    if (n.word !== undefined) {
+      if (n.word.trim() === "" || /[\r\n]/.test(n.word)) err(`Human "${n.id}" word: must be a non-empty word on one line, the text the person types to give the go.`);
+      const ledgers = goLedgers(ast, n.id);
+      if (ledgers.length === 0)
+        err(`Human "${n.id}" has word: "${n.word}", but no ledger to write the go to. Add a records { record <name> { path: "logs/go.jsonl" } } and a gate { after: ${n.id}, before: <the step it approves>, ledger: <name> }.`);
+      for (const l of ledgers)
+        if (l.path.includes("{unit}")) err(`Human "${n.id}" word: writes the go to ledger ${l.id}, whose path "${l.path}" has {unit}, which a typed word cannot fill. Give the gate after ${n.id} a ledger path with no {unit}.`);
+    }
+    if (n.binds !== undefined) {
+      if (n.word === undefined) err(`Human "${n.id}" has binds: but no word:. The bound files are recorded by the typed go, so add word: "<the go word>".`);
+      for (const p of n.binds)
+        if (!p || isAbsolute(p) || p.startsWith("~") || hasDotDot(p) || /[\r\n]/.test(p))
+          err(`Human "${n.id}" binds: "${p}" must be a path inside the project: relative, with no ".." and no absolute or home path.`);
+    }
   }
   return results;
 }

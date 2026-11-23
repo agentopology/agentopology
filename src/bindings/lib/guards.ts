@@ -17,7 +17,8 @@
 
 import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
-import { gateLedger, guardedActions } from "../../parser/ledger.js";
+import { gateLedger, goLedgers, guardedActions } from "../../parser/ledger.js";
+import { parseWindow } from "../../parser/window.js";
 import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
@@ -1382,6 +1383,39 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
   ];
 }
 
+/** The project paths of the topology's go hooks (claude-code only): the agent must not run or change them. */
+function goScriptPaths(ast: TopologyAST, p: GuardPlatform): string[] {
+  if (p.id !== CLAUDE_CODE_GUARDS.id) return [];
+  return goHumans(ast, p).map((h) => `${p.scriptsDir(ast.topology.name)}/${goHookScript(h.id)}`);
+}
+
+/**
+ * The before-action.sh lines that refuse a command naming a go hook unless it only reads it: run by the
+ * agent with a payload it wrote, the hook would write the go row nobody typed. Needs ledgerGuardLines
+ * (a go hook always has a ledger, so they are there).
+ */
+function goScriptGuardLines(paths: string[]): string[] {
+  if (paths.length === 0) return [];
+  return [
+    "# The go: a human's go hook writes the go row from a typed prompt. A command that names it and does",
+    "# more than read it (runs it with a payload of its own, or writes it) is refused.",
+    "go_script_guard() {",
+    "  local hit=0 w",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == \"$1\" || $w == */\"$1\" ]]; then hit=1; fi; done",
+    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  [ \"$hit\" = 1 ] || return 0",
+    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+    "  echo \"agentopology: the command runs or changes the go hook $3; only a prompt the person types runs it ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...paths.map((path) => {
+      const base = path.replace(/^.*\//, "");
+      return `go_script_guard ${shellQuote(base)} ${shellQuote(lettersOf(base))} ${shellQuote(path)}`;
+    }),
+    "",
+  ];
+}
+
 /**
  * One PreToolUse hook on the file-edit tools (F-4): an edit whose path, made project-relative, matches
  * a ledger's pattern, or whose file name is a ledger's, is refused (exit 2). Claude Code sends the path
@@ -1392,6 +1426,7 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
   if (ledgers.length === 0) return null;
+  const goScripts = goScriptPaths(ast, p);
   const name = ast.topology.name;
   const v = p.projectDirVar;
   const lines = [
@@ -1411,7 +1446,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
-      inOrder: ledgers.map(ledgerWords),
+      inOrder: [...ledgers.map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))])],
     }),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
@@ -1435,6 +1470,10 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
     if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+  }
+  // The go: an edit of a go hook would let the agent write the go row nobody typed.
+  for (const s of goScripts) {
+    lines.push(`  if [[ \${RL##*/} == ${shellQuote(s.replace(/^.*\//, "").toLowerCase())} ]]; then echo "agentopology: the edit changes the go hook ${s} ($R); only agentopology scaffold writes it" >&2; exit 2; fi`);
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
@@ -1490,6 +1529,55 @@ const GATE_BUDGET_FUNCTIONS: string[] = [
   "",
 ];
 
+/** at_sha FILE: the file's sha256 in hex (sha256sum, else shasum -a 256 on macOS). */
+const SHA_FUNCTION = "at_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum < \"$1\"; else shasum -a 256 < \"$1\"; fi | cut -d' ' -f1; }";
+
+/**
+ * What before-action.sh checks of a human's go row beyond ok: its `valid:` window (empty when none or
+ * malformed) and its bound files. Null when `step` is no human, or one with neither.
+ */
+function goCheckOf(ast: TopologyAST, step: string): { start: string; end: string; binds: string[] } | null {
+  const h = ast.nodes.find((n) => n.id === step && n.type === "human") as HumanNode | undefined;
+  if (!h) return null;
+  const w = parseWindow(h.valid);
+  const binds = h.binds ?? [];
+  if (!w && binds.length === 0) return null;
+  return { start: w?.start ?? "", end: w?.end ?? "", binds };
+}
+
+/**
+ * check_go (before-action.sh): the human's go row, read as check_ledger reads it, counts only inside the
+ * human's `valid:` window (today not past its end, the step check rule, and the row's ts, or at, inside
+ * it) and while each bound file's sha256 is the one in the row. Needs deny and jq.
+ */
+const GO_CHECK_FUNCTIONS: string[] = [
+  "# check_go GATE HUMAN LEDGER-PATH UNIT START END [FILE...]: the human's go must lie in its valid window",
+  "# START..END (empty: none), and each FILE it binds must still have the sha256 the go recorded.",
+  SHA_FUNCTION,
+  "check_go() {",
+  "  local gate=$1 human=$2 path=$3 unit=$4 start=$5 end=$6 row now ts f want have",
+  "  shift 6",
+  "  row=$(jq -cs --arg step \"$human\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last' \"$path\") \\",
+  '    || deny "$gate" "the go ledger $path could not be read"',
+  '  if [ -n "$end" ]; then',
+  "    now=${AT_TODAY:-}",
+  '    [[ $now =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || now=$(date +%Y-%m-%d)',
+  '    if [[ $now > $end ]]; then deny "$gate" "human $human\'s approval is valid $start..$end, and today ($now) is after it"; fi',
+  "    ts=$(printf '%s' \"$row\" | jq -r '(.ts // .at // \"\") | strings | .[0:10]') || ts=''",
+  '    [[ $ts =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || deny "$gate" "human $human\'s go in $path has no time (ts), so it cannot be checked against its valid window $start..$end"',
+  '    if [[ $ts < $start || $ts > $end ]]; then deny "$gate" "human $human\'s go was given $ts, outside its valid window $start..$end"; fi',
+  "  fi",
+  '  for f in "$@"; do',
+  "    want=$(printf '%s' \"$row\" | jq -r --arg f \"$f\" '(.binds // {})[$f] // \"\" | strings') || want=''",
+  '    [[ $want =~ ^[0-9a-f]{64}$ ]] || deny "$gate" "human $human\'s go in $path records no sha256 for $f, which it binds; type the go word again"',
+  '    [ -f "$f" ] || deny "$gate" "$f, which human $human\'s go approved, is gone; type the go word again"',
+  '    have=$(at_sha "$f") || deny "$gate" "$f, which human $human\'s go binds, could not be read"',
+  '    [ "$have" = "$want" ] || deny "$gate" "$f changed after human $human\'s go (sha256 $want at the go, $have now); type the go word again"',
+  "  done",
+  "}",
+  "",
+];
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -1521,6 +1609,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
+  // A gate after a human with a valid: window or binds: checks the go row beyond ok (check_go).
+  const goNeeded = guards.some(({ gates }) => gates.some((g) => gateLedger(ast, g) && gateAnchors(g, "after").some((s) => goCheckOf(ast, s))));
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
   const stepWords = guards.flatMap(({ action }) => (action.commands ?? []).map(stepKey));
   const gitSteps = [...new Set(ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
@@ -1580,6 +1670,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
     "}",
     "",
+    ...(goNeeded ? GO_CHECK_FUNCTIONS : []),
     "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",
     "# - a backslash at a line end joins the next line;",
     "# - redirections (`>out`, `2>&1`, `<<<x`, `< f`) are dropped before the command is cut, so they neither",
@@ -1623,6 +1714,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "UNIT=''",
     "",
     ...ledgerGuardLines(ledgers),
+    ...goScriptGuardLines(goScriptPaths(ast, p)),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
@@ -1659,6 +1751,10 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
         if (ledger) {
           for (const step of gateAnchors(gate, "after")) {
             out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+            const go = goCheckOf(ast, step);
+            if (go) {
+              out.push(`${indent}check_go ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT" ${sq(go.start)} ${sq(go.end)}${go.binds.map((b) => ` ${sq(b)}`).join("")}`);
+            }
           }
         }
         if (scriptNameFromRun(gate.run)) {
@@ -1986,6 +2082,88 @@ export function talkGuard(topology: string, ast: TopologyAST, p: GuardPlatform):
   return { path: `${p.scriptsDir(topology)}/talk-guard.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
+/**
+ * The typed test (T-04): reads $PAYLOAD's prompt into $PROMPT (leading space dropped) and sets $KIND to
+ * `arrived` when it opens with the `<cross-session-message` wrapper Claude Code puts around a message
+ * from another session, or when it holds, anywhere, the `<task-notification` envelope a background task's
+ * report arrives in; `typed` for any other non-empty prompt, `unknown` when none was read. One source
+ * for a deciding session's prompt log and a human's go hook.
+ */
+const TYPED_TEST_LINES: string[] = [
+  "KIND=unknown",
+  String.raw`PROMPT=$(printf '%s' "$PAYLOAD" | jq -er '.prompt | strings | sub("\\A\\s+"; "") | select(length > 0)' 2>/dev/null) || PROMPT=`,
+  'if [ -n "$PROMPT" ]; then',
+  '  case "$PROMPT" in',
+  '    "<cross-session-message"*) KIND=arrived ;;',
+  '    *"<task-notification"*) KIND=arrived ;;',
+  "    *) KIND=typed ;;",
+  "  esac",
+  "fi",
+];
+
+/** The file name of a human's go hook. */
+export function goHookScript(id: string): string {
+  return `go-${id}.sh`;
+}
+
+/**
+ * A human's go hook (UserPromptSubmit): when a prompt the person typed is the human's `word:` (trimmed),
+ * or opens with the word and a space, it appends `{step, ok: true, word, ts, binds}` to each ledger the
+ * gates after the human read, `binds` holding the sha256 of each bound file (null for one missing). A
+ * prompt the typed test reads as arrived, or as unknown, writes nothing. It never blocks (always exit 0).
+ * Null when the human has no word or no ledger to write (V127 reports that).
+ */
+export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): GeneratedFile | null {
+  const ledgers = goLedgers(ast, human.id).map((r) => r.path.replace(/^\.\//, ""));
+  if (human.word === undefined || human.word.trim() === "" || ledgers.length === 0 || ledgers.some((l) => l.includes("{unit}"))) return null;
+  const topology = ast.topology.name;
+  const sq = shellQuote;
+  const binds = human.binds ?? [];
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# The go for human "${human.id}" of topology "${topology}".`,
+    "# Auto-generated by agentopology scaffold. UserPromptSubmit hook. When a prompt the person typed",
+    `# is the go word (trimmed), or opens with it and a space, it appends {step, ok: true, word, ts${binds.length ? ", binds" : ""}}`,
+    `# to ${ledgers.join(", ")}${binds.length ? `; binds holds the sha256 of ${binds.join(", ")}` : ""}.`,
+    "# Claude Code runs this hook for prompts nobody typed too (a message from another session, a",
+    "# scheduled task, a background subagent reporting back), and its input says nothing of where a prompt",
+    `# came from. The typed test is the one ${promptLogScript("<id>")} uses: a prompt that opens with`,
+    "# <cross-session-message, or holds a <task-notification envelope, writes nothing. A scheduled task or",
+    "# /loop prompt is the person's own text, sent as written; one that starts with the word counts.",
+    "# It never blocks (exit 0).",
+    "PAYLOAD=$(cat 2>/dev/null || true)",
+    ...TYPED_TEST_LINES,
+    '[ "$KIND" = typed ] || exit 0',
+    `W=${sq(human.word.trim())}`,
+    'P="${PROMPT%"${PROMPT##*[![:space:]]}"}"',
+    'case "$P" in "$W"|"$W "*) ;; *) exit 0 ;; esac',
+    ...projectRootLines(p, topology, "fallback").map((l, i) => (i === 2 ? 'cd "$ROOT" 2>/dev/null || exit 0' : l)),
+    SHA_FUNCTION,
+    "BINDS='{}'",
+    ...binds.map((b) => [
+      `F=${sq(b)}; H=''`,
+      'if [ -f "$F" ]; then H=$(at_sha "$F" 2>/dev/null) || H=\'\'; fi',
+      `BINDS=$(printf '%s' "$BINDS" | jq -c --arg p "$F" --arg h "$H" '. + {($p): (if $h == "" then null else $h end)}') || exit 0`,
+    ].join("\n")),
+    `ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$W" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson binds "$BINDS" '{step: $step, ok: true, word: $word, ts: $ts}${binds.length ? " + {binds: $binds}" : ""}') || exit 0`,
+    "go_append() { # LEDGER: one JSON line on stdin; never writes through a symlink or a hard link",
+    '  local d; d=$(dirname "$1")',
+    '  if [ -L "$1" ] || [ -L "$d" ]; then echo "go: $1 or its folder is a symlink; the go is not written" >&2; return 1; fi',
+    '  if [ -n "$(find "$1" -type f -links +1 2>/dev/null)" ]; then echo "go: $1 has more than one hard link; the go is not written" >&2; return 1; fi',
+    '  mkdir -p "$d" && cat >> "$1"',
+    "}",
+    ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2`),
+    "exit 0",
+    "",
+  ];
+  return { path: `${p.scriptsDir(topology)}/${goHookScript(human.id)}`, content: lines.join("\n"), category: "script", executable: true };
+}
+
+/** Humans whose go hook is written: a `word:` and a ledger to write it to. */
+export function goHumans(ast: TopologyAST, p: GuardPlatform): HumanNode[] {
+  return ast.nodes.filter((n): n is HumanNode => n.type === "human").filter((h) => goHook(ast, h, p) !== null);
+}
+
 /** The file name of the prompt-log script for a deciding session. */
 export function promptLogScript(id: string): string {
   return `session-prompt-${id}.sh`;
@@ -2002,14 +2180,7 @@ export function promptLog(topology: string, agent: AgentNode, p: GuardPlatform):
     "# unless a non-empty prompt was read. It never blocks (always exit 0).",
     `[ "\${AT_SESSION:-}" = "${agent.id}" ] || exit 0`,
     "PAYLOAD=$(cat 2>/dev/null || true)",
-    "KIND=unknown",
-    String.raw`PROMPT=$(printf '%s' "$PAYLOAD" | jq -er '.prompt | strings | sub("\\A\\s+"; "") | select(length > 0)' 2>/dev/null) || PROMPT=`,
-    'if [ -n "$PROMPT" ]; then',
-    '  case "$PROMPT" in',
-    '    "<cross-session-message"*) KIND=arrived ;;',
-    "    *) KIND=typed ;;",
-    "  esac",
-    "fi",
+    ...TYPED_TEST_LINES,
     ...projectRootLines(p, topology, "fallback").map((l, i) => (i === 2 ? 'cd "$ROOT" 2>/dev/null || exit 0' : l)),
     ...appendLines(p),
     `jq -nc --arg kind "$KIND" --arg session "${agent.id}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{ts: $ts, kind: $kind, session: $session}' 2>/dev/null | append 2>/dev/null || true`,

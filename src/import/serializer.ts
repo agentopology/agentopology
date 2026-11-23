@@ -336,6 +336,8 @@ function serializeHuman(node: HumanNode): string {
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
+  if (node.word !== undefined) lines.push(`    word: ${q(node.word)}`);
+  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
   lines.push("  }");
   return lines.join("\n");
 }

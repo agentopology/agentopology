@@ -885,6 +885,10 @@ export interface HumanNode extends BaseNode {
   who?: string;
   /** Window `"YYYY-MM-DD..YYYY-MM-DD"` this human's approval holds; `step check` refuses a guarded step after it. */
   valid?: string;
+  /** The go word the person types. On claude-code a UserPromptSubmit hook writes the go row to the ledger of the gate after this human when a typed prompt holds it. */
+  word?: string;
+  /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
+  binds?: string[];
 }
 
 /** A person from a top-level `person <id> { away: "YYYY-MM-DD..YYYY-MM-DD" }` block. */
