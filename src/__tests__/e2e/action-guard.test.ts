@@ -218,9 +218,11 @@ describe("[N38] validation", () => {
     const bad = findings(topology().replace(/unit-from: ".*"/, 'unit-from: "./tool (publish"'), "V111");
     expect(bad.length).toBe(1);
     expect(bad[0].level).toBe("error");
-    const none = findings(topology().replace(/unit-from: ".*"/, 'unit-from: "./tool publish \\S+"'), "V111");
-    expect(none.length).toBe(1);
+    const none = findings(topology().replace(/unit-from: ".*"/, 'unit-from: "./tool publish \\\\S+"'), "V111");
+    expect(none.filter((r) => r.level === "error").length).toBe(1);
     expect(none[0].message).toMatch(/capture group/);
+    // The input's doubled backslash also raises V111's warning: it matches a literal backslash.
+    expect(none.filter((r) => r.level === "warning").map((r) => r.message)).toEqual([expect.stringContaining("literal backslash")]);
     expect(findings(topology(), "V111")).toEqual([]);
   });
 
