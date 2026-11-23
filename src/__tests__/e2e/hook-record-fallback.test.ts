@@ -28,6 +28,7 @@ import { runSequence } from "./differential/merge-sequences.mjs";
 import { ALL_SEQUENCES as SEQUENCES } from "./differential/fable-sequences.mjs";
 // @ts-expect-error plain JavaScript module
 import { ruledSides } from "./differential/stub-rulings.mjs";
+import { refuseStubRegenerated } from "./differential/refuse-stub.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -67,6 +68,15 @@ function withoutRecord(seq: Seq): Seq {
   };
 }
 
+/**
+ * The same approved exception as merge-differential-0112's, over the same five sequences:
+ * a refuse hook's stub now blocks its call, so adding `strength: refuse` regenerates it
+ * ("topology script: strength refuse added" and "PATH tool: strength refuse added", each
+ * also with "(settings.json edited between)", and "hk T6 upgrade, .at adds strength: refuse").
+ */
+const REFUSE_STUB_REGENERATED = 5;
+const refuseStubSeqs = new Set<string>();
+
 const ALL = SEQUENCES as Seq[];
 const COVERED = ALL.map((seq, i) => [seq.name, i] as const).filter(([, i]) => !startsUnmanaged(ALL[i]));
 
@@ -89,11 +99,19 @@ describe("a manifest with no hook record merges as 0.12.6 did", () => {
       if (w.code !== step.code) diffs.push(`${at}: exit ${w.code} -> ${step.code}`);
       if (w.settings !== step.settings) diffs.push(`${at}: settings.json differs\n--- frozen\n${w.settings}\n--- now\n${step.settings}`);
       const [wasOut, nowOut] = ruledSides(hostless(w.output), hostless(step.output));
-      if (wasOut !== nowOut) diffs.push(`${at}: output differs\n--- frozen\n${w.output}\n--- now\n${step.output}`);
+      if (wasOut === nowOut) return;
+      // refuse-stub-regenerated (differential/refuse-stub.ts), the approved exception
+      // merge-differential-0112 also holds: only the regenerated stub line and the counts it moves.
+      if (refuseStubRegenerated(wasOut, nowOut, hostless(step.output))) return void refuseStubSeqs.add(ALL[i].name);
+      diffs.push(`${at}: output differs\n--- frozen\n${w.output}\n--- now\n${step.output}`);
     });
     expect(now.length).toBe(was.length);
     expect(diffs, `${diffs.length} differences:\n${diffs.slice(0, 6).join("\n\n")}`).toEqual([]);
   }, 120_000);
+
+  it("held only the sequences that regenerate a refuse hook's stub to refuse-stub-regenerated, counted", () => {
+    expect(refuseStubSeqs.size).toBe(REFUSE_STUB_REGENERATED);
+  });
 });
 
 const COVERED_COUNT = 79;
