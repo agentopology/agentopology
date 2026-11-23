@@ -24,6 +24,7 @@
 import type { AgentNode, EdgeDef, TopologyAST } from "../../parser/ast.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
+import { environmentNames } from "./environments.js";
 import { CLAUDE_CODE_GUARDS, promptLog, promptLogScript, shellQuote, spawnGuard, talkGuard } from "./guards.js";
 
 export { promptLogScript, shellQuote };
@@ -74,7 +75,7 @@ export function sessionScriptPath(topology: string, file: string): string {
   return `.claude/skills/${topology}/scripts/${file}`;
 }
 
-function sessionsMd(allAgents: AgentNode[]): GeneratedFile {
+function sessionsMd(allAgents: AgentNode[], envs: string[] = []): GeneratedFile {
   const agents = allAgents.filter((a) => {
     if (sessionIsSafe(a)) return true;
     console.warn(`[claude-code] .claude/sessions.md: no start line for a session whose id, place or permission-mode has characters outside a-z, 0-9 and "-" (permission-mode also allows A-Z); validate reports an unsafe id or place as V113`);
@@ -90,7 +91,9 @@ function sessionsMd(allAgents: AgentNode[]): GeneratedFile {
   ];
   for (const [place, members] of placesOf(agents)) {
     const heading = SAFE_NAME.test(place) ? place : "(place name not shown: unsafe characters)";
-    lines.push(`## ${heading}`, "", "```sh", ...members.map(startLine), "```", "");
+    const block = [...members.map(startLine)];
+    for (const env of envs) block.push("", `# ${env}`, ...members.map((a) => `AT_ENV=${env} ${startLine(a)}`));
+    lines.push(`## ${heading}`, "", "```sh", ...block, "```", "");
   }
   return { path: ".claude/sessions.md", content: lines.join("\n"), category: "machine" };
 }
@@ -154,7 +157,7 @@ export function generateSessionFiles(ast: TopologyAST): GeneratedFile[] {
   const agents = sessionAgentsOf(ast);
   if (agents.length === 0) return [];
   const name = ast.topology.name;
-  const files = [sessionsMd(agents), spawnGuard(name, agents, CLAUDE_CODE_GUARDS)];
+  const files = [sessionsMd(agents, environmentNames(ast)),spawnGuard(name, agents, CLAUDE_CODE_GUARDS)];
   const sh = launcher(agents);
   if (sh) files.splice(1, 0, sh);
   if (talkEdgesOf(ast).length > 0) files.push(talkGuard(name, ast, CLAUDE_CODE_GUARDS));

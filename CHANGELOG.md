@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- `environments { }` now compiles for Claude Code. Each environment is written to `env/<name>.env` as `KEY=value` lines (keys upper-cased, `-` turned into `_`). A value whose key holds TOKEN, KEY, SECRET or PASSWORD is not written; a comment says to set it outside the repo. When `.claude/sessions.md` is generated, each start line also appears with an `AT_ENV=<name>` prefix for every environment. `settings.json` is not changed. Before, environments only appeared as text in the playbook.
+- New rule V137: an environment value that is a list or a nested block is an error. A value must be a string or a number.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

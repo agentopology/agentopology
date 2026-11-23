@@ -4149,6 +4149,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137EnvironmentValues(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4354,25 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V137: an environment value must be a string or a number. A list or a nested
+ * block cannot be written as KEY=value in env/<name>.env, so it is an error.
+ */
+function v137EnvironmentValues(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const [envName, values] of Object.entries(ast.environments ?? {})) {
+    for (const [key, value] of Object.entries(values)) {
+      if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) continue;
+      const what = Array.isArray(value) ? "a list" : value !== null && typeof value === "object" ? "a nested block" : typeof value;
+      results.push({
+        rule: "V137", level: "error", node: envName,
+        message: `Environment "${envName}" key "${key}" is ${what}: a value must be a string or a number, so it can be written as ${key.toUpperCase().replace(/-/g, "_")}=value in env/${envName}.env.`,
+      });
+    }
   }
   return results;
 }

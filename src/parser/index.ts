@@ -1588,7 +1588,20 @@ export function parseEnvironments(
     const fields = parseFields(innerBody);
     const env: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(fields)) {
-      env[k] = unquote(v);
+      // A bare [a, b] is a list, not a string: kept as an array so V137 reports it.
+      env[k] = /^\[.*\]$/.test(v.trim()) ? v.trim().slice(1, -1).split(",").map((s) => unquote(s.trim())) : unquote(v);
+    }
+    // A nested block (`db { ... }`) is not a value either: kept as an object so V137 reports it.
+    let depth = 0;
+    const lines = innerBody.split("\n");
+    const braceLines = braceText(innerBody).split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const open = depth === 0 ? braceLines[i].match(/^\s*([A-Za-z_][\w-]*)\s*\{/) : null;
+      if (open) env[open[1]] = {};
+      for (const ch of braceLines[i]) {
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+      }
     }
     envs[envName] = env;
   }

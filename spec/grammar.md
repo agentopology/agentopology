@@ -1162,7 +1162,9 @@ environments {
 }
 ```
 
-Environment blocks have no fixed schema -- fields are identifier/string key-value pairs. The environment name is the identifier.
+Environment blocks have no fixed schema -- fields are identifier/string key-value pairs. The environment name is the identifier. A value must be a string or a number; a list or a nested block is error V137.
+
+The claude-code binding writes `env/<name>.env` for each environment (`KEY=value`, key upper-cased with `-` turned into `_`; a value whose key holds TOKEN, KEY, SECRET or PASSWORD is not written, and a comment says to set it outside the repo). With session agents, `.claude/sessions.md` also lists each start line with an `AT_ENV=<name>` prefix per environment. `settings.json` is not changed.
 
 ---
 

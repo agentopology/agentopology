@@ -33,6 +33,7 @@ import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { generateEnvironmentFiles } from "./lib/environments.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import {
   CLAUDE_CODE_GUARDS,
@@ -3788,6 +3789,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));
+
+    // environments { }: env/<name>.env
+    files.push(...generateEnvironmentFiles(ast));
 
     // Hook scripts (global)
     files.push(...generateHookScripts(ast));

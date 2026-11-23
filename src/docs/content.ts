@@ -2261,7 +2261,13 @@ environments {
 
 ## Structure
 
-Each environment is a named block containing key-value pairs. The keys and values are free-form -- they are not validated against a schema.
+Each environment is a named block containing key-value pairs. Keys are free-form. A value must be a string or a number (a list or a nested block is error V137).
+
+## What it compiles to
+
+- Claude Code: one \`env/<name>.env\` file per environment, with \`KEY=value\` lines. A key is upper-cased and \`-\` becomes \`_\`. A value whose key holds TOKEN, KEY, SECRET or PASSWORD is not written: a comment says to set it outside the repo.
+- When \`.claude/sessions.md\` is generated (session agents), each start line also appears with an \`AT_ENV=<name>\` prefix, once per environment.
+- \`settings.json\` is not changed. The playbook still lists the environments as text.
 
 ## Example
 
@@ -2287,7 +2293,7 @@ environments {
 
 - Environment names are identifiers (lowercase, kebab-case).
 - Values are always strings (quoted).
-- Bindings select the active environment at compile/deploy time.
+- Nothing selects the active environment for you: source the \`env/<name>.env\` file you want, or start a session with its \`AT_ENV=<name>\` line.
 `,
   },
 
@@ -3392,6 +3398,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Environment Value (error)
+A value in an \`environments { }\` block is a list or a nested block. A value must be a string or a number, so it can be written as \`KEY=value\` in \`env/<name>.env\`.
+
+**Violation:** \`environments { staging { hosts: [a, b] } }\`
+**Fix:** Write one string or number per key.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3441,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Environment Value |
 `,
   },
 
