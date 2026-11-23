@@ -61,6 +61,12 @@ This is not a parser limitation to route around — some unquoted values are
 legitimately multi-token (`on-fail: fallback reviewer`), so whitespace could not
 separate fields without ambiguity. V90 rejects the collapsed form, in `meta` and in every node block.
 
+A comma does separate fields: `checkpoint { backend: sqlite, strategy: every-node, ttl: 7d }`
+reads the same as the three-line form. A comma separates only at the top level of
+the block and only before a `key:`; a comma inside `[..]`, `{..}`, `(..)` or quotes
+stays part of the value. V137 refuses a value in `checkpoint`, `interface`,
+`defaults`, `observability` or `metering` that still holds `, <field>:`.
+
 **Exception:** free-prose fields (`description`, `role`, `generates`,
 `termination`) are exempt once their quotes have been stripped by the parser,
 because a colon in English is ordinary — `description: "Demo: agent pipeline"`.

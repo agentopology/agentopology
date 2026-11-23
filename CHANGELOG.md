@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- A block written on one line now reads a comma between fields as a separator, the same as a newline. `checkpoint { backend: sqlite, strategy: every-node, ttl: 7d }` used to give `backend` the value `sqlite, strategy: every-node, ttl: 7d` and drop `ttl`, and a one-line `interface { entry: a, exit: b }` parsed to nothing. A comma separates fields only at the top level of the block and only before a `key:`; a comma inside `[..]`, `{..}`, `(..)` or quotes stays part of the value. A `.at` that has an unquoted value with a comma followed by `word:` (`description: a, note: b`) now reads that as two fields.
+
+### Added
+
+- V137: a value in a `checkpoint`, `interface`, `defaults`, `observability` or `metering` block that still holds `, <field>:` (an unclosed bracket or quote hid the next field) is an error that names the block and the field, so a lost field is never silent.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

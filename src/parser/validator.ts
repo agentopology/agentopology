@@ -4149,6 +4149,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137SwallowedFields(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4354,46 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V137: a value in a one-line block that still holds `, <field>:`, where
+ * <field> is a field of that same block. A comma at the top level of a block
+ * separates fields; this one stayed in the value (an unclosed ( or [ or quote
+ * hid it), so the field after it was lost. Names the block and the field.
+ */
+const V137_BLOCK_FIELDS: Record<string, readonly string[]> = {
+  checkpoint: ["backend", "strategy", "connection", "ttl", "replay"],
+  interface: ["entry", "exit"],
+  defaults: ["temperature", "max-tokens", "top-p", "model"],
+  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level"],
+  metering: ["track", "per", "output", "format", "pricing"],
+};
+function v137SwallowedFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const blocks: Record<string, unknown> = {
+    checkpoint: ast.checkpoint,
+    interface: ast.interfaceEndpoints,
+    defaults: ast.defaults,
+    observability: ast.observability,
+    metering: ast.metering,
+  };
+  for (const [block, value] of Object.entries(blocks)) {
+    if (!value || typeof value !== "object") continue;
+    const fields = V137_BLOCK_FIELDS[block];
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v !== "string") continue;
+      for (const m of v.matchAll(/,\s*([a-zA-Z_-]+)\s*:/g)) {
+        if (!fields.includes(m[1])) continue;
+        results.push({
+          rule: "V137", level: "error", node: block,
+          message: `In the ${block} block, the value of "${key}" still holds ", ${m[1]}:" (${v}). A comma between fields separates them only outside quotes and brackets: close the ( [ or " that holds it open, or put ${m[1]} on its own line.`,
+        });
+        break;
+      }
+    }
   }
   return results;
 }

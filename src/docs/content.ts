@@ -1713,7 +1713,7 @@ hooks {
 ## Notes
 
 - \`type: command\` runs a shell command; \`type: prompt\` injects text into the agent's context; \`type: mod\` loads a module inside the engine.
-- Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90).
+- Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90). A comma before a \`key:\` separates fields (\`checkpoint { backend: sqlite, ttl: 7d }\`); commas inside \`[..]\`, \`{..}\`, \`(..)\` and quotes stay in the value.
 - The \`matcher\` is tested against the tool name alone. Letters, digits, \`_\`, \`-\`, spaces, \`,\` and \`|\` mean exact names; any other character makes it an unanchored regex. MCP tools are \`mcp__<server>__<tool>\`, so match a whole server with \`mcp__chrome__.*\` (\`mcp__chrome\` alone matches nothing). Filter on arguments with \`if:\`.
 - Only exit 2 blocks. Exit 1 is a non-blocking error and the action goes ahead.
 - Global hooks fire for all agents; per-agent hooks fire only for that agent.
@@ -3392,6 +3392,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Field Swallowed Into A Value (error)
+In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`metering\` block, a value still holds \`, <field>:\` where \`<field>\` is a field of the same block. A comma between fields on one line separates them, but not inside quotes, \`[..]\`, \`{..}\` or \`(..)\`; an unclosed one hides the next field, which was then lost. The message names the block and the field.
+
+**Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
+**Fix:** Close the bracket or quote, or put the field on its own line.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3435,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Field Swallowed Into A Value |
 `,
   },
 
