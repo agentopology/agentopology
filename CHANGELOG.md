@@ -6,6 +6,7 @@ All notable changes to agentopology are documented here.
 
 ### Changed behaviour
 
+- A `script:` tool now puts Bash in the agent's tools: with no allow rule, so every call prompts; before, the tool's name was written there, which Claude Code doesn't know, so the agent had nothing that worked.
 - A repo's own tool (`tools { tool <id> { ... } }`) is no longer written into a generated agent's `tools:` on claude-code. Claude Code's subagent `tools:` takes Claude Code tool names, MCP entries and `Agent(<type>)`, so `tools: "Read, Bash, run-tests"` named a tool Claude Code does not know. A tool with a `script:` (or the new `command:`) runs through Bash: the agent now gets `Bash` (added once, unless it already has it) and the tool's name is left out, so `tools: [Read, run-tests]` compiles to `tools: Read, Bash`.
 - `.claude/settings.json` gains a permission allow rule for each `command:` tool, `Bash(<command> *)`, after the rules in `settings { allow }`, so the call runs without a prompt. A `script:` tool is not auto-allowed: the agent can edit the script, so an allow rule on it would let the agent run anything without a prompt, a wider capability than the `.at` gives. A script tool gets `Bash` and prompts as any Bash call does; nothing else is written for it, and its stub is written as before.
 - A skill's `allowed-tools` naming a command tool (and a `runs: inline` or `runs: fork` agent's `tools`, written as `allowed-tools`) gets the tool's allow rule in place of its name; a script tool there is left out, not pre-approved.
