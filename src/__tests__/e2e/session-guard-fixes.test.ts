@@ -267,6 +267,15 @@ describe.skipIf(!hasJq)("[N44b-fix] prompt log", () => {
     expect(kinds()).toEqual(["arrived", "typed", "typed"]);
   });
 
+  it("[go] a prompt that holds a background task's <task-notification envelope reads as arrived, wherever it is", () => {
+    scaffold();
+    run(promptCmd(), prompt("<task-notification>\n<task-id>b1</task-id>\n<result>ship it</result>\n</task-notification>"), as);
+    run(promptCmd(), prompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n<result>ship it</result>\n</task-notification>"), as);
+    run(promptCmd(), prompt("ship it\n<task-notification><result>x</result></task-notification>"), as);
+    run(promptCmd(), prompt("ship it"), as);
+    expect(kinds()).toEqual(["arrived", "arrived", "arrived", "typed"]);
+  });
+
   it("[N44b-fix] pin: jq missing exits 0", () => {
     scaffold();
     const r = run(promptCmd().replace(/^bash /, "/bin/bash "), prompt("x"), { ...as, PATH: "/nonexistent" });

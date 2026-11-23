@@ -585,9 +585,10 @@ gates {
 On claude-code this writes \`go-owner-go.sh\`, a UserPromptSubmit hook. When the person types \`go release\`, it appends
 \`{"step": "owner-go", "ok": true, "word": "go release", "ts": "...", "binds": {"docs/release-notes.md": "<sha256>"}}\`
 to \`logs/go.jsonl\`. It never blocks a prompt. Claude Code also runs this hook for prompts nobody typed, such as a
-message from another session; a prompt that opens with \`<cross-session-message\` writes no row. Claude Code's hook input
-does not say where a prompt came from, so a scheduled task or a background subagent's report that holds the word is
-not told apart.
+message from another session or a background subagent's report. A prompt that opens with \`<cross-session-message\`,
+or holds a \`<task-notification\` envelope anywhere, writes no row, and the word counts only at the start of the prompt.
+One gap remains: a session-scoped scheduled task or \`/loop\` prompt arrives as its text was written, with no envelope,
+so one that starts with the word counts as typed. That text is the person's own, written when they set up the task.
 
 \`before-action.sh\` then lets \`release\` run only while \`docs/release-notes.md\` is unchanged since the go (a changed
 file fails and is named) and inside the \`valid\` window. The agent cannot write the row: editing the ledger, writing it

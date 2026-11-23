@@ -2070,7 +2070,8 @@ export function talkGuard(topology: string, ast: TopologyAST, p: GuardPlatform):
 /**
  * The typed test (T-04): reads $PAYLOAD's prompt into $PROMPT (leading space dropped) and sets $KIND to
  * `arrived` when it opens with the `<cross-session-message` wrapper Claude Code puts around a message
- * from another session, `typed` for any other non-empty prompt, `unknown` when none was read. One source
+ * from another session, or when it holds, anywhere, the `<task-notification` envelope a background task's
+ * report arrives in; `typed` for any other non-empty prompt, `unknown` when none was read. One source
  * for a deciding session's prompt log and a human's go hook.
  */
 const TYPED_TEST_LINES: string[] = [
@@ -2079,6 +2080,7 @@ const TYPED_TEST_LINES: string[] = [
   'if [ -n "$PROMPT" ]; then',
   '  case "$PROMPT" in',
   '    "<cross-session-message"*) KIND=arrived ;;',
+  '    *"<task-notification"*) KIND=arrived ;;',
   "    *) KIND=typed ;;",
   "  esac",
   "fi",
@@ -2111,7 +2113,9 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
     "# Claude Code runs this hook for prompts nobody typed too (a message from another session, a",
     "# scheduled task, a background subagent reporting back), and its input says nothing of where a prompt",
     `# came from. The typed test is the one ${promptLogScript("<id>")} uses: a prompt that opens with`,
-    "# <cross-session-message is a message from another session and writes nothing. It never blocks (exit 0).",
+    "# <cross-session-message, or holds a <task-notification envelope, writes nothing. A scheduled task or",
+    "# /loop prompt is the person's own text, sent as written; one that starts with the word counts.",
+    "# It never blocks (exit 0).",
     "PAYLOAD=$(cat 2>/dev/null || true)",
     ...TYPED_TEST_LINES,
     '[ "$KIND" = typed ] || exit 0',
