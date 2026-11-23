@@ -11,13 +11,15 @@
  * - a route check in before-agent.sh: an agent every way into which is a route
  *   starts only when the last record for that agent and field holds a value
  *   whose edge leads to it.
- * - before-edit.sh refuses an Edit or Write of the route record.
+ * - before-edit.sh refuses an Edit or Write of the route record, and
+ *   before-action.sh a shell command that writes it (as for gate ledgers).
  *
- * Every other `when` edge keeps its line in the playbook and validate warns
- * that it is not enforced ({@link routeWarnings}): a condition of another form,
- * an edge to an action (no launch to refuse), an edge to an agent that
- * another, unrouted edge also reaches (its launch cannot be told apart), and a
- * route whose router cannot run route.sh (no Bash in its tools).
+ * Every other `when` edge keeps its line in the playbook. validate warns where
+ * a `when` promises a refusal that is not made ({@link routeWarnings}): a
+ * condition of another form, an edge to an action (no launch to refuse), a
+ * route whose router cannot run route.sh (no Bash in its tools), and inline
+ * delegation. A route into an agent that a plain edge also reaches is not
+ * checked (its launch cannot be told apart) and does not warn.
  *
  * @module
  */
@@ -254,8 +256,8 @@ export interface RouteWarning {
 /**
  * One warning per `when` edge that Claude Code does not enforce, naming the
  * edge and why: another condition form, an action or a non-subagent target,
- * another way into the target, or a router that cannot run route.sh. Edges
- * into a checked agent do not warn.
+ * or a router that cannot run route.sh. Edges into a checked agent, and
+ * routes into an agent a plain edge also reaches, do not warn.
  */
 export function routeWarnings(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): RouteWarning[] {
   const out: RouteWarning[] = [];
@@ -281,9 +283,9 @@ export function routeWarnings(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_G
     if (inline) warn(e, "orchestrator.delegation is inline, so no agent is launched to refuse");
     else if (node?.type === "action") warn(e, `"${e.to}" is an action, and only an agent's launch is guarded`);
     else if (!isRegisteredSubagentType(ast, e.to, p)) warn(e, `"${e.to}" is not launched as a subagent, so no launch is guarded`);
-    else if (other.length > 0) {
-      warn(e, `"${e.to}" is also reached by ${other.join(", ")}, ${other.length === 1 ? "which is not a route" : "which are not routes"}, so its launch cannot be told apart`);
-    } else if (mute.length > 0) {
+    // A plain edge also leads into the agent: the route is one way in among others, and promises no refusal.
+    else if (other.length > 0) continue;
+    else if (mute.length > 0) {
       const who = mute.map((a) => `"${a}"`).join(" and ");
       warn(e, `${who} ${mute.length === 1 ? "has" : "have"} no Bash in ${mute.length === 1 ? "its" : "their"} tools, so route.sh cannot record the route`);
     } else {

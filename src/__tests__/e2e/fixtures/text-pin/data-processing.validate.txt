@@ -4,9 +4,8 @@ Validating data-processing.at (data-processing v1.0.0)
 
   WARN  [CC-route] Flow edge "reporter -> deliver" [when reporter.quality == complete] is not enforced on Claude Code: "deliver" is an action, and only an agent's launch is guarded; it stays a line in the playbook. (reporter)
   WARN  [CC-route] Flow edge "reporter -> deliver" [when reporter.quality == partial] is not enforced on Claude Code: "deliver" is an action, and only an agent's launch is guarded; it stays a line in the playbook. (reporter)
-  WARN  [CC-route] Flow edge "reporter -> synthesizer" [when reporter.quality == failed] is not enforced on Claude Code: "synthesizer" is also reached by validate-batch -> synthesizer, which is not a route, so its launch cannot be told apart; it stays a line in the playbook. (reporter)
 
-  0 error(s), 3 warning(s)
+  0 error(s), 2 warning(s)
 
 checked against Claude Code 2.1.323 (supports 2.1.295 and later)
 --- exit 0

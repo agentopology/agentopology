@@ -748,7 +748,9 @@ An edge \`router -> builder [when router.class == change]\`, where \`class\` is 
 - a route check in \`before-agent.sh\` (PreToolUse on \`Agent|Task\`): the agent starts only when the last record for that agent and field holds a value whose edge leads to it. Otherwise it exits 2, naming the recorded value (or that there is none) and the edge it needed. An agent that no route leads to is not affected.
 - \`before-edit.sh\` refuses an Edit or Write of the route record.
 
-Not enforced, and named by a \`validate\` warning (CC-route): a condition of any other form (\`!=\`, \`>=\`, a value not declared); an edge to an action (no launch to refuse); an edge to an agent that another edge without a route also reaches (its launch cannot be told apart); a router whose \`tools\` leave out Bash (it cannot run route.sh); inline delegation. These edges stay a line in the playbook's Flow list. A shell command that writes the route record is not refused, and Codex and Cursor get no route check.
+- \`before-action.sh\` (PreToolUse on \`Bash|Monitor|PowerShell\`) refuses a shell command that writes the route record (a redirect, \`tee\`, \`cp\`, \`mv\`, \`rm\`), as it does for a gate ledger. Reading it, and running route.sh, pass.
+
+Not enforced, and named by a \`validate\` warning (CC-route): a condition of any other form (\`!=\`, \`>=\`, a value not declared); an edge to an action (no launch to refuse); a router whose \`tools\` leave out Bash (it cannot run route.sh); inline delegation. These edges stay a line in the playbook's Flow list. A route into an agent that a plain edge also reaches is not checked (its launch cannot be told apart) and does not warn. Codex and Cursor get no route check.
 
 ## Validation Rules
 

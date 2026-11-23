@@ -1347,11 +1347,49 @@ function protectedRouteRecord(ast: TopologyAST, p: GuardPlatform): ProtectedLedg
  * the command only reads its arguments (AT_READS, a reading git subcommand) and the command holds no
  * `>` and no `tee`. Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS, and runs under `set -f`.
  */
-function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
-  if (ledgers.length === 0) return [];
+function ledgerGuardLines(ledgers: ProtectedLedger[], route: ProtectedLedger | null = null): string[] {
+  if (ledgers.length === 0 && !route) return [];
+  const routeLines = route
+    ? [
+        "# 0.13.0: the route record is refused the same way: only route.sh writes it.",
+        "# route_guard 'PATTERN' LETTERS PATH: refuse the command when it names the route record and does more than read it.",
+        "route_guard() {",
+        "  local hit=0 w",
+        "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+        "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+        "  [ \"$hit\" = 1 ] || return 0",
+        "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+        "  echo \"agentopology: the command touches the route record $3; only route.sh writes it ($CMD)\" >&2",
+        "  exit 2",
+        "}",
+        `route_guard ${shellQuote(route.glob)} ${shellQuote(route.letters)} ${shellQuote(route.path)}`,
+        "",
+      ]
+    : [];
+  if (ledgers.length === 0) return [...atOnlyReadsLines(), ...routeLines];
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
     "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
+    ...atOnlyReadsLines(),
+    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
+    "ledger_guard() {",
+    "  local hit=0 w",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  [ \"$hit\" = 1 ] || return 0",
+    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    "",
+    ...routeLines,
+  ];
+}
+
+/** at_only_reads (F-4): every program in the command only reads its arguments, and nothing is redirected or tee'd. */
+function atOnlyReadsLines(): string[] {
+  return [
     "at_only_reads() {",
     "  local seg x base; local -a ws",
     "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
@@ -1367,18 +1405,6 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "  done <<< \"$SEGS\"",
     "  return 0",
     "}",
-    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
-    "ledger_guard() {",
-    "  local hit=0 w",
-    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
-    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
-    "  [ \"$hit\" = 1 ] || return 0",
-    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
-    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
-    "  exit 2",
-    "}",
-    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
-    "",
   ];
 }
 
@@ -1525,7 +1551,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const guards = actionGuards(ast);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
-  if (guards.length === 0 && ledgers.length === 0) return null;
+  // 0.13.0: a topology whose launches read the route record gets the shell check for it too.
+  const route = protectedRouteRecord(ast, p);
+  if (guards.length === 0 && ledgers.length === 0 && !route) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
@@ -1553,6 +1581,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       // inline git alias (`V=commit git -calias.x=V x`), which can name a git step in no words of its own
       inOrder: [
         ...ledgers.map(ledgerWords),
+        ...(route ? [ledgerWords(route)] : []),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
       ],
       expansion: stepWords.map((s) => s.key),
@@ -1629,7 +1658,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    ...ledgerGuardLines(ledgers),
+    ...ledgerGuardLines(ledgers, route),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.

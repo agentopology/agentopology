@@ -1,6 +1,6 @@
 Validating openclaw-assistant.at (personal-assistant v1.0.0)
 
-  stubs (claude-code): 1 of 16 generated files are stubs: 1 metering script
+  stubs (claude-code): 1 of 17 generated files are stubs: 1 metering script
 
   WARN  [V99] line 56: Agent "scheduler" uses skill "google-calendar", which this topology does not declare — scaffold writes no SKILL.md for it. If it is hand-written, declare skill google-calendar { file: ".claude/skills/google-calendar/SKILL.md" }; otherwise check the name (scheduler)
 
