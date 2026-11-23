@@ -107,6 +107,7 @@ function namedSubBlocks(body: string, skipNested = false): Array<{ name: string;
 import { findUnknownNames } from "./known-fields.js";
 import { findLostStructure } from "./lost-structure.js";
 import { SINGLE_SECTIONS } from "./sections.js";
+import { parseRules } from "./rules.js";
 
 // Re-export AST types for convenience
 export type * from "./ast.js";
@@ -875,6 +876,7 @@ export function parseGate(
   if (fields.match) node.match = unquote(fields.match);
   if (fields.bypass) node.bypass = unquote(fields.bypass);
   if (fields.ledger) node.ledger = fields.ledger;
+  if (fields.rule) node.rule = unquote(fields.rule);
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -1639,6 +1641,7 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     ...(fields.model ? { model: unquote(fields.model) } : {}),
     ...(fields.strength ? { strength: fields.strength } : {}),
     ...(fields.bypass ? { bypass: unquote(fields.bypass) } : {}),
+    ...(fields.rule ? { rule: unquote(fields.rule) } : {}),
   };
 }
 
@@ -2949,6 +2952,11 @@ export function parse(source: string): TopologyAST {
     interfaces,
     defaults,
     schemas,
+    // Left off the AST when there is no block, so a file without rules parses as before.
+    ...(() => {
+      const block = extractBlock(topBody, "rules");
+      return block ? { rules: parseRules(block.body) } : {};
+    })(),
     ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
     observability,
     params,

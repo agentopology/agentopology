@@ -28,7 +28,7 @@ interface BlockSchema {
 const OPAQUE = null;
 
 const HOOK: BlockSchema = {
-  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass"],
+  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass", "rule"],
   blocks: { extensions: OPAQUE },
 };
 
@@ -70,7 +70,7 @@ const NODE_SCHEMAS = {
   agent: AGENT,
   action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join", "unit-from"] },
   gate: {
-    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
+    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "rule"],
     blocks: { extensions: OPAQUE },
   },
   human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
@@ -122,7 +122,7 @@ const TOPOLOGY: BlockSchema = {
     roles: OPAQUE, flow: OPAQUE, depth: OPAQUE, memory: OPAQUE, batch: OPAQUE,
     environments: OPAQUE, triggers: OPAQUE, settings: OPAQUE, "mcp-servers": OPAQUE,
     metering: OPAQUE, context: OPAQUE, env: OPAQUE, providers: OPAQUE,
-    interfaces: OPAQUE, defaults: OPAQUE, schemas: OPAQUE, observability: OPAQUE,
+    interfaces: OPAQUE, defaults: OPAQUE, schemas: OPAQUE, rules: OPAQUE, observability: OPAQUE,
     checkpoint: OPAQUE, extensions: OPAQUE, params: OPAQUE, interface: OPAQUE,
     // Children of a misplaced container keyword are reported by V98 instead.
     gate: OPAQUE, hook: OPAQUE, tool: OPAQUE, job: OPAQUE, command: OPAQUE, level: OPAQUE,

@@ -16,6 +16,7 @@ import { codexBinding } from "../../bindings/codex.js";
 import { checkGuards, renderGuardReport } from "../../guard/check.js";
 import { getTopic } from "../../docs/index.js";
 import { rulesSummary } from "../rules.js";
+import { codexSource } from "../../bindings/__tests__/codex-models.js";
 
 const RULES = `
   rules {
@@ -80,7 +81,7 @@ describe("rules block: parse", () => {
   });
 
   it("has no rules when none are declared", () => {
-    expect(parse(topo()).rules).toEqual([]);
+    expect(parse(topo()).rules ?? []).toEqual([]);
   });
 
   it("reads rule: on a gate", () => {
@@ -206,7 +207,7 @@ describe("rules block: guard --check", () => {
 
 describe("rules block: codex and docs", () => {
   it("writes the rules into AGENTS.md", () => {
-    const agents = codexBinding.scaffold(parse(topo(RULES))).find((f) => f.path === "AGENTS.md")!;
+    const agents = codexBinding.scaffold(parse(codexSource(topo(RULES)))).find((f) => f.path === "AGENTS.md")!;
     expect(agents.content).toContain("## Rules");
     expect(agents.content).toContain("R-7.6");
     expect(agents.content).toContain("Never publish a draft without a second read.");

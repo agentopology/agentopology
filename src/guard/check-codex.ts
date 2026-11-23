@@ -57,7 +57,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    const base = { kind: "gate" as const, id: gate.id };
+    const base = { kind: "gate" as const, id: gate.id, ...(gate.rule ? { rule: gate.rule } : {}) };
     const hold = codexGateHold(ast, gate);
     const wrapper = `gate-${gate.id}.sh`;
     switch (hold.kind) {

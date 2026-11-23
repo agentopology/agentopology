@@ -2,6 +2,18 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A top-level `rules { rule "<id>" { text: "...", source: "..." } }` block holds conduct rules traced to their ids. Ids are quoted and may hold dots (`"R-7.6"`); `text` is required; `source` is optional. On claude-code each rule is written, with its id, under a `## Rules` section between `<!-- agentopology:rules -->` markers in the entry agent's file (the `meta { entry }` agent), or in the topology skill when there is no entry agent; your own text outside the markers is kept. On codex the same section is written into `AGENTS.md`. `validate` prints `rules: N declared (<ids>)`. `agentopology docs rules` explains it.
+- A gate or a hook may cite a rule with `rule: "<id>"`. The citation is written as `Rule: <id>` in the gate's section of the playbook (and `AGENTS.md`), and `guard --check` lists it beside the gate (`· rule: R-7.6`). It is a trace, not enforcement: only the gate's own hook refuses. A cited hook is checked but nothing is written for it.
+- V137 (error): a rule has an empty or repeated id, or no text. V138 (error): a gate or hook cites a rule the block does not declare.
+
+### Changed behaviour
+
+- `rules` and `rule` are now reserved words, so an agent, action or gate named `rules` or `rule` is a V2 error. Rename it.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

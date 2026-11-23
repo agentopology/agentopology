@@ -297,7 +297,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    const base = { kind: "gate" as const, id: gate.id };
+    const base = { kind: "gate" as const, id: gate.id, ...(gate.rule ? { rule: gate.rule } : {}) };
     if (gate.behavior === "advisory") {
       items.push({ ...base, strength: "hope", by: "prose", where: "advisory: it reports and never blocks", notes: [] });
       continue;
@@ -626,7 +626,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
   const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}${i.rule ? `  · rule: ${i.rule}` : ""}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${countsMissing(i) ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");

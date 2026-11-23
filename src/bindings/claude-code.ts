@@ -56,6 +56,7 @@ import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
+import { rulesSection } from "../parser/rules.js";
 import {
   AT_OWNED_TOPOLOGY_SKILL_KEYS, assertCcFrontmatter, ccKey, coerceCcValue, isClaudeCodeModelName, resolveSettingsKey, setSettingsPath, unknownSettingsPaths,
   type CcSurface, type FrontmatterFields,
@@ -816,6 +817,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push(PROMPT_FENCE_CLOSE);
     sections.push("");
+    // Conduct rules: written into the entry agent only, the agent every session starts as.
+    if (agent.id === sessionAgentId(ast)) sections.push(...rulesSection(ast));
     if (agent.independent) {
       sections.push("## Independence");
       sections.push("");
@@ -1558,6 +1561,9 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
   }
 
+  // Conduct rules: the topology skill carries them only when no entry agent can.
+  if (sessionAgentId(ast) === undefined) sections.push(...rulesSection(ast));
+
   // Gates section
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
   if (gates.length > 0) {
@@ -1565,6 +1571,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
+      if (gate.rule) sections.push(`Rule: ${gate.rule}`);
       if (gate.after) sections.push(`After: ${gateAnchors(gate, "after").join(", ")}`);
       if (gate.before) sections.push(`Before: ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`Run: ${gate.run}`);

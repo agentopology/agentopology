@@ -129,6 +129,7 @@ const SINGLE: Record<string, (m: string) => string> = {
   interface: (m) => `interface { entry: a\n exit: ${m} }`,
   inventory: (m) => `inventory { roots: ["${m}/"] }`,
   needs: (m) => `needs { memory: "~/${m}" }`,
+  rules: (m) => `rules { rule "${m}" { text: "t" } }`,
 };
 
 // HEAD already holds one of these.

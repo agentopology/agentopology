@@ -2647,6 +2647,57 @@ schemas {
   },
 
   // -------------------------------------------------------------------------
+  // rules
+  // -------------------------------------------------------------------------
+  rules: {
+    name: "rules",
+    description: "Conduct rules traced to their ids, cited by gates and hooks",
+    content: () => `# rules
+
+The \`rules\` block holds conduct rules, each with an id a person can trace.
+
+## Syntax
+
+\`\`\`at
+rules {
+  rule "R-7.6" {
+    text: "Never publish a draft without a second read."
+    source: "editorial handbook, section 7"
+  }
+}
+\`\`\`
+
+- The id is a quoted string and may hold dots. Each id appears once (V137).
+- \`text:\` is required and never empty (V137). \`source:\` is optional.
+
+## What it compiles to
+
+- **claude-code**: a \`## Rules\` section, one entry per rule with its id, written between
+  \`<!-- agentopology:rules -->\` markers into the entry agent's file (\`meta { entry }\`), or the
+  topology skill when there is no entry agent. Text outside the markers is yours.
+- **codex**: the same section in AGENTS.md.
+- \`agentopology validate\` prints \`rules: N declared (<ids>)\`.
+
+## Citing a rule
+
+A gate or hook may name the rule it enforces with \`rule: "<id>"\`. An id the block does not
+declare is an error (V138). The citation is written into the gate's section of the playbook
+and listed beside the gate by \`agentopology guard <file> --check\`. It is a trace, not
+enforcement: the gate's own hook is what refuses.
+
+\`\`\`at
+gates {
+  gate second-read {
+    after: drafter
+    run: "scripts/second-read.sh"
+    rule: "R-7.6"
+  }
+}
+\`\`\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 25. defaults
   // -------------------------------------------------------------------------
   defaults: {
@@ -3392,6 +3443,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Rules Block (error)
+A \`rules { }\` block holds rules with unique ids and non-empty text. A repeated id, an empty id, or a rule with no \`text:\` is an error.
+
+**Violation:** \`rules { rule "R-1" { text: "a" }  rule "R-1" { text: "b" } }\`
+**Fix:** Give each rule its own id and write its text.
+
+### V138: Rule Citation (error)
+A gate or hook that cites \`rule: "<id>"\` must name a rule the \`rules { }\` block declares.
+
+**Violation:** \`gate g { after: a  run: "scripts/g.sh"  rule: "R-9" }\` with no rule "R-9".
+**Fix:** Declare the rule, or cite one that exists.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3492,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Rules Block |
+| V138 | error | Rule Citation |
 `,
   },
 

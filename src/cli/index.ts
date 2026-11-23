@@ -67,6 +67,7 @@ import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
+import { rulesSummary } from "../parser/rules.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
 import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
@@ -546,6 +547,8 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const drifted = !!drift && drift.rows.length > 0;
   printStubPlan(ast, target, dir);
+  const rulesLine = rulesSummary(ast);
+  if (rulesLine) { console.log(`  ${rulesLine}`); console.log(""); }
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -623,6 +626,8 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
     printStubPlan(ast, target, dir);
+    const rulesLine = rulesSummary(ast);
+    if (rulesLine) { console.log(`  ${rulesLine}`); console.log(""); }
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;

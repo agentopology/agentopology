@@ -97,7 +97,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "agent", "action", "orchestrator", "meta", "roles", "memory", "flow",
   "gates", "gate", "depth", "batch", "environments", "triggers", "command",
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
-  "tools", "tool", "scale", "skill",
+  "tools", "tool", "scale", "skill", "rules", "rule",
   // Field keywords
   "model", "disallowed-tools", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
@@ -4149,6 +4149,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137RulesBlock(ast),
+    ...v138RuleCitation(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4354,6 +4356,45 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
   }
+  return results;
+}
+
+/**
+ * V137: a `rules { }` block must hold rules a person can trace: each id appears
+ * once, and each rule has text. A duplicate id would make a citation (`rule:`)
+ * ambiguous; an empty rule would be written into the entry agent as a bare id.
+ */
+function v137RulesBlock(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const r of ast.rules ?? []) {
+    if (r.id.trim() === "") {
+      results.push({ rule: "V137", level: "error", message: `A rule in the rules block has an empty id; give it a quoted id such as rule "R-1" { text: "..." }.` });
+    } else if (seen.has(r.id)) {
+      results.push({ rule: "V137", level: "error", node: r.id, message: `Rule "${r.id}" is declared twice in the rules block; a rule: citation could not tell them apart. Give each rule its own id.` });
+    }
+    seen.add(r.id);
+    if (r.text.trim() === "") {
+      results.push({ rule: "V137", level: "error", node: r.id, message: `Rule "${r.id}" has no text; write what the rule says: text: "...".` });
+    }
+  }
+  return results;
+}
+
+/**
+ * V138: a gate or hook that cites `rule: "<id>"` must name a rule the `rules { }`
+ * block declares. A citation to nothing is a trace that leads nowhere.
+ */
+function v138RuleCitation(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const ids = new Set((ast.rules ?? []).map((r) => r.id));
+  const check = (kind: string, name: string, rule: string | undefined) => {
+    if (rule === undefined || ids.has(rule)) return;
+    const known = ids.size ? `declared rules: ${[...ids].join(", ")}` : "the topology declares no rules block";
+    results.push({ rule: "V138", level: "error", node: name, line: lookupLine(ast, name), message: `The ${kind} "${name}" cites rule "${rule}", which the rules block does not declare (${known}).` });
+  };
+  for (const n of ast.nodes) if (n.type === "gate") check("gate", n.id, (n as GateNode).rule);
+  for (const h of ast.hooks ?? []) check("hook", h.name, h.rule);
   return results;
 }
 

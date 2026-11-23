@@ -1059,6 +1059,7 @@ gates {
 | `match` | string | no | -- | Text expected within 5 lines of `at`, so a refactor that removes the check is caught. Needs `at` (V106) |
 | `bypass` | string | no | -- | The declared way around it (an env switch, a flag) |
 | `ledger` | record id | no | the only record | The record a gate before a script step reads. Omitted, a topology with exactly one `record` uses it (V112) |
+| `rule` | string | no | -- | The id of a `rules { }` entry this gate enforces; an unknown id is an error (V138). Written into the gate's section and listed by `guard --check` |
 
 **Gates before a script step.** A gate whose `before:` is an `action` with `commands:` refuses that step in Claude Code sessions. The claude-code binding writes one script, `before-action.sh`, wired as a `PreToolUse` hook on `Bash|Monitor|PowerShell` (every Claude Code tool that runs a shell command; Monitor from Claude Code 2.1.314) with `onFailure: "block"`. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; a Monitor call with no `command` passes. When the command starts with one of the action's `commands:` (leading `VAR=value` words are ignored), the script checks the gate: if it has a ledger, the **last** line for the `after:` step (and the same unit, when the command names one with `unit-from`) must have `ok: true`; if it has `run:`, that wrapper must exit 0. Anything else exits 2 and says which gate, step, unit and ledger path refused. A gate with neither a ledger nor `run:` has nothing to check (V110).
 
@@ -1906,6 +1907,28 @@ needs {
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+### 4.32 `rules`
+
+```ebnf
+rules           = 'rules' '{' rule-decl* '}'
+rule-decl       = 'rule' string '{' 'text' ':' string ('source' ':' string)? '}'
+```
+
+```agenttopology
+rules {
+  rule "R-7.6" {
+    text: "Never publish a draft without a second read."
+    source: "editorial handbook, section 7"
+  }
+}
+```
+
+Conduct rules traced to their ids. The id is a quoted string and may hold dots; each id appears once, and `text` is required and never empty (V137). `source` says where the rule comes from. A second `rules { }` block is ignored with a V23 warning.
+
+A gate or a hook may cite a rule with `rule: "<id>"`; an id the block does not declare is an error (V138). The citation is a trace, not enforcement.
+
+claude-code writes a `## Rules` section, one entry per rule with its id, between `<!-- agentopology:rules -->` markers into the entry agent's file (the `meta { entry }` agent), or into the topology skill when there is no entry agent; text outside the markers is the user's. A cited rule is written as `Rule: <id>` in the gate's section and listed beside the gate by `guard --check`. codex writes the same section into AGENTS.md. `validate` prints `rules: N declared (<ids>)`.
 
 ---
 
