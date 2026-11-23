@@ -778,6 +778,11 @@ export interface GateNode extends BaseNode {
   after?: string | string[];
   /** Node id(s) this gate runs before. See {@link after}. */
   before?: string | string[];
+  /**
+   * Path globs from `before: write "<glob>"`: an edit of a matching path is refused until the
+   * gate holds. Kept apart from {@link before} (node ids); an empty glob is kept so V137 can say so.
+   */
+  beforeWrite?: string[];
   /** Script to execute for the gate check. */
   run?: string;
   /** List of check identifiers. */
@@ -1031,6 +1036,11 @@ export interface TopologyMeta {
   entry?: string;
   /** Whether durable execution is enabled. */
   durable?: boolean;
+  /**
+   * The directory the generated hooks resolve project paths against (ledgers, gate checks,
+   * `before: write` globs): absolute, or relative to the project. Default: the project root.
+   */
+  target?: string;
 }
 
 /** Authentication configuration for a provider (OIDC, OAuth2, etc.). */

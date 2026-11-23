@@ -108,6 +108,8 @@ entry, exit, sha256
 
 `entry` is in use, and stays reserved so it cannot name a node: `interface { entry: <id> exit: <id> }` (a fragment's flow entry point) and `meta { entry: <agent-id> }` (the agent every session starts as, V134).
 
+`write` (in a gate's `before: write "<glob>"`, V137) and `target` (`meta { target: "<dir>" }`, V138) are read only in those places and are not reserved: a node may still be named `write` or `target`. A `before: write` with no quoted glob after it names a node.
+
 ---
 
 ## Wave 5 Keywords (Advanced Patterns)

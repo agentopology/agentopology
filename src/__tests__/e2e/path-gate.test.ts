@@ -196,7 +196,29 @@ describe.skipIf(!hasJq)("meta target resolves project paths against the target d
     for (const f of files.filter((x) => x.path.includes("/scripts/") && /before-(edit|action)\.sh$/.test(x.path))) {
       const uses = f.content.split("\n").filter((l) => l.includes("CLAUDE_PROJECT_DIR") && !l.trim().startsWith("#"));
       // only the lines that set the one root variable may read it
-      expect(uses.length, f.path).toBeLessThanOrEqual(3);
+      expect(uses.length, f.path).toBeLessThanOrEqual(2);
+      expect(f.content, f.path).toContain('AT_PROJECT="');
     }
+  });
+
+  it("a project-relative run: script is found in the target, in the wrapper and in settings", () => {
+    const gate = `    gate src-open {\n      before: write "src/**"\n      run: "./tools/open-check.sh"\n    }`;
+    const { files } = scaffold(topology({ target: "work", gate }));
+    const wrapper = files.find((f) => f.path.endsWith("scripts/gate-src-open.sh"))!.content;
+    expect(wrapper).toContain('cd "$AT_PROJECT"');
+    expect(wrapper).toContain('"$CLAUDE_PROJECT_DIR/work/tools/open-check.sh"');
+    expect(wrapper).not.toContain('"$CLAUDE_PROJECT_DIR/tools/open-check.sh"');
+  });
+
+  it("without a target nothing changes: the project root is the root", () => {
+    const { files } = scaffold(topology());
+    const edit = files.find((f) => f.path.endsWith("scripts/before-edit.sh"))!.content;
+    expect(edit).toContain('ROOT="$(cd "$CLAUDE_PROJECT_DIR" && pwd)"');
+    expect(edit).not.toContain("AT_PROJECT");
+  });
+
+  it("a target that is missing blocks the edit", () => {
+    scaffold(topology({ target: "nowhere" }));
+    expect(hook("before-edit.sh", edit(at("nowhere/src/a.ts"))).status).toBe(2);
   });
 });

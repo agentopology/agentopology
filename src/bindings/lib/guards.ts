@@ -132,20 +132,34 @@ function upToRoot(p: GuardPlatform, topology: string): string {
  *
  * With no project-dir variable every mode finds the root from the script's place.
  */
-export function projectRootLines(p: GuardPlatform, topology: string, mode: "cd" | "strict" | "fallback"): string[] {
+export function projectRootLines(p: GuardPlatform, topology: string, mode: "cd" | "strict" | "fallback", target?: string): string[] {
   const v = p.projectDirVar;
   const here = `$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, topology)}" && pwd)`;
   if (v === null) {
     return mode === "fallback" ? [`ROOT="${here}"`, 'cd "$ROOT"'] : [`cd "${here}"`];
   }
-  if (mode === "cd") return [`cd "$${v}"`];
+  // meta { target }: AT_PROJECT is the project (where the scripts are), then the work is done in the target.
+  const intoTarget = target === undefined || mode === "fallback"
+    ? []
+    : [`cd ${shellQuote(target)} || { echo "agentopology: the target directory ${target.replace(/[^A-Za-z0-9_.@+/ -]/g, "")} does not exist, so this step cannot be checked and is blocked" >&2; exit 2; }`];
+  if (mode === "cd") return target === undefined ? [`cd "$${v}"`] : [`AT_PROJECT="$${v}"`, 'cd "$AT_PROJECT"', ...intoTarget];
   if (mode === "strict") {
     return [
       `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this step cannot be checked and is blocked" >&2; exit 2; fi`,
-      `cd "$${v}"`,
+      ...(target === undefined ? [`cd "$${v}"`] : [`AT_PROJECT="$${v}"`, 'cd "$AT_PROJECT"', ...intoTarget]),
     ];
   }
   return [`ROOT="\${${v}:-}"`, `if [ -z "$ROOT" ]; then ROOT=${here}; fi`, 'cd "$ROOT"'];
+}
+
+/** The target directory a platform's guards work in: `meta { target }` where the host sets a project-dir variable (Claude Code). */
+export function rootTarget(ast: TopologyAST, p: GuardPlatform): string | undefined {
+  return p.projectDirVar === null ? undefined : targetOf(ast);
+}
+
+/** The `DIR=` line: the scripts folder, absolute from $AT_PROJECT when the script has moved into a target. */
+function scriptsDirLine(p: GuardPlatform, topology: string, target: string | undefined): string {
+  return target === undefined ? `DIR="${p.scriptsDir(topology)}"` : `DIR="$AT_PROJECT/${p.scriptsDir(topology)}"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,8 +360,8 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
       : `# reason to ${p.modelName}. ${p.label} cannot ask, so an approval step holds until a record exists.`,
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    ...projectRootLines(p, name, "cd"),
-    `DIR="${p.scriptsDir(name)}"`,
+    ...projectRootLines(p, name, "cd", rootTarget(ast, p)),
+    scriptsDirLine(p, name, rootTarget(ast, p)),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this launch, so it is blocked",
       pass: "agentopology: jq is not installed; this launch names no gated agent, so it runs. Install jq to check launches.",
@@ -449,7 +463,61 @@ export function inlineGateBudget(gate: GateNode): number {
 
 /** The gates whose check script before-action.sh runs, each once. */
 export function beforeActionGates(ast: TopologyAST): GateNode[] {
-  return [...new Set(actionGuards(ast).flatMap(({ gates }) => gates))].filter((g) => !!scriptNameFromRun(g.run));
+  return [...new Set([...actionGuards(ast).flatMap(({ gates }) => gates), ...writeGates(ast)])].filter((g) => !!scriptNameFromRun(g.run));
+}
+
+/**
+ * The gates with a `before: write "<glob>"` anchor that have something to check: a ledger or a `run:`
+ * script, and not advisory. An edit (before-edit.sh) or a Bash write (before-action.sh) of a path
+ * matching one of the globs is refused until the gate holds.
+ */
+export function writeGates(ast: TopologyAST): GateNode[] {
+  return ast.nodes.filter((n): n is GateNode => n.type === "gate")
+    .filter((g) => g.behavior !== "advisory" && (g.beforeWrite ?? []).some((x) => x.trim() !== "") && (!!gateLedger(ast, g) || !!scriptNameFromRun(g.run)));
+}
+
+/** The words of a glob's literal parts (`src/**` + `/gen` → src, gen), for the no-jq reading. */
+function globWords(glob: string): string[] {
+  return glob.split(/[*?/[\]\\]+/).filter((w) => lettersOf(w) !== "");
+}
+
+/** A gate's write globs that are not empty. */
+function writeGlobs(gate: GateNode): string[] {
+  return (gate.beforeWrite ?? []).filter((x) => x.trim() !== "");
+}
+
+/**
+ * A path glob as lower-case `[[ == ]]` patterns, for a path relative to the project root. `*` and `**`
+ * both match across folders (the guard errs toward refusing); `**` + `/` also matches no folder; a glob
+ * with no wildcard names a path or a folder under it.
+ */
+export function writeGlobPatterns(glob: string): string[] {
+  const g0 = glob.trim().replace(/^\.\//, "");
+  const variants = g0.includes("**/") ? [g0.split("**/").join(""), g0.split("**/").join("*/")] : [g0];
+  const out = new Set<string>();
+  for (const v of variants) {
+    const esc = v.toLowerCase().replace(/[[\]\\]/g, "\\$&").replace(/\*+/g, "*");
+    out.add(esc);
+    if (!esc.endsWith("*")) out.add(`${esc.replace(/\/$/, "")}/*`);
+  }
+  return [...out];
+}
+
+/** The `meta { target }` directory, or undefined when none is set (or it is empty: V138 reports that). */
+export function targetOf(ast: TopologyAST): string | undefined {
+  const t = ast.topology.target?.trim();
+  return t ? t : undefined;
+}
+
+/**
+ * The shell expression for the directory project paths resolve against: the project root (`$VAR`), or
+ * with `meta { target }` the target, absolute as written or under the project root. The one place that
+ * joins the target to the project-dir variable; every generated script and hook command takes it from here.
+ */
+export function projectRootRef(ast: TopologyAST, v: string = "CLAUDE_PROJECT_DIR"): string {
+  const t = targetOf(ast);
+  if (t === undefined) return `$${v}`;
+  return t.startsWith("/") ? t.replace(/\/+$/, "") || "/" : `$${v}/${t.replace(/^\.\//, "").replace(/\/+$/, "")}`;
 }
 
 /**
@@ -458,6 +526,15 @@ export function beforeActionGates(ast: TopologyAST): GateNode[] {
  */
 export function beforeActionHookTimeout(ast: TopologyAST): number {
   return Math.max(BEFORE_ACTION_MIN_TIMEOUT, beforeActionBudgetSum(ast) + BEFORE_ACTION_MARGIN);
+}
+
+/**
+ * The hook timeout for before-edit.sh: set only when a gate before a write runs a check script (its
+ * budgets plus the margin), else 0 and the host's default stands.
+ */
+export function beforeEditHookTimeout(ast: TopologyAST): number {
+  const runs = writeGates(ast).filter((g) => !!scriptNameFromRun(g.run));
+  return runs.length === 0 ? 0 : Math.max(BEFORE_ACTION_MIN_TIMEOUT, runs.reduce((s, g) => s + inlineGateBudget(g), 0) + BEFORE_ACTION_MARGIN);
 }
 
 /** The sum of the budgets of the gate checks before-action.sh may run in one command. */
@@ -1147,8 +1224,13 @@ function noJqLines(o: {
   powershell?: boolean;
   /** The first word of every git step the topology declares: refuse a tool run by a program that reads its arguments from stdin. */
   stdinGitSteps?: string[];
+  /** Refuse every call when jq is missing: the guard checks a path it cannot read without jq. */
+  refuseAll?: boolean;
 }): string[] {
   const sq = shellQuote;
+  if (o.refuseAll) {
+    return ["if ! command -v jq >/dev/null 2>&1; then", `  echo ${sq(o.refuse)} >&2`, "  exit 2", "fi"];
+  }
   const lists = (o.inOrder ?? []).map((ws) => ws.map(lettersOf).filter(Boolean)).filter((ws) => ws.length > 0);
   const wordLists = (o.words ?? []).map((ws) => ws.flatMap((w) => noJqWords(w, o.split ?? ""))).filter((ws) => ws.length > 0);
   const tools = [...new Set((o.expansion ?? []).map(lettersOf).filter(Boolean))];
@@ -1332,8 +1414,8 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
  * the command only reads its arguments (AT_READS, a reading git subcommand) and the command holds no
  * `>` and no `tee`. Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS, and runs under `set -f`.
  */
-function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
-  if (ledgers.length === 0) return [];
+function ledgerGuardLines(ledgers: ProtectedLedger[], ast: TopologyAST, wgates: GateNode[] = []): string[] {
+  if (ledgers.length === 0 && wgates.length === 0) return [];
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
     "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
@@ -1352,17 +1434,37 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "  done <<< \"$SEGS\"",
     "  return 0",
     "}",
-    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
-    "ledger_guard() {",
-    "  local hit=0 w",
-    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
-    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
-    "  [ \"$hit\" = 1 ] || return 0",
-    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
-    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
-    "  exit 2",
-    "}",
-    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    ...(ledgers.length === 0 ? [] : [
+      "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
+      "ledger_guard() {",
+      "  local hit=0 w",
+      "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+      "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+      "  [ \"$hit\" = 1 ] || return 0",
+      "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+      "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+      "  exit 2",
+      "}",
+      ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    ]),
+    ...(wgates.length === 0 ? [] : [
+      "# A gate before a write of a path: a command that names a path matching its glob and does more than read",
+      "# it is held until the gate holds. Not seen: a path reached through a variable set elsewhere, or another script.",
+      "at_writes_to() {",
+      "  local w",
+      "  for w in $(norm \"$CMD\"); do",
+      "    w=$(lower \"${w##*>}\")",
+      "    [ -n \"$w\" ] || continue",
+      "    if [[ $w == $1 || $w == */$1 ]]; then return 0; fi",
+      "  done",
+      "  return 1",
+      "}",
+      "at_not_only_reads() { local r=0; set +u; if at_only_reads; then r=1; fi; set -u; [ \"$r\" = 1 ] && return 1; return 0; }",
+      ...wgates.flatMap((g) => {
+        const hit = writeGlobs(g).flatMap(writeGlobPatterns).map((pat) => `at_writes_to ${shellQuote(pat)}`).join(" || ");
+        return [`if { ${hit}; } && at_not_only_reads; then`, `  UNIT=''`, ...gateCheckLines(ast, g, "  "), "fi"];
+      }),
+    ]),
     "",
   ];
 }
@@ -1376,28 +1478,48 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
  */
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
-  if (ledgers.length === 0) return null;
+  const wgates = writeGates(ast);
+  if (ledgers.length === 0 && wgates.length === 0) return null;
   const name = ast.topology.name;
   const v = p.projectDirVar;
+  const target = rootTarget(ast, p);
   const lines = [
     "#!/usr/bin/env bash",
     `# Before ${p.label} edits a file in a project of topology "${name}" (F-4).`,
     `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on`,
     `# ${p.supportsAsk ? "Write|Edit|MultiEdit|NotebookEdit" : "apply_patch"}. A gate's ledger is a file the agent could write, so an edit`,
     `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
+    ...(wgates.length ? ["# A gate before a write of a path (before: write \"<glob>\") holds an edit of a matching path until it holds."] : []),
     "set -euo pipefail",
     ...FAIL_CLOSED,
     ...(v === null
       ? [`ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, name)}" && pwd)"`]
       : [
           `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this edit cannot be checked and is blocked" >&2; exit 2; fi`,
-          `ROOT="$(cd "$${v}" && pwd)"`,
+          ...(target === undefined
+            ? [`ROOT="$(cd "$${v}" && pwd)"`]
+            : [
+                `AT_PROJECT="$(cd "$${v}" && pwd)"`,
+                `ROOT="$(cd "$AT_PROJECT" && cd ${shellQuote(target)} 2>/dev/null && pwd)" || { echo "agentopology: the target directory does not exist, so this edit cannot be checked and is blocked" >&2; exit 2; }`,
+              ]),
         ]),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
       inOrder: ledgers.map(ledgerWords),
+      // a gate before a write reads the path and the ledger with jq: without it nothing can be told apart
+      refuseAll: wgates.length > 0,
     }),
+    ...(wgates.length
+      ? [
+          `DIR="${target === undefined ? "$ROOT" : "$AT_PROJECT"}/${p.scriptsDir(name)}"`,
+          'cd "$ROOT"',
+          "EDITED=''; UNIT=''",
+          'deny() { echo "agentopology: gate $1 refuses the edit of $EDITED: $2" >&2; exit 2; }',
+          ...(beforeActionGates(ast).some((g) => wgates.includes(g)) ? GATE_BUDGET_FUNCTIONS : []),
+          ...CHECK_LEDGER_FUNCTION,
+        ]
+      : []),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
     "TOOL=$(printf '%s' \"$INPUT\" | jq -er '.tool_name | strings') || { echo \"agentopology: the hook input is not valid JSON, so the edit is blocked\" >&2; exit 2; }",
@@ -1420,6 +1542,11 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
     if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+  }
+  for (const g of wgates) {
+    // the pattern goes through a variable: unquoted in [[ ]] it is matched as a glob
+    lines.push(`  for PAT in ${writeGlobs(g).flatMap(writeGlobPatterns).map(shellQuote).join(" ")}; do`);
+    lines.push("    if [[ $RL == $PAT ]]; then", '      EDITED=$R', ...gateCheckLines(ast, g, "      "), "      break", "    fi", "  done");
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
@@ -1475,6 +1602,45 @@ const GATE_BUDGET_FUNCTIONS: string[] = [
   "",
 ];
 
+/** check_ledger (before-action.sh and before-edit.sh): the last ledger line for a step (and unit) must be ok. Needs deny and jq. */
+const CHECK_LEDGER_FUNCTION: string[] = [
+  "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
+  "check_ledger() {",
+  "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
+  '  if [[ "$tmpl" == *"{unit}"* ]]; then',
+  '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
+  '    path="${tmpl//\\{unit\\}/$unit}"',
+  "  else",
+  '    path="$tmpl"',
+  "  fi",
+  '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
+  "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
+  '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
+  '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
+  "}",
+];
+
+/**
+ * The shell lines that check one gate: its ledger (the last line for each `after:` step must be ok) and its
+ * `run:` check script (at_gate). One source for the gates before a script step and the gates before a write.
+ * Needs deny, check_ledger, at_gate and $UNIT.
+ */
+function gateCheckLines(ast: TopologyAST, gate: GateNode, indent: string): string[] {
+  const sq = shellQuote;
+  const out: string[] = [`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`];
+  const ledger = gateLedger(ast, gate);
+  if (ledger) {
+    for (const step of gateAnchors(gate, "after")) {
+      out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+    }
+  }
+  if (scriptNameFromRun(gate.run)) {
+    const fix = gateWorstCase(gate) === null ? "declare a timeout: on the gate if it needs longer" : "raise the gate's timeout: if it needs longer";
+    out.push(`${indent}at_gate ${sq(gate.id)} ${inlineGateBudget(gate)} ${sq(fix)}`);
+  }
+  return out;
+}
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -1503,7 +1669,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   const guards = actionGuards(ast);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
-  if (guards.length === 0 && ledgers.length === 0) return null;
+  const wgates = writeGates(ast);
+  if (guards.length === 0 && ledgers.length === 0 && wgates.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
@@ -1521,7 +1688,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "# `agentopology step check` itself.",
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    ...projectRootLines(p, name, "strict"),
+    ...projectRootLines(p, name, "strict", rootTarget(ast, p)),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this step, so it is blocked",
       pass: "agentopology: jq is not installed; this command names no gated step, so it runs. Install jq to check steps.",
@@ -1531,13 +1698,16 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       // inline git alias (`V=commit git -calias.x=V x`), which can name a git step in no words of its own
       inOrder: [
         ...ledgers.map(ledgerWords),
+        ...wgates.flatMap((g) => writeGlobs(g).map(globWords).filter((w) => w.length > 0)),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
       ],
       expansion: stepWords.map((s) => s.key),
       powershell: !!p.powershellTool,
       stdinGitSteps: gitSteps,
+      // a write glob with no letters (`**`) names every path: nothing can be told apart without jq
+      refuseAll: wgates.some((g) => writeGlobs(g).some((x) => globWords(x).length === 0)),
     }),
-    `DIR="${p.scriptsDir(name)}"`,
+    scriptsDirLine(p, name, rootTarget(ast, p)),
     ...(p.powershellTool
       ? [
         // One read of stdin: the command, and whether the tool is PowerShell. A call with no command (Monitor's ws input) reads as "" and runs nothing.
@@ -1550,20 +1720,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
     "",
     ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
-    "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
-    "check_ledger() {",
-    "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
-    '  if [[ "$tmpl" == *"{unit}"* ]]; then',
-    '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
-    '    path="${tmpl//\\{unit\\}/$unit}"',
-    "  else",
-    '    path="$tmpl"',
-    "  fi",
-    '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
-    "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
-    '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
-    '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
-    "}",
+    ...CHECK_LEDGER_FUNCTION,
     "",
     "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",
     "# - a backslash at a line end joins the next line;",
@@ -1607,7 +1764,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    ...ledgerGuardLines(ledgers),
+    ...ledgerGuardLines(ledgers, ast, wgates),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
@@ -1636,23 +1793,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   for (const [a, { action, gates }] of guards.entries()) {
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
     const names = [...new Set(keys.map((k) => k.key))];
-    const gateChecks = (indent: string) => {
-      const out: string[] = [];
-      for (const gate of gates) {
-        out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
-        const ledger = gateLedger(ast, gate);
-        if (ledger) {
-          for (const step of gateAnchors(gate, "after")) {
-            out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
-          }
-        }
-        if (scriptNameFromRun(gate.run)) {
-          const fix = gateWorstCase(gate) === null ? "declare a timeout: on the gate if it needs longer" : "raise the gate's timeout: if it needs longer";
-          out.push(`${indent}at_gate ${sq(gate.id)} ${inlineGateBudget(gate)} ${sq(fix)}`);
-        }
-      }
-      return out;
-    };
+    const gateChecks = (indent: string) => gates.flatMap((gate) => gateCheckLines(ast, gate, indent));
     const unreadable = (why: string, indent: string) => action.unitFrom
       ? [`${indent}deny ${sq(gates[0].id)} "it names ${names.join("/")} in a form this guard cannot read (${why}); write the step as a plain command"`]
       : [`${indent}UNIT=''`, ...gateChecks(indent)];
@@ -1768,7 +1909,7 @@ export function generateGateWrapperScripts(
       "set -euo pipefail",
       ...FAIL_CLOSED,
       // A platform with no project-dir variable runs the hook in the session's folder; the check path is root-relative.
-      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : []),
+      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : rootTarget(ast, p) !== undefined ? projectRootLines(p, name, "strict", rootTarget(ast, p)) : []),
       "",
       "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
       "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),

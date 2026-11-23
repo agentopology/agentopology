@@ -2,6 +2,14 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A gate can stand before a write of a path: `before: write "<glob>"`. An edit of a matching path is refused until the gate holds (its ledger row, or its `run:` check), and so is a Bash command that names a matching path and does more than read it. `before-edit.sh` (the hook on the file-edit tools) does the first and `before-action.sh` the second. Written as text only: a path reached through a variable set elsewhere, or another script.
+- `meta { target: "<dir>" }` makes the generated hooks resolve project paths (a gate's ledger and check, a project-relative hook script, the write globs) against that directory, absolute or relative to the project, instead of the project root. Claude Code only; the hooks themselves stay in the project's `.claude/`.
+- V137: a `before: write` anchor with an empty glob is an error; a gate before a write with neither a ledger nor a `run:` is a warning. V138: a `meta { target }` that is not a path is an error.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

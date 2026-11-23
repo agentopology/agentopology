@@ -39,6 +39,8 @@ import {
   LEDGER_WRITABLE_NOTE,
   approvalTargets,
   beforeActionHookTimeout,
+  beforeEditHookTimeout,
+  projectRootRef,
   checkableActionGate,
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
@@ -2403,7 +2405,7 @@ export function skillScriptPath(topologyName: string, file: string): string {
  *
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
-export function hookCommand(run: string, topologyName: string): string {
+export function hookCommand(run: string, topologyName: string, projectRoot: string = "$CLAUDE_PROJECT_DIR"): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter: named, flags = [], script: first, args: rest } = runParts(run);
   // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
@@ -2415,7 +2417,7 @@ export function hookCommand(run: string, topologyName: string): string {
   }
   const where = first.startsWith("/")
     ? first
-    : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
+    : `"${projectRoot}/${first.replace(/^\.\//, "")}"`;
   return [interpreter, where, ...rest].join(" ");
 }
 
@@ -2456,7 +2458,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
     }
 
     const hookEntry: Record<string, unknown> = {
-      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName))],
+      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName, projectRootRef(ast)))],
     };
 
     // Only add matcher when it has a value
@@ -2618,7 +2620,7 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
       matcher: "Write|Edit|MultiEdit|NotebookEdit",
-      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, ...(beforeEditHookTimeout(ast) ? { timeout: beforeEditHookTimeout(ast) } : {}), onFailure: "block" }],
     });
   }
 
@@ -3778,7 +3780,7 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
-    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, hookCommand));
+    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, (run, topology) => hookCommand(run, topology, projectRootRef(ast))));
     const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);

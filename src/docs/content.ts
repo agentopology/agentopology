@@ -62,6 +62,7 @@ topology my-system {
 | error-handler | identifier | no | -- | Node ID for catch-all error handler |
 | entry | identifier | no | -- | The agent every session starts as (Claude Code: settings.json \`agent\`; see V134) |
 | durable | boolean | no | false | Enable durable execution (requires checkpoint block) |
+| target | path | no | the project root | Directory the generated hooks resolve project paths against (ledgers, gate checks, \`before: write\` globs): absolute, or relative to the project. Claude Code only; V138 |
 
 ## Available Patterns
 
@@ -469,6 +470,19 @@ gates {
 | halt | Stop the topology on gate failure |
 | bounce-back | Return work to the \`after\` agent for correction |
 
+## Gates before a write of a path
+
+\`before: write "<glob>"\` holds an edit of a matching path until the gate holds: its ledger (the LAST line for its \`after\` step must be ok) and its \`run\` check, as for a script step. The claude-code binding makes \`before-edit.sh\` (PreToolUse on \`Write|Edit|MultiEdit|NotebookEdit\`) refuse an edit whose path, relative to the project root (or \`meta { target }\`), matches the glob, and \`before-action.sh\` refuse a Bash command that names a matching path and does more than read it. \`*\` and \`**\` both match across folders. It is a path anchor, not a node id: a gate with one is written as its own gate. V137: an empty glob is an error; no ledger and no \`run\` is a warning. \`meta { target: "<dir>" }\` makes the generated hooks resolve project paths (ledgers, checks, these globs) against that directory, absolute or relative to the project (V138).
+
+\`\`\`at
+gate src-open {
+  after: review
+  before: write "src/**"
+  ledger: trace
+  on-fail: halt
+}
+\`\`\`
+
 ## Gates before a script step
 
 A gate whose \`before\` is an action with \`commands\` refuses that step in Claude Code sessions. The claude-code binding writes \`before-action.sh\`, a PreToolUse hook on \`Bash|Monitor|PowerShell\` (\`onFailure: "block"\`): every Claude Code tool that runs a shell command. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; \`guard --check\` grades PowerShell unverified (not measured), and says when the installed Claude Code (below 2.1.314) does not run the hook for Monitor commands. When the command starts with one of the action's commands (leading \`VAR=value\` words ignored) it checks the gate: with a ledger, the LAST line for the \`after\` step (same unit, when \`unit-from\` reads one) must have \`ok: true\`; with \`run\`, that wrapper must exit 0. Otherwise it exits 2 and names the gate, step, unit and ledger path.
@@ -502,6 +516,8 @@ gates {
 - **V13**: \`after\` and \`before\` must reference declared nodes
 - **V25**: \`on-fail: bounce-back\` warning when \`after\` is not an agent/group (cannot be wired as a SubagentStop hook on claude-code). Not raised for a gate before an action with commands: that is compiled to before-action.sh
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
+- **V137**: error, a \`before: write ""\` anchor has an empty glob; warning, a gate before a write has neither a ledger nor \`run\`
+- **V138**: error, \`meta { target }\` is not a path
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
 - **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
@@ -3392,6 +3408,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Write Anchor (error/warning)
+A gate's \`before: write "<glob>"\` names a non-empty path glob (error), and the gate has a ledger or a \`run:\` to check (warning when it has neither: the edit is never refused).
+
+**Violation:** \`gate src-open { before: write ""  ledger: trace }\`.
+**Fix:** \`before: write "src/**"\`.
+
+### V138: Meta Target (error)
+\`meta { target }\` is a directory path, absolute or relative to the project, with letters, digits and \`. _ @ + - /\` and spaces only.
+
+**Violation:** \`target: "a;b"\` or \`target: ""\`.
+**Fix:** \`target: "app"\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3457,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error/warning | Write Anchor |
+| V138 | error | Meta Target |
 `,
   },
 

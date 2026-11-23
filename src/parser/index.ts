@@ -422,6 +422,9 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.durable) result.durable = fields.durable === "true";
+  // Kept as written, an empty value included: V138 reports one that is not a path.
+  if (fields.target !== undefined) result.target = unquote(fields.target.trim());
+  else if (/^\s*target\s*:\s*(#.*)?$/m.test(body)) result.target = "";
 
   return result;
 }
@@ -859,9 +862,18 @@ export function parseGate(
   if (afterList.length) node.after = afterList;
   else if (fields.after) node.after = fields.after;
 
+  // `before: write "<glob>"` is a path anchor, not a node id: it goes to beforeWrite.
   const beforeList = parseMultilineList(body, "before");
-  if (beforeList.length) node.before = beforeList;
-  else if (fields.before) node.before = fields.before;
+  const beforeItems = beforeList.length ? beforeList : fields.before ? [fields.before] : [];
+  const beforeNodes: string[] = [];
+  const beforeWrite: string[] = [];
+  for (const item of beforeItems) {
+    const w = /^write\s+(".*")$/.exec(item.trim());
+    if (w) beforeWrite.push(unquote(w[1]));
+    else beforeNodes.push(item);
+  }
+  if (beforeWrite.length) node.beforeWrite = beforeWrite;
+  if (beforeNodes.length) node.before = beforeList.length ? beforeNodes : beforeNodes[0];
   if (fields.run) node.run = unquote(fields.run);
   if (checks.length) node.checks = checks;
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
@@ -2567,6 +2579,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
+    ...(metaFields.target !== undefined ? { target: metaFields.target } : {}),
   };
 
   // --- Roles ---

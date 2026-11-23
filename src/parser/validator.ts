@@ -4149,6 +4149,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137WriteAnchor(ast),
+    ...v138MetaTarget(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4355,6 +4357,48 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     });
   }
   return results;
+}
+
+/**
+ * V137: a gate's `before: write "<glob>"` anchor names a path pattern that is not empty (error), and
+ * the gate has something to check: a ledger (an `after:` step) or a `run:` script (warning, as V110).
+ */
+function v137WriteAnchor(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.beforeWrite?.length) continue;
+    for (const glob of gate.beforeWrite) {
+      if (glob.trim() === "" || /[\u0000-\u001f]/.test(glob)) {
+        results.push({
+          rule: "V137", level: "error", node: gate.id, line: lookupLine(ast, gate.id),
+          message: `Gate "${gate.id}" has a write anchor with ${glob.trim() === "" ? "an empty glob" : "a control character in its glob"}: write before: write "<path glob>", for example before: write "src/**".`,
+        });
+      }
+    }
+    if (gate.behavior !== "advisory" && !gateLedger(ast, gate) && !scriptNameFromRun(gate.run)) {
+      results.push({
+        rule: "V137", level: "warning", node: gate.id, line: lookupLine(ast, gate.id),
+        message: `Gate "${gate.id}" stands before a write of ${gate.beforeWrite.map((g) => `"${g}"`).join(", ")} but has no ledger and no run:, so there is nothing to check and the edit is never refused. Give it an after: step with a records { } ledger, or a run: script.`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V138: `meta { target: ... }` is a directory path: absolute or relative to the project, plain characters only. */
+function v138MetaTarget(ast: TopologyAST): ValidationResult[] {
+  const target = ast.topology.target;
+  if (target === undefined) return [];
+  const bad = target.trim() === ""
+    ? "it is empty"
+    : !/^[A-Za-z0-9_.@+/ -]+$/.test(target) ? "it holds a character a directory path does not (use letters, digits, . _ @ + - / and spaces)" : null;
+  if (!bad) return [];
+  return [{
+    rule: "V138", level: "error",
+    message: `meta target "${target}" is not a path: ${bad}. Write a directory, absolute or relative to the project, for example target: "app".`,
+  }];
 }
 
 /** V125 (L-2): a job carried by a session cannot outlive it. */
