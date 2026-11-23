@@ -662,9 +662,11 @@ agentopology docs [topic]                 Language reference (43 topics)
 
 ---
 
-## Known issues in 0.12.5
+## Known issues in 0.12.6
 
 - In a gate's or a hook's `run:`, write the interpreter and the script (`python3 tools/x.py`, `python3 -I tools/x.py`) or a script path, not `env …` or `command …`. `scaffold` and `guard --target` can read the first word as a script name and write a stub with that name that blocks every step. `guard --check` grades such a gate `none`, with a note that its check script is still a stub and a line saying how many gates are graded so.
+- A hand-written hook in `.claude/settings.json` that runs a script directly, or by a program other than the interpreters `run:` reads (`./.claude/hooks/x.sh "a b"`, `dash x.sh "a b"`), and passes it quoted arguments is rewritten by `import` then `scaffold` with its quotes escaped, which changes the arguments the script gets. Write it with one of those interpreters (`bash ./.claude/hooks/x.sh "a b"`), which round-trips as written. Fixed in a later release.
+- A hook you add by hand that runs a script the `.at` names as your own file (a `run:` on `.claude/hooks/x.sh`) can be removed by the next `scaffold` without a message. Until a fix ships, keep a copy of `.claude/settings.json` before `scaffold` and compare after, or declare that hook in the `.at`. Fixed in a later release.
 
 ---
 

@@ -2,6 +2,14 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.12.6] - unreleased
+
+### Fixed
+
+- `import` then `scaffold` no longer changes the arguments of a hand-written hook that passes quoted arguments to a script through an interpreter. `bash .claude/hooks/x.sh "$CLAUDE_PROJECT_DIR" "a b"` was written back as `bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh" \"$CLAUDE_PROJECT_DIR\" \"a b\"`, so the script got three arguments (`"<root>"`, `"a`, `b"`) instead of two, while `import` reported that the generated file passes all validation rules. The arguments now keep their quoting, so the script gets the same arguments as before: a quoted variable, a value with a space, single quotes, an escaped quote inside a value, `$(…)` and backticks included. This holds for the interpreters `run:` reads (python, node, tsx, bun, deno, bash, sh, zsh, perl, ruby) when the script names a file. Two or more blanks in a row inside a quoted argument are still written as one. A script run directly, or by another program, is a known issue (see the README).
+- The project folder variable standing alone as an argument (`rsync -a "$CLAUDE_PROJECT_DIR/" /b`, `bash x.sh "$CLAUDE_PROJECT_DIR"`) is part of a hook's identity, so two hand-written hooks that differ only by it are no longer merged into one.
+- `import` reports a hook whose quoted script path holds a space (`bash "$CLAUDE_PROJECT_DIR/.claude/hooks/my guard.sh"`) as one it cannot compile faithfully, as `validate` already refused it; before, the library path could write a broken second entry for it.
+
 ## [0.12.5] - 2026-11-23
 
 ### Changed behaviour
