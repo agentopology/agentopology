@@ -12,6 +12,7 @@
  *   double quotes, commas, semicolons or backslashes; other characters
  *   percent-encoded, "an `=` inside a value must be written as `%3D`"
  * - OTEL_LOG_USER_PROMPTS / OTEL_LOG_TOOL_DETAILS: `1` to enable, default off
+ * - OTEL_LOG_ASSISTANT_RESPONSES: "`1` to enable, `0` to keep redacted"
  *
  * One plan serves the binding (settings.json env, scaffold warnings) and V137
  * (validate), so the two never disagree.
@@ -90,13 +91,21 @@ export function telemetryPlan(ast: TopologyAST): TelemetryPlan {
 
   if (o.capture.prompts) {
     mapped.OTEL_LOG_USER_PROMPTS = "1";
-    plan.notes.push("observability capture { prompts: true } writes OTEL_LOG_USER_PROMPTS=1: the exported prompt text can carry client content. Claude Code also logs assistant responses while OTEL_LOG_ASSISTANT_RESPONSES is unset (set it to 0 in env { } to keep them redacted).");
+    plan.notes.push("observability capture { prompts: true } writes OTEL_LOG_USER_PROMPTS=1: the exported prompt text can carry client content.");
+  }
+  // OTEL_LOG_ASSISTANT_RESPONSES "When unset, falls back to the value of
+  // OTEL_LOG_USER_PROMPTS": with prompts on, an unset key would log responses
+  // too, so it is written 0 unless completions is true.
+  if (o.capture.completions) {
+    mapped.OTEL_LOG_ASSISTANT_RESPONSES = "1";
+    plan.notes.push("observability capture { completions: true } writes OTEL_LOG_ASSISTANT_RESPONSES=1: the exported assistant response text can carry client content.");
+  } else if (o.capture.prompts) {
+    mapped.OTEL_LOG_ASSISTANT_RESPONSES = "0";
   }
   if (o.capture.toolArgs) {
     mapped.OTEL_LOG_TOOL_DETAILS = "1";
     plan.notes.push("observability capture { tool-args: true } writes OTEL_LOG_TOOL_DETAILS=1: the exported tool details (Bash commands, tool input) can carry client content.");
   }
-  if (o.capture.completions) plan.notes.push("observability capture { completions } is not written: the agentopology mapping covers prompts and tool-args only (Claude Code's own switch is OTEL_LOG_ASSISTANT_RESPONSES, set in env { }).");
   if (o.capture.toolResults) plan.notes.push("observability capture { tool-results } is not written: Claude Code logs tool content only with tracing on (OTEL_LOG_TOOL_CONTENT, set in env { }).");
   if (o.spansWritten) plan.notes.push("observability spans { } is not written: Claude Code has no setting per span kind. Its beta tracing (CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 with OTEL_TRACES_EXPORTER) is set in env { } by hand.");
   if (o.sampleRate !== 1) plan.notes.push(`observability sample-rate ${o.sampleRate} is not written: Claude Code documents no sampling setting.`);

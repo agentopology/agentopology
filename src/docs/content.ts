@@ -2783,10 +2783,12 @@ Since 0.13.0 the block is written to \`.claude/settings.json\` \`env\` as the ke
 | service, attributes | OTEL_RESOURCE_ATTRIBUTES=service.name=<service>,<key>=<value>,... (values percent-encoded) |
 | capture { prompts: true } | OTEL_LOG_USER_PROMPTS=1 (scaffold warns: prompt text can carry client content) |
 | capture { tool-args: true } | OTEL_LOG_TOOL_DETAILS=1 (scaffold warns: tool details can carry client content) |
+| capture { completions: true } | OTEL_LOG_ASSISTANT_RESPONSES=1 (scaffold warns: response text can carry client content) |
+| capture { prompts: true }, completions not true | OTEL_LOG_ASSISTANT_RESPONSES=0 (Claude Code would otherwise fall back to OTEL_LOG_USER_PROMPTS) |
 
-- Capture switches left out or false write nothing: Claude Code keeps prompts and tool details redacted.
+- Capture switches left out or false write nothing else: Claude Code keeps prompts, responses and tool details redacted.
 - A key you also set in \`env { }\` keeps your value; a different value is a V137 warning in validate and a warning in scaffold.
-- \`spans { }\`, \`sample-rate\` other than 1, \`capture { completions, tool-results }\` and exporters other than otlp have no Claude Code key: scaffold says so in a warning and writes nothing for them.
+- \`spans { }\`, \`sample-rate\` other than 1, \`capture { tool-results }\` and exporters other than otlp have no Claude Code key: scaffold says so in a warning and writes nothing for them.
 
 ## Notes
 
