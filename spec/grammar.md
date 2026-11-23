@@ -541,7 +541,7 @@ action <name> {
 | `source` | string | no | -- |
 | `commands` | name-list | no | `[]` |
 | `description` | string | no | -- |
-| `unit-from` | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. `"./tool publish (\\S+)"`. Needs a capture group (V111) |
+| `unit-from` | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. `"./tool publish (\S+)"`. Needs a capture group (V111). Write one backslash: a string keeps its backslashes as written, so `\\` matches a literal backslash (V111 warns) |
 
 **action-kind:** `external` | `git` | `decision` | `inline` | `report`
 
