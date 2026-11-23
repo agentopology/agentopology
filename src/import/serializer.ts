@@ -91,6 +91,7 @@ function serializeMeta(ast: TopologyAST): string {
   if (meta.timeout) lines.push(`    timeout: ${q(meta.timeout)}`);
   if (meta.errorHandler) lines.push(`    error-handler: ${meta.errorHandler}`);
   if (meta.entry) lines.push(`    entry: ${meta.entry}`);
+  if (meta.outpoints) lines.push(`    outpoints: ${inlineList(meta.outpoints)}`);
   if (meta.durable) lines.push("    durable: true");
   lines.push("  }");
   return lines.join("\n");
@@ -365,6 +366,7 @@ function serializeEdge(edge: EdgeDef): string {
 
   if (edge.condition) attrs.push(`when ${edge.condition}`);
   if (edge.maxIterations) attrs.push(`max ${edge.maxIterations}`);
+  if (edge.finish) attrs.push("finish");
   if (edge.per) attrs.push(`per ${edge.per}`);
   if (edge.race) attrs.push("race");
   if (edge.tolerance !== undefined) attrs.push(`tolerance: ${edge.tolerance}`);

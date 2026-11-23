@@ -61,6 +61,7 @@ topology my-system {
 | timeout | string | no | -- | Topology-level timeout (e.g. "30m", "2h") |
 | error-handler | identifier | no | -- | Node ID for catch-all error handler |
 | entry | identifier | no | -- | The agent every session starts as (Claude Code: settings.json \`agent\`; see V134) |
+| outpoints | name-list | no | -- | Nodes a run may end at; each must be declared, and a flow node with no outgoing edge that is not listed warns (V138) |
 | durable | boolean | no | false | Enable durable execution (requires checkpoint block) |
 
 ## Available Patterns
@@ -678,6 +679,7 @@ Attributes appear in brackets after the target. Order matters (V12):
 |-----------|--------|-------------|
 | when | \`[when agent.field == value]\` | Conditional edge (V5, V15) |
 | max | \`[max N]\` | Loop bound for back-edges (V6) |
+| finish | \`[finish]\` | Closes the run and hands the line back to the entry agent: an end, not a loop, so no \`[max N]\`. Must point at \`meta { entry }\` (V137) |
 | per | \`[per agent-id]\` | Scoping per agent instance |
 | tolerance | \`[tolerance N]\` or \`[tolerance "33%"]\` | Fan-out failure tolerance |
 | race | \`[race]\` | First-to-finish wins |
@@ -3392,6 +3394,17 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Finish Edge Target (error)
+A \`[finish]\` edge closes the run and hands the line back to the entry agent, so it must point at \`meta { entry }\`, and the topology must declare one. A finish edge is an end, not a loop: V6 does not apply, so it needs no \`[max N]\`.
+
+**Violation:** \`builder -> checker [finish]\` where the entry is \`lead\`.
+**Fix:** \`builder -> lead [finish]\`.
+
+### V138: Outpoints (error/warning)
+\`meta { outpoints: [..] }\` lists the nodes a run may end at. An outpoint that is not a declared node is an error. Once the list is written, a flow node with no outgoing edge that is not listed warns.
+
+**Fix:** Declare the node or remove it from the list; add a dead-end node to \`outpoints\` or give it an edge.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3442,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Finish Edge Target |
+| V138 | error/warning | Outpoints |
 `,
   },
 

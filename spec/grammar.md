@@ -293,6 +293,9 @@ meta {
 | `description` | string | yes | -- |
 | `domain` | identifier | no | -- |
 | `entry` | agent-id | no | -- |
+| `outpoints` | node-id list | no | -- |
+
+**`outpoints`** -- `outpoints: [builder, checker]` lists the nodes a run may end at. Each must be a declared node (V138 error). Once the list is written, a flow node with no outgoing edge that is not on it warns (V138). With no `outpoints`, nothing is checked. claude-code compiles a `[finish]` edge into the generated flow text (`[finish]` on the edge, plus a line saying the edge closes the run and hands back to the entry agent); when the topology declares a `records` entry, that line also tells the step before the edge to append `{"run": "closed", "ts": "<ISO time>"}` to the run ledger when it closes ok. No generated script writes step rows (a step's own script does), so the closed row is an instruction in the text, not a hook.
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
 
@@ -984,6 +987,7 @@ flow {
 | `a -> [b, c] [when x]` | Conditional fan-out: condition applies to the fan-out as a whole |
 | `[when x.y == z]` | Conditional: edge taken only when condition is true |
 | `[max N]` | Bounded loop: back-edge limited to N iterations |
+| `[finish]` | Finish edge: `builder -> lead [finish]` closes the run and hands the line back to the entry agent. An end, not a loop, so it needs no `[max N]` (V6 does not apply). It must point at `meta { entry }` (V137). Combine as `[when x.y == z, finish]` |
 | `[per ticket]` | One instance per unit (currently only `ticket` is valid) |
 | `[strength: none]` | Enforcement written down: `refuse`, `detect`, `hope` or `none` (V104), so an absence is declared, not implied |
 | `[at: "story/SKILL.md"]` | Where the enforcement, or the prose that hopes, lives (V106) |

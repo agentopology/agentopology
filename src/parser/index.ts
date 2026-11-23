@@ -421,6 +421,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   // Kept as written, an empty value included: V134 reports one that is not an agent id.
   if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
+  if (fields.outpoints !== undefined) result.outpoints = parseList(fields.outpoints);
   if (fields.durable) result.durable = fields.durable === "true";
 
   return result;
@@ -973,6 +974,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let wait: string | undefined;
     let weight: number | undefined;
     let reflection: boolean | undefined;
+    let finish: boolean | undefined;
     let strength: string | undefined;
     let at: string | undefined;
     let guard: string[] | undefined;
@@ -981,9 +983,14 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
 
     // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
     // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
-    const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?)\]\s*$/
+    let bracketMatch = trimmed.match(
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?|finish(?:\s*,.*?)?)\]\s*$/
     );
+    // `a -> [finish, b]` is a fan-out list that names a node "finish", not an
+    // annotation: an annotation follows a target, a fan-out list follows an arrow.
+    if (bracketMatch && /^finish\b/.test(bracketMatch[1]) && /(?:->|\])\s*$/.test(trimmed.slice(0, bracketMatch.index!))) {
+      bracketMatch = null;
+    }
     // V92: two bracket groups on one edge. The grammar defines ONE annotation
     // with comma-separated attributes (`[when ..., max N]`). Written as
     // `[when ...] [max N]`, the matcher below spans from the first `[` to the
@@ -992,7 +999,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     // Count only ANNOTATION brackets. A fan-out list is also bracketed —
     // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
     // `] [` alone flagged valid topologies.
-    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message)\b/g;
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message|finish)\b/g;
     const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
     if (annotationBrackets > 1 && _edgeAttributeErrors) {
       _edgeAttributeErrors.push({
@@ -1019,7 +1026,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b|finish\b)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -1055,6 +1062,11 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       // reflection
       if (/\breflection\b/.test(annotation)) {
         reflection = true;
+      }
+
+      // finish (a word of its own: `when x.finish == y` is not it)
+      if (/(?:^|,)\s*finish\s*(?:,|$)/.test(annotation)) {
+        finish = true;
       }
 
       // strength: refuse | detect | hope | none; at: "path:line"; guard: id | [id, id]
@@ -1144,6 +1156,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && wait) baseEdge.wait = wait;
       if (isLastSegment && weight !== undefined) baseEdge.weight = weight;
       if (isLastSegment && reflection) baseEdge.reflection = true;
+      if (isLastSegment && finish) baseEdge.finish = true;
       if (isLastSegment && strength) baseEdge.strength = strength;
       if (isLastSegment && at !== undefined) baseEdge.at = at;
       if (isLastSegment && guard) baseEdge.guard = guard;
@@ -1165,6 +1178,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
             ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
             ...(baseEdge.reflection ? { reflection: true } : {}),
+            ...(baseEdge.finish ? { finish: true } : {}),
             ...enforcement(baseEdge),
             ...(baseEdge.message ? { message: baseEdge.message } : {}),
           });
@@ -1183,6 +1197,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
           ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
           ...(baseEdge.reflection ? { reflection: true } : {}),
+          ...(baseEdge.finish ? { finish: true } : {}),
           ...enforcement(baseEdge),
           ...(baseEdge.message ? { message: baseEdge.message } : {}),
         });
@@ -2566,6 +2581,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
+    ...(metaFields.outpoints !== undefined ? { outpoints: metaFields.outpoints } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
   };
 

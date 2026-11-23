@@ -160,7 +160,7 @@ These are free-form values and can be used as names:
 branch, render, supabase, target-branch
 ```
 
-Environment block field names, custom role names, and user-defined enum values are not reserved.
+Environment block field names, custom role names, and user-defined enum values are not reserved. `finish` (the edge attribute `[finish]`) and `outpoints` (the `meta` field) are likewise not reserved: they are read only inside an edge's brackets and the `meta` block, so a node may still be named `finish`.
 
 ---
 

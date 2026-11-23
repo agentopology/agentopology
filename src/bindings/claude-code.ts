@@ -74,6 +74,28 @@ import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, sc
  * Convert .at MCP tool notation (mcp.server.method) to Claude Code format (mcp__server__method).
  * Non-MCP tool names pass through unchanged.
  */
+/**
+ * Flow text for finish edges. A finish edge closes the run and hands the line
+ * back to the entry agent. When the topology declares a record, the step before
+ * the edge, closing ok, also writes `{"run": "closed", "ts": ...}` to it. No
+ * generated script writes step rows (a step's own script does), so this is an
+ * instruction in the text, not a hook.
+ */
+function finishFlowLines(ast: TopologyAST): string[] {
+  const finish = ast.edges.filter((e) => e.finish);
+  if (finish.length === 0) return [];
+  const record = ast.records?.[0];
+  const out = ["", "A `[finish]` edge closes the run and hands the line back to the entry agent; it is an end, not a loop."];
+  for (const e of finish) {
+    out.push(
+      record
+        ? `- Finish ${e.from} -> ${e.to}: when ${e.from} closes ok, append \`{"run": "closed", "ts": "<ISO time>"}\` as one line to the run ledger \`${record.path}\` (the file the step rows go to), then hand back to ${e.to}.`
+        : `- Finish ${e.from} -> ${e.to}: when ${e.from} closes ok, the run is closed; hand back to ${e.to}.`,
+    );
+  }
+  return out;
+}
+
 export function convertMcpToolName(tool: string): string {
   if (!tool.startsWith("mcp.")) return tool;
   // mcp.server → mcp__server (every tool on it); mcp.server.* → mcp__server__*;
@@ -1553,8 +1575,10 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
       if (edge.wait) line += ` [wait ${edge.wait}]`;
       if (edge.reflection) line += ` [reflection]`;
+      if (edge.finish) line += ` [finish]`;
       sections.push(`- ${line}`);
     }
+    sections.push(...finishFlowLines(ast));
     sections.push("");
   }
 
@@ -3040,8 +3064,10 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
         if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
         if (edge.wait) line += ` [wait ${edge.wait}]`;
         if (edge.reflection) line += ` [reflection]`;
+        if (edge.finish) line += ` [finish]`;
         sections.push(`- ${line}`);
       }
+      sections.push(...finishFlowLines(ast));
       sections.push("");
     }
 

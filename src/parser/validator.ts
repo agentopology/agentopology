@@ -294,6 +294,8 @@ function collectOutputs(
 export function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
   // Step 1: Remove edges that already have [max N] — those are acknowledged loops.
   // We compute the topological order on the remaining "forward" edges only.
+  // A finish edge is an end, not a loop (V137): it is never a back-edge.
+  edges = edges.filter((e) => !e.finish);
   const forwardEdges = edges.filter((e) => e.maxIterations === null);
   const loopEdges = edges.filter((e) => e.maxIterations !== null);
 
@@ -4149,6 +4151,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137FinishEdge(ast),
+    ...v138Outpoints(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4352,6 +4356,61 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     results.push({
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V137: a `[finish]` edge closes the run and hands the line back to the entry
+ * agent, so it must point at `meta { entry }` (and the topology must have one).
+ * It needs no `[max N]`: V6 does not apply to it.
+ */
+function v137FinishEdge(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const entry = ast.topology.entry;
+  for (const e of ast.edges) {
+    if (!e.finish) continue;
+    const label = `${e.from} -> ${e.to}`;
+    if (!entry) {
+      results.push({
+        rule: "V137", level: "error", node: e.from, line: lookupLine(ast, e.from),
+        message: `Finish edge ${label} hands the line back to the entry agent, but the topology has no entry. Declare meta { entry: <agent-id> }.`,
+      });
+    } else if (e.to !== entry) {
+      results.push({
+        rule: "V137", level: "error", node: e.from, line: lookupLine(ast, e.from),
+        message: `Finish edge ${label} must point at the entry agent "${entry}", the agent a finish hands the line back to.`,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * V138: `meta { outpoints: [..] }` lists the nodes a run may end at. Each must
+ * be a declared node (error). Once the list is written, a flow node with no
+ * outgoing edge that is not on it is probably a dead end (warning).
+ */
+function v138Outpoints(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const outpoints = ast.topology.outpoints;
+  if (!outpoints) return results;
+  const ids = allNodeIds(ast);
+  for (const id of outpoints) {
+    if (!ids.has(id)) {
+      results.push({ rule: "V138", level: "error", message: `meta outpoints names "${id}", which is not a declared node.`, node: id });
+    }
+  }
+  const listed = new Set(outpoints);
+  const hasOut = new Set(ast.edges.map((e) => e.from));
+  const inFlow = new Set(ast.edges.flatMap((e) => [e.from, e.to]));
+  for (const n of ast.nodes) {
+    if (n.type === "orchestrator" || n.type === "gate") continue;
+    if (!inFlow.has(n.id) || hasOut.has(n.id) || listed.has(n.id)) continue;
+    results.push({
+      rule: "V138", level: "warning", node: n.id, line: lookupLine(ast, n.id),
+      message: `Node "${n.id}" has no outgoing edge and is not in meta outpoints, so a run that reaches it ends there unlisted. Add it to outpoints or give it an edge.`,
     });
   }
   return results;

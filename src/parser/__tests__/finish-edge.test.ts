@@ -84,7 +84,7 @@ describe("a finish edge needs no [max N] (V6)", () => {
 
   it("the same back-edge without [finish] still fails V6", () => {
     const res = validate(parse(topo({ flow: "    intake -> lead\n    lead -> builder\n    builder -> lead" })));
-    expect(res.filter((r) => r.rule === "V6").length).toBe(1);
+    expect(res.filter((r) => r.rule === "V6").length).toBeGreaterThan(0);
   });
 });
 

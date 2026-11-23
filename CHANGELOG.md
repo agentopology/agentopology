@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A finish edge: `builder -> lead [finish]` closes the run and hands the line back to the entry agent. It is an end, not a loop, so it needs no `[max N]`, and `plan` and the order it resolves report no loop for it. It must point at the `meta { entry }` agent; V137 is an error otherwise, or when the topology has no entry. It combines with a condition: `[when x.y == z, finish]`. The claude-code flow text marks it `[finish]` and says it hands back to the entry agent. When the topology declares a `records` entry, the text also tells the step before the edge, closing ok, to append `{"run": "closed", "ts": "<ISO time>"}` to the run ledger. That row is an instruction in the text: no generated script writes step rows, so nothing enforces it.
+- `meta { outpoints: [..] }` lists the nodes a run may end at. V138 is an error for an outpoint that is not a declared node, and a warning, once the list is written, for a flow node with no outgoing edge that is not on it.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

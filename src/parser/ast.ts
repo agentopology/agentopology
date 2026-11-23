@@ -975,6 +975,11 @@ export interface EdgeDef {
   maxIterations: number | null;
   /** Optional per-agent scoping identifier (from `[per <id>]`). */
   per?: string | null;
+  /**
+   * True for a `[finish]` edge: it closes the run and hands the line back to
+   * the entry agent. An end, not a loop, so it needs no `[max N]` (V137).
+   */
+  finish?: boolean;
   /** True for `-x->` error edges. */
   isError?: boolean;
   /** Optional error type filter from `-x[type]->`. */
@@ -1029,6 +1034,8 @@ export interface TopologyMeta {
    * start as the main thread (V134).
    */
   entry?: string;
+  /** Node ids a run may end at (`meta { outpoints: [..] }`, V138). */
+  outpoints?: string[];
   /** Whether durable execution is enabled. */
   durable?: boolean;
 }
