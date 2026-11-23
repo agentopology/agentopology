@@ -153,6 +153,7 @@ Every `.at` file has exactly one root keyword:
 |------|---------|---------|
 | `topology` | A complete agentic structure | `pipeline.at` |
 | `library` | Reusable agent definitions | `shared-agents.at` |
+| `fragment` | A part merged into a topology by `include` (§4.3a) | `blocks/brain.at` |
 
 ### 3.1 Path Resolution
 
@@ -275,6 +276,39 @@ topology my-team : [pipeline] {
 **Import path:** Unquoted, starts with `./`, ends with `.at`. Matches `import-path` production in Section 2.
 
 **Merge semantics:** `use` applies REPLACE on specified fields. Omitted fields KEEP their original values. Shallow merge -- nested objects (like `outputs`) and lists (like `reads`) are replaced entirely if specified, not appended.
+
+### 4.3a `include` and `fragment`
+
+```ebnf
+include         = 'include' string
+fragment        = 'fragment' identifier? '{' topology-body '}'
+```
+
+```agenttopology
+# blocks/brain.at
+fragment {
+  hooks {
+    hook header-gate {
+      on: PreToolUse
+      matcher: "Edit|Write"
+      run: "bash tools/knowledge/header-gate.sh"
+      strength: refuse
+    }
+  }
+}
+
+# main.at
+topology my-team : [pipeline] {
+  include "./blocks/brain.at"
+  agent builder { model: sonnet }
+}
+```
+
+`include` merges a fragment file into the topology. The path is read relative to the file that writes the include (a fragment may include another). The name after `fragment` is optional.
+
+**What is merged:** nodes (agents, actions, gates, ...), flow edges, `hooks`, `triggers`, skills, tools, schedules, `schemas`, `artifacts`, `records`, stores, retrievals, providers, interfaces, `machines`, persons, `mcp-servers`, `env`, roles, `decisions` and inventory roots. `validate`, `scaffold`, `guard --check`, `plan` and `export` all see the merged topology. Paths the fragment writes (a hook's `run:`, ...) are project paths, as in §3.1, not relative to the fragment.
+
+**What is refused (V8 error):** a section with one value per topology (`settings`, `defaults`, `depth`, `memory`, `batch`, `environments`, `metering`, `observability`, `checkpoint`, `context`, `extensions`, `params`, `interface`, `needs`, `pin-models`, and `meta` fields other than `version` and `description`) and `import` inside a fragment; the error names the section and the fragment. Write these in the including file. A name declared both by the including file and by a fragment, or by two fragments, is a V8 error naming both files, never an override. A missing file, a parse error, an include cycle and an included `topology` (not a `fragment`) are V8 errors too. A fragment reached by two includes is merged once.
 
 ---
 

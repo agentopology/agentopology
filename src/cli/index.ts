@@ -23,6 +23,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
+import { resolveIncludes } from "../parser/includes.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
@@ -229,6 +230,12 @@ function readFile(filePath: string): string {
 function parseAt(source: string, filePath: string): ReturnType<typeof parse> {
   const ast = parse(source);
   Object.defineProperty(ast, "sourcePath", { value: path.resolve(filePath), enumerable: false, writable: true, configurable: true });
+  // Merge each `include`d fragment into the AST; what cannot be merged is a
+  // V8 error validate reports (non-enumerable, so exports do not carry it).
+  const includeErrors = resolveIncludes(ast, filePath, parse);
+  if (includeErrors.length > 0) {
+    Object.defineProperty(ast, "_includeErrors", { value: includeErrors, enumerable: false, writable: true, configurable: true });
+  }
   return ast;
 }
 

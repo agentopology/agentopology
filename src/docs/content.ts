@@ -3081,6 +3081,8 @@ Include a fragment file, merging its contents into the current topology:
 include "./shared/common-hooks.at"
 \`\`\`
 
+The path is read relative to the including file. Nodes, flow edges, hooks, triggers, skills, tools, schedules, schemas, artifacts, records, stores, providers, mcp-servers, env and roles are merged. A name declared in both files is a V8 error naming both. One-per-topology sections (settings, defaults, depth, memory, metering, context, extensions, params, interface, ...) and \`import\` in a fragment are a V8 error naming the section: write them in the including file. Paths in the fragment are project paths, as anywhere else.
+
 ## params
 
 Declare typed parameters for a composable topology:

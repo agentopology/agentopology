@@ -1,0 +1,11 @@
+fragment {
+  hooks {
+    hook header-gate {
+      on: PreToolUse
+      matcher: "Edit|Write"
+      run: "bash tools/knowledge/header-gate.sh"
+      type: command
+      strength: refuse
+    }
+  }
+}
