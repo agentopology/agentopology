@@ -451,6 +451,34 @@ export interface RecordDef {
   id: string;
   /** Project-relative path; may contain `{unit}`. */
   path: string;
+  /** Fields a row must hold: `fields: [name: type, ..]` (types: string, number, boolean, ts). */
+  fields?: RecordFieldDef[];
+  /** A schema declared in `schemas { }`. */
+  schema?: string;
+  /** What writes the record: an action id, an agent id or a project script path. */
+  writer?: string;
+  /** `run-state`: the fixed fields target and step. Any other value is reported by V137. */
+  kind?: string;
+}
+
+/** One field of a record, as written: the type is kept as written so V137 can name a wrong one. */
+export interface RecordFieldDef {
+  name: string;
+  type: string;
+}
+
+/** The field types a record field may have. */
+export const RECORD_FIELD_TYPES = ["string", "number", "boolean", "ts"] as const;
+
+/** The fields of a `kind: run-state` record. */
+export const RUN_STATE_FIELDS: RecordFieldDef[] = [
+  { name: "target", type: "string" },
+  { name: "step", type: "string" },
+];
+
+/** The fields a record's rows must hold: its run-state fixed fields, or the ones it declares. */
+export function recordFields(r: RecordDef): RecordFieldDef[] {
+  return r.kind === "run-state" ? RUN_STATE_FIELDS : r.fields ?? [];
 }
 
 /** An artifact definition in the top-level `artifacts` block. */
