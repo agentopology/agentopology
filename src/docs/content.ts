@@ -740,6 +740,16 @@ flow {
 }
 \`\`\`
 
+## What a when edge compiles to (Claude Code)
+
+An edge \`router -> builder [when router.class == change]\`, where \`class\` is an enum that \`router\` (an agent or the orchestrator) declares in \`outputs:\`, is a route. When every edge into an agent is a route, the claude-code binding writes:
+
+- \`.claude/skills/<topology>/scripts/route.sh <agent> <field> <value>\`: the router records its choice. It appends \`{"agent", "field", "value", "ts"}\` to \`.claude/state/routes-<topology>.jsonl\`. A value the .at does not declare exits 2 and writes nothing. The router's agent file (or, for the orchestrator, SKILL.md) gets the command and the route table: each value and the node it starts.
+- a route check in \`before-agent.sh\` (PreToolUse on \`Agent|Task\`): the agent starts only when the last record for that agent and field holds a value whose edge leads to it. Otherwise it exits 2, naming the recorded value (or that there is none) and the edge it needed. An agent that no route leads to is not affected.
+- \`before-edit.sh\` refuses an Edit or Write of the route record.
+
+Not enforced, and named by a \`validate\` warning (CC-route): a condition of any other form (\`!=\`, \`>=\`, a value not declared); an edge to an action (no launch to refuse); an edge to an agent that another edge without a route also reaches (its launch cannot be told apart); a router whose \`tools\` leave out Bash (it cannot run route.sh); inline delegation. These edges stay a line in the playbook's Flow list. A shell command that writes the route record is not refused, and Codex and Cursor get no route check.
+
 ## Validation Rules
 
 - **V3**: All node references in flow must be declared

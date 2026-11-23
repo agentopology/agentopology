@@ -45,7 +45,8 @@ describe("agentopology CLI", () => {
 
   describe("validate", () => {
     it("exits 0 and says so on a clean topology", () => {
-      const { out, code } = run(["validate", ex("simple-pipeline.at")]);
+      // 0.13.0: simple-pipeline now warns that its `when` edges are not enforced (CC-route), so it is no longer clean.
+      const { out, code } = run(["validate", ex("memory-system.at")]);
       expect(code).toBe(0);
       expect(out).toContain("All validation rules passed");
     });

@@ -53,6 +53,7 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { generateRouteScript, routeInstructions, routeKeys } from "./lib/route.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -949,6 +950,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       sections.push("");
     }
 
+    // 0.13.0: a router records its choice; the launch guard reads it.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS).filter((k) => k.agent === agent.id)) {
+      sections.push(`## Route: ${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
+      sections.push("");
+    }
+
     // Timeout instruction
     if (agent.timeout) {
       sections.push(`You have a maximum of ${agent.timeout} to complete your work.`);
@@ -1556,6 +1565,13 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       sections.push(`- ${line}`);
     }
     sections.push("");
+    // 0.13.0: the routes the launch guard holds, and who records them.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS)) {
+      sections.push(`### Route: ${key.agent}.${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
+      sections.push("");
+    }
   }
 
   // Gates section
@@ -3785,6 +3801,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+    // 0.13.0: the route record a router writes and before-agent.sh reads.
+    const routeScript = generateRouteScript(ast, CLAUDE_CODE_GUARDS);
+    if (routeScript) files.push(routeScript);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

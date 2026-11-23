@@ -68,6 +68,7 @@ import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
+import { routeWarnings } from "../bindings/lib/route.js";
 import { platformConformance } from "../conformance/index.js";
 import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
 import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
@@ -521,7 +522,8 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const checked = validateResult(ast, path.resolve(filePath), target);
   // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
-  const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+  // 0.13.0: a `when` edge Claude Code does not enforce is named (lib/route.ts).
+  const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...routeWarnings(ast)] : [];
   const results = [...checked.results, ...ccExtra];
   const errorCount = checked.errors;
   const warningCount = checked.warnings + ccExtra.length;
@@ -618,7 +620,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     console.log("");
     if (!inventory && ast.needs) { for (const line of renderOutside(outsideChecks(ast, false, ""))) console.log(line); console.log(""); }
     const checked = validateResult(ast, path.resolve(f), target);
-    const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
+    const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...routeWarnings(ast)] : [];
     const results = [...checked.results, ...ccExtra];
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;

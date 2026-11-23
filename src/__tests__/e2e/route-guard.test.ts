@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../../parser/index.js";
 import { claudeCodeBinding } from "../../bindings/claude-code.js";
 import type { GeneratedFile } from "../../bindings/types.js";
+import { routeWarnings } from "../../bindings/lib/route.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCE = fs.readFileSync(resolve(here, "fixtures/p10-router.at"), "utf-8");
@@ -132,14 +133,22 @@ describe.skipIf(!hasJq)("p10-router: before-agent.sh holds the route", () => {
 });
 
 describe("a when edge that does not compile to a refusal warns", () => {
-  it("a non-equality condition, and an edge to an action, are named as not enforced", async () => {
-    const lib = "../../bindings/lib/route.js";
-    const { routeWarnings } = await import(lib);
+  it("a non-equality condition, and an edge to an action, are named as not enforced", () => {
     const src = SOURCE.replace("router -> answerer [when router.class == question]", "router -> answerer [when router.class != change]");
     const w = routeWarnings(parse(src)).map((r: { message: string }) => r.message);
     expect(w.some((m: string) => m.includes('"router -> answerer"') && m.includes("router.class != change"))).toBe(true);
     expect(w.some((m: string) => m.includes('"router -> status-screen"') && m.includes("action"))).toBe(true);
     // the equality edge to an agent compiles, so it does not warn
     expect(w.some((m: string) => m.includes('"router -> builder"'))).toBe(false);
+  });
+
+  it("a router whose tools leave out Bash cannot record, so its routes are not checked and warn", () => {
+    const src = SOURCE.replace('description: "Classifies every message"', 'description: "Classifies every message"\n    tools: [Read, Grep]');
+    const noBash = parse(src);
+    const out = claudeCodeBinding.scaffold(noBash);
+    expect(out.find((f) => f.path === `${SCRIPTS}/route.sh`)).toBeUndefined();
+    expect(out.find((f) => f.path === `${SCRIPTS}/before-agent.sh`)).toBeUndefined();
+    const w = routeWarnings(noBash).map((r: { message: string }) => r.message);
+    expect(w.some((m: string) => m.includes('"router -> builder"') && m.includes("route.sh cannot record the route"))).toBe(true);
   });
 });
