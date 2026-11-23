@@ -453,6 +453,20 @@ export interface RecordDef {
   path: string;
 }
 
+/**
+ * The top-level `ci { provider: github, on: [...], gates: [...] }` block.
+ * Scaffold writes a workflow that runs `agentopology step check` for the step
+ * after each listed gate. Only `github` is supported (V137).
+ */
+export interface CiDef {
+  /** CI provider as written; only "github" is accepted. */
+  provider: string;
+  /** Events that start the workflow. Default: pull_request and push. */
+  on: string[];
+  /** Ids of declared gates whose following step the workflow checks. */
+  gates: string[];
+}
+
 /** An artifact definition in the top-level `artifacts` block. */
 export interface ArtifactDef {
   /** Artifact identifier. */
@@ -1194,6 +1208,8 @@ export interface TopologyAST {
   artifacts: ArtifactDef[];
   /** Records from the top-level `records` block (ledgers gates read). */
   records?: RecordDef[];
+  /** The top-level `ci { }` block: the gates a CI workflow runs (see {@link CiDef}). */
+  ci?: CiDef;
   /** Decision names the topology says must have a seat (`decisions: [...]`). */
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
