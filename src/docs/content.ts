@@ -2008,6 +2008,7 @@ mcp-servers {
 - Agents reference MCP servers via the \`mcp-servers\` field: \`mcp-servers: [database]\`.
 - Tool names from MCP servers can be referenced with wildcards: \`tools: [mcp.database.*]\`.
 - Environment variables in \`env\` should use \`\${ENV_VAR}\` syntax for secrets.
+- \`trust: untrusted\` marks a server whose results are untrusted input: it is added to the \`threat-model\` untrusted list (see the **threat-model** topic). \`trust: trusted\` is the default.
 
 ## A plugin's server
 
@@ -2022,6 +2023,54 @@ mcp-servers {
 \`\`\`
 
 Claude Code names a plugin server's tools \`mcp__plugin_<plugin>_<server>__<tool>\` (any character outside \`A-Za-z0-9_-\` becomes \`_\`), so every reference compiles to that form: \`tools: [mcp.playwright.*]\` is \`mcp__plugin_playwright_playwright__*\`. The same holds in \`disallowed-tools\`, a skill's \`allowed-tools\`, \`settings { allow ask deny }\`, and a hook \`matcher\` written with the key (\`mcp__playwright__.*\`). An \`mcp_tool\` hook's \`server\` becomes the registered name \`plugin:playwright:playwright\`. An agent's \`mcp-servers: [playwright]\` entry is left out of the agent's \`mcpServers\` for now (validate notes it): that scoped name is not yet verified there, and the agent's \`tools\` already reach the server. Codex and Cursor have no Claude Code plugins and write no entry for such a server.
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 15b. threat-model
+  // -------------------------------------------------------------------------
+  "threat-model": {
+    name: "threat-model",
+    description: "Untrusted inputs, and what is refused after reading one",
+    content: () => `# threat-model
+
+The top-level \`threat-model\` block names inputs the session cannot trust and the acts to hold back once one has been read.
+
+## Syntax
+
+\`\`\`at
+threat-model {
+  untrusted: [web, mcp:crm, "inbox/**"]
+  refuse-after-untrusted: ["Bash(git push *)", "SendMessage"]
+  outside-sandbox: ["npm"]
+  lift: owner
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| untrusted | list | no | \`web\` (WebFetch and WebSearch), \`mcp:<server id>\` (every tool of a declared MCP server), or a quoted path glob (reads by Read, Grep or Glob) |
+| refuse-after-untrusted | list | no | Permission rules, as in \`settings { deny }\`: \`Tool\` or \`Tool(specifier)\` |
+| outside-sandbox | list | no | Commands that run outside the sandbox (\`sandbox.excludedCommands\`), and paths the sandbox may write (\`sandbox.filesystem.allowWrite\`: starts with \`/\` or \`~\`, ends with \`/\`, or holds \`*\`) |
+| lift | human id | no | The human whose ok row for an act ends the hold for that act |
+
+An MCP server written \`trust: untrusted\` in \`mcp-servers { }\` is added to the untrusted list.
+
+## What claude-code writes
+
+- \`taint-mark.sh\`, a PostToolUse hook on the untrusted tools. It writes \`.claude/state/taint/<session_id>\` (\`{"source": ..., "ts": <epoch>}\`); the session id comes from the hook's stdin JSON.
+- \`taint-guard.sh\`, a PreToolUse hook on the tools the rules name. While the session has a mark, a call matching a rule exits 2 with a reason that names the source. A Bash rule is read per command segment (\`cd x && git push\` matches \`Bash(git push *)\`); a command run through \`sudo\`, \`sh -c\`, \`env\` and the like counts when it holds the rule's fixed start. A command reached through a variable or another script is not seen.
+- The hold ends in a new session (a new session id has no mark), or for one act when the \`lift:\` human has an ok row in \`.claude/state/approvals.jsonl\` with \`"act"\` equal to the rule string and \`"at"\` (ISO time) not older than the mark. A later untrusted read marks again, so an older row no longer lifts. Nothing clears the whole mark.
+- The agent cannot write the mark folder or the approvals file: the before-edit guard refuses edits of them, and the before-action guard refuses a Bash command that writes them.
+- \`outside-sandbox\` goes to the sandbox keys of settings.json; it takes effect only when \`settings { sandbox: true }\`.
+
+An agent's own \`sandbox\` field has no Claude Code key and is still not written (validate warns, V130).
+
+## Not written
+
+Codex and Cursor write nothing for the block: \`validate --target codex\` and \`--target cursor\` warn (V137). Only Read, Grep and Glob count for a path glob; a file read through Bash does not mark the session.
 `,
   },
 
@@ -3392,6 +3441,9 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Threat Model (error/warning)
+The \`threat-model { }\` block must name what it can compile. Errors: an \`untrusted\` entry that is not \`web\`, \`mcp:<id>\` of a declared server, or a path glob; a \`lift:\` that names no declared human; a \`refuse-after-untrusted\` string that is not a permission rule; a server with \`trust:\` other than \`untrusted\` or \`trusted\`. Warnings: rules with nothing untrusted (or the reverse), \`outside-sandbox\` with the sandbox off, and on codex and cursor that the block is not written. See the **threat-model** topic.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3481,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error/warning | Threat Model |
 `,
   },
 
@@ -3615,7 +3668,7 @@ topology code-review : [pipeline, fan-out, human-gate] {
 
 Reserved keywords cannot be used as agent, action, or gate identifiers. They are organized into block keywords, field keywords, and wave keywords.
 
-## Block Keywords (40)
+## Block Keywords (41)
 
 These introduce grammar constructs:
 
@@ -3628,7 +3681,7 @@ level       hooks       hook        settings    mcp-servers
 metering    tools       tool        scale       skill
 context     env         extensions  providers   schedule
 job         interfaces  defaults    schemas     schema
-observability fragment  interface   params
+observability fragment  interface   params      threat-model
 \`\`\`
 
 ## Field Keywords (100+)

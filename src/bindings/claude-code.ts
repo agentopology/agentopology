@@ -53,6 +53,8 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { generateTaintGuardScript, generateTaintMarkScript, taintGuardMatcher, taintMarkMatcher } from "./lib/taint.js";
+import { isSandboxPath } from "./lib/threat.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -2622,6 +2624,22 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // threat-model { }: mark the session after an untrusted read; refuse listed acts while it is marked.
+  if (generateTaintMarkScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool)) {
+    if (!hooksByEvent.PostToolUse) hooksByEvent.PostToolUse = [];
+    hooksByEvent.PostToolUse.push({
+      matcher: taintMarkMatcher(ast, mcpRefs(ast).tool),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "taint-mark.sh")}` }],
+    });
+  }
+  if (generateTaintGuardScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: taintGuardMatcher(ast, mcpRefs(ast).tool),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "taint-guard.sh")}`, onFailure: "block" }],
+    });
+  }
+
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
   for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -2665,6 +2683,16 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     if (Array.isArray(chain) && chain.length > 0 && chain.every((m) => typeof m === "string" && isClaudeCodeModel(m))) {
       settings.fallbackModel = chain;
     }
+  }
+
+  // threat-model { outside-sandbox }: a command runs outside the sandbox
+  // (sandbox.excludedCommands); a path is one the sandbox may write (sandbox.filesystem.allowWrite).
+  const outside = ast.threatModel?.outsideSandbox ?? [];
+  if (outside.length > 0) {
+    const commands = outside.filter((e) => !isSandboxPath(e));
+    const paths = outside.filter(isSandboxPath);
+    if (commands.length > 0) setSettingsPath(settings, "sandbox.excludedCommands", commands);
+    if (paths.length > 0) setSettingsPath(settings, "sandbox.filesystem.allowWrite", paths);
   }
 
   // Defaults and observability are documented in the CLAUDE.md context file,
@@ -3785,6 +3813,12 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+
+    // threat-model { }: the taint mark and the guard that reads it.
+    const taintMark = generateTaintMarkScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool);
+    if (taintMark) files.push(taintMark);
+    const taintGuard = generateTaintGuardScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool);
+    if (taintGuard) files.push(taintGuard);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

@@ -23,9 +23,19 @@ const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 const DIR = ".claude/skills/t/scripts";
 
 const topo = (threat: string, servers = `mcp-servers {
-    crm { command: "node" args: ["crm.js"] trust: untrusted }
-    docs { command: "node" args: ["docs.js"] }
-    other { command: "node" args: ["o.js"] }
+    crm {
+      command: "node"
+      args: ["crm.js"]
+      trust: untrusted
+    }
+    docs {
+      command: "node"
+      args: ["docs.js"]
+    }
+    other {
+      command: "node"
+      args: ["o.js"]
+    }
   }`) => `topology t : [pipeline] {
   meta {
     version: "1.0.0"
@@ -125,7 +135,10 @@ describe("threat-model: the block validates", () => {
     expect(e.some((r) => r.rule === "V137" && r.message.includes("everything"))).toBe(true);
   });
   it("an unknown field in the block is a V102 error", () => {
-    const e = errors(topo(`threat-model { untrusted: [web] colour: red }`));
+    const e = errors(topo(`threat-model {
+    untrusted: [web]
+    colour: red
+  }`));
     expect(e.some((r) => r.rule === "V102")).toBe(true);
   });
   for (const target of ["codex", "cursor"]) {
@@ -158,7 +171,7 @@ describe("threat-model: what is written to settings.json", () => {
     expect(s.sandbox.excludedCommands).toEqual(["npm"]);
   });
   it("writes no taint hooks without the block", () => {
-    const { files } = scaffold(topo(""));
+    const { files } = scaffold(topo("", "mcp-servers {\n    docs {\n      command: \"node\"\n    }\n  }"));
     expect(files.some((f) => f.path.endsWith("taint-mark.sh") || f.path.endsWith("taint-guard.sh"))).toBe(false);
   });
 });
@@ -233,6 +246,49 @@ describe.skipIf(!hasJq)("threat-model: the taint mark and the guard", () => {
     const r = mark("../../evil");
     expect(r.status).not.toBe(0);
     expect(fs.existsSync(at(".claude/evil"))).toBe(false);
+  });
+
+  describe("other rule forms", () => {
+    const RULES = topo(`threat-model {
+    untrusted: [web]
+    refuse-after-untrusted: ["Edit(.env*)", "WebFetch(domain:evil.test)", "mcp__other__send", "mcp.docs.write", "Bash(npm publish:*)"]
+  }`);
+    it("a path rule refuses an edit of a matching file, and only that file", () => {
+      scaffold(RULES);
+      mark("s1");
+      expect(run("taint-guard.sh", pre("s1", "Write", { file_path: join(root, ".env.local"), content: "x" })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "Edit", { file_path: ".env" })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "Write", { file_path: join(root, "src/a.ts"), content: "x" })).status).toBe(0);
+    });
+    it("a domain rule refuses that host and its subdomains", () => {
+      scaffold(RULES);
+      mark("s1");
+      expect(run("taint-guard.sh", pre("s1", "WebFetch", { url: "https://evil.test/x" })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "WebFetch", { url: "https://a.evil.test/x" })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "WebFetch", { url: "https://good.test/x" })).status).toBe(0);
+    });
+    it("an mcp tool rule, dotted or compiled, refuses that tool", () => {
+      scaffold(RULES);
+      mark("s1");
+      expect(run("taint-guard.sh", pre("s1", "mcp__other__send", { a: 1 })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "mcp__docs__write", { a: 1 })).status).toBe(2);
+      expect(run("taint-guard.sh", pre("s1", "mcp__docs__read", { a: 1 })).status).toBe(0);
+    });
+    it("a legacy prefix rule and a program run through sudo or sh -c are read", () => {
+      scaffold(RULES);
+      mark("s1");
+      expect(bash("s1", "npm publish --tag x").status).toBe(2);
+      expect(bash("s1", "sudo npm publish").status).toBe(2);
+      expect(bash("s1", "sh -c 'npm publish'").status).toBe(2);
+      expect(bash("s1", "FOO=1 /usr/bin/npm publish").status).toBe(2);
+      expect(bash("s1", "npm install").status).toBe(0);
+    });
+    it("with no lift human, nothing lifts the hold in the session", () => {
+      scaffold(RULES);
+      mark("s1");
+      lift([{ step: "boss", ok: true, act: "Bash(npm publish:*)", at: FUTURE }]);
+      expect(bash("s1", "npm publish").status).toBe(2);
+    });
   });
 
   describe("lift", () => {

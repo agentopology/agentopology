@@ -60,6 +60,7 @@ import type {
   MachineDef,
   PersonDef,
   NeedsDef,
+  ThreatModelDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -2687,6 +2688,23 @@ export function parse(source: string): TopologyAST {
       })()
     : undefined;
 
+  // --- Threat model (top-level `threat-model { untrusted, outside-sandbox, refuse-after-untrusted, lift }`) ---
+  const threatBlock = extractBlock(topBody, "threat-model");
+  const threatModel: ThreatModelDef | undefined = threatBlock
+    ? (() => {
+        // The fields may share a line: `threat-model { untrusted: [web] lift: boss }`.
+        const body = threatBlock.body.replace(/(?<=[\]\w"])[ \t]+(?=(?:untrusted|outside-sandbox|refuse-after-untrusted|lift)[ \t]*:)/g, "\n");
+        const f = parseFields(body);
+        const list = (key: string) => parseMultilineList(body, key).map(unquote);
+        return {
+          untrusted: list("untrusted"),
+          outsideSandbox: list("outside-sandbox"),
+          refuseAfterUntrusted: list("refuse-after-untrusted"),
+          ...(f.lift ? { lift: unquote(f.lift) } : {}),
+        };
+      })()
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -2964,6 +2982,7 @@ export function parse(source: string): TopologyAST {
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),
+    ...(threatModel ? { threatModel } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

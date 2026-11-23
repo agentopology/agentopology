@@ -18,6 +18,7 @@
 import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
 import { gateLedger, guardedActions } from "../../parser/ledger.js";
+import { threatModelActive } from "./threat.js";
 import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
@@ -1314,6 +1315,11 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
   if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
+  // The threat model's session marks, and the ledger its lift person approves in (Claude Code only).
+  if (p.id === "claude-code" && threatModelActive(ast)) {
+    paths.push(`${p.stateDir}/taint/{unit}`);
+    if (ast.threatModel?.lift) paths.push(`${p.stateDir}/approvals.jsonl`);
+  }
   return [...new Set(paths)].map((path) => {
     const base = path.replace(/^.*\//, "");
     const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");

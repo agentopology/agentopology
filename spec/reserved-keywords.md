@@ -16,7 +16,8 @@ agent, action, orchestrator, meta, roles, memory, flow, gates, gate,
 depth, batch, environments, triggers, command, event, level,
 hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
 context, env, extensions, providers, schedule, job, interfaces,
-defaults, schemas, schema, observability, fragment, interface, params
+defaults, schemas, schema, observability, fragment, interface, params,
+threat-model
 ```
 
 ---

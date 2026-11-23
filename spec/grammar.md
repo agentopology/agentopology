@@ -185,10 +185,10 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
-                 | schedule | interfaces | inventory | needs
+                 | schedule | interfaces | inventory | needs | threat-model
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, and `needs` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, `needs`, and `threat-model` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -1906,6 +1906,32 @@ needs {
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+### 4.32 `threat-model`
+
+```ebnf
+threat-model    = 'threat-model' '{' (untrusted-field | outside-field | refuse-field | lift-field)* '}'
+untrusted-field = 'untrusted' ':' '[' untrusted-entry (',' untrusted-entry)* ']'
+untrusted-entry = 'web' | 'mcp:' identifier | string          (* a path glob *)
+outside-field   = 'outside-sandbox' ':' string-list
+refuse-field    = 'refuse-after-untrusted' ':' string-list    (* permission rules, as in settings { deny } *)
+lift-field      = 'lift' ':' identifier                       (* a human step *)
+```
+
+```agenttopology
+threat-model {
+  untrusted: [web, mcp:crm, "inbox/**"]
+  refuse-after-untrusted: ["Bash(git push *)", "SendMessage"]
+  outside-sandbox: ["npm"]
+  lift: owner
+}
+```
+
+Inputs the session cannot trust, and what is held back once one has been read. `web` is the WebFetch and WebSearch tools; `mcp:<id>` is every tool of a server declared in `mcp-servers { }`; a quoted path glob is a read of a matching file by Read, Grep or Glob. An MCP server written `trust: untrusted` is added to the list (`trust:` takes `untrusted` or `trusted`). Entries of `refuse-after-untrusted` are permission-rule strings in the `settings { deny }` form (`Tool` or `Tool(specifier)`).
+
+claude-code writes two hooks. `taint-mark.sh` (PostToolUse, on the untrusted tools) writes `.claude/state/taint/<session_id>` with the source and time, reading the session id from the hook's stdin JSON. `taint-guard.sh` (PreToolUse, on the tools the rules name) refuses with exit 2, naming the source, a call that matches a rule while the session's mark exists. The mark ends only in a new session (a new session id has no mark), or for one act when the human named in `lift:` has an ok row in `.claude/state/approvals.jsonl` whose `act` equals the rule string and whose `at` is not older than the mark; a later untrusted read marks again. There is no blanket clear. The mark folder and the approvals file are refused to the agent by the before-edit and before-action guards. `outside-sandbox` entries that are commands go to `sandbox.excludedCommands`, and entries that are paths (a leading `/` or `~`, a trailing `/`, or a `*`) to `sandbox.filesystem.allowWrite`; Claude Code reads them only with `settings { sandbox: true }`. An agent's `sandbox:` field is still not written (V130).
+
+Validate (V137) errors on an `untrusted` entry that is none of the three forms, an `mcp:<id>` naming no declared server, a `lift` naming no declared human, and a refuse rule that is not a permission rule. Codex and Cursor write nothing for it; `validate --target codex|cursor` warns.
 
 ---
 

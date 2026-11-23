@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- `threat-model { untrusted, outside-sandbox, refuse-after-untrusted, lift }` is a top-level section. `untrusted` lists `web` (WebFetch and WebSearch), `mcp:<server id>` and quoted path globs (reads by Read, Grep or Glob); an MCP server written `trust: untrusted` joins the list. On Claude Code, scaffold writes `taint-mark.sh`, a PostToolUse hook that marks the session (`.claude/state/taint/<session_id>`) after an untrusted read, and `taint-guard.sh`, a PreToolUse hook that refuses (exit 2, naming the source) a call matching a `refuse-after-untrusted` permission rule while the mark exists. The mark ends in a new session, or for one act when the `lift:` human has an ok row in `.claude/state/approvals.jsonl` naming that rule string (`act`) and not older than the mark; there is no blanket clear. The mark folder and the approvals file are refused to the agent by the before-edit and before-action guards. `outside-sandbox` commands go to `sandbox.excludedCommands` and paths to `sandbox.filesystem.allowWrite`. An agent's own `sandbox` field is still not written (V130 warns).
+- V137 checks the block: errors for an untrusted entry that is not `web`, `mcp:<id>` of a declared server or a path glob, a `lift` naming no declared human, a refuse rule that is not a permission rule, and a `trust:` other than `untrusted` or `trusted`; warnings for rules with nothing untrusted (or the reverse), `outside-sandbox` with the sandbox off, and, on `--target codex` and `--target cursor`, that the block is not written there.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

@@ -894,6 +894,18 @@ export interface PersonDef {
   away?: string;
 }
 
+/** The top-level `threat-model { untrusted, outside-sandbox, refuse-after-untrusted, lift }` block. */
+export interface ThreatModelDef {
+  /** `web`, `mcp:<server id>`, or a path glob. A server written `trust: untrusted` is added where the list is used. */
+  untrusted: string[];
+  /** Commands and paths that run outside the sandbox. */
+  outsideSandbox: string[];
+  /** Permission-rule strings refused while the session holds a taint mark. */
+  refuseAfterUntrusted: string[];
+  /** The human whose ok row for an act ends the taint for that act. */
+  lift?: string;
+}
+
 /** The top-level `needs { memory: "<path under home>" connectors: [..] user-skills: [..] }` block (L-4). */
 export interface NeedsDef {
   /** A path under the user's home (`~/...`). */
@@ -1212,6 +1224,8 @@ export interface TopologyAST {
   inventoryRoots?: string[];
   /** What the topology needs from outside the repo, from the top-level `needs` block (L-4). */
   needs?: NeedsDef;
+  /** Untrusted inputs and what is refused after reading one, from the top-level `threat-model` block. */
+  threatModel?: ThreatModelDef;
 }
 
 // ---------------------------------------------------------------------------

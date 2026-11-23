@@ -26,6 +26,7 @@ import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun 
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
+import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
@@ -97,7 +98,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "agent", "action", "orchestrator", "meta", "roles", "memory", "flow",
   "gates", "gate", "depth", "batch", "environments", "triggers", "command",
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
-  "tools", "tool", "scale", "skill",
+  "tools", "tool", "scale", "skill", "threat-model",
   // Field keywords
   "model", "disallowed-tools", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
@@ -4149,6 +4150,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137ThreatModel(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4355,55 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V137: the `threat-model { }` block names what it can compile.
+ *
+ * Errors: an `untrusted` entry that is not `web`, `mcp:<id>` of a declared
+ * MCP server, or a path glob; a `lift` that names no declared human; a
+ * `refuse-after-untrusted` string that is not a permission rule
+ * (`Tool` or `Tool(specifier)`); a server written `trust:` with a word other
+ * than `untrusted` or `trusted`. Warnings: a refuse rule with nothing
+ * untrusted (or the other way round), and, on `--target codex` and
+ * `--target cursor`, that the block is not written there (only Claude Code
+ * runs the hooks that mark and refuse).
+ */
+function v137ThreatModel(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V137", level: "error", message });
+  const warn = (message: string) => results.push({ rule: "V137", level: "warning", message });
+  for (const [id, server] of Object.entries(ast.mcpServers ?? {})) {
+    const t = server.trust;
+    if (t !== undefined && t !== "untrusted" && t !== "trusted") err(`MCP server "${id}" has trust: ${String(t)}; use untrusted or trusted.`);
+  }
+  const tm = ast.threatModel;
+  if (!tm) return results;
+  const untrusted = untrustedEntries(ast);
+  for (const entry of tm.untrusted) {
+    if (entry === "web") continue;
+    if (entry.startsWith("mcp:")) {
+      const id = entry.slice(4);
+      if (!Object.prototype.hasOwnProperty.call(ast.mcpServers ?? {}, id)) err(`threat-model untrusted: "${entry}" names no MCP server declared in mcp-servers { }; declared: ${Object.keys(ast.mcpServers ?? {}).join(", ") || "none"}.`);
+      continue;
+    }
+    if (!isPathGlob(entry)) err(`threat-model untrusted: "${entry}" is not web, mcp:<server id> or a path glob (a quoted path such as "inbox/**").`);
+  }
+  if (tm.lift !== undefined) {
+    const node = ast.nodes.find((n) => n.id === tm.lift);
+    if (!node) err(`threat-model lift: "${tm.lift}" names no declared human step.`);
+    else if (node.type !== "human") err(`threat-model lift: "${tm.lift}" is ${node.type === "agent" ? "an agent" : `a ${node.type}`}, not a human step.`);
+  }
+  for (const rule of tm.refuseAfterUntrusted) {
+    if (!isPermissionRule(rule)) err(`threat-model refuse-after-untrusted: "${rule}" is not a permission rule; write a tool name or Tool(specifier) as in settings { deny }, for example "Bash(git push *)" or "SendMessage".`);
+  }
+  if (tm.refuseAfterUntrusted.length > 0 && untrusted.length === 0) warn(`threat-model refuse-after-untrusted has rules but no untrusted input, so nothing ever marks a session and nothing is refused.`);
+  if (untrusted.length > 0 && tm.refuseAfterUntrusted.length === 0) warn(`threat-model names untrusted input but no refuse-after-untrusted rule, so a marked session is still allowed to do everything.`);
+  if (tm.outsideSandbox.length > 0 && ast.settings?.sandbox !== true) warn(`threat-model outside-sandbox is written to the sandbox keys of settings.json, which Claude Code reads only when the sandbox is on: set settings { sandbox: true }.`);
+  if (opts.target === "codex" || opts.target === "cursor") {
+    warn(`threat-model is not written for ${opts.target}: the hooks that mark a session after an untrusted read and refuse after it are Claude Code hooks, so nothing marks or refuses here.`);
   }
   return results;
 }
