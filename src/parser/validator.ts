@@ -21,7 +21,7 @@
 
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
-import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
+import { mcpRefs, pluginMcpPrefix, everyToCron } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
@@ -4149,6 +4149,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137EveryHasCronForm(ast),
+    ...v138IntervalCarrierNeedsEvery(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4313,7 +4315,7 @@ function v123HomePaths(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-const CARRIERS = ["session", "cron", "launchd", "cloud", "calendar"];
+const CARRIERS = ["session", "cron", "launchd", "systemd", "cloud", "calendar"];
 const SURVIVES = ["pane-close", "reboot", "away"];
 
 /** V124 (T-06): a schedule job's `carrier:` and `survives:` must be one of the known values. */
@@ -4352,6 +4354,41 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     results.push({
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V137: a cron job's `every:` must be one cron can say exactly (minutes that
+ * divide 60, hours that divide 24, days 1-31). launchd and systemd count
+ * seconds, so any positive interval is fine there.
+ */
+function v137EveryHasCronForm(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if (j.cron || j.every === undefined) continue;
+    if (j.carrier !== undefined && j.carrier !== "cron") continue;
+    if (everyToCron(j.every) !== null) continue;
+    // Only a number and a unit is a duration cron could get wrong; free text ("monday 3:00") keeps its old
+    // commented line and warning, as the bundled examples rely on.
+    if (!/^\s*\d+\s*(m|min|mins|minutes?|h|hours?|d|days?|w|weeks?)\s*$/i.test(j.every)) continue;
+    results.push({
+      rule: "V137", level: "error", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" has every: "${j.every}", which cron cannot say exactly. Use minutes that divide 60 (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30), hours that divide 24 (1, 2, 3, 4, 6, 8, 12), or days (1d to 31d); or write cron: "<expression>"; or use carrier: launchd or systemd.`,
+    });
+  }
+  return results;
+}
+
+/** V138: launchd and systemd run on an interval, not a cron expression. */
+function v138IntervalCarrierNeedsEvery(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of ast.schedules ?? []) {
+    if ((j.carrier !== "launchd" && j.carrier !== "systemd") || !j.cron) continue;
+    results.push({
+      rule: "V138", level: "error", node: j.id, line: lookupLine(ast, j.id),
+      message: `Schedule job "${j.id}" has carrier: ${j.carrier} and cron: "${j.cron}", but ${j.carrier} runs a job on an interval. Write every: "<N>m", "<N>h" or "<N>d" instead, or use carrier: cron.`,
     });
   }
   return results;

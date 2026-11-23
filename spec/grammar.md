@@ -1756,6 +1756,9 @@ schedule-fields = ('cron' ':' string)
                 | ('agent' ':' identifier)
                 | ('action' ':' identifier)
                 | ('enabled' ':' boolean)
+                | ('machine' ':' identifier)
+                | ('carrier' ':' identifier)
+                | ('survives' ':' identifier)
 ```
 
 ```agenttopology
@@ -1765,7 +1768,7 @@ schedule {
     agent: summarizer
   }
   job weekly-report {
-    every: "monday 9:00"
+    every: "6h"
     agent: reporter
     enabled: true
   }
@@ -1775,10 +1778,15 @@ schedule {
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `cron` | string | one of cron/every | -- | Standard cron expression (5-field) |
-| `every` | string | one of cron/every | -- | Human-readable schedule ("daily", "monday 9:00") |
+| `every` | string | one of cron/every | -- | An interval `"<N>m"`, `"<N>h"` or `"<N>d"` (also `hourly`, `daily`, `weekly`) |
 | `agent` | identifier | one of agent/action | -- | Agent to trigger |
 | `action` | identifier | one of agent/action | -- | Action to trigger |
 | `enabled` | boolean | no | `true` | Whether the job is active |
+| `machine` | identifier | no | -- | A `machines` entry; `install-schedule.sh` refuses (exit 1) on any other host (V122) |
+| `carrier` | identifier | no | `cron` | What fires the job: `session`, `cron`, `launchd`, `systemd`, `cloud` or `calendar` (V124) |
+| `survives` | identifier | no | -- | `pane-close`, `reboot` or `away` (V124). With `launchd` it sets `RunAtLoad`; with `systemd`, `Persistent=true`; cron always survives a reboot |
+
+**Installing a schedule (claude-code).** `every:` compiles to a cron expression in `crontab.fragment`: minutes that divide 60, hours that divide 24, and days 1 to 31 are exact; any other value on a cron job is a V137 error naming it. scaffold also writes `scripts/install-schedule.sh`, a dry run that prints what it would do; `--apply` writes. `cron` jobs are merged into `crontab -l` between `# BEGIN agentopology <topology>` and `# END agentopology <topology>` lines, replacing only that block; `launchd` jobs become `~/Library/LaunchAgents/agentopology.<topology>.<job>.plist` with `StartInterval`; `systemd` jobs become a user `.service` and `.timer` under `~/.config/systemd/user/`. A launchd or systemd job counts seconds from `every:` and takes no `cron:` (V138). The script exits 1, writing nothing, when the host name is not a job's `machine:`. `validate <file> --inventory <dir>` prints `installed` or `not installed` per job by asking the carrier.
 
 **Mutual exclusivity:** A job must have exactly one of `cron` or `every` -- not both (V20). A job must reference exactly one of `agent` or `action`.
 

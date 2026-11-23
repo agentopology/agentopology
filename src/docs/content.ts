@@ -2805,19 +2805,21 @@ schedule {
 |-------|------|----------|---------|-------------|
 | id | identifier | yes | -- | Job identifier (the NAME) |
 | cron | string | conditional (V20) | -- | 5-field cron expression (mutually exclusive with \`every\`) |
-| every | string | conditional (V20) | -- | Human-readable interval (mutually exclusive with \`cron\`) |
+| every | string | conditional (V20) | -- | An interval: \`"<N>m"\`, \`"<N>h"\` or \`"<N>d"\` (mutually exclusive with \`cron\`). On cron it must be exact: minutes that divide 60, hours that divide 24, days 1 to 31 (V137) |
 | agent | identifier | conditional (V20) | -- | Agent ID to invoke |
 | action | identifier | conditional (V20) | -- | Action ID to invoke |
 | enabled | boolean | no | true | Whether this job is active |
 | machine | identifier | no | -- | The machine the job runs on; must be in \`machines { }\` (V122) |
-| carrier | string | no | -- | What fires the job: \`session\`, \`cron\`, \`launchd\`, \`cloud\` or \`calendar\` (V124) |
-| survives | string | no | -- | What the job outlives: \`pane-close\`, \`reboot\` or \`away\` (V124). \`carrier: session\` with any \`survives:\` is an error: a session cron dies with its session and after 7 days (V125) |
+| carrier | string | no | -- | What fires the job: \`session\`, \`cron\` (the default), \`launchd\`, \`systemd\`, \`cloud\` or \`calendar\` (V124). \`launchd\` and \`systemd\` take \`every:\`, not \`cron:\` (V138). scaffold writes \`scripts/install-schedule.sh\` (dry run; \`--apply\` installs the cron block, the plist or the user timer, and refuses on a host that is not \`machine:\`); \`validate --inventory\` reports each job \`installed\` or \`not installed\` |
+| survives | string | no | -- | What the job outlives: \`pane-close\`, \`reboot\` or \`away\` (V124). \`reboot\` sets launchd \`RunAtLoad\` and systemd \`Persistent=true\`; cron always survives. \`carrier: session\` with any \`survives:\` is an error: a session cron dies with its session and after 7 days (V125) |
 
 ## Validation Rules
 
 - **V20**: \`cron\` and \`every\` are mutually exclusive -- use one or the other
 - **V20**: Job must reference a declared agent or action node
 - **V136**: warning, a job runs a decision, report or inline action, or one with no kind, with no \`commands:\` (done in conversation, so the job does nothing)
+- **V137**: error, a cron job's \`every:\` is not one cron can say exactly (7m, 45m, 5h, 0m)
+- **V138**: error, a launchd or systemd job has \`cron:\`; write \`every:\`
 
 ## Example
 
@@ -3392,6 +3394,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Every Has No Cron Form (error)
+A schedule job on cron (no \`carrier:\`, or \`carrier: cron\`) has an \`every:\` that cron cannot say exactly. Minutes that divide 60, hours that divide 24 and days 1 to 31 are exact. The message names the value.
+
+**Violation:** \`job j { agent: worker  every: "7m" }\`
+**Fix:** Use \`every: "5m"\`, write \`cron: "<expression>"\`, or use \`carrier: launchd\` or \`systemd\`, which count seconds.
+
+### V138: Interval Carrier With Cron (error)
+A job with \`carrier: launchd\` or \`carrier: systemd\` has \`cron:\`. Those carriers run on an interval.
+
+**Violation:** \`job j { agent: worker  cron: "0 3 * * *"  carrier: launchd }\`
+**Fix:** Write \`every: "1d"\`, or use \`carrier: cron\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3443,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Every Has No Cron Form |
+| V138 | error | Interval Carrier With Cron |
 `,
   },
 

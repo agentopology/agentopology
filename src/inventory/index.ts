@@ -28,6 +28,7 @@ import { codexBinding } from "../bindings/codex.js";
 import { runParts, isProjectPath } from "../parser/run.js";
 import { matcherGaps, type MatcherGap } from "../conformance/claude-code.js";
 import { sessionAgentsOf } from "../bindings/lib/session.js";
+import { jobCarrier, scheduleSlug } from "../bindings/lib/schedule-install.js";
 
 export { matcherGaps, type MatcherGap };
 
@@ -211,6 +212,43 @@ function scheduled(root: string, opts: CollectOptions): InventoryItem[] {
     if (t && !t.startsWith("#") && t.includes(root)) items.push({ id: `cron:${t}`, kind: "cron", tag: "e" });
   }
   return items;
+}
+
+export interface ScheduleStatus { id: string; carrier: string; installed: boolean }
+
+/**
+ * Whether each enabled cron, launchd or systemd schedule job is installed, by
+ * asking its carrier: `crontab -l` holding the topology's marker block with the
+ * job's script in it, the plist, or the timer file. Reads only.
+ */
+export function scheduleStatus(ast: TopologyAST, opts: { crontab?: string; home?: string } = {}): ScheduleStatus[] {
+  const out: ScheduleStatus[] = [];
+  const name = scheduleSlug(ast.topology.name);
+  const home = opts.home ?? process.env.HOME ?? os.homedir();
+  let tab = opts.crontab;
+  const crontab = (): string => {
+    if (tab === undefined) {
+      try { tab = spawnSync("crontab", ["-l"], { encoding: "utf8", timeout: 3000 }).stdout ?? ""; } catch { tab = ""; }
+    }
+    return tab;
+  };
+  for (const j of ast.schedules ?? []) {
+    if (j.enabled === false) continue;
+    const carrier = jobCarrier(j);
+    let installed: boolean;
+    if (carrier === "cron") {
+      const lines = crontab().split("\n");
+      const begin = lines.indexOf(`# BEGIN agentopology ${name}`);
+      const end = lines.indexOf(`# END agentopology ${name}`, begin + 1);
+      installed = begin >= 0 && end > begin && lines.slice(begin + 1, end).some((l) => l.includes(`scripts/schedule-${j.id}.sh`));
+    } else if (carrier === "launchd") {
+      installed = fs.existsSync(path.join(home, "Library", "LaunchAgents", `agentopology.${name}.${j.id}.plist`));
+    } else if (carrier === "systemd") {
+      installed = fs.existsSync(path.join(home, ".config", "systemd", "user", `agentopology-${name}-${j.id}.timer`));
+    } else continue;
+    out.push({ id: j.id, carrier, installed });
+  }
+  return out;
 }
 
 /** Hook entries of a hooks.json-shaped object `{ hooks: { Event: [{ matcher?, hooks: [...] }] } }`. */

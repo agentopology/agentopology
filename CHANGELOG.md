@@ -2,6 +2,19 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A schedule installs its carrier. A job takes `carrier: cron | launchd | systemd` and `every: "<N>m"`, `"<N>h"` or `"<N>d"`; `survives` and `machine` now reach the generated files. scaffold writes `scripts/install-schedule.sh`: a dry run that prints what it would do, and with `--apply` it merges the cron jobs into `crontab -l` between `# BEGIN agentopology <name>` and `# END agentopology <name>` lines (replacing only that block), writes a launchd plist to `~/Library/LaunchAgents`, or a user timer and service under `~/.config/systemd/user`. `survives: reboot` sets `RunAtLoad` (launchd) or `Persistent=true` (systemd). It exits 1, writing nothing, when the host name is not the job's `machine:`.
+- `validate <file> --inventory <dir>` prints `installed` or `not installed` for each cron, launchd and systemd job, by reading the crontab block, the plist or the timer file.
+- V137 (error): a cron job's `every:` that cron cannot say exactly (`7m`, `45m`, `5h`, `0m`). V138 (error): `cron:` on a launchd or systemd job. `systemd` is a known carrier for V124.
+
+### Changed behaviour
+
+- `every:` with days now compiles: `3d` is `0 0 */3 * *` in `crontab.fragment`. An `every:` that cron cannot say used to become a commented line with a warning; on a cron job it is now a V137 error in `validate`.
+- `crontab.fragment` lists a launchd or systemd job as a comment; `install-schedule.sh` installs it.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

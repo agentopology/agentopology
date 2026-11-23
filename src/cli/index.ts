@@ -70,7 +70,7 @@ import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
 import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
-import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
+import { collectInventory, scheduleStatus, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -675,6 +675,12 @@ function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefi
   const r = coverageResult(ast, items, root, user);
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
+  const sched = scheduleStatus(ast);
+  if (sched.length > 0) {
+    for (const s of sched) console.log(`  schedule job ${s.id} (${s.carrier}): ${s.installed ? "installed" : "not installed"}`);
+    if (sched.some((s) => !s.installed)) console.log(c.dim("  install with: bash scripts/install-schedule.sh --apply"));
+    console.log("");
+  }
   printTopLevelPermissions(root);
   return r.missing.length === 0;
 }
