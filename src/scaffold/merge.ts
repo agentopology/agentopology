@@ -727,6 +727,8 @@ function mergeHooksByRecord(
       state?: "ours" | "gone" | "same" | "user";
       /** A user entry's line, when it looks like the edit of a recorded one. */
       edited?: string;
+      /** The recorded entry this edit stands for, while the .at still generates it. */
+      holds?: HookRecord;
     };
     const entries: Entry[] = [];
     exGroups.forEach((g, gi) => {
@@ -748,24 +750,36 @@ function mergeHooksByRecord(
     }
 
     // A recorded entry no longer in the file was edited (or deleted) by the
-    // user: the entry that looks like its edit (the same command under
-    // another matcher, or another command under the same matcher) is said
-    // to be the user's now.
+    // user. Its edit is a user entry with the same command under another
+    // matcher, or, under the same matcher, a command holding the recorded
+    // one (an argument appended, a command chained) or held by it. The edit
+    // is the user's; while the .at still generates the original, the
+    // original is not written again beside it (the edit stands for it, and
+    // stays recorded as such), until the user deletes the copy.
     const userEntries = entries.filter((e) => e.state === "user" && e.command !== null);
+    const sameMatcher = (a: string | null, b: string | null) => (a ?? "") === (b ?? "");
     for (const r of record) {
       if (r.event !== event) continue;
       const k = recordKey(r.event, r.matcher, r.command);
       if ((recorded.get(k) ?? 0) === 0) continue;
       recorded.set(k, recorded.get(k)! - 1);
+      const was = normalCommand(r.command);
       const edit =
-        userEntries.find((e) => !e.edited && normalCommand(e.command!) === normalCommand(r.command)) ??
-        userEntries.find((e) => !e.edited && (e.matcher ?? "") === (r.matcher ?? ""));
+        userEntries.find((e) => !e.edited && normalCommand(e.command!) === was) ??
+        userEntries.find((e) => {
+          if (e.edited || !sameMatcher(e.matcher, r.matcher)) return false;
+          const now = normalCommand(e.command!);
+          return now.includes(was) || was.includes(now);
+        });
       if (!edit) continue;
-      const again = (free.get(hookPlace(r.matcher, { command: r.command })) ?? 0) > 0;
-      edit.edited =
-        `hooks.${event}: kept your hook ${showMatcher(edit.matcher)} ${edit.command}: you edited the entry scaffold wrote ` +
-        `(${showMatcher(r.matcher)} ${r.command}), so it is yours now` +
-        (again ? "; the .at's entry is written again beside it" : "");
+      if (take(hookPlace(r.matcher, { command: r.command }))) {
+        edit.holds = r;
+        edit.edited = `hooks.${event}: kept your edited copy of ${event} ${showMatcher(r.matcher)}; the generated hook is not added again; delete your copy to get it back`;
+      } else {
+        edit.edited =
+          `hooks.${event}: kept your hook ${showMatcher(edit.matcher)} ${edit.command}: you edited the entry scaffold wrote ` +
+          `(${showMatcher(r.matcher)} ${r.command}), so it is yours now`;
+      }
     }
 
     const state = new Map(entries.map((e) => [`${e.g}:${e.h}`, e] as const));
@@ -788,6 +802,7 @@ function mergeHooksByRecord(
           return false;
         }
         if (e.state === "ours") rec.push({ event, matcher: e.matcher, command: e.command! });
+        if (e.holds) rec.push(e.holds);
         if (e.command === null) return true;
         if (e.state === "same") {
           outcome.kept.push({

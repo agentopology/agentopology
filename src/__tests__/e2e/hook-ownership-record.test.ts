@@ -255,10 +255,12 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
       expect(p.scaffold([LINT, AUDIT])).toContain(keptLine);
       expect(has(p.rows(), lint), JSON.stringify(p.rows())).toBe(false);
       if (target === "claude-code") {
-        // guard --check grades the hook on the user's edited command.
+        // guard --check reads the hook on the user's edited copy (by its
+        // script), so the copy is the declared hook's entry, not an untied one.
         const at = join(tmp, "project.at");
         const check = cli(["guard", at, "--check", "--dir", p.dir]);
-        expect(check.out).toContain(edited.command);
+        expect(check.code, check.out).toBe(0);
+        expect(check.out).not.toContain("not tied to any step");
       }
       // Deleting the copy brings the generated hook back.
       p.edit((d) => {
