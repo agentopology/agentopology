@@ -414,6 +414,21 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
 }
 
+/**
+ * What a before-action.sh on disk lacks for a gate before a script step (guard --check, both
+ * platforms): the gate's line, the ledger read when the gate has a ledger, and the run of its
+ * check when it has a `run:` script. A gate with both needs both; a script that has the line but
+ * skips one (kept from an older scaffold, edited by hand) holds less than the .at says.
+ */
+export function beforeActionGateProblems(ast: TopologyAST, gate: GateNode, script: string): string[] {
+  if (!script.includes(`# gate ${gate.id} (`)) return [`before-action.sh has no line for gate ${gate.id}`];
+  const problems: string[] = [];
+  const has = (call: string) => script.split("\n").some((l) => l.trimStart().startsWith(`${call} ${shellQuote(gate.id)} `));
+  if (gateLedger(ast, gate) && !has("check_ledger")) problems.push(`before-action.sh does not read the ledger of gate ${gate.id}`);
+  if (scriptNameFromRun(gate.run) && !has("at_gate")) problems.push(`before-action.sh does not run the run: check of gate ${gate.id}`);
+  return problems;
+}
+
 /** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
 export function durationSeconds(d: string | undefined): number | null {
   const m = /^(\d+)([smhd])$/.exec(d ?? "");
