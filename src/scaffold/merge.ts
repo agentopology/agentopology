@@ -770,12 +770,15 @@ function mergeHooksByRecord(
     }
 
     const state = new Map(entries.map((e) => [`${e.g}:${e.h}`, e] as const));
-    const groups: unknown[] = [];
+    // Each group with the topology's entries it holds; `ours`: it holds
+    // nothing of the user's, so 0.12.6's deduplication applies to it.
+    const items: Array<{ group: unknown; rec: HookRecord[]; ours: boolean }> = [];
     exGroups.forEach((g, gi) => {
       if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
-        groups.push(g);
+        items.push({ group: g, rec: [], ours: false });
         return;
       }
+      const rec: HookRecord[] = [];
       // A group holding the topology's entries, as 0.12.6 read it: its other
       // entries, and any naming one of the topology's scripts, are said kept.
       const withOurs = g.hooks.some((_, hi) => state.get(`${gi}:${hi}`)!.state !== "user");
@@ -785,7 +788,7 @@ function mergeHooksByRecord(
           outcome.removed.push(hookLine({ event, matcher: e.matcher, command: e.command! }));
           return false;
         }
-        if (e.state === "ours") outcome.record.push({ event, matcher: e.matcher, command: e.command! });
+        if (e.state === "ours") rec.push({ event, matcher: e.matcher, command: e.command! });
         if (e.command === null) return true;
         if (e.state === "same") {
           outcome.kept.push({
@@ -801,12 +804,14 @@ function mergeHooksByRecord(
         }
         return true;
       });
-      if (keep.length === g.hooks.length) groups.push(g);
-      else if (keep.length > 0) groups.push({ ...g, hooks: keep });
+      // Every entry kept is the topology's (the others were removed).
+      const ours = g.hooks.every((_, hi) => ["ours", "gone"].includes(state.get(`${gi}:${hi}`)!.state!));
+      if (keep.length === g.hooks.length) items.push({ group: g, rec, ours });
+      else if (keep.length > 0) items.push({ group: { ...g, hooks: keep }, rec, ours });
     });
     for (const g of genGroups) {
       if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
-        groups.push(g);
+        items.push({ group: g, rec: [], ours: true });
         continue;
       }
       const rest = g.hooks.filter((h) => {
@@ -815,11 +820,24 @@ function mergeHooksByRecord(
         placed.set(k, placed.get(k)! - 1);
         return false;
       });
-      for (const h of rest) {
-        if (isPlainObject(h) && typeof h.command === "string") outcome.record.push({ event, matcher: matcherOf(g), command: h.command });
-      }
-      if (rest.length === g.hooks.length) groups.push(g);
-      else if (rest.length > 0) groups.push({ ...g, hooks: rest });
+      const rec = rest.flatMap((h) =>
+        isPlainObject(h) && typeof h.command === "string" ? [{ event, matcher: matcherOf(g), command: h.command }] : [],
+      );
+      if (rest.length === g.hooks.length) items.push({ group: g, rec, ours: true });
+      else if (rest.length > 0) items.push({ group: { ...g, hooks: rest }, rec, ours: true });
+    }
+    // 0.12.6's deduplication, for the topology's own groups only: one equal
+    // (by matcher and each entry's identity) to a group before it is dropped,
+    // as two .at hooks on one script with different if: were merged. A
+    // group holding a user's entry is never dropped.
+    const seen = new Set<string>();
+    const groups: unknown[] = [];
+    for (const item of items) {
+      const key = hookGroupKey(item.group);
+      if (item.ours && seen.has(key)) continue;
+      seen.add(key);
+      groups.push(item.group);
+      outcome.record.push(...item.rec);
     }
     if (groups.length > 0) out[event] = groups;
   }

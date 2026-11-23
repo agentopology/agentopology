@@ -130,12 +130,10 @@ export function computeIncrementalPlan(
   const ownedPaths = [...generatedMap.keys(), ...Object.keys(manifest?.files ?? {})];
 
   // The hook entries scaffold wrote to a hooks file: exactly those are the
-  // topology's. A file the manifest lists with no record (written by 0.12.x)
-  // is merged as 0.12.6 merged it, this once, and then recorded; a file the
-  // manifest does not list was never scaffold's, so every entry in it is the
-  // user's.
-  const hookRecordOf = (path: string): HookRecord[] | undefined =>
-    manifest?.hooks?.[path] ?? (manifest?.files[path] ? undefined : []);
+  // topology's. With no record for the file (no manifest, a hand-built or
+  // imported harness, or a manifest written by 0.12.x), the file is merged
+  // as 0.12.6 merged it, this once, and what that wrote is recorded.
+  const hookRecordOf = (path: string): HookRecord[] | undefined => manifest?.hooks?.[path];
 
   // Process each generated file
   for (const file of generatedFiles) {
