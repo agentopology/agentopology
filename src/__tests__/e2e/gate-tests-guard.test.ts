@@ -21,8 +21,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
 
 const topology = (gate: string, extra = "") => `topology ship : [pipeline] {
-  meta { version: "1.0.0" description: "Render then publish" }
-  orchestrator { model: sonnet handles: [render, publish] }
+  meta {
+    version: "1.0.0"
+    description: "Render then publish"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [render, publish]
+  }
   action render {
     kind: external
     commands: ["./tool render"]
@@ -30,7 +36,7 @@ const topology = (gate: string, extra = "") => `topology ship : [pipeline] {
   action publish {
     kind: external
     commands: ["./tool publish"]
-    unit-from: "./tool publish (\\\\S+)"
+    unit-from: "./tool publish (\\S+)"
   }
   human sign { description: "ok to publish" }
   records {
@@ -240,10 +246,23 @@ describe.skipIf(!hasJq)("agentopology guard --test", () => {
 
   it("feeds an agent name to a gate that holds an agent launch", () => {
     const src = `topology ship : [pipeline] {
-  meta { version: "1.0.0" description: "x" }
-  orchestrator { model: sonnet handles: [render, reviewer] }
-  action render { kind: external commands: ["./tool render"] }
-  agent reviewer { model: sonnet description: "reviews" prompt { Review. } }
+  meta {
+    version: "1.0.0"
+    description: "x"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [render, reviewer]
+  }
+  action render {
+    kind: external
+    commands: ["./tool render"]
+  }
+  agent reviewer {
+    model: sonnet
+    description: "reviews"
+    prompt { Review. }
+  }
   gates {
     gate review-ready {
       after: render
@@ -263,6 +282,32 @@ describe.skipIf(!hasJq)("agentopology guard --test", () => {
     const r = cli("guard", f, "--test", "--dir", dir);
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.stdout).toContain("reviewer");
+  });
+
+  it("guard --check says tested for a gate whose rows passed in the last --test --dir run of the same file", () => {
+    const src = topology(`      tests { refuse: ["./tool publish ep1"] allow: ["./tool render ep1"] }`);
+    const f = write("tested.at", src);
+    const dir = at("proj");
+    fs.mkdirSync(dir);
+    expect(cli("guard", f, "--check", "--dir", dir).stdout).not.toContain("· tested");
+    expect(cli("guard", f, "--test", "--dir", dir).status).toBe(0);
+    const line = cli("guard", f, "--check", "--dir", dir).stdout.split("\n").find((l) => l.includes("publish-ready")) ?? "";
+    expect(line).toContain("· tested");
+    // a changed file is not the one that was tested
+    const g = write("tested2.at", src.replace("ok to publish", "ok to publish it"));
+    expect(cli("guard", g, "--check", "--dir", dir).stdout).not.toContain("· tested");
+  });
+
+  it("works on Codex through the same scripts", () => {
+    const src = topology(`      tests {
+        refuse: ["./tool publish ep1"]
+        allow: ["./tool render ep1"]
+      }`).replace(/sonnet/g, "gpt-5.2");
+    const r = cli("guard", write("codex.at", src), "--test", "--target", "codex");
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toContain(".codex/scripts/ship/before-action.sh");
+    const bad = topology(`      tests { refuse: ["./tool render ep1"] }`).replace(/sonnet/g, "gpt-5.2");
+    expect(cli("guard", write("codex-bad.at", bad), "--test", "--target", "codex").status).toBe(1);
   });
 
   it("refuses a file with no tests rows", () => {

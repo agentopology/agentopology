@@ -21,6 +21,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
 import type { TopologyAST } from "../parser/ast.js";
@@ -63,6 +64,7 @@ import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
+import { hasTests, renderTestRun, runGuardTests, testedGateIds, writeTestResults } from "../guard/test-run.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
@@ -150,6 +152,13 @@ ${c.bold("Usage:")}
                        Report which gates, approval steps and permission rules the
                        project enforces today (refuse / cited / none / hope). Writes nothing;
                        exits 1 when something the binding generates is missing.
+  agentopology guard <file.at> --test [--target <claude-code|codex>] [--dir <project-dir>]
+                       Run the tests { refuse: [..] allow: [..] } rows of every gate and hook
+                       through the real generated scripts (before-action.sh for a script step,
+                       before-agent.sh for a subagent launch, a hook's own run: command), as the
+                       PreToolUse payload the host sends. Scaffolds into a temp folder, or into
+                       --dir (files already there are kept). Prints refused or allowed per row;
+                       exits 1 on any row that is not what it was written to be.
   agentopology step check <file.at> <step-id> [--unit U] [--dir D]
                        Exit 0 when every gate before <step-id> holds (its ledger shows the
                        after: step ok for the unit; its run: exits 0 from D), else 1,
@@ -268,6 +277,8 @@ interface ParsedArgs {
   task: string | undefined;
   root: string | undefined;
   check: boolean;
+  /** `guard --test`: run the tests rows of gates and hooks through the generated scripts. */
+  test: boolean;
   noOpen: boolean;
   noCheck: boolean;
   printSummary: boolean;
@@ -307,6 +318,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     task: undefined,
     root: undefined,
     check: false,
+    test: false,
     noOpen: false,
     noCheck: false,
     printSummary: false,
@@ -354,6 +366,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--check") {
       result.check = true;
+      i++;
+      continue;
+    }
+    if (arg === "--test") {
+      result.test = true;
       i++;
       continue;
     }
@@ -1773,10 +1790,58 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
     process.exit(1);
   }
   const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root);
+  // A gate whose tests rows all matched in the last `guard --test --dir` run of this very file is said to be tested.
+  const tested = testedGateIds(root, source);
+  for (const item of report.items) if (item.kind === "gate" && tested.has(item.id)) item.tested = true;
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
   process.exit(report.missing > 0 ? 1 : 0);
+}
+
+/**
+ * `guard <file> --test`: run each tests row of the gates and hooks through the generated
+ * scripts (src/guard/test-run.ts). Scaffolds into a temp folder, or into --dir (files
+ * already there are kept). Exit 1 on a row that is not what it was written to be, on a
+ * topology that does not validate for the target (V137/V138 included), and when there
+ * is no row to run.
+ */
+function cmdGuardTest(filePath: string, targetName: string | undefined, dirPath: string | undefined): void {
+  const target = targetName ?? "claude-code";
+  if (target !== "claude-code" && target !== "codex") {
+    console.error(c.red(`Error: guard --test supports claude-code and codex only (got "${target}").`));
+    process.exit(1);
+  }
+  const ast = parseAt(readFile(filePath), filePath);
+  const errors = buildErrors(ast, target);
+  if (errors.length > 0) {
+    console.error(c.red(`  ${errors.length} validation error(s), so the scripts are not run:`));
+    for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
+    if (errors.length > 5) console.error(c.dim(`  … and ${errors.length - 5} more`));
+    process.exit(1);
+  }
+  if (!hasTests(ast)) {
+    console.error(c.red(`Error: ${filePath} has no tests rows: write tests { refuse: ["<command>"] allow: ["<command>"] } on a gate or a hook.`));
+    process.exit(1);
+  }
+  const own = dirPath === undefined;
+  const dir = path.resolve(own ? fs.mkdtempSync(path.join(os.tmpdir(), "agentopology-guard-test-")) : dirPath);
+  let run;
+  try {
+    run = runGuardTests(ast, dir, target);
+  } catch (err) {
+    // a binding that refuses the topology (Codex and a Claude model): one line, exit 1
+    console.error(c.red(`Error: ${(err as Error).message}`));
+    if (own) fs.rmSync(dir, { recursive: true, force: true });
+    process.exit(1);
+  }
+  console.log(`guard --test ${filePath} (${own ? "temp project" : `project: ${dirPath}`}, ${target})`);
+  console.log("");
+  for (const line of renderTestRun(run)) console.log(line);
+  if (own) fs.rmSync(dir, { recursive: true, force: true });
+  // With --dir the project is known: leave what passed for `guard --check --dir` to say `tested`.
+  else writeTestResults(dir, readFile(filePath), run);
+  process.exit(run.misses > 0 || run.results.length === 0 ? 1 : 0);
 }
 
 /**
@@ -2161,6 +2226,10 @@ function main(): void {
         console.error(c.red("Error: guard requires a file argument."));
         process.exit(1);
       }
+      if (args.test) {
+        cmdGuardTest(args.file, args.target, args.dir);
+        break;
+      }
       // E-2: --check reads and never writes, on any target.
       if (args.check) {
         cmdGuardCheck(args.file, args.dir ?? ".", args.target);
@@ -2171,7 +2240,7 @@ function main(): void {
         break;
       }
       if (!args.check) {
-        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code|codex (write the guards)."));
+        console.error(c.red("Error: guard needs --check (read-only report), --test (run the tests rows) or --target claude-code|codex (write the guards)."));
         process.exit(1);
       }
       cmdGuardCheck(args.file, args.dir ?? ".");

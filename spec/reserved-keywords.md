@@ -56,7 +56,8 @@ domain, fork, api-key, base-url, default,
 cron, every, enabled, webhook, channel, auth, port,
 sandbox, docker, network-only, fallback-chain,
 pipeline, supervisor, blackboard, orchestrator-worker, debate,
-market-routing, consensus, fan-out, event-driven, human-gate
+market-routing, consensus, fan-out, event-driven, human-gate,
+tests, refuse, shadow, let-go, lift, once
 ```
 
 ---

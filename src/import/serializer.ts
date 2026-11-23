@@ -323,8 +323,18 @@ function serializeGate(node: GateNode): string {
   if (node.match) lines.push(`      match: ${q(node.match)}`);
   if (node.bypass) lines.push(`      bypass: ${q(node.bypass)}`);
   if (node.ledger) lines.push(`      ledger: ${node.ledger}`);
+  if (node.mode) lines.push(`      mode: ${node.mode}`);
+  if (node.letGo) lines.push(`      let-go: ${node.letGo}`);
+  if (node.lift) lines.push(`      lift: ${node.lift}`);
+  if (node.tests) lines.push(...testsLines(node.tests, "      "));
   lines.push("    }");
   return lines.join("\n");
+}
+
+/** A `tests { refuse: [..] allow: [..] }` block, as the parser reads it. */
+function testsLines(tests: { refuse: string[]; allow: string[] }, pad: string): string[] {
+  const rows = (key: string, list: string[]) => (list.length ? [`${pad}  ${key}: [${list.map(q).join(", ")}]`] : []);
+  return [`${pad}tests {`, ...rows("refuse", tests.refuse), ...rows("allow", tests.allow), `${pad}}`];
 }
 
 function serializeHuman(node: HumanNode): string {
@@ -419,6 +429,9 @@ function serializeHook(hook: HookDef, pad: string): string[] {
   if (hook.timeout) lines.push(`${pad}  timeout: ${hook.timeout}`);
   if (hook.strength) lines.push(`${pad}  strength: ${hook.strength}`);
   if (hook.bypass) lines.push(`${pad}  bypass: ${q(hook.bypass)}`);
+  if (hook.mode) lines.push(`${pad}  mode: ${hook.mode}`);
+  if (hook.letGo) lines.push(`${pad}  let-go: ${hook.letGo}`);
+  if (hook.tests) lines.push(...testsLines(hook.tests, `${pad}  `));
   lines.push(`${pad}}`);
   return lines;
 }

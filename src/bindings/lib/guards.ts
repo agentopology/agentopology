@@ -310,16 +310,20 @@ export function approvalTargets(ast: TopologyAST, human: HumanNode, p: GuardPlat
 export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const name = ast.topology.name;
   const steps = new Map<string, string[]>();
+  const hold = holdLines(ast, p, "agent");
   const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
 
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (!gate.run || gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) continue;
+    const held = hold !== null && (gate.mode === "shadow" || gate.letGo === "once");
     for (const agent of spawnHeldAgents(ast, gate, p)) {
       add(agent, [
         `    # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`,
-        `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
+        held
+          ? `    bash "$DIR/gate-${gate.id}.sh" >&2 || at_hold ${shellQuote(gate.id)} "its check script failed" || exit 2`
+          : `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
       ]);
     }
   }
@@ -360,6 +364,7 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     // trailing punctuation), so " Reviewer ", "re\u200bviewer" and "agents/reviewer:" are still reviewer.
     `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
     "",
+    ...(hold ?? []),
     ...(p.supportsAsk
       ? [
           // D-4: one decision per run. Each approval step adds its reason; one JSON object is printed at the end.
@@ -412,6 +417,26 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   if (gate.behavior === "advisory") return false;
   if (guardedActions(ast, gate).length === 0) return false;
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
+}
+
+/**
+ * The generated checks that hold a gate: `action` when before-action.sh runs it
+ * (a script step in `before:`), `agent` when before-agent.sh does (it holds the
+ * launch of a subagent). Empty when no generated check runs it before something
+ * (a SubagentStop-only gate, or none). `tests`, `mode` and `let-go` work on
+ * these two only.
+ */
+export function gateChecks(ast: TopologyAST, gate: GateNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): Array<"action" | "agent"> {
+  const out: Array<"action" | "agent"> = [];
+  if (checkableActionGate(ast, gate)) out.push("action");
+  if (gate.run && gate.behavior !== "advisory" && scriptNameFromRun(gate.run) && spawnHeldAgents(ast, gate, p).length > 0) out.push("agent");
+  return out;
+}
+
+/** The human whose ledger row lets a gate go: its `lift:`, else the human its `after:` names. */
+export function letGoHuman(ast: TopologyAST, gate: GateNode): string | undefined {
+  if (gate.lift) return gate.lift;
+  return gateAnchors(gate, "after").find((id) => ast.nodes.some((n) => n.id === id && n.type === "human"));
 }
 
 /** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
@@ -1475,6 +1500,75 @@ const GATE_BUDGET_FUNCTIONS: string[] = [
   "",
 ];
 
+/**
+ * `mode: shadow` and `let-go: once` (0.13): the shell a check script needs to
+ * honour them, or null when no gate it holds uses either (the script is then
+ * written exactly as before).
+ *
+ * `at_hold GATE WHY` is called where the script would refuse. It returns 0, and
+ * the step goes on, when
+ * - the gate is `mode: shadow`: what it would refuse is appended to
+ *   logs/shadow.jsonl ({gate, at, command, reason}); or
+ * - the gate is `let-go: once` and the human's ledger row lets this one go: an
+ *   ok row of the human's step, with `gate` naming this gate and `let-go: true`,
+ *   newer than the gate's last refusal (logs/refused.jsonl) and newer than the
+ *   row of the last use (logs/let-go.jsonl). The use is written there, so the
+ *   row lifts one run.
+ * Otherwise it returns 1, after writing the refusal to logs/refused.jsonl (a let-go gate only).
+ * The ledger is the gate's own, which the ledger guard keeps the model from writing.
+ */
+function holdLines(ast: TopologyAST, p: GuardPlatform, kind: "action" | "agent"): string[] | null {
+  const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => gateChecks(ast, g, p).includes(kind));
+  const shadow = gates.filter((g) => g.mode === "shadow").map((g) => g.id);
+  const letGo = gates.flatMap((g) => {
+    const human = g.letGo === "once" ? letGoHuman(ast, g) : undefined;
+    const ledger = human ? gateLedger(ast, g) : undefined;
+    return human && ledger ? [{ id: g.id, human, path: ledger.path.replace(/^\.\//, "") }] : [];
+  });
+  if (shadow.length === 0 && letGo.length === 0) return null;
+  const sq = shellQuote;
+  return [
+    "# at_hold GATE WHY: 0 when the step may go on although the gate would refuse it: the gate is mode: shadow (the",
+    "# refusal is logged to logs/shadow.jsonl), or it is let-go: once and its human's row lets this one go (the use is",
+    "# logged to logs/let-go.jsonl). Otherwise 1.",
+    `AT_SHADOW=${sq(` ${shadow.join(" ")} `)}`,
+    `AT_LETGO=${sq(` ${letGo.map((l) => l.id).join(" ")} `)}`,
+    "at_letgo_cfg() {",
+    '  case "$1" in',
+    ...letGo.map((l) => `    ${sq(l.id)}) printf '%s|%s' ${sq(l.human)} ${sq(l.path)} ;;`),
+    "  esac",
+    "}",
+    "at_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }",
+    "# at_last FILE GATE KEY: KEY of the last line of FILE for GATE, or nothing.",
+    'at_last() { [ -f "$1" ] || return 0; jq -rs --arg g "$2" --arg k "$3" \'[.[] | select(.gate == $g)] | last | (.[$k] // "")\' "$1" 2>/dev/null || true; }',
+    "at_hold() {",
+    "  local g=$1 why=$2 what=${CMD-${AGENT-}} unit=${UNIT-} cfg human path row refused used",
+    '  if [[ $AT_SHADOW == *" $g "* ]]; then',
+    "    mkdir -p logs",
+    '    jq -nc --arg gate "$g" --arg at "$(at_now)" --arg command "$what" --arg unit "$unit" --arg reason "$why" \'{gate: $gate, at: $at, command: $command, reason: $reason} + (if $unit == "" then {} else {unit: $unit} end)\' >> logs/shadow.jsonl',
+    '    echo "agentopology: gate $g would refuse ($why); it is mode: shadow, so this is logged to logs/shadow.jsonl and the step runs." >&2',
+    "    return 0",
+    "  fi",
+    '  [[ $AT_LETGO == *" $g "* ]] || return 1',
+    '  cfg=$(at_letgo_cfg "$g"); human=${cfg%%|*}; path=${cfg#*|}; path=${path//\\{unit\\}/$unit}',
+    '  refused=$(at_last logs/refused.jsonl "$g" at); used=$(at_last logs/let-go.jsonl "$g" row-at); row=\'\'',
+    '  if [ -n "$refused" ] && [ -f "$path" ]; then',
+    "    row=$(jq -rs --arg h \"$human\" --arg g \"$g\" --arg u \"$unit\" '[.[] | select(.step == $h and .ok == true and .gate == $g and .[\"let-go\"] == true and ($u == \"\" or .unit == $u))] | last | (.at // \"\")' \"$path\" 2>/dev/null) || row=''",
+    "  fi",
+    '  if [ -n "$row" ] && [[ "$row" > "$refused" ]] && [[ "$row" > "$used" ]]; then',
+    "    mkdir -p logs",
+    '    jq -nc --arg gate "$g" --arg at "$(at_now)" --arg row "$row" --arg human "$human" --arg command "$what" \'{gate: $gate, at: $at, "row-at": $row, human: $human, command: $command}\' >> logs/let-go.jsonl',
+    '    echo "agentopology: gate $g refused ($why), and $human let this one go (let-go: once); the step runs." >&2',
+    "    return 0",
+    "  fi",
+    "  mkdir -p logs",
+    '  jq -nc --arg gate "$g" --arg at "$(at_now)" --arg command "$what" --arg reason "$why" \'{gate: $gate, at: $at, command: $command, reason: $reason}\' >> logs/refused.jsonl',
+    "  return 1",
+    "}",
+    "",
+  ];
+}
+
 /** Every action a gate guards, with its gates, in declaration order. */
 function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
@@ -1506,6 +1600,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   if (guards.length === 0 && ledgers.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
+  // mode: shadow and let-go: once (0.13): deny may return, and the check ends there.
+  const hold = holdLines(ast, p, "action");
+  const d = (call: string) => (hold ? `{ ${call}; return 0; }` : call);
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
   const stepWords = guards.flatMap(({ action }) => (action.commands ?? []).map(stepKey));
   const gitSteps = [...new Set(ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
@@ -1547,22 +1644,25 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       ]
       : [`CMD=$(jq -er '${p.payload.command} // ""') || { echo "agentopology: the hook input is not valid JSON, so the command is blocked" >&2; exit 2; }`]),
     "",
-    "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
+    ...(hold
+      ? [...hold, 'deny() { at_hold "$1" "$2" && return 0; echo "agentopology: gate $1 refuses this command ($CMD): $2" >&2; exit 2; }']
+      : ["deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }"]),
     "",
-    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
+    // With mode: shadow or let-go, deny can return: the check ends there (return 0) instead of going on to read what is missing.
+    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS.map((l) => (hold ? l.replace(/\|\| (deny .*)$/, "|| { $1; return 0; }") : l)) : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
     "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
     '  if [[ "$tmpl" == *"{unit}"* ]]; then',
-    '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
+    `    [ -n "$unit" ] || ${d('deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"')}`,
     '    path="${tmpl//\\{unit\\}/$unit}"',
     "  else",
     '    path="$tmpl"',
     "  fi",
-    '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
+    `  [ -f "$path" ] || ${d('deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"')}`,
     "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
-    '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
-    '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
+    `    || ${d('deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"')}`,
+    `  [ "$ok" = true ] || ${d('deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"')}`,
     "}",
     "",
     "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",

@@ -28,8 +28,8 @@ interface BlockSchema {
 const OPAQUE = null;
 
 const HOOK: BlockSchema = {
-  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass"],
-  blocks: { extensions: OPAQUE },
+  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass", "mode", "let-go"],
+  blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
 };
 
 const AGENT: BlockSchema = {
@@ -70,8 +70,8 @@ const NODE_SCHEMAS = {
   agent: AGENT,
   action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join", "unit-from"] },
   gate: {
-    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
-    blocks: { extensions: OPAQUE },
+    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "mode", "let-go", "lift"],
+    blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
   },
   human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
   group: {

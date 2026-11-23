@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A gate and a hook carry their tests: `tests { refuse: ["<command>", ..] allow: ["<command>", ..] }`. Each row is a Bash command the guarded check is fed as a PreToolUse payload (for a gate before a subagent, an agent name instead). `agentopology guard <file.at> --test [--target claude-code|codex] [--dir D]` scaffolds into a temp folder (or `--dir`, keeping the files already there), feeds every row through the real generated script (`before-action.sh`, `before-agent.sh`, or the hook's own `run:` command), prints `refused` or `allowed` per row, and exits 1 on any row that is not what it was written to be, or when the file has no rows. Codex uses the same scripts and works the same way.
+- `mode: shadow | refuse` on a gate (default `refuse`). In `shadow` the generated check logs what it would refuse to `logs/shadow.jsonl` (`{gate, at, command, reason}`) and exits 0, so a new gate can run for a while without stopping anything. `guard --test` counts a row a shadow gate logged as refused, and says so.
+- `let-go: once` on a gate, with `lift: <human id>` (default: the human in the gate's `after:`). One override per step: a refusal is lifted for one run when that human has an ok row in the gate's ledger with `step` set to the human's id, `gate` set to this gate and `"let-go": true`, newer than the gate's last refusal. The use is written to `logs/let-go.jsonl`, and the row lifts exactly one run. Refusals of a let-go gate are logged to `logs/refused.jsonl`; a row written before any refusal lifts nothing. The ledger is the one the ledger guard already keeps the model from writing.
+- V137 (error): `tests` on a gate no generated check holds (no script step or subagent in `before:`), on a hook that is not a command hook on PreToolUse with a `run:`, or a tests block or row that is empty.
+- V138 (error): `mode` that is not shadow or refuse, `let-go` that is not once, `mode: shadow` or `let-go` on a gate no generated check holds, `let-go` with no human or no ledger to read, `lift:` that is not a human or has no `let-go`, and `mode` or `let-go` on a hook (a hook runs your own script).
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

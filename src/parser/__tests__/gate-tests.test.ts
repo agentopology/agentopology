@@ -24,7 +24,7 @@ const topo = (gate: string, extra = "") => `topology ship : [pipeline] {
   action publish {
     kind: external
     commands: ["./tool publish"]
-    unit-from: "./tool publish (\\\\S+)"
+    unit-from: "./tool publish (\\S+)"
   }
   human sign { description: "ok to publish" }
   records {
@@ -178,7 +178,12 @@ describe("V138: mode and let-go", () => {
   action publish { kind: external commands: ["./tool publish"] }
   records { record trace { path: "logs/trace.jsonl" } }
   gates {
-    gate g { after: sign before: publish ledger: trace let-go: once }
+    gate g {
+      after: sign
+      before: publish
+      ledger: trace
+      let-go: once
+    }
   }
   flow { sign -> publish }
 }
@@ -194,7 +199,12 @@ describe("V138: mode and let-go", () => {
   agent a { model: sonnet description: "a" prompt { Do a. } }
   agent b { model: sonnet description: "b" prompt { Do b. } }
   gates {
-    gate g { after: a before: b run: "scripts/g.sh" mode: shadow }
+    gate g {
+      after: a
+      before: b
+      run: "scripts/g.sh"
+      mode: shadow
+    }
   }
   flow { a -> b }
 }
@@ -213,7 +223,14 @@ describe("V138: mode and let-go", () => {
   agent b { model: sonnet description: "b" prompt { Do b. } }
   records { record trace { path: "logs/{unit}/trace.jsonl" } }
   gates {
-    gate g { after: render before: b run: "scripts/g.sh" ledger: trace let-go: once lift: sign }
+    gate g {
+      after: render
+      before: b
+      run: "scripts/g.sh"
+      ledger: trace
+      let-go: once
+      lift: sign
+    }
   }
   flow { render -> b }
 }

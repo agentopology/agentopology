@@ -455,6 +455,10 @@ gates {
 | match | string | no | -- | Text expected near \`at\`; needs \`at\` (V106) |
 | bypass | string | no | -- | The declared way around it (an env switch, a flag) |
 | ledger | record id | no | the only record | The record a gate before a script step reads (V112) |
+| tests | block | no | -- | \`tests { refuse: ["<command>", ..] allow: ["<command>", ..] }\`: rows \`guard --test\` feeds the gate's generated check (a Bash command; before a subagent, an agent name). Needs a check that holds the gate (V137) |
+| mode | shadow / refuse | no | refuse | \`shadow\`: the generated check logs what it would refuse to \`logs/shadow.jsonl\` and lets the step run (V138) |
+| let-go | once | no | -- | One override per step: a refusal is lifted for one run when the gate's human has an ok ledger row naming this gate with \`let-go: true\`, newer than the last refusal. Used up when the step runs (\`logs/let-go.jsonl\`) (V138) |
+| lift | human id | no | the human in \`after\` | The human whose ledger row lets the gate go (V138) |
 | checks | string[] | no | -- | List of check identifiers |
 | retry | number | no | -- | Max retries on failure |
 | on-fail | string | no | "halt" | "halt" or "bounce-back" |
@@ -504,6 +508,8 @@ gates {
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
+- **V137**: error, \`tests\` on a gate no generated check holds (no script step or subagent in \`before:\`), or an empty tests block or row
+- **V138**: error, \`mode\` is not shadow or refuse, \`let-go\` is not once, \`mode: shadow\` or \`let-go\` on a gate no generated check holds, \`let-go\` with no human (\`lift:\` or a human in \`after\`) or no ledger
 - **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
 
 ## Example
@@ -1628,6 +1634,7 @@ agent my-agent {
 | run | string | yes | -- | Command or script to execute; \`exit 2\` runs as written, and only exit 2 blocks (V108) |
 | type | string | no | command | "command", "prompt" or "mod" (V94) |
 | flag | string | no | -- | mod only: the env switch that turns the Mod on |
+| tests | block | no | -- | \`tests { refuse: ["<command>"] allow: ["<command>"] }\`: Bash commands \`guard --test\` feeds this hook's \`run:\` as PreToolUse payloads; exit 2 is refused (V137). A command hook on PreToolUse only |
 | timeout | number | no | -- | Timeout in seconds (Claude Code reads seconds) |
 | strength | string | no | -- | refuse, detect, hope or none (V104); a refuse hook is checked against every tool of a server it guards (V109) |
 | extensions | Record | no | -- | Binding-specific fields |
@@ -3392,6 +3399,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Gate and Hook Tests (error)
+\`tests { refuse: [...] allow: [...] }\` on a gate or a hook is run by \`agentopology guard <file> --test\`. A gate's tests need a generated check that holds it: before-action.sh (a script step, an action with \`commands:\`, in \`before:\`) or before-agent.sh (a subagent in \`before:\` with a \`run:\` script). A hook's tests are Bash commands fed to its own script as a PreToolUse payload, so the hook must be a command hook on PreToolUse with a \`run:\`. A tests block with no rows, or an empty row, is an error too.
+
+**Violation:** \`gate g { after: a  before: b  run: "scripts/g.sh"  tests { refuse: ["b"] } }\` where \`a\` and \`b\` are subagents: a SubagentStop hook runs it, and no check runs before something.
+**Fix:** Give the gate a script step or a subagent in \`before:\`, or drop \`tests\`.
+
+### V138: Gate Mode and Let-Go (error)
+\`mode\` on a gate is \`shadow\` or \`refuse\`; \`let-go\` is \`once\`. Both change what the generated check does, so an unread value is an error, and so is \`mode: shadow\` or \`let-go\` on a gate no generated check holds (they would do nothing). \`let-go: once\` needs a human to give it (\`lift: <human id>\`, or a human in \`after:\`) and a ledger to read the human's row from; a gate that holds a subagent launch needs a ledger path with no \`{unit}\`. \`lift:\` without \`let-go\` and \`mode\` or \`let-go\` on a hook are errors: a hook runs your own script.
+
+**Violation:** \`gate g { after: render  before: publish  let-go: once }\` with no human anywhere.
+**Fix:** Add \`lift: <human id>\`, or drop \`let-go\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3448,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Gate and Hook Tests |
+| V138 | error | Gate Mode and Let-Go |
 `,
   },
 

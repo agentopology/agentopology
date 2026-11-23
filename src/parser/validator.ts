@@ -33,7 +33,7 @@ import { isClaudeModelName } from "../conformance/codex.js";
 import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
-import { checkableActionGate, hooklessGateReason, stepMatchWords } from "../bindings/lib/guards.js";
+import { checkableActionGate, gateChecks, hooklessGateReason, letGoHuman, stepMatchWords } from "../bindings/lib/guards.js";
 import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/hook-blocks.js";
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
@@ -4149,6 +4149,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137GateTests(ast, opts),
+    ...v138GateMode(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4355,115 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/** The guard platform V137 and V138 judge a gate against: Codex when validating for it. */
+const guardPlatformFor = (opts: ValidateOptions): GuardPlatform => (opts.target === "codex" ? CODEX_GUARDS : CLAUDE_CODE_GUARDS);
+
+/**
+ * V137: `tests { refuse: [..] allow: [..] }` on a gate or a hook is run by
+ * `guard --test`, which feeds each row through the generated check. A gate's
+ * tests need a check that holds it: before-action.sh (a script step in
+ * `before:`) or before-agent.sh (a subagent in `before:`). A hook's tests are
+ * Bash commands fed to its own script as a PreToolUse payload, so the hook
+ * must be a command hook on PreToolUse with a `run:`. Each row is a non-empty
+ * text, and a block with no rows tests nothing.
+ */
+function v137GateTests(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const p = guardPlatformFor(opts);
+  const rows = (t: { refuse: string[]; allow: string[] }) => [...t.refuse, ...t.allow];
+  const problem = (node: string, message: string) =>
+    results.push({ rule: "V137", level: "error", node, line: lookupLine(ast, node), message });
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.tests) continue;
+    if (rows(gate.tests).length === 0) {
+      problem(gate.id, `Gate "${gate.id}" has a tests block with no rows: write refuse: ["<command>"] and/or allow: ["<command>"].`);
+    } else if (rows(gate.tests).some((r) => r.trim() === "")) {
+      problem(gate.id, `Gate "${gate.id}" has an empty tests row: each row is a command (or, before a subagent, an agent name).`);
+    }
+    if (gateChecks(ast, gate, p).length === 0) {
+      problem(
+        gate.id,
+        `Gate "${gate.id}" has tests, but no generated check runs it: guard --test feeds the rows to before-action.sh (a script step, an action with commands:, in before:) or before-agent.sh (a subagent in before: with a run: script). ` +
+          `Give the gate one of those anchors, or drop tests.`,
+      );
+    }
+  }
+  for (const { hook } of allHooks(ast)) {
+    if (!hook.tests) continue;
+    if (rows(hook.tests).length === 0) problem(hook.name, `Hook "${hook.name}" has a tests block with no rows: write refuse: ["<command>"] and/or allow: ["<command>"].`);
+    else if (rows(hook.tests).some((r) => r.trim() === "")) problem(hook.name, `Hook "${hook.name}" has an empty tests row: each row is a Bash command.`);
+    const why = !hook.run
+      ? "it has no run: script to feed"
+      : hook.type && hook.type !== "command"
+        ? `it is a ${hook.type} hook, not a command hook`
+        : hook.on !== "PreToolUse"
+          ? `it is on ${hook.on || "no event"}: the rows are fed as PreToolUse payloads`
+          : null;
+    if (why) problem(hook.name, `Hook "${hook.name}" has tests, but ${why}, so guard --test cannot run them.`);
+  }
+  return results;
+}
+
+/**
+ * V138: `mode: shadow | refuse` and `let-go: once` (with `lift: <human id>`)
+ * on a gate. They change what the generated check does, so a value it does not
+ * read, a gate no generated check holds (shadow and let-go do nothing there),
+ * and let-go with no human to give it, are errors rather than silent text.
+ * A hook runs the author's own script: mode and let-go on one are errors.
+ * Let-go reads the human's row from the gate's ledger, so it needs one, and a
+ * gate that holds a subagent launch (no unit is known there) needs a ledger
+ * path without `{unit}`.
+ */
+function v138GateMode(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const p = guardPlatformFor(opts);
+  const problem = (node: string, message: string) =>
+    results.push({ rule: "V138", level: "error", node, line: lookupLine(ast, node), message });
+  for (const { hook } of allHooks(ast)) {
+    if (hook.mode !== undefined || hook.letGo !== undefined) {
+      problem(hook.name, `Hook "${hook.name}" has ${hook.mode !== undefined ? "mode:" : "let-go:"}, which belongs to a gate: a hook runs your own script, so write the shadow or let-go behaviour in it.`);
+    }
+  }
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.mode !== undefined && gate.mode !== "shadow" && gate.mode !== "refuse") {
+      problem(gate.id, `Gate "${gate.id}" has mode: ${gate.mode}; use shadow (log what it would refuse, and let the step run) or refuse (the default).`);
+    }
+    if (gate.letGo !== undefined && gate.letGo !== "once") {
+      problem(gate.id, `Gate "${gate.id}" has let-go: ${gate.letGo}; the only value is once (one override per step).`);
+    }
+    const checks = gateChecks(ast, gate, p);
+    if ((gate.mode === "shadow" || gate.letGo !== undefined) && checks.length === 0) {
+      problem(
+        gate.id,
+        `Gate "${gate.id}" has ${gate.mode === "shadow" ? "mode: shadow" : "let-go:"}, but no generated check holds it, so it would do nothing: shadow and let-go work in before-action.sh (a script step in before:) and before-agent.sh (a subagent in before: with a run: script).`,
+      );
+    }
+    if (gate.lift !== undefined && gate.letGo === undefined) {
+      problem(gate.id, `Gate "${gate.id}" has lift: ${gate.lift} without let-go: once, so it lifts nothing.`);
+    }
+    if (gate.letGo === undefined) continue;
+    if (gate.lift !== undefined && !ast.nodes.some((n) => n.id === gate.lift && n.type === "human")) {
+      problem(gate.id, `Gate "${gate.id}" has lift: ${gate.lift}, which is not a declared human.`);
+      continue;
+    }
+    if (!letGoHuman(ast, gate)) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once but no human to give it: write lift: <human id>, or put a human in its after:.`);
+      continue;
+    }
+    const ledger = gateLedger(ast, gate);
+    if (!ledger) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once, which reads the human's row from the gate's ledger, but the gate has no ledger (name one with ledger:, and give the gate an after:).`);
+    } else if (checks.length > 0 && !checks.includes("action") && ledger.path.includes("{unit}")) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once, but it holds a subagent launch, where no unit is known, and its ledger path ${ledger.path} needs one. Use a ledger path without {unit}.`);
+    }
   }
   return results;
 }

@@ -79,6 +79,8 @@ export interface GuardItem {
   citation?: "cited" | "wired";
   /** Graded none only because its check script is still a scaffold stub (its sole problem): said on its own line, not counted missing (countsMissing). */
   stub?: boolean;
+  /** Every tests row of the gate matched in the last `guard --test --dir` run of this .at (0.13): said after `where`. Not a grade. */
+  tested?: boolean;
 }
 
 export interface GuardReport {
@@ -624,7 +626,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
   const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}${i.tested ? "  · tested" : ""}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${countsMissing(i) ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");

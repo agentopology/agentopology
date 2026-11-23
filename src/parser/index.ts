@@ -20,6 +20,7 @@ import type {
   ActionNode,
   AgentNode,
   GateNode,
+  GateTests,
   HumanNode,
   GroupNode,
   NodeDef,
@@ -746,7 +747,7 @@ export function parseAgent(
       if (_blockFieldMisuseWarnings) {
         detectSwallowedFields(hFields, `${id}.${hBlock.id}`, _blockFieldMisuseWarnings);
       }
-      const agentHook = hookFromFields(hBlock.id, hFields);
+      const agentHook = hookFromFields(hBlock.id, hFields, hBlock.body);
 
       // Parse extensions sub-block inside per-agent hook
       const hookExtensions = parseExtensionsBlock(hBlock.body);
@@ -833,6 +834,17 @@ export function parseAgent(
 }
 
 /**
+ * The `tests { refuse: [..] allow: [..] }` block of a gate or a hook, or
+ * undefined when there is none. A block with no rows reads as two empty lists
+ * (V137 reports it).
+ */
+function parseTestsBlock(body: string): GateTests | undefined {
+  const block = extractBlock(body, "tests");
+  if (!block) return undefined;
+  return { refuse: parseMultilineList(block.body, "refuse"), allow: parseMultilineList(block.body, "allow") };
+}
+
+/**
  * Parse a `gate <id> { ... }` block into a {@link GateNode}.
  */
 export function parseGate(
@@ -875,6 +887,11 @@ export function parseGate(
   if (fields.match) node.match = unquote(fields.match);
   if (fields.bypass) node.bypass = unquote(fields.bypass);
   if (fields.ledger) node.ledger = fields.ledger;
+  const tests = parseTestsBlock(body);
+  if (tests) node.tests = tests;
+  if (fields.mode) node.mode = fields.mode;
+  if (fields["let-go"]) node.letGo = fields["let-go"];
+  if (fields.lift) node.lift = fields.lift;
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -1620,7 +1637,8 @@ export function parseTriggers(body: string): TriggerDef[] {
  * Build a HookDef from a hook block's parsed fields. Shared by global and
  * per-agent hooks so the two cannot drift apart.
  */
-function hookFromFields(name: string, fields: Record<string, string>): HookDef {
+function hookFromFields(name: string, fields: Record<string, string>, body?: string): HookDef {
+  const tests = body ? parseTestsBlock(body) : undefined;
   return {
     name,
     on: fields.on ?? "",
@@ -1639,6 +1657,9 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     ...(fields.model ? { model: unquote(fields.model) } : {}),
     ...(fields.strength ? { strength: fields.strength } : {}),
     ...(fields.bypass ? { bypass: unquote(fields.bypass) } : {}),
+    ...(tests ? { tests } : {}),
+    ...(fields.mode ? { mode: fields.mode } : {}),
+    ...(fields["let-go"] ? { letGo: fields["let-go"] } : {}),
   };
 }
 
@@ -1659,7 +1680,7 @@ export function parseHooks(
     if (_blockFieldMisuseWarnings) {
       detectSwallowedFields(fields, block.id, _blockFieldMisuseWarnings);
     }
-    const hook = hookFromFields(block.id, fields);
+    const hook = hookFromFields(block.id, fields, block.body);
 
     // Parse extensions sub-block inside hook
     const extensions = parseExtensionsBlock(block.body);
