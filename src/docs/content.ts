@@ -373,7 +373,7 @@ action NAME {
 | source | string | no | -- | Source reference (file path or URL) |
 | description | string | no | -- | Human-readable description |
 | commands | string[] | no | -- | Shell commands to execute. The action's script runs each one as written (an interpreter flag, \`npx\` or \`env\` included). With none, an inline, decision or report action is done by the orchestrator in conversation (its script says so and is no stub); an external or git action scaffolds a stub, counted by validate and scaffold. A gate before this action guards them in Claude Code sessions |
-| unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\\\S+)"\`. Needs a capture group (V111) |
+| unit-from | string (regex) | no | -- | One capture group that reads the unit (an episode id, a ticket) from the command line, e.g. \`"./tool publish (\\S+)"\`. Needs a capture group (V111). Write one backslash: a string keeps its backslashes as written, so \`\\\\\` matches a literal backslash (V111 warns) |
 | timeout | string | no | -- | Duration string (e.g. "5m", "2h") |
 | on-fail | string | no | -- | "halt", "retry", "skip", "continue", "fallback <agent-id>" |
 | join | string | no | -- | Fan-in: "all", "any", "all-done", "none-failed" |
@@ -477,13 +477,17 @@ A gate whose \`before\` is an action with \`commands\` refuses that step in Clau
 action publish {
   kind: external
   commands: ["./tool publish"]
-  unit-from: "./tool publish (\\\\S+)"
+  unit-from: "./tool publish (\\S+)"
 }
 records {
   record trace { path: "logs/{unit}/trace.jsonl" }
 }
 gates {
-  gate publish-ready { after: render  before: publish  ledger: trace }
+  gate publish-ready {
+    after: render
+    before: publish
+    ledger: trace
+  }
 }
 \`\`\`
 

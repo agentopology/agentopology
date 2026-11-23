@@ -1697,6 +1697,16 @@ function v111UnitFromRegex(ast: TopologyAST): ValidationResult[] {
         line: lookupLine(ast, action.id),
       });
     }
+    // A string keeps its backslashes as written, so `\\S` is a literal backslash then S, not \S.
+    if (action.unitFrom.includes("\\\\")) {
+      results.push({
+        rule: "V111",
+        level: "warning",
+        message: `Action "${action.id}" has unit-from "${action.unitFrom}", which holds \\\\: a .at string keeps its backslashes as written, so the regex matches a literal backslash there and reads no unit from a command without one. Write one backslash (e.g. "(\\S+)").`,
+        node: action.id,
+        line: lookupLine(ast, action.id),
+      });
+    }
     // D-2: a ledger path with no {unit} holds every unit's records in one file, so it cannot tell them apart.
     for (const g of ast.nodes) {
       if (g.type !== "gate" || !guardedActions(ast, g as GateNode).some((a) => a.id === action.id)) continue;

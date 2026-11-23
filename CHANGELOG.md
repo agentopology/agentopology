@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Fixed
+
+- The docs' `unit-from` example now works as written: `unit-from: "./tool publish (\S+)"`, one backslash. The `gate` and `action` docs topics and the grammar showed `(\\S+)`; a `.at` string keeps its backslashes as written, so that regex matched only a command holding a literal backslash and read no unit from `./tool publish ep42`. The topic's gate example is also written one field per line, as V90 asks; on one line it did not validate.
+- `validate` warns (V111) when an action's `unit-from` holds a doubled backslash, as `"./tool publish (\\S+)"`: the regex then matches a literal backslash. Write one backslash. How strings are read is unchanged.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed
