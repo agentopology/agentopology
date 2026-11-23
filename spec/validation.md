@@ -202,6 +202,18 @@ agent writer {
 }
 ```
 
+A repo tool with a `command:` or a `script:` runs through Bash, so where Bash is disallowed it cannot run, and allowing it would widen what was denied. A skill whose `disallowed-tools` has `Bash` (or `Bash(...)`, which removes the whole tool on Claude Code) and that names such a tool in `scripts:` or `allowed-tools` is an error, and so is an agent with such `disallowed-tools` whose skill names one:
+
+```agenttopology
+# INVALID -- the skill needs Bash for run-tests; the agent disallows it
+agent builder {
+  disallowed-tools: [Bash]
+  skills: [testing]
+}
+skill testing { description: "Tests" scripts: [run-tests] }
+tools { tool run-tests { command: "npm test" description: "Run the suite" } }
+```
+
 ---
 
 ## Rule 15: Exhaustive Conditions
@@ -687,7 +699,7 @@ through the validator like any other rule.
 | V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
 | V12 | error | Edge attribute order must be [when, max, per] |
 | V13 | error | Gate `after` and `before` must reference declared nodes |
-| V14 | error | `tools` and `disallowed-tools` cannot both appear on the same agent |
+| V14 | error | `tools` and `disallowed-tools` cannot both appear on the same agent. Also: a skill whose `disallowed-tools` has `Bash` (or a `Bash(...)` entry, which removes the whole tool on Claude Code) names, in `scripts:` or `allowed-tools`, a repo tool with a `command:` or `script:` (it runs through Bash); or an agent with such `disallowed-tools` has a skill that does. The message names the agent, the skill and the tool |
 | V15 | error/warning | When a node has ONLY conditional outgoing edges, the conditions must |
 | V16 | error/warning | `api-key` must be a `${...}` env-var reference (no literal secrets) |
 | V17 | error/warning | At most one provider may have `default: true` |
@@ -803,7 +815,7 @@ through the validator like any other rule.
 | V127 | error | A human's `who:` is no `person` block, or a person's `away:` or a human's `valid:` is not a real `YYYY-MM-DD..YYYY-MM-DD` window |
 | V128 | error | An `inventory { roots }` entry is an absolute path, a home path (`~`) or holds `..`; a root must be a folder inside the project |
 | V129 | error | `needs memory:` is not a `~/<path>` under the user's home (an absolute path or `..` is refused), or a `user-skills` or `connectors` entry is a path instead of a bare name |
-| V130 | warning | The `.at` states something Claude Code cannot be given, so it is not written: an `extensions { claude-code }` key Claude Code does not have on that surface (topology = settings.json, agent = agent frontmatter, skill or `runs: inline/fork` agent = skill frontmatter; the message names the nearest key), a value of the wrong type or outside the documented values, a settings key a project's settings.json cannot set, or a claude-code extension on a hook or gate; and, for target claude-code or none, an agent's `sandbox` or `fallback-chain`, a `settings { sandbox }` that is not true/false, or a `settings { fallback-chain }` naming a model Claude Code cannot run; for a `from: plugin` MCP server: an agent's `mcp-servers` entry naming it (left out of `mcpServers`), a server that also sets `command`, `url` or other `.mcp.json` keys (not written), and a hook `matcher` that names it in a form scaffold cannot rewrite (a regex such as `mcp__(playwright\|x)__.*` or `mcp__play.*`, which matches the server's project-form names but none of its `mcp__plugin_<plugin>_<server>__` names, so it never fires); and a hook `if:` written in dotted form (`mcp.server.tool(…)`), which compiles to Claude Code's tool name since 0.12.2 where 0.12.1 wrote it as is and it never matched, so the hook now runs. The keys are in `src/bindings/claude-code-schema.ts` |
+| V130 | warning | The `.at` states something Claude Code cannot be given, so it is not written: an `extensions { claude-code }` key Claude Code does not have on that surface (topology = settings.json, agent = agent frontmatter, skill or `runs: inline/fork` agent = skill frontmatter; the message names the nearest key), a value of the wrong type or outside the documented values, a settings key a project's settings.json cannot set, or a claude-code extension on a hook or gate; and, for target claude-code or none, an agent's `sandbox` or `fallback-chain`, a `settings { sandbox }` that is not true/false, or a `settings { fallback-chain }` naming a model Claude Code cannot run, or a `tools { tool }` with neither `script:` nor `command:` (it compiles to nothing: no `Bash` and no allow rule for an agent or skill that names it); for a `from: plugin` MCP server: an agent's `mcp-servers` entry naming it (left out of `mcpServers`), a server that also sets `command`, `url` or other `.mcp.json` keys (not written), and a hook `matcher` that names it in a form scaffold cannot rewrite (a regex such as `mcp__(playwright\|x)__.*` or `mcp__play.*`, which matches the server's project-form names but none of its `mcp__plugin_<plugin>_<server>__` names, so it never fires); and a hook `if:` written in dotted form (`mcp.server.tool(…)`), which compiles to Claude Code's tool name since 0.12.2 where 0.12.1 wrote it as is and it never matched, so the hook now runs. The keys are in `src/bindings/claude-code-schema.ts` |
 | V131 | error | A block the source declares is not in the parse as written: a brace inside a quoted string, or a brace that does not balance, ends the topology or a block before its written end, so what follows would be dropped without a message. The message names the line where parsing stopped and the blocks that are not read (a `#` comment's braces are text and never count). The unused second copy of a single section, such as a second `gates { }` block, is a V23 warning and not reported here |
 | V132 | warning | A `permissions:` word whose Claude Code compile is not what it reads as (target claude-code or none). `permissions: auto` is Claude Code's auto mode (a classifier approves actions without asking) and compiles to `permissionMode: auto`; it is not a short form of `autonomous`, which writes no permissionMode. `permissions: interactive` writes no permissionMode (Claude Code asks) where it wrote `acceptEdits` before 0.12.2; the message names the old value and says to write `permissions: acceptEdits` to keep it |
 | V133 | error | An `mcp-servers` entry's `from:` is not an accepted form. The one accepted form is `from: plugin "<plugin-name>"` (the name may also be written bare, `from: plugin playwright`; a trailing comment is fine). Anything else, such as single quotes, `Plugin`, the whole value quoted, an empty or spaced name, or two names, would fall back to a project server and compile every ref to `mcp__<key>__`, so the agent silently loses the plugin's tools. The message names the expected form |

@@ -162,8 +162,14 @@ export interface SkillDef {
 export interface ToolBlockDef {
   /** Tool identifier. */
   id: string;
-  /** Path to the script that implements this tool. */
+  /** Path to the script that implements this tool ("" when none is given). */
   script: string;
+  /**
+   * The shell command that runs this tool (e.g. "npm test"). On Claude Code a
+   * tool with a command (or a script) is a Bash call: the agent gets `Bash`
+   * and settings.json gets the allow rule `Bash(<command> *)`.
+   */
+  command?: string;
   /** Positional arguments to pass to the script. */
   args?: string[];
   /** Script language (e.g. "bash", "python", "node"). */

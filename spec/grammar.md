@@ -1430,6 +1430,7 @@ Topology-level declaration of custom script-based tools. Agents reference these 
 tools-block     = 'tools' '{' tool-decl* '}'
 tool-decl       = 'tool' identifier '{' tool-decl-fields '}'
 tool-decl-fields = ('script' ':' string
+                   | 'command' ':' string
                    | 'args' ':' name-list
                    | 'description' ':' string
                    | 'lang' ':' tool-lang)*
@@ -1456,12 +1457,15 @@ tools {
 
 | Field | Type | Required | Default |
 |-------|------|----------|---------|
-| `script` | string | yes | -- |
+| `script` | string | no (one of `script`, `command`) | -- |
+| `command` | string | no (one of `script`, `command`) | -- |
 | `args` | name-list | no | `[]` |
 | `description` | string | no | -- |
 | `lang` | tool-lang | no | `auto` |
 
-**`script`** -- Path to the script file, relative to the output directory.
+**`script`** -- Path to the script file. A path with a folder other than `scripts/` (`tools/render.py`, `./x.sh`) is a project path; a bare name or `scripts/<name>` lives in the topology skill's scripts folder (claude-code: `.claude/skills/<topology>/scripts/`). Scaffold writes a stub there that fails until it is written (a project path is create-only).
+
+**`command`** -- The shell command that runs the tool, as `command: "npm test"`. A tool with a command needs no script, and no stub is written for it. When a tool has both, the command is the call that is allowed.
 
 **`lang`** -- Runtime hint. `auto` (default) infers from file extension (`.sh` -> bash, `.py` -> python, `.js`/`.ts` -> node). Explicit values override inference.
 
@@ -1473,6 +1477,16 @@ agent processor {
   tools: [Read, Write, run-tests, extract-data]
 }
 ```
+
+**How a repo tool compiles on claude-code.** Claude Code's subagent `tools:` field takes Claude Code tool names (`Read, Grep, Bash`), MCP entries (`mcp__github__*`) and `Agent(<type>)` (code.claude.com/docs/en/sub-agents); a repo tool's name is none of these, so it is never written there. A tool with a `command:` or a `script:` runs through Bash:
+
+- An agent whose `tools` names it gets `Bash` in its `tools:` (added once, unless the list already has it).
+- `.claude/settings.json` gets the permission allow rule for the call after the rules in `settings { allow }`, so it runs without a prompt: `Bash(<command> *)` for a command (which also matches the bare command, code.claude.com/docs/en/permissions; a command that holds a `*` is written as is), `Bash(<script path> *)` for a script, by its project path (with the interpreter when `script:` names one, as `Bash(python3 tools/x.py *)`).
+- A skill's `allowed-tools` (and a `runs: inline` or `runs: fork` agent's `tools`, written as `allowed-tools`) naming it gets that allow rule in its place.
+- A tool with neither `script:` nor `command:` compiles to nothing: it adds no `Bash` and no rule, and its name is left out (V130 warns). When it is an agent's only tool, the list is kept as written, since an empty `tools:` would give the agent every tool.
+- **Never widen.** A skill with `disallowed-tools: [Bash]` (or a `Bash(...)` entry, which removes the whole tool on Claude Code) that names a command or script tool in `scripts:` or `allowed-tools`, and an agent with such `disallowed-tools` whose skill does, are V14 errors naming the agent, the skill and the tool.
+
+Codex and Cursor write the tool's name in the agent's instructions as before, and its stub script when it has a script (none for a command-only tool).
 
 **LL(2) note:** `tools` is a block keyword. The parser sees `tools` `{` and enters the tools-block production. Inside, each `tool` `<identifier>` `{` starts a tool-decl. No ambiguity -- `tools` as a field keyword (in agent-fields) is always followed by `:`, while `tools` as a block keyword is followed by `{`.
 

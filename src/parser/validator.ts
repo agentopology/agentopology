@@ -22,6 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
+import { repoTool, toolAllowRule } from "../bindings/lib/repo-tools.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
@@ -768,6 +769,34 @@ function v14ToolExclusivity(ast: TopologyAST): ValidationResult[] {
         node: node.id,
         line: lookupLine(ast, node.id),
       });
+    }
+  }
+
+  // A repo tool with a command or a script runs through Bash (lib/repo-tools.ts).
+  // Where Bash is disallowed, a skill that uses such a tool cannot run it, and
+  // allowing it would widen what was denied: the allow and the deny clash.
+  // (A disallowed-tools entry with a specifier, Bash(...), removes the whole
+  // tool on Claude Code, so it counts too.)
+  const deniesBash = (list?: string[]) => (list ?? []).some((t) => t === "Bash" || t.startsWith("Bash("));
+  const bashTools = (skill: { scripts?: string[]; allowedTools?: string[] }) =>
+    [...new Set([...(skill.scripts ?? []), ...(skill.allowedTools ?? [])])].filter((id) => {
+      const tool = repoTool(ast, id);
+      return tool !== undefined && toolAllowRule(ast, tool) !== null;
+    });
+  for (const skill of ast.skills ?? []) {
+    if (!deniesBash(skill.disallowedTools)) continue;
+    for (const id of bashTools(skill))
+      results.push({ rule: "V14", level: "error", node: skill.id, line: lookupLine(ast, skill.id),
+        message: `Skill "${skill.id}" has disallowed-tools Bash and uses the tool "${id}", which runs through Bash — drop one` });
+  }
+  for (const node of ast.nodes) {
+    if (!isAgent(node) || !deniesBash(node.disallowedTools)) continue;
+    for (const sid of node.skills ?? []) {
+      const skill = (ast.skills ?? []).find((s) => s.id === sid);
+      if (!skill || deniesBash(skill.disallowedTools)) continue; // reported on the skill above
+      for (const id of bashTools(skill))
+        results.push({ rule: "V14", level: "error", node: node.id, line: lookupLine(ast, node.id),
+          message: `Agent "${node.id}" has disallowed-tools Bash, but its skill "${sid}" uses the tool "${id}", which runs through Bash — drop one` });
     }
   }
   return results;
@@ -4308,6 +4337,7 @@ function v123HomePaths(ast: TopologyAST): ValidationResult[] {
   }
   for (const t of ast.toolDefs ?? []) {
     check(`Tool "${t.id}" script`, t.id, t.script);
+    check(`Tool "${t.id}" command`, t.id, t.command);
     for (const a of t.args ?? []) check(`Tool "${t.id}" argument`, t.id, a);
   }
   return results;
@@ -4818,6 +4848,12 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
     }
     if (a.sandbox != null) warn(`agent "${a.id}" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled).`, a.id);
     if (a.fallbackChain && a.fallbackChain.length > 0) warn(`agent "${a.id}" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel.`, a.id);
+  }
+  // A repo tool with neither script: nor command: has nothing Claude Code can
+  // run: no Bash in an agent's tools and no allow rule (lib/repo-tools.ts).
+  for (const t of ast.toolDefs ?? []) {
+    if (toolAllowRule(ast, t) === null)
+      warn(`tool "${t.id}" has neither script: nor command:, so it compiles to nothing on Claude Code: an agent or skill that names it gets no Bash and no allow rule. Give it command: "<shell command>" or script: "<path>".`, t.id);
   }
   const s = ast.settings ?? {};
   if (s.sandbox != null && typeof s.sandbox !== "boolean")

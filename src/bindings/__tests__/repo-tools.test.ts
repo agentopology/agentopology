@@ -14,6 +14,7 @@ import { describe, it, expect, vi } from "vitest";
 import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { bindings } from "../index.js";
+import { serializeAST } from "../../import/serializer.js";
 import type { GeneratedFile } from "../types.js";
 
 function scaffold(src: string): GeneratedFile[] {
@@ -61,7 +62,10 @@ const P13 = `topology p13 : [pipeline] {
 }`;
 
 const commandTool = (agentTools: string, extra = "") => `topology cmd : [pipeline] {
-  meta { version: "0.1.0" description: "Command tool" }
+  meta {
+    version: "0.1.0"
+    description: "Command tool"
+  }
   agent builder {
     model: sonnet
     description: "Builds"
@@ -113,6 +117,16 @@ describe("a repo tool in an agent's tools", () => {
     const files = scaffold(commandTool("tools: [Read]", `skill t {\n    description: "T"\n    allowed-tools: ["Read", "run-tests"]\n  }`));
     const skill = file(files, ".claude/skills/t/SKILL.md")!;
     expect(frontmatterLine(skill.content, "allowed-tools")).toBe("allowed-tools: Read, Bash(npm test *)");
+  });
+});
+
+describe("command: is a tool field", () => {
+  it("parses, passes V102 and round-trips through the serializer", () => {
+    const ast = parse(commandTool("tools: [Read, run-tests]"));
+    expect(ast.toolDefs[0].command).toBe("npm test");
+    expect(validate(ast).filter((r) => r.level === "error")).toEqual([]);
+    const again = parse(serializeAST(ast));
+    expect(again.toolDefs[0]).toMatchObject({ id: "run-tests", command: "npm test", script: "" });
   });
 });
 
