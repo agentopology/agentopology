@@ -163,6 +163,24 @@ describe("a $CLAUDE_PROJECT_DIR script word is a project path, named by its base
     expect(hookCommand(run, "t")).toBe('python3 "$CLAUDE_PROJECT_DIR/tools/guard.py" --re "a\\\\d+"');
   });
 
+  // import writes `bash .claude/hooks/x.sh "a b"` as `run: "bash .claude/hooks/x.sh \"a b\""`: the
+  // arguments' \" are read as quotes whenever an interpreter's script names a file, quoted or not
+  it.each<[string, string[], string]>([
+    ['bash .claude/hooks/x.sh \\"$CLAUDE_PROJECT_DIR\\" \\"a b\\"', ['"$CLAUDE_PROJECT_DIR"', '"a', 'b"'], 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh" "$CLAUDE_PROJECT_DIR" "a b"'],
+    ["bash .claude/hooks/x.sh 'c d' 'it\\\"s'", ["'c", "d'", "'it\"s'"], "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh\" 'c d' 'it\"s'"],
+    ['bash .claude/hooks/x.sh \\"e\\\\"f\\" g', ['"e\\"f"', "g"], 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh" "e\\"f" g'],
+    ["bash .claude/hooks/x.sh '$HOME' \\\"\\$HOME\\\"",["'$HOME'", '"\\$HOME"'], 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/x.sh" \'$HOME\' "\\$HOME"'],
+    ['sh ./tools/x.sh \\"a b\\" --flag', ['"a', 'b"', "--flag"], 'sh "$CLAUDE_PROJECT_DIR/tools/x.sh" "a b" --flag'],
+    ['python3 -u /opt/g.py \\"a b\\"', ['"a', 'b"'], 'python3 -u /opt/g.py "a b"'],
+  ])("an unquoted script word, the arguments in a .at string's form: %s", (run, args, command) => {
+    expect(runParts(run).args).toEqual(args);
+    expect(hookCommand(run, "t")).toBe(command);
+  });
+
+  it("a run that names no file after its interpreter (a stub, which import flags) keeps its arguments as written, as 0.11.2 did", () => {
+    expect(runParts('bun run \\"$CLAUDE_PROJECT_DIR/x.ts\\"').args).toEqual(['\\"$CLAUDE_PROJECT_DIR/x.ts\\"']);
+  });
+
   it("after a word that is not an interpreter (`cd`), a variable path is left as written and names no script, as before", () => {
     const run = 'cd \\"$CLAUDE_PROJECT_DIR/web\\" && npm test';
     expect(runParts(run)).toEqual({ interpreter: "cd", script: '\\"$CLAUDE_PROJECT_DIR/web\\"', args: ["&&", "npm", "test"] });
