@@ -519,7 +519,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     console.error(c.red(`Error: unknown target "${target}".`));
     process.exit(1);
   }
-  const checked = validateResult(ast, path.resolve(filePath), target);
+  const checked = validateResult(ast, path.resolve(filePath), target, dir ? path.resolve(dir) : undefined);
   // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
   const ccExtra = !target || target === "claude-code" ? onFailureWarnings(ast) : [];
   const results = [...checked.results, ...ccExtra];

@@ -56,6 +56,7 @@ import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
+import { contextBlock, contextFilePath } from "./lib/context-block.js";
 import {
   AT_OWNED_TOPOLOGY_SKILL_KEYS, assertCcFrontmatter, ccKey, coerceCcValue, isClaudeCodeModelName, resolveSettingsKey, setSettingsPath, unknownSettingsPaths,
   type CcSurface, type FrontmatterFields,
@@ -3152,25 +3153,18 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
 /**
  * Generate context/instructions file inside `.claude/`.
  *
- * If `ast.context.file` is set and points inside `.claude/`, that path is
- * used.  Otherwise the file is written to `.claude/CONTEXT.md`.
- *
- * **Important**: We never generate a file at the project-root `CLAUDE.md`
- * because that is the user's own instructions file and overwriting it would
- * destroy their content.
+ * Always `.claude/rules/<topology>.md`. The project's own CLAUDE.md is the
+ * user's file: it is written only when `context { file }` names it, and then
+ * only as one marked block (see lib/context-block.ts), never as a whole.
  */
 function generateContextFile(ast: TopologyAST): GeneratedFile {
   // A rules file, one per topology: Claude Code loads .claude/rules/*.md like
   // CLAUDE.md, so the context still reaches every session, but it never
   // competes with the project's own CLAUDE.md or .claude/CLAUDE.md (it used to
   // be written to .claude/CLAUDE.md, a conflict in any project that had one).
-  const DEFAULT_PATH = `.claude/rules/${ast.topology.name}.md`;
-  let fileName = ast.context.file ?? DEFAULT_PATH;
-
-  // Safety: never overwrite the user's root-level CLAUDE.md
-  if (fileName === "CLAUDE.md" || fileName === "./CLAUDE.md") {
-    fileName = DEFAULT_PATH;
-  }
+  // The declared `file:` is written separately (generateContextBlockFile),
+  // as one marked block; the full description always goes to the rules file.
+  const fileName = `.claude/rules/${ast.topology.name}.md`;
   const sections: string[] = [];
 
   sections.push(`# ${toTitle(ast.topology.name)}`);
@@ -3833,6 +3827,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Context file (.claude/CONTEXT.md or custom — never root CLAUDE.md)
     files.push(generateContextFile(ast));
+    // `context { file }`: that file, as one marked block among the user's lines.
+    const contextPath = contextFilePath(ast);
+    if (contextPath) files.push({ path: contextPath, content: contextBlock(ast), category: "agent" });
 
     return deduplicateFiles(files);
 }

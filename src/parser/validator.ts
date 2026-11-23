@@ -19,6 +19,9 @@
  * @module
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { contextBlock, contextFilePath, mergeContextBlock } from "../bindings/lib/context-block.js";
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
@@ -133,7 +136,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "orchestrator-worker", "debate", "market-routing", "consensus",
   "fan-out", "event-driven", "human-gate", "brain",
   // Extension system keywords
-  "context", "extensions", "max-turns",
+  "context", "extensions", "max-turns", "max-lines", "glossary",
   "disable-model-invocation", "user-invocable", "allowed-tools",
   "domain", "fork",
   // Provider keywords
@@ -4072,6 +4075,8 @@ export interface ValidateOptions {
   importCache?: ImportCache;
   /** Binding target being compiled for. Target-specific warnings (rule ids CX*) appear only when it is set. */
   target?: string;
+  /** Project folder (`validate --dir`): rules that look at files in it run only when it is set. */
+  dir?: string;
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
@@ -4149,6 +4154,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137ContextIncludes(ast, opts),
+    ...v138ContextMaxLines(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4355,6 +4362,49 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     });
   }
   return results;
+}
+
+/**
+ * V137: a `context { includes }` path that does not exist in the project is a
+ * warning, checked only when a project folder is given (`validate --dir`).
+ * The file would import a path Claude Code cannot read. Paths starting with
+ * `~` name the user's home and are not checked.
+ */
+function v137ContextIncludes(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  if (!opts.dir) return [];
+  const results: ValidationResult[] = [];
+  for (const inc of ast.context.includes ?? []) {
+    if (inc.startsWith("~")) continue;
+    if (existsSync(resolvePath(opts.dir, inc))) continue;
+    results.push({
+      rule: "V137", level: "warning", node: "context", line: lookupLine(ast, "context"),
+      message: `context includes "${inc}", but no such file exists in ${opts.dir}; the generated @${inc} import points at nothing.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V138: the context file (the block plus the user's own lines) is longer than
+ * `max-lines`. With a project folder the file on disk is counted with the new
+ * block in it; without one, the block alone is.
+ */
+function v138ContextMaxLines(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const max = ast.context.maxLines;
+  const file = contextFilePath(ast);
+  if (max === undefined || !file) return [];
+  let text = contextBlock(ast);
+  if (opts.dir) {
+    try {
+      text = mergeContextBlock(readFileSync(resolvePath(opts.dir, file), "utf-8"), text);
+    } catch { /* no file yet: the block alone */ }
+  }
+  const lines = text.replace(/\n$/, "").split("\n").length;
+  if (lines <= max) return [];
+  return [{
+    rule: "V138", level: "warning", node: "context", line: lookupLine(ast, "context"),
+    message: `The context file "${file}" would be ${lines} lines (the generated block plus your own lines), over max-lines: ${max}. Shorten it or raise max-lines.`,
+  }];
 }
 
 /** V125 (L-2): a job carried by a session cannot outlive it. */

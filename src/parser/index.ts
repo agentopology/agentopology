@@ -1822,12 +1822,23 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
  *
  * Returns context file configuration with optional file path and includes list.
  */
-export function parseContext(body: string): { file?: string; includes?: string[] } {
+export function parseContext(body: string): TopologyAST["context"] {
   const fields = parseFields(body);
-  const result: { file?: string; includes?: string[] } = {};
+  const result: TopologyAST["context"] = {};
   if (fields.file) result.file = unquote(fields.file);
   const includes = parseMultilineList(body, "includes");
   if (includes.length) result.includes = includes;
+  const max = fields["max-lines"];
+  if (max !== undefined && /^\d+$/.test(max.trim())) result.maxLines = Number(max.trim());
+  const glossary = extractBlock(body, "glossary");
+  if (glossary) {
+    const terms: { term: string; definition: string }[] = [];
+    for (const line of glossary.body.split("\n")) {
+      const m = /^\s*"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/.exec(line);
+      if (m) terms.push({ term: m[1].replace(/\\(.)/g, "$1"), definition: m[2].replace(/\\(.)/g, "$1") });
+    }
+    if (terms.length) result.glossary = terms;
+  }
   return result;
 }
 

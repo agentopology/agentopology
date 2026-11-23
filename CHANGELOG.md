@@ -2,6 +2,18 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- A topology with `context { file: "CLAUDE.md" }` (or any `file:`) now gets that file written on claude-code. Before, the field validated and no CLAUDE.md was written. The file holds one block between `agentopology:context:begin` and `agentopology:context:end` markers; a missing file is created, an existing one keeps every line you wrote and only the block is replaced, and a file with no block gets it appended. Without `file:`, no CLAUDE.md is written, as before. The full topology description still goes to `.claude/rules/<topology>.md`, and a declared `file:` no longer receives that description in place of the rules file.
+
+### Added
+
+- `context { max-lines: N }` and `context { glossary { "term": "definition" } }`. The block names the entry agent (`meta { entry }`) with an instruction to start as it and `If no agent is named, start as <entry>.`, imports each `includes` path as an `@<path>` line, and lists the glossary.
+- V137 (warning): a `context { includes }` path that does not exist in the project, checked with `validate --dir`.
+- V138 (warning): the context file, the block plus your own lines, is longer than `max-lines`.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

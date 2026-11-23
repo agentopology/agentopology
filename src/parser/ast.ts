@@ -1161,6 +1161,10 @@ export interface TopologyAST {
     file?: string;
     /** Additional files to include in context. */
     includes?: string[];
+    /** Longest the context file may be, in lines (V138 warns above it). */
+    maxLines?: number;
+    /** Terms the context file defines, in the order written. */
+    glossary?: { term: string; definition: string }[];
   };
   /** Environment variables for the topology (plain strings or sensitive values). */
   env: Record<string, string | SensitiveValue>;

@@ -2698,6 +2698,46 @@ defaults {
   // -------------------------------------------------------------------------
   // 26. observability
   // -------------------------------------------------------------------------
+  context: {
+    name: "context",
+    description: "The context file (CLAUDE.md): one generated block, the rest yours",
+    content: () => `# context
+
+The \`context\` block makes the Claude Code binding write a context file. Without \`file:\`, no CLAUDE.md is written.
+
+## Syntax
+
+\`\`\`at
+context {
+  file: "CLAUDE.md"
+  includes: [docs/style.md]
+  max-lines: 200
+  glossary {
+    "ticket": "A unit of customer work"
+  }
+}
+\`\`\`
+
+## Fields
+
+| Field | Description |
+|-------|-------------|
+| \`file\` | The file to write the block into |
+| \`includes\` | Project files the block imports, one \`@<path>\` line each |
+| \`max-lines\` | Longest the file may be (V138 warns above it) |
+| \`glossary\` | \`"term": "definition"\` pairs, written as a list |
+
+## What is written
+
+One block between \`agentopology:context:begin\` and \`agentopology:context:end\` markers: the entry agent (\`meta { entry }\`) with an instruction to start as it and \`If no agent is named, start as <entry>.\`, the imports, and the glossary. A missing file is created; in an existing file only the text between the markers is replaced and every other line is kept; a file with no block gets it appended.
+
+## Validation Rules
+
+- **V137**: warning, an include that is not in the project (\`validate --dir\`)
+- **V138**: warning, the file is longer than \`max-lines\`
+`,
+  },
+
   observability: {
     name: "observability",
     description: "Tracing and observability configuration",
@@ -3392,6 +3432,16 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Context Include Missing (warning)
+A \`context { includes }\` path does not exist in the project. Checked only with \`validate --dir <project>\`. The generated \`@<path>\` import in the context file would point at nothing.
+
+**Fix:** Create the file or correct the path.
+
+### V138: Context File Too Long (warning)
+The context file (the generated block plus your own lines) is longer than \`context { max-lines }\`.
+
+**Fix:** Shorten the file or raise \`max-lines\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3479,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | warning | Context Include Missing |
+| V138 | warning | Context File Too Long |
 `,
   },
 
@@ -3642,7 +3694,7 @@ outputs     skip        retry             isolation phase
 kind        role        version           description
 permissions prompt      generates         handles   argument
 behavior    invocation  background        skills    sandbox
-fallback-chain max-turns
+fallback-chain max-turns   max-lines   glossary
 \`\`\`
 
 ### Flow & Edge Fields

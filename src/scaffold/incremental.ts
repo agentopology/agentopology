@@ -47,6 +47,8 @@ import {
 } from "./merge.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
 
+import { contextSpan, mergeContextBlock } from "../bindings/lib/context-block.js";
+
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
 
@@ -182,6 +184,17 @@ export function computeIncrementalPlan(
 
     if (existingContent === file.content) {
       actions.push({ type: "unchanged", path: file.path });
+      continue;
+    }
+
+    // The context file (CLAUDE.md): only the block between the markers is
+    // scaffold's, with or without a manifest entry; every other line is the
+    // user's. A file with no block gets it appended.
+    if (contextSpan(file.content)) {
+      const merged = mergeContextBlock(existingContent, file.content);
+      actions.push(merged === existingContent
+        ? { type: "unchanged", path: file.path }
+        : { type: "update", path: file.path, content: merged, detail: "context block updated" });
       continue;
     }
 
