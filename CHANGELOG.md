@@ -2,6 +2,15 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- `scaffold` now removes the generated hooks it no longer generates, and never touches a hook it did not write. The scaffold manifest records every hook entry scaffold writes to `.claude/settings.json` (and `.codex/hooks.json` for Codex) as its event, matcher and command, exactly as written. On the next run, a recorded entry the `.at` still generates stays where it is, as the file has it; a recorded entry the `.at` no longer generates (a hook dropped, moved to another matcher or event, or given another command) is removed, with a line per entry, as `- removed generated hook PreToolUse Bash bash "$CLAUDE_PROJECT_DIR/tools/lint.sh"`. This includes the last hook of a `.at` that no longer writes the hooks file at all. Before, a re-scaffold kept an old generated entry in several of these cases, and it kept firing.
+- An entry that is not in the record is yours, whatever it runs: it is never removed or changed. That includes a hook you add by hand that runs a script the `.at` names as your own file (a `run:` on `.claude/hooks/x.sh`), which the next `scaffold` could remove without a message, and a hook whose command equals a generated one under another matcher, which was replaced by the generated entry. When your entry equals one the `.at` generates (same event, matcher and command), scaffold keeps yours, does not write a second one, and says so on every run. A generated entry you edit (its command or its matcher) becomes yours: it is kept and said as kept, and while the `.at` still generates the original, the original is written again beside it.
+- A recorded entry keeps the `timeout` and `if` the file has, as before: a change of either in the `.at` does not reach an entry already in the file.
+- Upgrading: a project scaffolded by 0.12.x has a manifest with no hook record. Its first scaffold with this version merges the hooks exactly as 0.12.6 did, then writes the record, so later runs own exactly what was written. A project with no manifest (a hand-built harness, or a manifest you deleted) has nothing recorded: every hook already in its files is yours, and a hook that equals a generated one is said on each run. `guard --target` keeps the same record.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

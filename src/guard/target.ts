@@ -24,7 +24,7 @@ import { codexBinding } from "../bindings/codex.js";
 import type { GeneratedFile } from "../bindings/types.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, type ExecuteResult } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, type ExecuteResult } from "../scaffold/incremental.js";
 import type { FileAction, ScaffoldManifest } from "../scaffold/types.js";
 import { undeclaredRuleNotice, recordNamedRules, type RuleNotice } from "../scaffold/undeclared.js";
 
@@ -185,9 +185,16 @@ export function applyGuardTarget(plan: GuardTargetPlan, root: string, source: st
     // guard writes no agent, skill or command file: scaffold's per-key base stays as it was.
     ...(previous?.fields ? { fields: previous.fields } : {}),
   };
+  // The hook entries written to the hooks file, as scaffold records them.
+  const hooks = nextManifestHooks(plan.actions, previous, result);
+  if (Object.keys(hooks).length > 0) manifest.hooks = hooks;
   recordNamedRules(manifest.files, plan.notice?.named ?? null);
   // A timestamp alone is not a change: a rerun that did nothing writes nothing.
-  const same = previous && previous.sourceHash === manifest.sourceHash && JSON.stringify(previous.files) === JSON.stringify(manifest.files);
+  const same =
+    previous &&
+    previous.sourceHash === manifest.sourceHash &&
+    JSON.stringify(previous.files) === JSON.stringify(manifest.files) &&
+    JSON.stringify(previous.hooks ?? null) === JSON.stringify(manifest.hooks ?? null);
   if (!same) writeManifest(root, target, manifest);
   return result;
 }
