@@ -9,7 +9,7 @@
  * other name with the block it sits in.
  *
  * Blocks whose contents are free-form or not yet listed (prompt, extensions,
- * settings, env, mcp-servers, memory, providers, ...) are not looked inside;
+ * env, mcp-servers, memory, providers, ...) are not looked inside;
  * their own name is still checked where they sit.
  *
  * @module
@@ -118,10 +118,15 @@ const TOPOLOGY: BlockSchema = {
     tools: { fields: [], blocks: { tool: NODE_SCHEMAS.tool } },
     // Not in the grammar, but the parser reads the skills inside it.
     skills: { fields: [], blocks: { skill: NODE_SCHEMAS.skill } },
+    // What parseSettings reads. An `env { }` inside it warns on its own (its
+    // keys are not written to settings.json; the topology env is top-level).
+    settings: { fields: ["allow", "deny", "ask", "sandbox", "fallback-chain"], blocks: { env: OPAQUE } },
+    // What parseMetering reads.
+    metering: { fields: ["track", "per", "output", "format", "pricing"] },
     // Sections whose contents are not checked yet.
     roles: OPAQUE, flow: OPAQUE, depth: OPAQUE, memory: OPAQUE, batch: OPAQUE,
-    environments: OPAQUE, triggers: OPAQUE, settings: OPAQUE, "mcp-servers": OPAQUE,
-    metering: OPAQUE, context: OPAQUE, env: OPAQUE, providers: OPAQUE,
+    environments: OPAQUE, triggers: OPAQUE, "mcp-servers": OPAQUE,
+    context: OPAQUE, env: OPAQUE, providers: OPAQUE,
     interfaces: OPAQUE, defaults: OPAQUE, schemas: OPAQUE, observability: OPAQUE,
     checkpoint: OPAQUE, extensions: OPAQUE, params: OPAQUE, interface: OPAQUE,
     // Children of a misplaced container keyword are reported by V98 instead.

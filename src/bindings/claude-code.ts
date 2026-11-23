@@ -31,7 +31,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
-import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE, STUB_BLOCKS_ON, blockingHookStubMessage, denyingHookStubMessage, denyOnExit2 } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import { overrideMessage, telemetryPlan } from "./lib/claude-code-telemetry.js";
@@ -195,6 +195,11 @@ function isCommandHook(hook: HookDef): boolean {
   return (hook.type ?? "command") === "command";
 }
 
+/** A `strength: refuse` command hook on PermissionRequest (not async): it refuses by the deny decision, never by exit 2. */
+function deniesPermission(hook: HookDef): boolean {
+  return hook.strength === "refuse" && claudeEvent(hook.on) === "PermissionRequest" && !hook.async && isCommandHook(hook);
+}
+
 /** A settings.json hook handler, in the shape Claude Code reads for its type. */
 function hookHandler(hook: HookDef, command: () => string): Record<string, unknown> {
   const timeout = hook.timeout ? { timeout: hook.timeout } : {};
@@ -214,7 +219,9 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
       // F-14: a refuse hook on PreToolUse that cannot start, times out or exits other than 0/2 blocks the
       // call (onFailure, Claude Code 2.1.295+) instead of letting it run. No effect on async hooks.
       const block = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !hook.async ? { onFailure: "block" } : {};
-      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
+      // A refuse hook on PermissionRequest denies through the decision object: exit 2 alone denies nothing there.
+      const cmd = deniesPermission(hook) ? denyOnExit2(command(), hook.name) : command();
+      return { type: "command", command: cmd, ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
     }
   }
 }
@@ -493,15 +500,27 @@ function workflowRunLabel(ast: TopologyAST, run: number[]): string {
   return run.length === 1 ? `phase-${run[0]}` : `phases-${run[0]}-${run[run.length - 1]}`;
 }
 
+/** Claude Code's own permissionMode values (sub-agents frontmatter and `--permission-mode`). */
+export const CLAUDE_CODE_PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+
+/**
+ * The frontmatter permissionMode an agent's `permission-mode:` writes: one of
+ * Claude Code's own values, as written; `default` and an unknown value (V113)
+ * write none.
+ */
+export function nativePermissionMode(mode: string): string | undefined {
+  return CLAUDE_CODE_PERMISSION_MODES.includes(mode) && mode !== "default" ? mode : undefined;
+}
+
 /**
  * Map topology permission strings to Claude Code permissionMode values.
  * Returns undefined when the permission mode should be omitted (the session's
  * own mode: default, autonomous, confirm, interactive). `auto` is Claude
  * Code's auto mode, not a short form of `autonomous` (V132).
  */
-function mapPermissionMode(perm: string): string | undefined {
+export function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
-  const nativeValues = ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
+  const nativeValues = CLAUDE_CODE_PERMISSION_MODES;
   if (nativeValues.includes(perm)) {
     // "default" is the default, omit it
     if (perm === "default") return undefined;
@@ -737,6 +756,23 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
             `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
             `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
         );
+      }
+    }
+    // `permission-mode:` is Claude Code's own word, written as is. A session
+    // agent's goes on its start line (--permission-mode) instead. When it and
+    // `permissions:` both map to a mode they agree (V113 refuses a mismatch),
+    // so there is one key.
+    if (agent.permissionMode && agent.runs !== "session") {
+      const mode = nativePermissionMode(agent.permissionMode);
+      if (mode && fm.permissionMode !== mode) {
+        fm.permissionMode = mode;
+        if (LOOSER_MODES.has(mode)) {
+          console.warn(
+            `[claude-code] Agent "${agent.id}" permission-mode: ${agent.permissionMode} compiles to permissionMode ${mode}. ` +
+              `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
+              `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
+          );
+        }
       }
     }
     // thinking is the language's reasoning-effort field; Claude Code calls it effort.
@@ -1580,6 +1616,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
       // Read back by import, so a gate written strength: hope (V135) stays one.
       if (gate.strength) sections.push(`Strength: ${gate.strength}`);
+      // The declared way around the gate, read back by import too.
+      if (gate.bypass) sections.push(`Bypass: ${gate.bypass}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
         sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
@@ -2131,13 +2169,16 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
 /**
  * Generate an observability-aware hook stub (Changes 4+5).
  *
- * For SubagentStop/Stop hooks: extract agent_type from the Claude Code stdin
- * JSON payload and export as AGENT_TYPE, then append a metrics.jsonl entry.
- * For other events: emit a simple TODO stub.
+ * For SubagentStop/Stop hooks with no strength or `strength: detect`: extract
+ * agent_type from the Claude Code stdin JSON payload and export as AGENT_TYPE,
+ * then append a metrics.jsonl entry (real work, so no stub marker).
+ * For other events, and for a Stop/SubagentStop hook declared `strength:
+ * refuse` (a logger there looked wired and refused nothing): the regular stub,
+ * marked and exiting 1, so the stub count and guard --check see it.
  */
-function observabilityStub(hookName: string, eventName: string, matcherHint: string): string {
+function observabilityStub(hookName: string, eventName: string, matcherHint: string, strength?: string, blocking?: string): string {
   const isFinishEvent = eventName === "SubagentStop" || eventName === "Stop";
-  if (isFinishEvent) {
+  if (isFinishEvent && strength !== "refuse") {
     return [
       "#!/usr/bin/env bash",
       `# Auto-generated by agentopology scaffold`,
@@ -2166,10 +2207,22 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
     'PAYLOAD=$(cat)',
     'AGENT_TYPE=$(echo "$PAYLOAD" | jq -r \'.agent_type // "unknown"\')',
     "",
-    `echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`,
-    "exit 1",
+    ...(blocking
+      // A refuse hook on an event exit 2 blocks: unwritten, it blocks (as a gate's stub does).
+      ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+      : [`echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`, "exit 1"]),
     "",
   ].join("\n");
+}
+
+/**
+ * The stderr line of an unwritten refuse hook script that blocks its call, or
+ * undefined: only a `strength: refuse` hook on an event where exit 2 blocks
+ * (STUB_BLOCKS_ON; never Stop or SubagentStop) gets one.
+ */
+function blockingStub(hook: HookDef, path: string): string | undefined {
+  const event = claudeEvent(hook.on);
+  return hook.strength === "refuse" && STUB_BLOCKS_ON.has(event) ? blockingHookStubMessage(hook.name, event, path) : undefined;
 }
 
 /**
@@ -2329,11 +2382,14 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         : null;
     if (!filePath) continue;
 
+    const blocking = blockingStub(hook, filePath);
     files.push({
       path: filePath,
-      content: interp === "bash"
-        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""))
-        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+      content: deniesPermission(hook)
+        ? scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { deny: denyingHookStubMessage(hook.name, filePath) })
+        : interp === "bash"
+        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""), hook.strength, blocking)
+        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, blocking ? { fail: true, message: blocking } : {}),
       category: "script",
       stub: "hook",
       executable: true,
@@ -2341,7 +2397,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
       // fills the gap until it exists. --force used to overwrite it.
       ...(isProjectPath(script) ? { createOnly: true } : {}),
       // At the generated path too, once the user writes it, it is theirs
-      // (the Stop/SubagentStop stub carries no stub marker to say so).
+      // (the Stop/SubagentStop logger carries no stub marker to say so).
       userScript: true,
     });
   }
@@ -2364,17 +2420,22 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
       if (isShellCommand(hook.run)) continue; // run as written: no script to stub
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
+      const path = `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`;
+      const blocking = blockingStub(hook, path);
       files.push({
-        path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
-        content: [
+        path,
+        content: deniesPermission(hook)
+          ? scriptStub(`Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`, "bash", { deny: denyingHookStubMessage(hook.name, path) })
+          : [
           "#!/usr/bin/env bash",
           `# Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`,
           "# Auto-generated by agentopology scaffold — edit as needed.",
           STUB_MARKER,
           'set -euo pipefail',
           "",
-          `echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`,
-          "exit 1",
+          ...(blocking
+            ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+            : [`echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`, "exit 1"]),
           "",
         ].join("\n"),
         category: "script",
