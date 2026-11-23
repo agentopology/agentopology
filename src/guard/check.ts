@@ -27,6 +27,8 @@
  */
 
 import * as fs from "node:fs";
+import { gateJudgeId, independentAgentIds, judgePairs } from "../parser/independence.js";
+import { independenceFlagCount } from "./independence.js";
 import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
@@ -93,6 +95,8 @@ export interface GuardReport {
    * them in hooks { } with a strength and cite them with [guard: name].
    */
   unattributed: string[];
+  /** Not-independent flags in logs/independence.jsonl; set only when the topology has an independent agent or a judge. */
+  independenceFlags?: number;
   verifiedOn: string;
   /** allow / deny / ask lists at the top level of a settings file, where Claude Code does not read them: warning lines (warn only). */
   topLevel?: string[];
@@ -498,7 +502,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     const item = gateItem(gate.id)!;
     if (gate.at) {
       const bad = citationProblem(root, gate.at, gate.match);
-      const by = (gate.by ?? "code") as GuardItem["by"];
+      const by = (gateJudgeId(gate) ? "code" : gate.by ?? "code") as GuardItem["by"];
       const notes = bad ? [bad] : [CITED_NOTE, ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
       if (item.strength !== "refuse" || bad) {
         // 0.12.4: a citation alone is the file's claim: cited, never refuse.
@@ -601,6 +605,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     unattributed,
     verifiedOn: VERIFIED_ON,
     ...(topLevel.length ? { topLevel } : {}),
+    ...(independentAgentIds(ast).length || judgePairs(ast).length ? { independenceFlags: independenceFlagCount(root) } : {}),
   };
 }
 
@@ -655,7 +660,8 @@ export function renderGuardReport(report: GuardReport): string[] {
   // How a cited gate comes to count, on Claude Code (Codex grades its own hooks unverified): after the mark.
   const how = cited && !report.platform ? [`${cited} gate(s) cite code that no hook of their own runs; to count one, ${CITED_HOW}`] : [];
   // Warn only, after the mark: a rule's own text never draws the installed-version mark.
-  return [...graded, ...how, ...(report.topLevel ?? [])];
+  const indep = report.independenceFlags === undefined ? [] : [`${report.independenceFlags} independence flag${report.independenceFlags === 1 ? "" : "s"} (logs/independence.jsonl): independence is flagged, not enforced`];
+  return [...graded, ...indep, ...how, ...(report.topLevel ?? [])];
 }
 
 /** One item of a guard report as page data. */

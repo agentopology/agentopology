@@ -17,6 +17,7 @@
 
 import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
+import { judgePairs } from "../../parser/independence.js";
 import { gateLedger, guardedActions } from "../../parser/ledger.js";
 import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
@@ -312,6 +313,23 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
   const steps = new Map<string, string[]>();
   const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
 
+  // Independence is flagged, never refused: a judge (a gate's by: agent) launched in a session
+  // whose launch log already shows an agent it judges is logged and warned about, and runs.
+  const logLaunches = p.id === "claude-code" && judgePairs(ast).some((j) => j.judges.length > 0 && isRegisteredSubagentType(ast, j.judge, p));
+  if (logLaunches) {
+    for (const j of judgePairs(ast)) {
+      if (!isRegisteredSubagentType(ast, j.judge, p)) continue;
+      for (const judged of j.judges) {
+        add(j.judge, [
+          `    # independence (gate ${j.gate}): ${j.judge} judges ${judged}; flag, never refuse`,
+          `    if [ -n "$SESSION" ] && [ -f logs/launches.jsonl ] && [ "$(jq -rs --arg s "$SESSION" --arg a ${shellQuote(judged)} '[.[] | select(.session_id == $s and .agent == $a)] | length > 0' logs/launches.jsonl 2>/dev/null)" = true ]; then`,
+          `      echo ${shellQuote(`agentopology: not-independent: "${j.judge}" judges "${judged}" but both were launched in this session. Independence is flagged, not enforced; the launch goes ahead.`)} >&2`,
+          `      { [ ! -L logs ] && [ ! -L logs/independence.jsonl ] && mkdir -p logs && jq -cn --arg s "$SESSION" --arg a ${shellQuote(j.judge)} --arg j ${shellQuote(judged)} --arg g ${shellQuote(j.gate)} '{flag: "not-independent", session_id: $s, agent: $a, judges: $j, gate: $g, ts: (now | todate)}' >> logs/independence.jsonl; } 2>/dev/null || true`,
+          "    fi",
+        ]);
+      }
+    }
+  }
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
@@ -358,7 +376,22 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     // Bad input must not read as "no agent": a failed hook lets the call through (Codex, probe P10).
     // R-12, F-15, F-14 (every platform): normalized (format characters, case, space, a leading path,
     // trailing punctuation), so " Reviewer ", "re\u200bviewer" and "agents/reviewer:" are still reviewer.
-    `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
+    ...(logLaunches
+      ? [
+          'INPUT=$(cat)',
+          `AGENT=$(printf '%s' "$INPUT" | jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
+          `SESSION=$(printf '%s' "$INPUT" | jq -r '(.session_id // "") | strings' 2>/dev/null || true)`,
+        ]
+      : [`AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`]),
+    ...(logLaunches
+      ? [
+          "# Every launch is logged (session, agent, time); a failed write never blocks a launch.",
+          `if [ -n "$AGENT" ] && [ ! -L logs ] && [ ! -L logs/launches.jsonl ]; then`,
+          `  { mkdir -p logs && jq -cn --arg s "$SESSION" --arg a "$AGENT" '{session_id: $s, agent: $a, ts: (now | todate)}' >> logs/launches.jsonl; } 2>/dev/null || true`,
+          "fi",
+          "# The judge's check reads the log without this launch in it: it only looks for other agents.",
+        ]
+      : []),
     "",
     ...(p.supportsAsk
       ? [

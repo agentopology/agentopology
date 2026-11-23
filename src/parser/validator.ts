@@ -26,6 +26,7 @@ import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun 
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, guardedActions } from "./ledger.js";
+import { judgePairs } from "./independence.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
@@ -1498,9 +1499,11 @@ function v104StrengthWords(ast: TopologyAST): ValidationResult[] {
   const check = (owner: string, field: "strength" | "by", value: string | undefined, nodeId?: string) => {
     const words = field === "strength" ? STRENGTHS : ENFORCED_BY;
     if (value === undefined || words.includes(value)) return;
+    // A gate's by: may also name the agent that judges (independence, V137).
+    if (field === "by" && ast.nodes.some((n) => n.type === "agent" && n.id === value)) return;
     results.push({
       rule: "V104", level: "error",
-      message: `${owner} has ${field}: ${value} — it must be one of ${words.join(", ")}.`,
+      message: `${owner} has ${field}: ${value} — it must be one of ${words.join(", ")}${field === "by" ? ", or the id of a declared agent that judges" : ""}.`,
       ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
     });
   };
@@ -4149,6 +4152,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137JudgeIsAuthor(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4352,6 +4356,23 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     results.push({
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V137: a gate's `by:` agent (the judge) must not be the agent the gate comes
+ * after, whose work it judges: an agent cannot be independent of itself.
+ * (A `by:` naming no declared agent is V104.)
+ */
+function v137JudgeIsAuthor(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const j of judgePairs(ast)) {
+    if (!j.judges.includes(j.judge)) continue;
+    results.push({
+      rule: "V137", level: "error", node: j.gate, line: lookupLine(ast, j.gate),
+      message: `Gate "${j.gate}" has by: ${j.judge} and after: ${j.judge}: the agent that judges is the agent whose work it judges. Name a different agent in by:.`,
     });
   }
   return results;

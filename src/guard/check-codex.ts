@@ -14,6 +14,7 @@
  */
 
 import * as fs from "node:fs";
+import { gateJudgeId } from "../parser/independence.js";
 import { join } from "node:path";
 import type { GateNode, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
@@ -112,7 +113,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
     if (!gate.at) continue;
     const item = items.find((i) => i.kind === "gate" && i.id === gate.id)!;
     const bad = citationProblem(root, gate.at, gate.match);
-    const by = (gate.by ?? "code") as GuardItem["by"];
+    const by = (gateJudgeId(gate) ? "code" : gate.by ?? "code") as GuardItem["by"];
     const notes = bad ? [bad] : [CITED_NOTE, ...(gate.bypass ? [`bypass: ${gate.bypass}`] : [])];
     if (bad || item.strength === "hope" || item.strength === "none") {
       // 0.12.4: a citation alone is the file's claim: cited, as on Claude Code (it read unverified).

@@ -2,6 +2,14 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- A gate's `by:` can name the agent that judges the work of its `after:` agent, next to the mechanism words `code`, `hook`, `settings` and `gate`. For an agent with `independent: true`, independence is flagged, not enforced: the generated `before-agent.sh` hook logs every launch (`session_id`, `agent`, `ts`) to `logs/launches.jsonl`; when the judge is launched in a session whose log also shows the judged agent, it warns on stderr, appends `{flag: "not-independent", ...}` to `logs/independence.jsonl` and lets the launch run (exit 0). It reads the session id and the agent name from the hook input, so it needs `jq` and a Claude Code that gives the hook a `session_id`; a launch it cannot read is not logged. Only the Claude Code binding writes this.
+- `validate` prints, for each independent agent, that independence is flagged, not enforced. `guard --check` shows the number of flags in `logs/independence.jsonl`.
+- V137 is a new error: a gate's `by:` agent is the same agent as its `after:` agent. A `by:` that names no declared agent and no mechanism word is the existing V104 error.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

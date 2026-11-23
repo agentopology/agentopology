@@ -64,6 +64,7 @@ import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
+import { independenceLines } from "../guard/independence.js";
 import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
@@ -571,6 +572,9 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
  * validate and scaffold cannot disagree. Changes no exit code.
  */
 function printStubPlan(ast: TopologyAST, target: string | undefined, dir: string | undefined): void {
+  const independence = independenceLines(ast);
+  for (const line of independence) console.log(`  ${c.yellow(line)}`);
+  if (independence.length) console.log("");
   const t = target ?? "claude-code";
   const plan = plannedStubs(ast, t, dir ? path.resolve(dir) : undefined);
   const lines = plan ? stubPlanLines(plan, t) : [];

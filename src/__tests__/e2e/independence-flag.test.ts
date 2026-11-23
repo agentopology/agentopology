@@ -21,8 +21,14 @@ import { independenceLines } from "../../guard/independence.js";
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 
 const topo = (gate: string) => `topology review-flow : [pipeline] {
-  meta { version: "1.0.0" description: "author then judge" }
-  orchestrator { model: sonnet handles: [author, judge] }
+  meta {
+    version: "1.0.0"
+    description: "author then judge"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [author, judge]
+  }
   agent author {
     model: sonnet
     description: "Writes the draft"

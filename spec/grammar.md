@@ -1054,7 +1054,7 @@ gates {
 | `behavior` | `advisory` / `blocking` | no | `blocking` | Advisory gates never block |
 | `description` | string | no | -- | What the gate checks, in words. Prose goes here, never in `run` (V96) |
 | `strength` | `refuse` / `detect` / `hope` / `none` | no | -- | What stops the step, as written down (V104). See "Enforcement" below |
-| `by` | `code` / `hook` / `settings` / `gate` | no | -- | Which mechanism refuses (V104) |
+| `by` | `code` / `hook` / `settings` / `gate`, or an agent id | no | -- | Which mechanism refuses (V104); or the agent that judges the work of `after:` (V104 if undeclared, V137 if it is the `after:` agent). Independence is flagged, not enforced: when the judge is launched in a session whose launch log (`logs/launches.jsonl`) also shows an `after:` agent, the before-agent hook warns on stderr, appends `{flag: "not-independent"}` to `logs/independence.jsonl` and lets the launch run |
 | `at` | `"path"` or `"path:line"` | no | -- | The code that refuses, project-relative (V106) |
 | `match` | string | no | -- | Text expected within 5 lines of `at`, so a refactor that removes the check is caught. Needs `at` (V106) |
 | `bypass` | string | no | -- | The declared way around it (an env switch, a flag) |

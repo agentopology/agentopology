@@ -393,6 +393,7 @@ action NAME {
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
 - **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
+- **V137**: error, a gate's \`by:\` agent is also its \`after:\` agent: the judge is the author
 
 ## Example
 
@@ -450,7 +451,7 @@ gates {
 | run | string | no | -- | Script to execute for the check |
 | description | string | no | -- | What the gate checks, in words (prose goes here, never in \`run\`: V96) |
 | strength | refuse / detect / hope / none | no | -- | What stops the step, as written down (V104) |
-| by | code / hook / settings / gate | no | -- | Which mechanism refuses (V104) |
+| by | code / hook / settings / gate, or an agent id | no | -- | Which mechanism refuses (V104); or the agent that judges the work of \`after:\`. Independence is flagged, not enforced: when the judge is launched in a session where an \`after:\` agent was also launched, the before-agent hook warns, appends a line to \`logs/independence.jsonl\` and lets the launch run (V137: the judge may not be the \`after:\` agent) |
 | at | "path" or "path:line" | no | -- | The code that refuses, project-relative (V106) |
 | match | string | no | -- | Text expected near \`at\`; needs \`at\` (V106) |
 | bypass | string | no | -- | The declared way around it (an env switch, a flag) |
@@ -3392,6 +3393,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Judge Is Author (error)
+A gate's \`by:\` names the agent that judges, and it is the same agent as the gate's \`after:\`, whose work it judges. A \`by:\` naming no declared agent (and no mechanism word) is V104. Independence is flagged, not enforced: the before-agent hook logs launches to \`logs/launches.jsonl\` and writes \`logs/independence.jsonl\` when the judge is launched in a session that also launched the judged agent.
+
+**Violation:** \`gate judged { after: author  by: author }\`.
+**Fix:** Name a different agent in \`by:\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3436,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Judge Is Author |
 `,
   },
 
