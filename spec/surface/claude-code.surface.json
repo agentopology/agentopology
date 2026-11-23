@@ -388,6 +388,25 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.env.CLAUDE_CODE_ENABLE_TELEMETRY",
+      "area": "env",
+      "tokens": [
+        "CLAUDE_CODE_ENABLE_TELEMETRY"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/monitoring-usage"
+      },
+      "usedBy": [
+        "src/bindings/lib/claude-code-telemetry.ts"
+      ],
+      "language": [
+        "observability"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-telemetry.test.ts",
+      "ifBroken": "Claude Code exports no telemetry for an observability block",
+      "grade": "cosmetic"
+    },
+    {
       "id": "cc.files.path:.claude/commands/*",
       "area": "files",
       "tokens": [
