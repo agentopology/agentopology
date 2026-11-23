@@ -46,6 +46,9 @@ import {
   generateBeforeEditScript as buildBeforeEditScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
+  goHook,
+  goHookScript,
+  goHumans,
   hooklessGateReason,
   isRegisteredSubagentType,
   runsAsSkill,
@@ -2622,6 +2625,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // The go: one UserPromptSubmit hook per human with a word; it never blocks, so no onFailure.
+  for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.UserPromptSubmit) hooksByEvent.UserPromptSubmit = [];
+    hooksByEvent.UserPromptSubmit.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, goHookScript(h.id))}` }] });
+  }
+
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
   for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -3788,6 +3797,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));
+
+    // The go: a human's typed word writes its go row (UserPromptSubmit)
+    for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) files.push(goHook(ast, h, CLAUDE_CODE_GUARDS)!);
 
     // Hook scripts (global)
     files.push(...generateHookScripts(ast));

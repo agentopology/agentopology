@@ -907,6 +907,8 @@ export function parseHuman(
   if (fields["on-timeout"]) node.onTimeout = unquote(fields["on-timeout"]);
   if (fields.who) node.who = unquote(fields.who);
   if (fields.valid) node.valid = unquote(fields.valid);
+  if (fields.word !== undefined) node.word = unquote(fields.word);
+  if (fields.binds) node.binds = parseList(fields.binds);
 
   return node;
 }
