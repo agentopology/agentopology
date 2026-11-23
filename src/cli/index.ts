@@ -23,6 +23,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { parse } from "../parser/index.js";
+import { parseRange, satisfiesRange } from "../parser/range.js";
+import { fileURLToPath } from "node:url";
 import type { TopologyAST } from "../parser/ast.js";
 import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
@@ -70,7 +72,7 @@ import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { platformConformance } from "../conformance/index.js";
 import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
-import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
+import { strictFailures, collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -221,6 +223,38 @@ function readFile(filePath: string): string {
   return fs.readFileSync(resolved, "utf-8");
 }
 
+/** The version of this package, read from its package.json (next to dist/ and src/). */
+function packageVersion(): string {
+  try {
+    const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+    return JSON.parse(fs.readFileSync(pkg, "utf-8")).version as string;
+  } catch {
+    return "0.0.0";
+  }
+}
+
+/**
+ * `meta { requires }`: every command that reads a .at stops here, with exit 1,
+ * when the running package is outside the range. The one place it is checked:
+ * every reader goes through parseAt (and `step check`, which calls this).
+ * An invalid range is not stopped here; validate reports it (V138).
+ */
+function checkRequires(ast: ReturnType<typeof parse>, filePath: string): void {
+  const range = ast.topology.requires;
+  if (range === undefined || !parseRange(range)) return;
+  const have = packageVersion();
+  if (satisfiesRange(have, range)) return;
+  console.error(c.red(`Error: ${path.basename(filePath)} requires agentopology ${range} (meta { requires }), but this is ${have}. Install a version in that range and run it again.`));
+  process.exit(1);
+}
+
+/** For the commands that work on the text and never go through parseAt (fix, sync): the same check; a file that does not parse is left to the command to report. */
+function checkRequiresInText(source: string, filePath: string): void {
+  let ast;
+  try { ast = parse(source); } catch { return; }
+  checkRequires(ast, filePath);
+}
+
 /**
  * Parse a topology read from `filePath`. The path is recorded on the AST
  * (non-enumerable, so exports do not carry it) so every later `validate(ast)`
@@ -228,6 +262,7 @@ function readFile(filePath: string): string {
  */
 function parseAt(source: string, filePath: string): ReturnType<typeof parse> {
   const ast = parse(source);
+  checkRequires(ast, filePath);
   Object.defineProperty(ast, "sourcePath", { value: path.resolve(filePath), enumerable: false, writable: true, configurable: true });
   return ast;
 }
@@ -493,7 +528,7 @@ function cmdValidateJson(filePath: string, inventory: string, dir: string | unde
       2,
     ),
   );
-  process.exit(checked.errors > 0 || r.missing.length > 0 ? 1 : drift.rows.length > 0 ? 3 : 0);
+  process.exit(checked.errors > 0 || r.missing.length > 0 || strictFailures(r).length > 0 ? 1 : drift.rows.length > 0 ? 3 : 0);
 }
 
 function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string, json = false): void {
@@ -638,7 +673,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     for (const line of lines) console.log(`  ${line}`);
     console.log("");
     printTopLevelPermissions(root);
-    if (u.missing.length) failed = true;
+    if (u.missing.length || strictFailures(u).length) failed = true;
   }
   printVersionLines(target);
   if (failed) process.exit(1);
@@ -676,7 +711,7 @@ function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefi
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
   printTopLevelPermissions(root);
-  return r.missing.length === 0;
+  return r.missing.length === 0 && strictFailures(r).length === 0;
 }
 
 /** Warn only: allow / deny / ask lists at the top level of the project's settings files, and the move. Changes no exit code. */
@@ -1082,6 +1117,7 @@ function requireDir(dirPath: string): string {
 
 function cmdSync(filePath: string, targetName: string, dirPath: string): void {
   const atSource = readFile(filePath);
+  checkRequiresInText(atSource, filePath);
   const files = readDirRecursive(dirPath);
 
   const updated = syncFromPlatform(atSource, files, targetName);
@@ -1776,6 +1812,13 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
+  // Listed only: an island's test command is never run here.
+  const islands = ast.islands ?? [];
+  if (islands.length) {
+    console.log("");
+    console.log("islands (test commands are listed, not run):");
+    for (const x of islands) console.log(`  island ${x.id}  owner ${x.owner || "(none)"}  ${x.path}${x.test ? `  test: ${x.test}` : "  (no test command)"}`);
+  }
   process.exit(report.missing > 0 ? 1 : 0);
 }
 
@@ -1906,6 +1949,7 @@ function cmdFix(filePath: string, target: string | undefined, write: boolean, dr
     console.error(c.red(`Error: ${name} is not valid UTF-8, so --write would change bytes outside the lines it edits. Nothing written; save it as UTF-8 first, or add strength: hope by hand.`));
     process.exit(1);
   }
+  checkRequiresInText(source, filePath);
   const importLine = (p: { relayed: unknown[]; relayedFiles: string[] }) =>
     `${p.relayed.length} V135 error(s) in imported files: run fix on ${p.relayedFiles.map((f) => path.relative(process.cwd(), f) || f).join(", ")}`;
   const on = target ? `--target ${target}` : "no target";
@@ -2187,7 +2231,9 @@ function main(): void {
         console.error(c.red("Usage: agentopology step check <file.at> <step-id> [--unit U] [--dir D]"));
         process.exit(1);
       }
-      const report = checkStep(parse(readFile(a.file)), a.step, { unit: a.unit, dir: a.dir ?? "." });
+      const stepAst = parse(readFile(a.file));
+      checkRequires(stepAst, a.file);
+      const report = checkStep(stepAst, a.step, { unit: a.unit, dir: a.dir ?? "." });
       for (const line of renderStepReport(report)) (report.ok ? console.log : console.error)(line);
       process.exit(report.ok ? 0 : 1);
     }

@@ -59,6 +59,7 @@ import type {
   StoreNode,
   MachineDef,
   PersonDef,
+  IslandDef,
   NeedsDef,
   RetrievalNode,
   EmbeddingConfig,
@@ -422,6 +423,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.durable) result.durable = fields.durable === "true";
+  if (fields.requires !== undefined) result.requires = unquote(fields.requires.trim());
 
   return result;
 }
@@ -2567,6 +2569,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
+    ...(metaFields.requires !== undefined ? { requires: metaFields.requires } : {}),
   };
 
   // --- Roles ---
@@ -2670,16 +2673,34 @@ export function parse(source: string): TopologyAST {
 
   // --- Inventory roots (top-level `inventory { roots: ["harness/"] }`) ---
   const inventoryBlock = extractBlock(topBody, "inventory");
-  const inventoryRootsField = inventoryBlock ? parseFields(inventoryBlock.body).roots : undefined;
+  // The fields may share a line: `inventory { roots: ["a/"]  strict: true }`.
+  const inventoryFields = inventoryBlock ? parseFields(inventoryBlock.body.replace(/[ \t]+(?=(?:roots|strict)[ \t]*:)/g, "\n")) : {};
+  const inventoryRootsField = inventoryFields.roots;
   const inventoryRoots = inventoryRootsField ? parseList(inventoryRootsField).map(unquote) : undefined;
+  const inventoryStrict = inventoryFields.strict === "true";
+
+  // --- Islands (top-level `islands { island <id> { path: "<glob>" owner: <person> test: "<cmd>" } }`) ---
+  const islandsBlock = extractBlock(topBody, "islands");
+  const islandList: IslandDef[] = islandsBlock
+    ? extractAllBlocks(islandsBlock.body, "island").filter((b) => b.id).map((b) => {
+        const f = parseFields(b.body);
+        return {
+          id: b.id as string,
+          path: f.path !== undefined ? unquote(f.path) : "",
+          owner: f.owner !== undefined ? unquote(f.owner) : "",
+          ...(f.test !== undefined ? { test: unquote(f.test) } : {}),
+        };
+      })
+    : [];
 
   // --- Needs outside the repo (top-level `needs { memory: "~/x" connectors: [..] user-skills: [..] }`) ---
   const needsBlock = extractBlock(topBody, "needs");
   const needs: NeedsDef | undefined = needsBlock
     ? (() => {
         // The fields may share a line: `needs { memory: "~/m"  connectors: [a] }`.
-        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills)[ \t]*:)/g, "\n"));
+        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills|plugins)[ \t]*:)/g, "\n"));
         return {
+          ...(f.plugins ? { plugins: parseList(f.plugins).map(unquote) } : {}),
           ...(f.memory ? { memory: unquote(f.memory) } : {}),
           ...(f.connectors ? { connectors: parseList(f.connectors).map(unquote) } : {}),
           ...(f["user-skills"] ? { userSkills: parseList(f["user-skills"]).map(unquote) } : {}),
@@ -2964,6 +2985,8 @@ export function parse(source: string): TopologyAST {
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),
+    ...(inventoryStrict ? { inventoryStrict } : {}),
+    ...(islandList.length ? { islands: islandList } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

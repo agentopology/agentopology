@@ -185,10 +185,10 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
-                 | schedule | interfaces | inventory | needs
+                 | schedule | interfaces | inventory | needs | islands
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, and `needs` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, `needs`, and `islands` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -1877,12 +1877,16 @@ agent expensive-thinker {
 ### 4.30 `inventory`
 
 ```ebnf
-inventory       = 'inventory' '{' 'roots' ':' string-list '}'
+inventory       = 'inventory' '{' (roots-field | strict-field)* '}'
+roots-field     = 'roots' ':' string-list
+strict-field    = 'strict' ':' ('true' | 'false')
 ```
 
 ```agenttopology
 inventory { roots: ["harness/", "scripts/"] }
 ```
+
+With `strict: true`, `validate --inventory` exits 1 when a live file is not in the .at and not covered by an island (4.32); today it lists them and exits 0. Hooks, servers, scripts and jobs are not files and do not count.
 
 Extra project folders whose files a run really reads. `agentopology inventory --at <file.at>` and `validate --inventory` list every file under each root as a live thing of kind `file` (id `file:<path>`), and a file counts as mapped when the topology points at it (a hook's or gate's `run:`, `file:`, `at:`, a tool's `script:`). A root that is not a folder on disk is reported as missing (exit 1). Each root must be a path inside the project: absolute paths, home paths (`~`) and `..` are a validate error (V128). Bindings emit nothing for it.
 
@@ -1891,10 +1895,11 @@ Extra project folders whose files a run really reads. `agentopology inventory --
 ### 4.31 `needs`
 
 ```ebnf
-needs           = 'needs' '{' (memory-field | connectors-field | user-skills-field)* '}'
+needs           = 'needs' '{' (memory-field | connectors-field | user-skills-field | plugins-field)* '}'
 memory-field    = 'memory' ':' string
 connectors-field = 'connectors' ':' name-list
 user-skills-field = 'user-skills' ':' name-list
+plugins-field   = 'plugins' ':' name-list
 ```
 
 ```agenttopology
@@ -1902,10 +1907,40 @@ needs {
   memory: "~/notes/agent-memory"
   connectors: [gmail, calendar]
   user-skills: [writer]
+  plugins: [my-plugin]
 }
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+`plugins` names plugins expected under `~/.claude/plugins`; a name is a bare name (V129). With `--user`, each is reported `installed` when `installed_plugins.json` lists it (`<name>` or `<name>@<marketplace>`) or a folder of that name is under `~/.claude/plugins/` or `~/.claude/plugins/cache/<marketplace>/`, and `missing` (exit 1, as for a missing user skill) when not.
+
+### 4.32 `islands`
+
+```ebnf
+islands         = 'islands' '{' island* '}'
+island          = 'island' id '{' path-field owner-field test-field? '}'
+path-field      = 'path' ':' string
+owner-field     = 'owner' ':' id
+test-field      = 'test' ':' string
+```
+
+```agenttopology
+person ana { away: "2026-01-01..2026-01-02" }
+islands {
+  island core {
+    path: "harness/core/**"
+    owner: ana
+    test: "npm run test:core"
+  }
+}
+```
+
+A region of the project one person owns. `path` is a glob over project-relative paths: `**` crosses folders, `*` and `?` stay in one. A live file the glob matches counts as accounted for in `validate --inventory`, which lists each island with its owner and file count. The owner must be a declared `person`, and a path is required (V137). `test` is a command: `guard --check` lists it and never runs it. Bindings emit nothing for it.
+
+### 4.33 `meta { requires }`
+
+`meta { requires: ">=0.13.0" }` names the agentopology versions the file is written for: comparators `>=`, `<=`, `>`, `<`, `=` or `^` before `x.y.z`, separated by blanks, all of which must hold (`^0.13.0` is `>=0.13.0 <0.14.0`; `^1.2.3` is `>=1.2.3 <2.0.0`). Every command that reads the file checks it against the running package first and exits 1 with a message naming both when it does not match. A value that is not a range is a V138 error, reported by `validate`.
 
 ---
 

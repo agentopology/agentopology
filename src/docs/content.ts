@@ -393,6 +393,8 @@ action NAME {
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
 - **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
+- **V137**: error, an \`islands\` entry has no path or owner, or its owner is not a declared person
+- **V138**: error, \`meta { requires }\` is not a version range (\`>=0.13.0\`, \`^0.13.0\`)
 
 ## Example
 
@@ -3392,6 +3394,18 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Island Owner (error)
+An island in the top-level \`islands { }\` block has no \`path:\`, no \`owner:\`, or an owner that is not a declared \`person\`. An island covers the project files its glob matches: \`validate --inventory\` counts them as accounted for and lists the island with its owner; \`guard --check\` lists its \`test:\` command (it is never run). With \`inventory { strict: true }\`, \`validate --inventory\` exits 1 when a live file is in neither the .at nor an island.
+
+**Violation:** \`islands { island core { path: "harness/**"  owner: bob } }\` with no \`person bob\`.
+**Fix:** Declare \`person bob { }\`, or name a declared person.
+
+### V138: Requires Range (error)
+\`meta { requires: "<range>" }\` is not a version range. A range is one or more comparators separated by blanks; a comparator is \`>=\`, \`<=\`, \`>\`, \`<\`, \`=\` or \`^\` before \`x.y.z\`. Every command that reads the file exits 1 when the running agentopology is outside the range.
+
+**Violation:** \`meta { requires: "newer" }\`.
+**Fix:** \`requires: ">=0.13.0"\`, \`"^0.13.0"\` or \`">=0.13.0 <1.0.0"\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3443,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Island Owner |
+| V138 | error | Requires Range |
 `,
   },
 

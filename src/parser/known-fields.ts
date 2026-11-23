@@ -91,7 +91,7 @@ const NODE_SCHEMAS = {
     blocks: { prompt: OPAQUE, extensions: OPAQUE },
   },
   meta: {
-    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "durable"],
+    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "durable", "requires"],
   },
 } satisfies Record<string, BlockSchema>;
 
@@ -110,8 +110,9 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     person: { fields: ["away"] },
-    inventory: { fields: ["roots"] },
-    needs: { fields: ["memory", "connectors", "user-skills"] },
+    inventory: { fields: ["roots", "strict"] },
+    needs: { fields: ["memory", "connectors", "user-skills", "plugins"] },
+    islands: { fields: [], blocks: { island: { fields: ["path", "owner", "test"] } } },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },

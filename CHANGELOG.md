@@ -2,6 +2,15 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- `islands { island <id> { path: "<glob>"  owner: <person>  test: "<command>" } }` names a region of the project one person owns. With `validate --inventory`, a live file the glob matches counts as accounted for, and each island is listed with its owner and file count. `guard --check` lists each island's test command and never runs it. The owner must be a declared `person` and the path is required (new error V137). Bindings write nothing for it.
+- `inventory { strict: true }`: `validate --inventory` exits 1 when a live file is in neither the `.at` nor an island. Without it the unmapped files are listed and the exit stays 0. Hooks, servers, scripts and jobs are not files and do not count.
+- `needs { plugins: [name] }`: with `validate --inventory --user`, each plugin is reported `installed` or `missing` by reading `~/.claude/plugins` (`installed_plugins.json`, or a folder of that name under `plugins/` or `plugins/cache/<marketplace>/`). A missing plugin exits 1, as a missing user skill does. Without `--user` the plugins are only listed as declared.
+- `meta { requires: ">=0.13.0" }`: every command that reads the file checks the range against the running package first and exits 1 with a message naming both when it does not match. Comparators `>=`, `<=`, `>`, `<`, `=` and `^`, separated by blanks. A value that is not a range is a new error, V138.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

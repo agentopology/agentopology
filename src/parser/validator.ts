@@ -29,6 +29,7 @@ import { gateLedger, guardedActions } from "./ledger.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
+import { parseRange } from "./range.js";
 import { isClaudeModelName } from "../conformance/codex.js";
 import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
@@ -4149,6 +4150,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137IslandOwners(ast),
+    ...v138RequiresRange(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4424,6 +4427,26 @@ function v128InventoryRoots(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V137: an island has a path, and its owner is a person the topology declares. */
+function v137IslandOwners(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Set((ast.persons ?? []).map((p) => p.id));
+  for (const i of ast.islands ?? []) {
+    if (!i.path) results.push({ rule: "V137", level: "error", message: `Island "${i.id}" has no path: write path: "<glob>".` });
+    if (!i.owner) results.push({ rule: "V137", level: "error", message: `Island "${i.id}" has no owner: write owner: <person id>, a person the topology declares.` });
+    else if (!people.has(i.owner))
+      results.push({ rule: "V137", level: "error", message: `Island "${i.id}" is owned by "${i.owner}", who is not a declared person. Declare person ${i.owner} { } or name one of: ${[...people].join(", ") || "(none declared)"}.` });
+  }
+  return results;
+}
+
+/** V138: `meta { requires }` is a version range: comparators (>=, <=, >, <, =, ^) before x.y.z, separated by blanks. */
+function v138RequiresRange(ast: TopologyAST): ValidationResult[] {
+  const r = ast.topology.requires;
+  if (r === undefined || parseRange(r)) return [];
+  return [{ rule: "V138", level: "error", message: `meta requires: "${r}" is not a version range. Write comparators such as ">=0.13.0", "^0.13.0" or ">=0.13.0 <1.0.0".` }];
+}
+
 /** V129 (L-4): `needs` names things outside the repo: memory is a path under the home folder (`~/...`, no `..`), skills and connectors are bare names. */
 function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -4434,7 +4457,7 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
     if (!n.memory || hasDotDot(n.memory) || (isAbsolute(n.memory)) || (n.memory.startsWith("~") && !n.memory.startsWith("~/")))
       err(`needs memory: "${n.memory}" must be a path under the user's home, written ~/<path> (no "..", no other absolute path).`);
   }
-  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors]] as const) {
+  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors], ["plugins", n.plugins]] as const) {
     for (const name of list ?? [])
       if (!name || /[\\/]/.test(name) || name === "." || name === "..")
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
