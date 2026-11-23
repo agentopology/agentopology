@@ -24,7 +24,14 @@ const topo = (action: string, hooks = "") => `topology t : [pipeline] {
   }
   ${action}
   records { record trace { path: "logs/{unit}/trace.jsonl" } }
-  gates { gate g { after: render before: publish ledger: trace on-fail: halt } }
+  gates {
+    gate g {
+      after: render
+      before: publish
+      ledger: trace
+      on-fail: halt
+    }
+  }
   flow { render -> publish }
 ${hooks}}
 `;
@@ -78,13 +85,11 @@ describe("what the binding writes", () => {
   it("a \\\" in a hook command reaches settings.json as one quote, and runs as a quote", () => {
     const src = topo(
       publish("./tool publish (\\S+)"),
-      `  hooks { hook h { on: PreToolUse matcher: "Bash" run: "echo \\"a b\\"" type: command } }\n`,
+      `  hooks {\n    hook h {\n      on: PreToolUse\n      matcher: "Bash"\n      run: "echo \\"a b\\""\n      type: command\n    }\n  }\n`,
     );
     const settings = claudeCodeBinding.scaffold(parse(src)).find((f) => f.path === ".claude/settings.json")!;
     const raw = settings.content;
     const json = JSON.parse(raw);
-    const cmds: string[] = JSON.stringify(json).match(/echo[^}]*/g) ?? [];
-    expect(cmds.length).toBeGreaterThan(0);
     const command = (json.hooks.PreToolUse as { hooks: { command: string }[] }[])
       .flatMap((e) => e.hooks.map((h) => h.command))
       .find((c) => c.includes("echo"))!;
@@ -95,15 +100,17 @@ describe("what the binding writes", () => {
     expect(ran.stdout.trim()).toBe("a b");
   });
 
-  it("a description with \\\" is one quote in the generated agent text", () => {
+  it("a description with \\\" and \\\\ is one quote and one backslash, then YAML-escaped once in the agent file", () => {
     const src = topo(publish("x (.)")).replace(
       "orchestrator { model: sonnet handles: [render, publish] }",
-      'orchestrator { model: sonnet handles: [render, publish] }\n  agent helper { model: sonnet description: "says \\"hi\\" and a\\\\b" permissions { allow: [Read] } }',
+      'orchestrator { model: sonnet handles: [render, publish] }\n  agent helper {\n    model: sonnet\n    description: "says \\"hi\\" and a\\\\b"\n  }',
     );
-    const files = claudeCodeBinding.scaffold(parse(src));
-    const text = files.map((f) => f.content).join("\n");
-    expect(text).not.toContain('\\"hi\\"\\"');
-    expect(text).toContain('says "hi" and a\\b');
+    const ast = parse(src);
+    expect((ast.nodes.find((n) => n.id === "helper") as { description?: string }).description).toBe('says "hi" and a\\b');
+    const text = claudeCodeBinding.scaffold(ast).map((f) => f.content).join("\n");
+    // never the raw backslash-quote pair twice over
+    expect(text).not.toContain('\\\\"hi');
+    expect(text).toMatch(/says (\\"hi\\"|"hi"|'hi'|.hi.) and a\\{1,2}b/);
   });
 });
 

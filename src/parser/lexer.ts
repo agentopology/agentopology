@@ -320,7 +320,8 @@ export type ScannedList =
 export function scanList(src: string, open: number): ScannedList {
   const items: string[] = [];
   const push = (s: string) => {
-    const item = s.trim().replace(/^"|"$/g, "");
+    const t = s.trim();
+    const item = /^".*"$/s.test(t) && t.length > 1 ? unescapeString(t.slice(1, -1)) : t.replace(/^"|"$/g, "");
     if (item) items.push(item);
   };
   let cur = "";
@@ -471,10 +472,23 @@ export function parseMultilineList(body: string, key: string): string[] {
 /**
  * Remove surrounding double quotes from a string value.
  *
- * If the string is not quoted, returns it unchanged.
+ * A quoted string reads two escapes: `\"` is a quote and `\\` is a backslash.
+ * Any other backslash stays as written (`\S`, `\d`, `\n`). If the string is
+ * not quoted, returns it unchanged.
  */
 export function unquote(s: string): string {
-  return s.replace(/^"(.*)"$/, "$1");
+  const m = /^"(.*)"$/.exec(s);
+  return m ? unescapeString(m[1]) : s;
+}
+
+/** Read the two escapes of a quoted .at string, in one left-to-right pass. */
+export function unescapeString(s: string): string {
+  return s.replace(/\\([\\"])/g, "$1");
+}
+
+/** The inverse of {@link unescapeString}, for writing a value as a quoted .at string. */
+export function escapeString(s: string): string {
+  return s.replace(/[\\"]/g, "\\$&");
 }
 
 /**
