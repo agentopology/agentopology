@@ -75,6 +75,8 @@ export interface GuardItem {
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
+  /** The `rules { }` id a gate cites with rule:, shown beside it. */
+  rule?: string;
   /** A gate that cites code (at:): "wired" when its own generated hook refuses it, else "cited" (0.12.4). */
   citation?: "cited" | "wired";
   /** Graded none only because its check script is still a scaffold stub (its sole problem): said on its own line, not counted missing (countsMissing). */

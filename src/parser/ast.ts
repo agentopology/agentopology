@@ -103,6 +103,8 @@ export interface HookDef {
   strength?: string;
   /** The declared way around it (an env switch, a flag). */
   bypass?: string;
+  /** Id of a declared `rules { }` entry this hook enforces (V138 checks it exists). */
+  rule?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -808,6 +810,8 @@ export interface GateNode extends BaseNode {
    * record uses that record.
    */
   ledger?: string;
+  /** Id of a declared `rules { }` entry this gate enforces (V138 checks it exists). */
+  rule?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -1120,6 +1124,16 @@ export interface IncludeDef {
 // ---------------------------------------------------------------------------
 
 /** The complete abstract syntax tree for an AgenTopology file. */
+/** One `rule "<id>" { text: ..., source: ... }` of the `rules` block. */
+export interface RuleDef {
+  /** The quoted id; may hold dots ("R-7.6"). */
+  id: string;
+  /** What the rule says. Required, never empty (V137). */
+  text: string;
+  /** Where the rule comes from. */
+  source?: string;
+}
+
 export interface TopologyAST {
   /** Topology metadata (header + meta block). */
   topology: TopologyMeta;
@@ -1174,6 +1188,8 @@ export interface TopologyAST {
   defaults: DefaultsDef | null;
   /** Named schema definitions from the top-level `schemas` block. */
   schemas: SchemaDef[];
+  /** Conduct rules from the top-level `rules` block, traced to their ids. */
+  rules?: RuleDef[];
   /** Top-level platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
   /** Observability / tracing configuration (null if not configured). */
