@@ -579,7 +579,7 @@ function generateAgentRules(ast: TopologyAST): GeneratedFile[] {
     sections.push("## Instructions");
     sections.push("");
     if (agent.prompt) {
-      sections.push(downshiftHeadings(agent.prompt));
+      sections.push(agent.promptParts ? agent.prompt : downshiftHeadings(agent.prompt));
     } else {
       sections.push(
         `${agent.description || agent.role || "Complete the assigned task."}`,

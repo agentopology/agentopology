@@ -601,8 +601,12 @@ export interface AgentNode extends BaseNode {
   model?: string;
   /** Permission mode (any string, e.g. "plan", "auto", "confirm"). */
   permissions?: string;
-  /** Inline prompt content (multi-line text from prompt {} block). */
+  /** Inline prompt content (multi-line text from prompt {} block). With named parts, the compiled text. */
   prompt?: string;
+  /** The named parts of a prompt written as `job { } scope { } ...`, in the order written. */
+  promptParts?: Array<{ name: string; text: string }>;
+  /** What is wrong with a prompt that has named parts (V137). */
+  promptPartIssues?: Array<{ kind: "unknown" | "mixed" | "twice"; name?: string }>;
   /** Allowed tool names. */
   tools?: string[];
   /** Skill identifiers this agent can use. */
@@ -1029,6 +1033,8 @@ export interface TopologyMeta {
    * start as the main thread (V134).
    */
   entry?: string;
+  /** The prompt parts every agent's prompt must have (`meta { prompt-parts: [..] }`). */
+  promptParts?: string[];
   /** Whether durable execution is enabled. */
   durable?: boolean;
 }

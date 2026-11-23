@@ -805,7 +805,7 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     // read it there, so generated sections below never leak into the .at.
     sections.push(PROMPT_FENCE_OPEN);
     if (agent.prompt) {
-      sections.push(downshiftHeadings(agent.prompt));
+      sections.push(agent.promptParts ? agent.prompt : downshiftHeadings(agent.prompt));
     } else if (agent.description) {
       sections.push(agent.description);
       if (roleText) sections.push(`\n${roleText}`);
@@ -1807,7 +1807,7 @@ function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
         ? "Runs as a skill in a fresh forked context: it sees none of the conversation that invoked it."
         : "Runs as a skill in the caller's own context: the same agent, no handoff.",
     );
-    sections.push("", "## Instructions", "", downshiftHeadings(agent.prompt ?? desc ?? "Complete the assigned task."), "");
+    sections.push("", "## Instructions", "", (agent.promptParts && agent.prompt ? agent.prompt : downshiftHeadings(agent.prompt ?? desc ?? "Complete the assigned task.")), "");
     if (agent.reads && agent.reads.length > 0) sections.push("## Reads", ...agent.reads.map((r) => `- ${r}`), "");
     if (agent.writes && agent.writes.length > 0) sections.push("## Writes", ...agent.writes.map((w) => `- ${w}`), "");
     if (agent.independent) sections.push("## Independence", "", INDEPENDENT_NOTE, "");

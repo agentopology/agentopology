@@ -398,6 +398,67 @@ export function parseTopologyHeader(src: string): {
   };
 }
 
+/** The named parts of an agent prompt, in the order they are written out. */
+export const PROMPT_PARTS = ["job", "scope", "inputs", "outputs", "steps", "rules", "done", "escalate", "examples"] as const;
+
+/**
+ * Read a prompt as named parts (`job { } rules { } ...`), or null when it is
+ * free text. It is parts when a line at brace depth 0 opens a known part. Every
+ * brace counts toward depth, as where a prompt block ends, so a part holds
+ * braces and colons in its prose when they balance. Free text beside the parts,
+ * an unknown part name and a part written twice are returned as issues (V137).
+ */
+export function splitPromptParts(text: string): { parts: Array<{ name: string; text: string }>; issues: NonNullable<AgentNode["promptPartIssues"]> } | null {
+  const known = new Set<string>(PROMPT_PARTS);
+  let depth = 0;
+  let structured = false;
+  for (const line of text.split("\n")) {
+    const m = depth === 0 ? /^\s*([A-Za-z][\w-]*)[ \t]*\{/.exec(line) : null;
+    if (m && known.has(m[1])) { structured = true; break; }
+    for (const ch of line) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+    if (depth < 0) depth = 0;
+  }
+  if (!structured) return null;
+  const parts: Array<{ name: string; text: string }> = [];
+  const issues: NonNullable<AgentNode["promptPartIssues"]> = [];
+  let pos = 0;
+  while (pos < text.length) {
+    const rest = text.slice(pos);
+    const ws = /^\s*/.exec(rest)![0].length;
+    if (ws === rest.length) break;
+    pos += ws;
+    const m = /^([A-Za-z][\w-]*)[ \t]*\{/.exec(text.slice(pos));
+    let close = -1;
+    if (m) {
+      let d = 0;
+      for (let i = pos + m[0].length - 1; i < text.length; i++) {
+        if (text[i] === "{") d++;
+        else if (text[i] === "}" && --d === 0) { close = i; break; }
+      }
+    }
+    if (!m || close === -1) {
+      if (!issues.some((i) => i.kind === "mixed")) issues.push({ kind: "mixed" });
+      const nl = text.indexOf("\n", pos);
+      pos = nl === -1 ? text.length : nl + 1;
+      continue;
+    }
+    const name = m[1];
+    const body = dedentBlock(text.slice(pos + m[0].length, close)).replace(/^\s+|\s+$/g, "");
+    pos = close + 1;
+    if (!known.has(name)) { issues.push({ kind: "unknown", name }); continue; }
+    if (parts.some((p) => p.name === name)) { issues.push({ kind: "twice", name }); continue; }
+    parts.push({ name, text: body });
+  }
+  return { parts, issues };
+}
+
+/** The parts as one prompt: fixed order, each under a `## <Part>` heading. */
+export function compilePromptParts(parts: Array<{ name: string; text: string }>): string {
+  return PROMPT_PARTS.flatMap((n) => parts.filter((p) => p.name === n))
+    .map((p) => `## ${p.name[0].toUpperCase()}${p.name.slice(1)}\n\n${p.text}`)
+    .join("\n\n");
+}
+
 /**
  * Parse the `meta { ... }` block.
  *
@@ -422,6 +483,8 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.durable) result.durable = fields.durable === "true";
+  const promptParts = parseMultilineList(body, "prompt-parts");
+  if (promptParts.length) result.promptParts = promptParts;
 
   return result;
 }
@@ -600,7 +663,13 @@ export function parseAgent(
 
   const promptBlock = extractBlock(body, "prompt");
   if (promptBlock) {
-    node.prompt = dedentBlock(promptBlock.body);
+    const text = dedentBlock(promptBlock.body);
+    const named = splitPromptParts(text);
+    node.prompt = named ? compilePromptParts(named.parts) : text;
+    if (named) {
+      node.promptParts = named.parts;
+      if (named.issues.length) node.promptPartIssues = named.issues;
+    }
   }
 
   if (tools.length) node.tools = tools;
@@ -2566,6 +2635,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
+    ...(metaFields.promptParts ? { promptParts: metaFields.promptParts } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
   };
 

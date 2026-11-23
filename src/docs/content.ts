@@ -110,6 +110,7 @@ agent NAME {
   prompt {
     Multi-line prompt text here.
   }
+  # or named parts: job { } scope { } inputs { } outputs { } steps { } rules { } done { } escalate { } examples { }
   tools: [tool1, tool2]
   # ... additional fields
 }
@@ -393,6 +394,7 @@ action NAME {
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
 - **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
+- **V137**: error, a prompt with named parts (\`job { }\`, \`rules { }\`, ...) mixes free text with parts, names an unknown or repeated part, or lacks a part \`meta { prompt-parts: [..] }\` requires
 
 ## Example
 
@@ -3386,6 +3388,12 @@ A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` 
 **Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
 **Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim. \`agentopology fix <file.at>\` lists every V135 error with the edit and, when the flow has one, an anchor that would make the gate refuse; \`--write\` adds \`strength: hope\` to those gates and changes nothing else.
 
+### V137: Prompt Parts (error)
+A prompt written as named parts (\`job\`, \`scope\`, \`inputs\`, \`outputs\`, \`steps\`, \`rules\`, \`done\`, \`escalate\`, \`examples\`) must hold only parts: free text beside them, a block that is not one of the nine, and a part written twice are errors. \`meta { prompt-parts: [job, rules] }\` names the parts every agent's prompt must have; an agent without one is an error naming the agent and the part, and a name in the list that is not a part is an error. A prompt with no named parts is free text and passes. The parts are written in a fixed order under \`## Job\`, \`## Scope\`, ... headings; nothing enforces that a model follows them.
+
+**Violation:** \`meta { prompt-parts: [job, done] }\` and an agent whose prompt has \`job { }\` only.
+**Fix:** Add \`done { ... }\` to that prompt.
+
 ### V136: Scheduled Routing Action (warning)
 A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an action with no \`kind:\`, that has no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. The warning names the job, the action and its kind (or "no kind"). Every target; an \`external\` or \`git\` action with no commands is a stub, not reported.
 
@@ -3429,6 +3437,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Prompt Parts |
 `,
   },
 

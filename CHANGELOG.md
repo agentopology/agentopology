@@ -2,7 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
-## [0.12.6] - 2026-11-23
+## [0.13.0] - unreleased
+
+### Added
+
+- A prompt with named parts. Inside an agent's `prompt { }`, write `job { }`, `scope { }`, `inputs { }`, `outputs { }`, `steps { }`, `rules { }`, `done { }`, `escalate { }` and `examples { }`, any subset, in any order. The parts are written into the agent file in that fixed order, each under a `## Job`, `## Scope`, ... heading, between the prompt markers. A part's prose may hold colons and braces as long as the braces balance. A prompt with no named parts is free text and is written exactly as before.
+- `meta { prompt-parts: [job, done] }` names the parts every agent's prompt must have. V137 is a new error: an agent that lacks a required part (the message names the agent and the part), a name in `prompt-parts` that is not one of the nine parts, a named block in a prompt that is not a part, a part written twice, and a prompt that mixes free text with parts. This only checks what is written in the `.at` file; no hook makes a model follow the parts. Sync copies the generated prompt back into the `.at` as free text.
+
 
 ### Fixed
 

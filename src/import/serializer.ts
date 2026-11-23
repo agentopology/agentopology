@@ -91,6 +91,7 @@ function serializeMeta(ast: TopologyAST): string {
   if (meta.timeout) lines.push(`    timeout: ${q(meta.timeout)}`);
   if (meta.errorHandler) lines.push(`    error-handler: ${meta.errorHandler}`);
   if (meta.entry) lines.push(`    entry: ${meta.entry}`);
+  if (meta.promptParts?.length) lines.push(`    prompt-parts: ${inlineList(meta.promptParts)}`);
   if (meta.durable) lines.push("    durable: true");
   lines.push("  }");
   return lines.join("\n");
@@ -274,7 +275,15 @@ function serializeAgent(node: AgentNode): string {
     }
   }
 
-  if (node.prompt) {
+  if (node.promptParts?.length) {
+    lines.push("    prompt {");
+    for (const p of node.promptParts) {
+      lines.push(`      ${p.name} {`);
+      lines.push(indent(p.text, 8));
+      lines.push("      }");
+    }
+    lines.push("    }");
+  } else if (node.prompt) {
     lines.push("    prompt {");
     lines.push(indent(node.prompt, 6));
     lines.push("    }");

@@ -180,7 +180,7 @@ describe("the generated agent file", () => {
   it("writes the parts inside the prompt markers, as ## headings", () => {
     const ast = parse(topo("", PARTS));
     const files = claudeCodeBinding.scaffold(ast);
-    const f = files.find((x) => x.path.endsWith("agents/lead.md"))!;
+    const f = files.find((x) => x.path === ".claude/agents/lead/AGENT.md")!;
     const span = f.content.slice(f.content.indexOf(PROMPT_FENCE_OPEN), f.content.indexOf(PROMPT_FENCE_CLOSE));
     expect(span).toMatch(/^## Job$/m);
     expect(span).toMatch(/^## Rules$/m);
@@ -196,7 +196,8 @@ describe("serializer", () => {
     expect(text).toMatch(/prompt-parts: \[job\]/);
     const back = parse(text);
     expect(promptOf(text)).toBe(promptOf(topo("prompt-parts: [job]", PARTS, "x")));
-    expect(v137(text)).toEqual(v137(topo("prompt-parts: [job]", PARTS, "x")));
+    const msgs = (src: string) => v137(src).map((r) => r.message);
+    expect(msgs(text)).toEqual(msgs(topo("prompt-parts: [job]", PARTS, "x")));
     expect(back.nodes.length).toBe(ast.nodes.length);
   });
 });

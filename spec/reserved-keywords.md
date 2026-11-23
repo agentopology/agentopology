@@ -99,6 +99,16 @@ secret, vault, op, awssm, ssm, gcpsm, azurekv
 
 ---
 
+## Prompt Parts
+
+```
+job, scope, inputs, outputs, steps, rules, done, escalate, examples, prompt-parts
+```
+
+These are read only inside an agent's `prompt { }` block (the part names) and as the `meta` field `prompt-parts`. They are not reserved: a node may still be named `job` or `rules`.
+
+---
+
 ## Wave 4 Keywords (Composition)
 
 ```

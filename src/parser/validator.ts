@@ -19,7 +19,7 @@
  * @module
  */
 
-import { MISSING } from "./index.js";
+import { MISSING, PROMPT_PARTS } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
@@ -4149,6 +4149,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137PromptParts(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4354,41 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+/**
+ * V137: a prompt with named parts is well formed, and has the parts
+ * `meta { prompt-parts }` asks of every agent. A prompt with no named parts is
+ * free text; it holds none of the required parts.
+ */
+function v137PromptParts(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const names: readonly string[] = PROMPT_PARTS;
+  const required = ast.topology.promptParts ?? [];
+  const list = names.join(", ");
+  for (const r of required) {
+    if (!names.includes(r)) {
+      results.push({ rule: "V137", level: "error", message: `meta prompt-parts names "${r}", which is not a prompt part. The parts are: ${list}.` });
+    }
+  }
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    const agent = n as AgentNode;
+    const line = lookupLine(ast, agent.id);
+    for (const i of agent.promptPartIssues ?? []) {
+      const message =
+        i.kind === "unknown" ? `agent "${agent.id}" has a prompt part "${i.name}", which is not a prompt part. The parts are: ${list}.`
+        : i.kind === "twice" ? `agent "${agent.id}" writes the prompt part "${i.name}" more than once; write it once.`
+        : `agent "${agent.id}" mixes free text with named prompt parts; put all of the prompt in parts, or write it as free text with none.`;
+      results.push({ rule: "V137", level: "error", node: agent.id, line, message });
+    }
+    for (const r of required) {
+      if (!names.includes(r)) continue;
+      if (agent.promptParts?.some((p) => p.name === r && p.text.length > 0)) continue;
+      results.push({ rule: "V137", level: "error", node: agent.id, line, message: `agent "${agent.id}" has no "${r}" part in its prompt, which meta prompt-parts requires of every agent. Add \`${r} { ... }\` to its prompt.` });
+    }
   }
   return results;
 }

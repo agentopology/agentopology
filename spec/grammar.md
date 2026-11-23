@@ -293,6 +293,7 @@ meta {
 | `description` | string | yes | -- |
 | `domain` | identifier | no | -- |
 | `entry` | agent-id | no | -- |
+| `prompt-parts` | name-list | no | -- |
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
 
@@ -315,6 +316,16 @@ meta {
 - **claude-workflow** lists it in its LOSSY report: the workflow script runs inside the session and cannot choose which agent that session is.
 
 The entry must be a declared agent that claude-code writes as a subagent: not an action, gate, human, group or orchestrator, not `runs: inline` or `runs: fork` (written as a skill), and not an `execution: workflow` agent (V134). An empty value or a list is a V134 error too: `entry` takes one agent id. It needs no flow edge (V4 does not apply to it, unless V134 refuses it). Import reads a settings.json `agent` back as `entry` when it matches an imported agent's frontmatter `name` or its id, and does not mark that agent `invocation: manual`.
+
+**`prompt-parts`** -- The prompt parts every agent's prompt must have (V137): a list of `job`, `scope`, `inputs`, `outputs`, `steps`, `rules`, `done`, `escalate`, `examples`. Written only as text: `validate` checks it, and no hook enforces what a model writes.
+
+```agenttopology
+meta {
+  version: "1.0.0"
+  description: "Release desk"
+  prompt-parts: [job, rules, done]
+}
+```
 
 `entry` here is the session's agent; `interface { entry: <id> exit: <id> }` (composition) is a fragment's flow entry point. They are separate fields.
 
@@ -363,7 +374,7 @@ agent-fields    = agent-field*
 agent-field     = 'role' ':' identifier
                 | 'model' ':' model-id
                 | 'permissions' ':' perm-enum
-                | 'prompt' '{' raw-text '}'
+                | 'prompt' '{' (raw-text | prompt-part*) '}'
                 | 'phase' ':' number
                 | 'tools' ':' tool-list
                 | 'disallowed-tools' ':' tool-list
@@ -405,7 +416,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `role` | identifier | no | -- | Maps to a role defined in the `roles` block |
 | `model` | model-id | yes | -- | LLM model identifier (e.g., `opus`, `gpt-4o`, `gemini-pro`) |
 | `permissions` | perm-enum | no | `autonomous` | Permission mode |
-| `prompt` | block | no | -- | Inline agent instructions (multi-line text **block**). A key-value `prompt: "path"` is NOT valid on an agent — that form belongs to `skill` — and is rejected by V89. |
+| `prompt` | block | no | -- | Inline agent instructions (multi-line text **block**, or named parts, see below). A key-value `prompt: "path"` is NOT valid on an agent — that form belongs to `skill` — and is rejected by V89. |
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |
@@ -438,6 +449,21 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
 | `fallback-chain` | name-list | no | `[]` | Ordered model fallback list |
 | `extensions` | agent-extensions | no | -- | Platform-specific extension fields (see below) |
+
+**Prompt parts.** A `prompt { }` is free text, or it is made of named parts, `job { }`, `scope { }`, `inputs { }`, `outputs { }`, `steps { }`, `rules { }`, `done { }`, `escalate { }` and `examples { }`, any subset, in any order:
+
+```agenttopology
+prompt {
+  job {
+    Review the change and report what you find: bugs first.
+  }
+  rules {
+    Never edit a file. Quote {braces} and colons as you like.
+  }
+}
+```
+
+The parts are written in the order above, each under a `## <Part>` heading (`## Job`, `## Scope`, ...), between the agentopology prompt markers. Braces in a part's prose must balance, as everywhere in a prompt. A prompt with no named parts is free text and is written as it always was. A prompt that mixes free text with parts, names a part that is not one of the nine, or writes a part twice is a V137 error; so is a missing part that `meta { prompt-parts }` requires. A part name is read only inside a prompt, so it is not a reserved word. The parts are compiled into text; nothing enforces that a model follows them.
 
 **Per-agent `hooks`:** Hooks defined inside an agent block are scoped to that agent's lifetime. They only fire while the agent is active. The hook sub-block syntax is identical to the global `hooks` section -- same fields (`on`, `matcher`, `run`, `type`, `timeout`), same hook events.
 
