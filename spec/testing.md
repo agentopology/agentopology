@@ -133,5 +133,5 @@ real test and the row moves to Guarantees. Source: the compile audit,
 | N22 | Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked | later |
 | F4 | Agent `memory` scope (user/project/local) and `autoCompactWindow` are not first-class; `memory:` already names stores, so the scope needs another word | later |
 | N25 | An agent's `role:` is documented (spec/grammar.md §4.6) but the parser never reads it: the role text comes only from the `roles` block by agent id, so `role: analyst` on `agent classifier` is lost | later |
-| N26 | V102 does not look inside free-form or not-yet-listed blocks (`prompt`, `extensions`, `settings`, `env`, `memory`, `providers`, `mcp-servers`, `interfaces`, `triggers`, `depth`, `flow`, `defaults`, `observability`, `checkpoint`, ...): an unknown name there can still vanish | later |
+| N26 | V102 does not look inside free-form or not-yet-listed blocks (`prompt`, `extensions`, `env`, `memory`, `providers`, `mcp-servers`, `interfaces`, `triggers`, `depth`, `flow`, `defaults`, `observability`, `checkpoint`, ...): an unknown name there can still vanish | later |
 | N35 | A second `hooks { }` block in a file is dropped without a word: the parser keeps the first block's hooks, validation reports nothing, and the second block's hooks are never scaffolded | later |

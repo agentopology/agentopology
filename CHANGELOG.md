@@ -2,6 +2,17 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- **`validate` can now fail a topology that passed under 0.12.6.** An unknown key inside `settings { }` or `metering { }` is a V102 error, as an unknown field is everywhere else, and `scaffold` writes nothing until it is fixed. Such a key was accepted and written nowhere: `settings { scope: local }` or `metering { cap: 5 }` did nothing. The message names the key and its block, as ``"settings" has `scope:`, which is not a settings field, so it is ignored``. `settings` takes `allow`, `deny`, `ask`, `sandbox` and `fallback-chain`; `metering` takes `track`, `per`, `output`, `format` and `pricing`. An `env { }` block inside `settings` still warns, as before. To fix it, remove the key, or move it where it is read (a Claude Code settings key goes in `extensions { claude-code { … } }`).
+- A hook declared `strength: refuse` on `Stop` or `SubagentStop` whose bash script is not written yet now gets the regular stub: it carries the `AGENTOPOLOGY_STUB` line, exits 1, and is counted as a hook stub by `validate`, `scaffold` and `stubs`. Before, it got a logger that appended to `.claude/memory/metrics.jsonl` and exited 0, with no stub line, so nothing said the declared refusal did nothing. A `Stop` or `SubagentStop` hook with no strength or `strength: detect` keeps the logger.
+
+### Fixed
+
+- A gate's `bypass:` is written into the claude-code skill's gate section (`Bypass: <text>`), and `import` reads it back. Before, it validated and landed nowhere in the claude-code output.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

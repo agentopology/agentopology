@@ -1311,6 +1311,8 @@ settings {
 | `deny` | string-list | no | `[]` |
 | `ask` | string-list | no | `[]` |
 
+`settings` also takes `sandbox` (§4.28) and `fallback-chain` (§4.29). Any other key is a V102 error: it would be written nowhere.
+
 ---
 
 ### 4.18 `mcp-servers`
@@ -1395,6 +1397,8 @@ metering {
 | `output` | string | no | `"metrics/"` | Directory for metering output files |
 | `format` | `json` / `jsonl` / `csv` | no | `jsonl` | Output format |
 | `pricing` | `anthropic-current` / `custom` / `none` | no | `anthropic-current` | How to calculate cost |
+
+Any other key in `metering` is a V102 error: it would be written nowhere.
 
 **Track options:**
 - `tokens-in` -- input tokens consumed
