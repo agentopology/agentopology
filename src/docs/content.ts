@@ -2716,6 +2716,11 @@ observability {
   service: "my-topology"
   sample-rate: 0.5
 
+  attributes {
+    team.id: "platform"
+    cost_center: "eng-123"
+  }
+
   capture {
     prompts: true
     completions: true
@@ -2742,6 +2747,7 @@ observability {
 | endpoint | string | no | -- | Exporter endpoint URL |
 | service | string | no | -- | Service name for trace attribution |
 | sample-rate | number | no | 1.0 | Sampling rate (0-1) |
+| attributes | block of key: "value" | no | -- | Resource attributes (keys may hold dots: \`team.id\`) |
 
 ## Exporters
 
@@ -2764,6 +2770,25 @@ observability {
 | tools | boolean | -- | Emit spans for tool invocations |
 | gates | boolean | -- | Emit spans for gate checks |
 | memory | boolean | -- | Emit spans for memory reads/writes |
+
+## Claude Code (scaffold --target claude-code)
+
+Since 0.13.0 the block is written to \`.claude/settings.json\` \`env\` as the keys Claude Code reads (https://code.claude.com/docs/en/monitoring-usage). \`enabled: false\` writes none.
+
+| .at | settings.json env |
+|-----|-------------------|
+| enabled: true | CLAUDE_CODE_ENABLE_TELEMETRY=1 |
+| exporter: otlp | OTEL_METRICS_EXPORTER=otlp, OTEL_LOGS_EXPORTER=otlp, OTEL_EXPORTER_OTLP_PROTOCOL (grpc for an endpoint on port 4317, else http/protobuf) |
+| endpoint | OTEL_EXPORTER_OTLP_ENDPOINT |
+| service, attributes | OTEL_RESOURCE_ATTRIBUTES=service.name=<service>,<key>=<value>,... (values percent-encoded) |
+| capture { prompts: true } | OTEL_LOG_USER_PROMPTS=1 (scaffold warns: prompt text can carry client content) |
+| capture { tool-args: true } | OTEL_LOG_TOOL_DETAILS=1 (scaffold warns: tool details can carry client content) |
+| capture { completions: true } | OTEL_LOG_ASSISTANT_RESPONSES=1 (scaffold warns: response text can carry client content) |
+| capture { prompts: true }, completions not true | OTEL_LOG_ASSISTANT_RESPONSES=0 (Claude Code would otherwise fall back to OTEL_LOG_USER_PROMPTS) |
+
+- Capture switches left out or false write nothing else: Claude Code keeps prompts, responses and tool details redacted.
+- A key you also set in \`env { }\` keeps your value; a different value is a V137 warning in validate and a warning in scaffold.
+- \`spans { }\`, \`sample-rate\` other than 1, \`capture { tool-results }\` and exporters other than otlp have no Claude Code key: scaffold says so in a warning and writes nothing for them.
 
 ## Notes
 
@@ -3394,6 +3419,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Observability Env Override (warning)
+\`observability { }\` compiles to the telemetry env keys Claude Code reads (see the observability topic). A key the topology also writes in \`env { }\` with a different value keeps the \`env { }\` value; the warning names the key and both values. Also a warning when \`attributes { service.name }\` sits next to \`service:\` (service is written). No target or claude-code only.
+
+**Violation:** \`observability { endpoint: "http://127.0.0.1:4318" }\` with \`env { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }\`.
+**Fix:** Drop one of the two, or make them agree.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3431,6 +3462,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | warning | Observability Env Override |
 `,
   },
 

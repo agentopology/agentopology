@@ -2150,6 +2150,22 @@ export function parseObservability(body: string): ObservabilityDef {
 
   if (endpoint !== undefined) def.endpoint = endpoint;
   if (service !== undefined) def.service = service;
+  if (spansBlock) def.spansWritten = true;
+
+  // attributes { key: "value" }: resource attributes. A key may hold dots
+  // (team.id), which the shared field reader does not take.
+  const attributesBlock = extractBlock(body, "attributes");
+  if (attributesBlock) {
+    const attributes: Record<string, string> = {};
+    const masked = maskProse(attributesBlock.body).split("\n");
+    const lines = attributesBlock.body.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s*[A-Za-z0-9_.-]+\s*:/.test(masked[i])) continue;
+      const m = lines[i].match(/^\s*([A-Za-z0-9_.-]+)\s*:\s*(.+?)\s*$/);
+      if (m) attributes[m[1]] = unquote(m[2]);
+    }
+    def.attributes = attributes;
+  }
 
   return def;
 }
