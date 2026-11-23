@@ -489,6 +489,25 @@ gates {
 
 \`records { record ID { path: "..." } }\` declares ledgers; \`path\` is project-relative and may contain \`{unit}\`. With exactly one record, a gate needs no \`ledger:\`.
 
+A record may also declare what a row holds, one field per line:
+
+\`\`\`
+records {
+  record trace {
+    path: "logs/trace.jsonl"
+    fields: [step: string, ok: boolean, ts: ts]
+    schema: row
+    writer: render
+  }
+  record state {
+    path: "logs/state.jsonl"
+    kind: run-state
+  }
+}
+\`\`\`
+
+\`fields: [name: type, ..]\` has types \`string\`, \`number\`, \`boolean\` and \`ts\` (an ISO 8601 time). \`schema:\` names a schema declared in \`schemas { }\`. \`writer:\` names an action, an agent or a project-relative script path. \`kind: run-state\` is a record with the fixed fields \`target\` and \`step\` (it takes no \`fields:\`). V137 checks all of it. On claude-code, a record with any of these is written as \`record-<id>.sh '<json>'\`, which appends the row only when it holds every declared field with the declared type (exit 2 naming the field otherwise) and adds \`ts\` when missing. A ledger row \`{step, ok: "n/a", reason}\` goes through it, with \`reason\` required. When a gate's ledger is such a record and its \`after:\` step is an action with \`commands:\`, a PostToolUse hook on Bash (\`after-action.sh\`) appends \`{step, ok: true, ts, model}\` when the step's command succeeded. \`.claude/records.json\` lists every record, with the gates that read it. Codex and cursor write none of this (V138 warns).
+
 **Ledger line format.** JSON Lines, one object per line, appended by the step's own script (agentopology only reads it):
 
 \`\`\`json
@@ -504,6 +523,8 @@ gates {
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
+- **V137**: error, a record's \`fields:\` has a type that is not string, number, boolean or ts, its \`schema:\` is not declared, its \`writer:\` names no action, agent or project script path, or \`kind: run-state\` has \`fields:\`
+- **V138**: warning, \`--target codex\` or \`cursor\` and a record declares fields, a schema, a writer or a kind: only claude-code writes them
 - **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
 
 ## Example
@@ -3386,6 +3407,17 @@ A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` 
 **Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
 **Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim. \`agentopology fix <file.at>\` lists every V135 error with the edit and, when the flow has one, an anchor that would make the gate refuse; \`--write\` adds \`strength: hope\` to those gates and changes nothing else.
 
+### V137: Record Fields (error)
+A record's \`fields:\`, \`schema:\`, \`writer:\` or \`kind:\` is wrong: a field type that is not string, number, boolean or ts, a \`schema:\` no \`schemas { }\` declares, a \`writer:\` that names no declared action or agent and is no safe project-relative script path, a \`kind:\` other than \`run-state\`, or \`kind: run-state\` with \`fields:\`.
+
+**Violation:** \`record trace { path: "t.jsonl"  fields: [n: integer] }\`
+**Fix:** Use one of string, number, boolean, ts.
+
+### V138: Records Not Written (warning)
+With \`--target codex\` or \`--target cursor\`, a record that declares fields, a schema, a writer or a kind gets no record script, no step ledger row and no records list; only claude-code writes them.
+
+**Fix:** Use claude-code, or leave the record a path a gate reads.
+
 ### V136: Scheduled Routing Action (warning)
 A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an action with no \`kind:\`, that has no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. The warning names the job, the action and its kind (or "no kind"). Every target; an \`external\` or \`git\` action with no commands is a stub, not reported.
 
@@ -3429,6 +3461,8 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error | Record Fields |
+| V138 | warning | Records Not Written |
 `,
   },
 

@@ -53,6 +53,7 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -2613,6 +2614,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // A step's ledger row: PostToolUse fires only for a Bash call that succeeded.
+  if (generateAfterActionScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PostToolUse) hooksByEvent.PostToolUse = [];
+    hooksByEvent.PostToolUse.push({
+      matcher: "Bash",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "after-action.sh")}` }],
+    });
+  }
+
   // F-4: an edit of a gate's ledger is refused on the file-edit tools.
   if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
@@ -3785,6 +3795,13 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+
+    // Records: the writer script of each typed record, the step's ledger-row hook, and the list of every record.
+    files.push(...generateRecordScripts(ast, CLAUDE_CODE_GUARDS));
+    const afterAction = generateAfterActionScript(ast, CLAUDE_CODE_GUARDS);
+    if (afterAction) files.push(afterAction);
+    const recordsJson = generateRecordsJson(ast);
+    if (recordsJson) files.push(recordsJson);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

@@ -20,7 +20,7 @@
  */
 
 import { MISSING } from "./index.js";
-import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
+import { gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
 import { mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
@@ -4149,6 +4149,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137RecordFields(ast),
+    ...v138RecordsNotWritten(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4355,6 +4357,68 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
     });
   }
   return results;
+}
+
+/**
+ * V137: a record's fields, schema, writer and kind are well formed.
+ * - every field is `name: type`, the type one of string, number, boolean, ts, and no name twice;
+ * - `schema:` names a schema declared in `schemas { }`;
+ * - `writer:` names a declared action or agent, or a project-relative script path (a safe path);
+ * - `kind:` is `run-state`, and a run-state record has the fixed fields target and step, so it writes no `fields:`.
+ */
+function v137RecordFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const types = RECORD_FIELD_TYPES as readonly string[];
+  const err = (message: string) => results.push({ rule: "V137", level: "error", message });
+  for (const r of ast.records ?? []) {
+    if (r.kind !== undefined && r.kind !== "run-state") {
+      err(`Record "${r.id}" has kind: ${r.kind}; the only kind is run-state`);
+    }
+    if (r.kind === "run-state" && r.fields !== undefined) {
+      err(`Record "${r.id}" has kind: run-state and fields: a run-state record has the fixed fields target and step, so it writes no fields:`);
+    }
+    if (r.kind !== "run-state" && r.fields !== undefined) {
+      const seen = new Set<string>();
+      for (const f of r.fields) {
+        if (!f.name || !f.type) {
+          err(`Record "${r.id}" has a field "${f.name || "?"}" with no type: write each field as name: type (types: ${types.join(", ")})`);
+        } else if (!types.includes(f.type)) {
+          err(`Record "${r.id}" field "${f.name}" has type "${f.type}", which is not a record field type (types: ${types.join(", ")})`);
+        }
+        if (f.name && seen.has(f.name)) err(`Record "${r.id}" declares the field "${f.name}" twice`);
+        seen.add(f.name);
+      }
+    }
+    if (r.schema !== undefined && !(ast.schemas ?? []).some((s) => s.id === r.schema)) {
+      err(`Record "${r.id}" has schema "${r.schema}", but no schema of that name is declared in schemas { } (schemas: ${(ast.schemas ?? []).map((s) => s.id).join(", ") || "none"})`);
+    }
+    if (r.writer !== undefined) {
+      const node = ast.nodes.find((n) => n.id === r.writer);
+      const named = node?.type === "action" || node?.type === "agent";
+      const pathLike = /[/.]/.test(r.writer);
+      if (!named && !(pathLike && !unsafePathReason(r.writer.replace(/^\.\//, "")))) {
+        const why = pathLike ? `, and as a script path it is unsafe: ${unsafePathReason(r.writer.replace(/^\.\//, ""))}` : "";
+        err(`Record "${r.id}" has writer "${r.writer}", which names no declared action or agent and is no project-relative script path${why}`);
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * V138 (codex, cursor): a record that declares fields, a schema, a writer or a kind
+ * is written only on claude-code (its writer script, the step's ledger row and
+ * .claude/records.json). With `--target codex` or `--target cursor` none of it
+ * is written, so the record stays a path a gate reads.
+ */
+function v138RecordsNotWritten(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  if (opts.target !== "codex" && opts.target !== "cursor") return [];
+  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind);
+  if (rich.length === 0) return [];
+  return [{
+    rule: "V138", level: "warning",
+    message: `${opts.target} writes nothing for the fields, schema, writer or kind of record ${rich.map((r) => `"${r.id}"`).join(", ")}: no record script, no ledger row from a step, no records list. Only claude-code writes them; here each is a path a gate may read`,
+  }];
 }
 
 /** V125 (L-2): a job carried by a session cannot outlive it. */

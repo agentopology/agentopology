@@ -843,7 +843,18 @@ function serializeArtifacts(artifacts: ArtifactDef[]): string | null {
 function serializeRecords(records: RecordDef[] | undefined): string | null {
   if (!records?.length) return null;
   const lines: string[] = ["  records {"];
-  for (const r of records) lines.push(`    record ${r.id} { path: "${r.path}" }`);
+  for (const r of records) {
+    if (!r.fields && !r.schema && !r.writer && !r.kind) {
+      lines.push(`    record ${r.id} { path: "${r.path}" }`);
+      continue;
+    }
+    lines.push(`    record ${r.id} {`, `      path: "${r.path}"`);
+    if (r.kind) lines.push(`      kind: ${r.kind}`);
+    if (r.fields) lines.push(`      fields: [${r.fields.map((f) => `${f.name}: ${f.type}`).join(", ")}]`);
+    if (r.schema) lines.push(`      schema: ${r.schema}`);
+    if (r.writer) lines.push(`      writer: ${r.writer}`);
+    lines.push("    }");
+  }
   lines.push("  }");
   return lines.join("\n");
 }

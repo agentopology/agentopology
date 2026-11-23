@@ -1072,6 +1072,33 @@ records {
 
 `records { record <id> { path: "<project-relative path>" } }` declares ledgers. `path` may contain `{unit}`. `append-only` and `written-by` are reserved and not implemented.
 
+A record may also say what a row holds. Write one field per line:
+
+```agenttopology
+records {
+  record trace {
+    path: "logs/trace.jsonl"
+    fields: [step: string, ok: boolean, ts: ts]
+    schema: row
+    writer: render
+  }
+  record state {
+    path: "logs/state.jsonl"
+    kind: run-state
+  }
+}
+```
+
+| Field | Value | Required | Description |
+|-------|-------|----------|-------------|
+| `path` | string | yes | Project-relative file, may contain `{unit}` (V112) |
+| `fields` | `[<name>: <type>, ..]` | no | The fields a row must hold. Types: `string`, `number`, `boolean`, `ts` (an ISO 8601 time) (V137) |
+| `schema` | schema id | no | A schema declared in `schemas { }` (V137) |
+| `writer` | action id, agent id or project-relative script path | no | What writes the record (V137) |
+| `kind` | `run-state` | no | A run-state record has the fixed fields `target` and `step` (both `string`); it takes no `fields:` (V137) |
+
+On `claude-code` a record that declares any of these compiles to: (1) `.claude/skills/<topology>/scripts/record-<id>.sh '<json>'`, which appends a row only when it holds every declared field with the declared type, otherwise exits 2 naming the missing or mistyped field and writes nothing, and adds `ts` when missing; a row `{step, ok: "n/a", reason}` goes through it and `reason` is required; (2) when a gate reads the record and its `after:` step is an action with `commands:`, `after-action.sh`, a `PostToolUse` hook on `Bash` that appends `{step, ok: true, ts, model}` (and the unit, when the step has one) when the step's command succeeded. It reads the command with the same step matcher `before-action.sh` uses. `PostToolUse` fires only for a call that succeeded (a failed `Bash` call fires `PostToolUseFailure`, whose `error` starts `Exit code N`), and the hook also skips a payload that says it failed; it writes nothing for a command joined with `;`, `|`, `||` or a single `&`, since the exit status is then not the step's. (3) `.claude/records.json` lists every record, with its id, path, fields, writer and the gates that read it (`readBy`), so a record no gate reads is still written down. Codex and cursor write none of this; `validate --target codex` and `--target cursor` warn (V138).
+
 **Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
 
 ```json

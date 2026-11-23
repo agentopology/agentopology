@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- Records can say what a row holds. `record <id> { path, fields: [<name>: <type>, ..], schema: <schema id>, writer: <action id | agent id | script path> }` declares the fields a row must have (types `string`, `number`, `boolean`, `ts`), a schema from `schemas { }`, and what writes it. `record <id> { path, kind: run-state }` is a run-state record with the fixed fields `target` and `step`. Write each key on its own line.
+- On claude-code, a record with any of these gets a script, `.claude/skills/<topology>/scripts/record-<id>.sh '<json>'`. It appends the row only when it has every declared field with the declared type; otherwise it exits 2, names the missing or mistyped field and writes nothing. It adds `ts` when missing. A row `{step, ok: "n/a", reason}` goes through it, and `reason` is required.
+- On claude-code, when a gate reads such a record and its `after:` step is an action with `commands:`, a `PostToolUse` hook on `Bash` (`after-action.sh`) appends the step's ledger row `{step, ok: true, ts, model}` when the step's command succeeded. It reads the command with the same matcher `before-action.sh` uses. Claude Code runs `PostToolUse` only for a call that succeeded, so a command that exits non-zero writes no row. Nothing is written for a command joined with `;`, `|`, `||` or `&`, because the exit status is then not the step's.
+- On claude-code, `.claude/records.json` lists every record (id, path, fields, writer, and the gates that read it), so a record no gate reads is still written down.
+- V137 (error): an unknown field type, a `schema:` no `schemas { }` declares, a `writer:` that names no declared action, agent or safe project path, an unknown `kind:`, or `kind: run-state` with `fields:`. V138 (warning): with `--target codex` or `--target cursor`, a record that declares these gets none of the above written.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

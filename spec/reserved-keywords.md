@@ -162,6 +162,8 @@ branch, render, supabase, target-branch
 
 Environment block field names, custom role names, and user-defined enum values are not reserved.
 
+The `record` block's field names `fields`, `schema`, `writer` and `kind`, its value `run-state`, and its field types `string`, `number`, `boolean` and `ts` are read only inside a `record { }` block. None of them is reserved: a node may still be named `writer` or `schema`.
+
 ---
 
 ## Roadmap Reserved

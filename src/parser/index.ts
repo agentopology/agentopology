@@ -2239,7 +2239,21 @@ export function parseRecords(topBody: string): RecordDef[] {
   if (!block) return [];
   return extractAllBlocks(block.body, "record")
     .filter((b) => b.id)
-    .map((b) => ({ id: b.id!, path: unquote(parseFields(b.body).path ?? "") }));
+    .map((b) => {
+      const f = parseFields(b.body);
+      const rec: RecordDef = { id: b.id!, path: unquote(f.path ?? "") };
+      if (f.fields !== undefined) {
+        // `fields: [name: type, ..]`; an item with no `name: type` shape keeps an empty type so V137 can name it.
+        rec.fields = parseList(f.fields).filter(Boolean).map((item) => {
+          const i = item.indexOf(":");
+          return i < 0 ? { name: item.trim(), type: "" } : { name: item.slice(0, i).trim(), type: item.slice(i + 1).trim() };
+        });
+      }
+      if (f.schema !== undefined) rec.schema = unquote(f.schema);
+      if (f.writer !== undefined) rec.writer = unquote(f.writer);
+      if (f.kind !== undefined) rec.kind = unquote(f.kind);
+      return rec;
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -43,8 +43,14 @@ const RECORDS = `  records {
   }`;
 
 const topology = (records = RECORDS) => `topology ship : [pipeline] {
-  meta { version: "1.0.0" description: "Render then publish" }
-  orchestrator { model: sonnet handles: [render, publish] }
+  meta {
+    version: "1.0.0"
+    description: "Render then publish"
+  }
+  orchestrator {
+    model: sonnet
+    handles: [render, publish]
+  }
   action render {
     kind: external
     commands: ["./tool render"]
@@ -117,7 +123,7 @@ describe("records: the language", () => {
   });
 
   it("RF2 a record with fields validates with no error", () => {
-    expect(validate(parse(topology())).filter((r) => r.level === "error")).toEqual([]);
+    expect(validate(parse(topology())).filter((r) => r.level === "error").map((r) => `${r.rule}: ${r.message}`)).toEqual([]);
   });
 
   it("RF3 the serializer keeps fields, schema, writer and kind", () => {
