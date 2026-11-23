@@ -12,6 +12,14 @@ All notable changes to agentopology are documented here.
 - V14 also refuses a Bash that a repo tool needs and the topology disallows: a skill with `disallowed-tools: [Bash]` (or a `Bash(...)` entry, which removes the whole tool on Claude Code) that names a command or script tool in `scripts:` or `allowed-tools`, and an agent with such `disallowed-tools` whose skill does. The message names the agent, the skill and the tool.
 - V130 warns (claude-code or no target) on a tool with neither `script:` nor `command:`: it compiles to nothing, adds no `Bash` and no allow rule, and its name is left out of an agent's `tools:` (kept only when it is the agent's only tool, since an empty list would give the agent every tool).
 
+- A script tool's allow rule comes only with its protection: the generator never widens a capability, and a script the agent could rewrite would, under an allow rule, run anything without a prompt. So a script tool's path is protected the way a gate's ledger is: `before-edit.sh` refuses an Edit, Write, MultiEdit or NotebookEdit of it (or of a file with its name), and `before-action.sh` refuses a Bash command that names it unless the command only reads it or is the run itself (one command, the script by its path as the first word, `./` allowed, no redirect, no `tee`, no `$(...)` or backtick). Both hooks are written together with the rule, also for a topology that had no guard hooks before, so such a topology now gains `before-edit.sh`, `before-action.sh` and their PreToolUse entries in settings.json. A command tool runs a fixed command, keeps its rule and gets no guard.
+
+### Known limits
+
+- A script tool's allow rule matches only a direct run of the script by its path: `bash <path>` or `python3 <path>` still prompts, and before-action.sh refuses the run when it is chained with another command (`cd x && <path>`) or redirected (`<path> > out.txt`).
+- A tool with neither `script:` nor `command:` keeps its name in an agent's `tools:` when it is the agent's only tool (an empty list would give the agent every tool); V130 warns.
+- A repo tool named in `disallowed-tools` is still written there by its name.
+
 ### Added
 
 - `command:` on a `tool`, as `tool run-tests { command: "npm test" description: "Run the suite" }`: the shell command that runs the tool. It needs no script, and no stub is written for it on any target. On claude-code it compiles to `Bash` in the agent's `tools:` and the allow rule `Bash(npm test *)` (which also matches the bare `npm test`); a command that holds a `*` is written as is. When a tool has both, the command is the allowed call. Codex and Cursor list the tool by name in the agent's instructions, as before.
