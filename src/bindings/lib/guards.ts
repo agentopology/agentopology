@@ -18,7 +18,7 @@
 import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
 import { gateLedger, guardedActions } from "../../parser/ledger.js";
-import { scriptNameFromRun } from "../../parser/run.js";
+import { isInlineRun, scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
@@ -1714,7 +1714,9 @@ export function generateGateWrapperScripts(
     if (gate.behavior === "advisory") continue;
 
     if (!scriptNameFromRun(gate.run)) continue; // V96: prose in run names no script
-    const gateCommand = gateCommandOf(gate.run, name);
+    // A program's command line runs as written, whole (a pipeline included), through bash -c.
+    const inline = isInlineRun(gate.run);
+    const gateCommand = inline ? `bash -c ${shellQuote(gate.run)}` : gateCommandOf(gate.run, name);
     const onFailExit = gate.onFail === "halt"
       ? `echo "Gate '${gate.id}' validation failed. Fix issues before proceeding." >&2\n  exit 2`
       : `echo "Gate '${gate.id}' failed — bounce back and fix the issues." >&2\n  exit 2`;
@@ -1768,7 +1770,7 @@ export function generateGateWrapperScripts(
       "set -euo pipefail",
       ...FAIL_CLOSED,
       // A platform with no project-dir variable runs the hook in the session's folder; the check path is root-relative.
-      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : []),
+      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : inline ? projectRootLines(p, name, "fallback") : []),
       "",
       "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
       "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),

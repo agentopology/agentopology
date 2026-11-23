@@ -292,6 +292,7 @@ export function proseInRun(run: string): string | null {
 
   const first = text.split(/\s+/)[0];
   if (/[:;,]$/.test(first)) return `its first word "${first}" ends in punctuation`;
+  if (first === "[" || first === "[[") return `its first word "${first}" is not a command a gate can run as written; write the test with the test command (test -f file) instead`;
   if (!EXECUTABLE.test(first)) return `its first word "${first}" is not a command or path`;
 
   // Judge only what the shell would see unquoted.
@@ -315,8 +316,35 @@ export function isShellCommand(run: string | undefined): boolean {
   return !!run && SHELL_BUILTIN.test(run.trim().split(/\s+/)[0] ?? "");
 }
 
-/** Whether `run` is a program's command line to run as written (not yet read). */
-export function isInlineRun(_run: string | undefined): boolean {
+/** Programs whose name, as a `run:`'s first word, is the program itself and never a script of the project. */
+const PROGRAM = new Set([
+  "grep", "egrep", "fgrep", "rg", "awk", "sed", "cat", "ls", "find", "diff", "cmp", "wc", "head", "tail", "sort", "uniq",
+  "cut", "tr", "xargs", "stat", "file", "basename", "dirname", "realpath", "readlink", "which", "expr",
+  "jq", "yq", "git", "gh", "npm", "npx", "pnpm", "yarn", "bunx", "make", "cargo", "go", "pytest", "tox", "tsc", "eslint",
+  "prettier", "vitest", "jest", "mocha", "ruff", "mypy", "black", "flake8", "pylint", "pip", "pip3", "uv", "poetry",
+  "curl", "wget", "md5sum", "sha256sum", "shasum", "cksum", "openssl", "docker", "kubectl", "terraform", "mvn", "gradle",
+  "dotnet", "php", "composer", "rustc", "gcc", "clang", "shellcheck", "markdownlint", "xmllint", "sleep",
+]);
+
+/**
+ * Whether `run` is a program's command line, to run as written through
+ * `bash -c`, rather than a project script: its first word is a well-known
+ * program (`grep -q closed his.md`, `npm test`, `cmd | grep -q x`), or an
+ * interpreter with no script after it (`bash -c '...'`, `python3 -m pytest`).
+ * A first word that names a project script (`scripts/x.sh`, `check-review`),
+ * an interpreter followed by a script, and the builtins {@link isShellCommand}
+ * reads are not: they keep their forms. A bare word that is no listed program
+ * stays a script, so a project script is never mistaken for a program.
+ */
+export function isInlineRun(run: string | undefined): boolean {
+  if (!run || isShellCommand(run)) return false;
+  const first = run.trim().split(/\s+/)[0] ?? "";
+  if (first.includes("/")) return false;
+  if (PROGRAM.has(first)) return true;
+  if (INTERPRETER.test(first)) {
+    const parts = runParts(run);
+    return parts.interpreter === undefined && parts.script === first;
+  }
   return false;
 }
 

@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Changed behaviour
+
+- A gate whose `run:` starts with a program now runs that command line instead of a stub that refused everything. `run: "grep -q closed his.md"` used to generate a stub `scripts/grep` that always exited 2, so the gate refused with and without the file; only a `run:` starting with `test` or `exit` was kept as written. Now a `run:` whose first word is a well-known program (`grep`, `cat`, `jq`, `git`, `npm`, `make`, `pytest` and the like), or a shell or interpreter with no script after it (`bash -c '...'`), is an inline command: the gate's wrapper runs it as written through `bash -c`, from the project folder, with the wrapper's fail-closed handling and the gate's `timeout:`. A pipeline (`cat his.md | grep -q closed`) runs whole. No stub is written, on claude-code or codex, and `guard --check` grades the gate by its strength like any written check (no "script is missing" or "still a stub" note). `step check` runs it the same way. Every `run:` that names a script is unchanged: `scripts/x.sh`, a bare script name such as `check-review`, an interpreter followed by a script, and a project path that does not exist yet (still a stub). A program name that is not in the built-in list is still read as a script name; put it in a script, or start the command with a program from the list. `[ -f x ]` stays refused by V96, and the message now says to write `test -f x`. Hooks are unchanged.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

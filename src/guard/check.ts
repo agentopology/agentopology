@@ -30,7 +30,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
-import { runParts, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
+import { runParts, isProjectPath, isInlineRun, isShellCommand, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
 import { LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
@@ -318,7 +318,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       if (script === null) problems.push(`${scriptsDir}/before-action.sh is missing`);
       else if (!script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
       if (gate.run && scriptNameFromRun(gate.run) && readText(join(root, scriptsDir, `gate-${gate.id}.sh`)) === null) problems.push(`${scriptsDir}/gate-${gate.id}.sh is missing`);
-      const stub = gate.run && scriptNameFromRun(gate.run) ? stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run)) : null;
+      const stub = gate.run && scriptNameFromRun(gate.run) && !isInlineRun(gate.run) ? stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run)) : null;
       if (stub) problems.push(stub);
       const scope = "refuses in Claude Code sessions only; a step run outside Claude is covered by step check (by: code)";
       const indirect = "a step named through a variable, an alias, a function or a script that calls it is not seen (bash -c and eval with the step written out are)";
@@ -326,7 +326,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
         items.push({ ...base, strength: "none", by: "hook", where, notes: [...problems, scope, indirect], ...soleStub(stub, problems) });
       } else {
         const entryNotes = hooks.some((h) => h.onFailure === "block") ? [] : [NO_BLOCK_NOTE];
-        items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
+        items.push({ ...base, strength: "refuse", by: "hook", where, notes: [...entryNotes, ...(gate.run && scriptNameFromRun(gate.run) && !isInlineRun(gate.run) ? checkScriptNotes(root, scriptsDir, gate.run) : []), scope, indirect] });
         shellGrades.set(gate.id, shellToolGrade(matcher));
       }
       continue;
@@ -358,8 +358,9 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
       items.push({ ...base, strength: "hope", by: "prose", where: `no Claude Code event marks its moment (between ${anchors}); the playbook runs it`, notes: [] });
       continue;
     }
-    const scriptNotes = checkScriptNotes(root, scriptsDir, gate.run);
-    const stub = stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run));
+    const inlineRun = isInlineRun(gate.run); // a program run as written: no script file to find or to be a stub
+    const scriptNotes = inlineRun ? [] : checkScriptNotes(root, scriptsDir, gate.run);
+    const stub = inlineRun ? null : stubCheckProblem(root, checkScriptFile(scriptsDir, gate.run));
     if (wiring.kind === "subagent-stop") {
       const file = `gate-${gate.id}.sh`;
       const problems: string[] = [];

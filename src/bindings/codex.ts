@@ -48,7 +48,7 @@ import { buildCodexHooks, codexGateHold } from "./lib/codex-hooks.js";
 import { CODEX_GUARDS, LEDGER_WRITABLE_NOTE, approvalTargets, checkableActionGate, gateWiring, spawnHeldAgents } from "./lib/guards.js";
 import { buildCodexRules } from "./lib/codex-rules.js";
 import { getTopologyExtensions, mapApprovalPolicy, mapSandboxMode, projectApprovalPolicy, projectSandboxMode } from "./lib/codex-policy.js";
-import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath, interpreterFor } from "../parser/run.js";
+import { isInlineRun, isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath, interpreterFor } from "../parser/run.js";
 
 /** Markers around the generated part of AGENTS.md; text outside them is the user's. */
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
@@ -1160,7 +1160,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     // A shell builtin (`exit 2`) is run as written; prose names no script.
-    if (!gate.run || isShellCommand(gate.run) || proseInRun(gate.run)) continue;
+    if (!gate.run || isShellCommand(gate.run) || isInlineRun(gate.run) || proseInRun(gate.run)) continue;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
     const { script, interpreter } = runParts(gate.run);

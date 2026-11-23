@@ -16,12 +16,28 @@ import { codexBinding } from "../../bindings/codex.js";
 import { checkGuards } from "../../guard/check.js";
 import { isInlineRun } from "../../parser/run.js";
 
-const source = (run: string) => `topology inl : [pipeline] {
-  meta { version: "1.0.0"  description: "inline gate" }
-  orchestrator { model: sonnet  handles: [writer, reviewer] }
-  agent writer { model: sonnet  description: "Writes"  prompt { Write. } }
-  agent reviewer { model: sonnet  description: "Reviews"  prompt { Review. } }
-  flow { writer -> reviewer }
+const source = (run: string, model = "sonnet") => `topology inl : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "inline gate"
+  }
+  orchestrator {
+    model: ${model}
+    handles: [writer, reviewer]
+  }
+  agent writer {
+    model: ${model}
+    description: "Writes"
+    prompt { Write. }
+  }
+  agent reviewer {
+    model: ${model}
+    description: "Reviews"
+    prompt { Review. }
+  }
+  flow {
+    writer -> reviewer
+  }
   gates {
     gate check {
       after: writer
@@ -50,7 +66,7 @@ const wrapper = () => spawnSync("bash", [at(".claude/skills/inl/scripts/gate-che
 describe("which run: values are inline commands", () => {
   it.each([
     "grep -q closed his.md",
-    "cmd | grep -q x",
+    "ls out | grep -q x",
     "npm test",
     "git diff --quiet",
     "jq -e .ok out.json",
@@ -114,7 +130,7 @@ describe("an inline gate run", () => {
   });
 
   it("writes no stub on Codex either", () => {
-    const files = codexBinding.scaffold(parse(source("grep -q closed his.md")));
+    const files = codexBinding.scaffold(parse(source("grep -q closed his.md", "gpt-5.2")));
     expect(files.some((f) => f.stub === "gate")).toBe(false);
   });
 

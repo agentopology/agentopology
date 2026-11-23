@@ -64,7 +64,7 @@ import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
-import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { interpreterFor, isInlineRun, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2104,6 +2104,7 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
     const gate = node as GateNode;
     const scriptName = scriptNameFromRun(gate.run);
     if (!scriptName) continue;
+    if (isInlineRun(gate.run)) continue; // a program's command line: run as written, no stub
     const { script, interpreter } = runParts(gate.run!);
     // The user's own script, outside the project: never stubbed.
     if (script.startsWith("/")) continue;
