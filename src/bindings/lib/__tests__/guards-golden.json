@@ -119,11 +119,15 @@
   ".claude/agents/writer/AGENT.md": "2de85f521d23318871d9886d7f77fad8e70acbf65e37e3aed24a542bf5099831",
   ".claude/agents/scheduler/AGENT.md": "8cb051d12cfed2f90312f1cfe37d8a889cfb0f72b4778452c72f4b0f42c24e2c",
   ".claude/agents/responder/AGENT.md": "dd235a7d913712740d61b7956210dafa483a63dd716fcd9a76da605b5e711854",
-  ".claude/skills/personal-assistant/SKILL.md": "d1ad24c728b57b5580ffac8f941cb4771b76e11e99ae6476be6b434580737bd3",
+  ".claude/skills/personal-assistant/SKILL.md": "707a142ea88e6c3564e6aca54e064e4f776c4cf891b4b5cac77009ce7588e8f0",
   ".claude/skills/personal-assistant/domains/.gitkeep": "61d1954b9aba0c9aedb8d1338804e817c7262cfc36da94161dab8e3ed7a3a43a",
   ".claude/skills/personal-assistant/metrics.jsonl": "61d1954b9aba0c9aedb8d1338804e817c7262cfc36da94161dab8e3ed7a3a43a",
   ".claude/skills/personal-assistant/runs/.gitkeep": "61d1954b9aba0c9aedb8d1338804e817c7262cfc36da94161dab8e3ed7a3a43a",
-  ".claude/settings.json": "4383e6351956d89b2d2450bf37f42833883ba4a336df905a9501a757c640acf8",
+  ".claude/skills/personal-assistant/scripts/before-agent.sh": "4f6c582e9636bf5868341b2d8b5347573e2a2920de45c4c6fd1d1b93fd1f265c",
+  ".claude/skills/personal-assistant/scripts/before-action.sh": "7ed60e3191e4000a0ba5bba50554f135a15cf52e80c151a38f89c7fd08f3d327",
+  ".claude/skills/personal-assistant/scripts/before-edit.sh": "cdbec2a33a68a5cd2b6ae036f65f3767410c2b85fe8a49f53cbf4d2149d85511",
+  ".claude/skills/personal-assistant/scripts/route.sh": "956119c19e4e8f004646b7903b4f8313a7f633655d5f020593832dabef447396",
+  ".claude/settings.json": "be1ddb1f07dec0ad2aa628fe9d66f9397dbafd2915a2dc49ad3a562c7eef0b36",
   "scripts/collect-metrics.sh": "364b4ce80fbdd353c8619c25372e76ed13ebbec2afb858a87d3d59513b7ee48d",
   ".claude/rules/personal-assistant.md": "5e1e0f3d8311406a039ed7b73358feaa693009722771a0d677868873a5a8826d"
  },
@@ -231,6 +235,19 @@
   ".claude/commands/create.md": "3246c9b81cdacd21473908a0a46282014e6c584bb0e34415fa5be5566527399e",
   ".claude/settings.json": "f4dfbe38c5fefb88fffdb68d97ee7d4294cb9b39c31154740f12892b02f2564f",
   ".claude/rules/hazards.md": "945a5c2ec64842923a2574714aa4f5b211db12a2b4bedb465c58d2571bca8f78"
+ },
+ "src/__tests__/e2e/fixtures/p10-router.at": {
+  ".claude/skills/p10-router/scripts/action-status-screen.sh": "65941cda3726151c551b4f7e889ba039e41b3c31b5dc433ad31a9af0367e845f",
+  ".claude/agents/router/AGENT.md": "c26f1b365981f0cae6b8c9bafd9be2e687cc5285543e79d387154202d043f353",
+  ".claude/agents/answerer/AGENT.md": "63cfd928f6e8b5390a60986e6a15096ace0268fda5dfe0d33a10a2c7217f8007",
+  ".claude/agents/builder/AGENT.md": "dbf7051dd4283745b9faa58e7de740fd4101eaea3ed8e812fdd8fb0733762254",
+  ".claude/skills/p10-router/SKILL.md": "7cf45b6ee19ac9b13a610f1da209baec7e766539cb13455c73773e5b3269b3dc",
+  ".claude/skills/p10-router/scripts/before-agent.sh": "c419d0ddf3f288f20cd34d011f530b789c1983b689681ab3f2ed4039237fd8ff",
+  ".claude/skills/p10-router/scripts/before-action.sh": "405713000ac7e701639dc54f63fed36684876140a29d0a58a5761140dc43addb",
+  ".claude/skills/p10-router/scripts/before-edit.sh": "cbcd5dc465e892fd38cfb6471fa4fd6f04fccb36938f2c51969e93d1f67b2bad",
+  ".claude/skills/p10-router/scripts/route.sh": "599f3d4c4144ff69365d57ba9801692e50888a12f0d0c522137302f17014f80a",
+  ".claude/settings.json": "aba2e768158cc0ed1663d1034fa77d931cd08a527e825960ba1a279d5d520856",
+  ".claude/rules/p10-router.md": "a32729c12c0aebdb2f088223eaa7f0feae7f16fbc1c1a5d22a364537faf0db81"
  },
  "src/__tests__/e2e/fixtures/session-ops.at": {
   ".claude/agents/lane-manager/AGENT.md": "187d5a78b5821404749602957d49ceadb3d4e9733c44ab95a0b33325cc4ae41a",
