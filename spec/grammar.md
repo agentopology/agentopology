@@ -382,6 +382,8 @@ agent-field     = 'role' ':' identifier
                 | 'background' ':' boolean
                 | 'description' ':' string
                 | 'max-turns' ':' number
+                | 'max-subagents' ':' number
+                | 'max-cost' ':' number
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
                 | agent-extensions
@@ -433,6 +435,8 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `background` | boolean | no | `false` | Run in background |
 | `description` | string | no | -- | Human-readable purpose of this agent |
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
+| `max-subagents` | number | no | -- | Most subagents this agent may have open at once; a positive whole number (V137). On claude-code a PreToolUse hook on `Agent\|Task` refuses a launch at the cap, counted per session from a log the SubagentStart and SubagentStop hooks write |
+| `max-cost` | number | no | -- | Spend cap in US dollars (V137). Advisory, not enforced: Claude Code hooks do not see spend; the value is written to the metering output for reporting |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime). May be written more than once: the first block's hooks belong to the agent; a second and later block's hooks are project hooks (settings.json), as in 0.11.4. A hook name in two of its blocks is a V23 error |
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
@@ -1376,6 +1380,7 @@ metering-field  = 'track' ':' name-list
                 | 'output' ':' string
                 | 'format' ':' ('json' | 'jsonl' | 'csv')
                 | 'pricing' ':' ('anthropic-current' | 'custom' | 'none')
+                | ('max-cost' | 'cap') ':' number
 ```
 
 ```agenttopology
@@ -1395,6 +1400,7 @@ metering {
 | `output` | string | no | `"metrics/"` | Directory for metering output files |
 | `format` | `json` / `jsonl` / `csv` | no | `jsonl` | Output format |
 | `pricing` | `anthropic-current` / `custom` / `none` | no | `anthropic-current` | How to calculate cost |
+| `max-cost` | number | no | -- | Spend cap in US dollars; `cap:` is accepted as an alias. Advisory, not enforced (V137): written to the metering output for reporting |
 
 **Track options:**
 - `tokens-in` -- input tokens consumed
@@ -1949,6 +1955,8 @@ All optional fields and their defaults when omitted:
 | `agent` | `background` | `false` |
 | `agent` | `hooks` | -- (none) |
 | `agent` | `max-turns` | -- (none) |
+| `agent` | `max-subagents` | -- (no cap) |
+| `agent` | `max-cost` | -- (no cap) |
 | `agent` | `sandbox` | -- (none) |
 | `agent` | `fallback-chain` | `[]` |
 | `agent` | `extensions` | -- (none) |

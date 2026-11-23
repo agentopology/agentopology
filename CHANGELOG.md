@@ -2,6 +2,14 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.0] - unreleased
+
+### Added
+
+- Caps that stop, on claude-code. `max-subagents: N` on an agent limits how many subagents it may have open at once: scaffold writes `caps-log.sh` (SubagentStart and SubagentStop hooks, which log each start and stop with the session and agent) and `max-subagents.sh` (a PreToolUse hook on `Agent|Task`), which refuses a launch, exit 2, when the launching agent already has N open in that session. A subagent whose stop was never logged stays counted as open. `timeout:` on an agent now also writes `<agent>-timeout.sh` as a PreToolUse hook in the agent's own frontmatter: once the agent has run longer than its timeout, counted from its SubagentStart, every tool call it makes is refused with a message naming the agent and the timeout. Both need `jq`; without it the guards refuse the call, and the logger writes nothing. Neither is written under `orchestrator { delegation: inline }`, where no subagent runs.
+- `max-cost: <usd>` on an agent and in `metering` (where `cap:` is accepted as an alias). It is advisory: Claude Code hooks do not see spend, so nothing stops a run at the cap. The value is written to the metering output (`scripts/collect-metrics.sh` and the Metering section of the context file), and V137 warns: "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting".
+- V137 is a new rule: `max-subagents` that is not a positive whole number, or `max-cost` that is not a positive number, is an error; a `max-cost` that is set is a warning. A `timeout` that is not a duration is still V30.
+
 ## [0.12.6] - 2026-11-23
 
 ### Fixed

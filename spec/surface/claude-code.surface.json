@@ -918,6 +918,46 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.agent_id",
+      "area": "hooks.payload",
+      "tokens": [
+        "agent_id"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell one subagent from another, so max-subagents miscounts and timeout lets a call through",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.hook_event_name",
+      "area": "hooks.payload",
+      "tokens": [
+        "hook_event_name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell a start from a stop, so max-subagents miscounts",
+      "grade": "refuse"
+    },
+    {
       "id": "cc.hooks.payload.agent_type",
       "area": "hooks.payload",
       "tokens": [

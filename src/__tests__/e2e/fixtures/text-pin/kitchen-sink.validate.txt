@@ -1,6 +1,6 @@
 Validating kitchen-sink.at (incident-response v2.0.0)
 
-  stubs (claude-code): 13 of 50 generated files are stubs: 2 gate check scripts, 5 hook scripts, 1 action script, 4 tool scripts, 1 metering script
+  stubs (claude-code): 13 of 54 generated files are stubs: 2 gate check scripts, 5 hook scripts, 1 action script, 4 tool scripts, 1 metering script
 
   WARN  [V93] line 296: Edge "verifier -> fixer" declares no handoff — "verifier" writes [workspace/verification/] and "fixer" reads [workspace/triage/], which do not overlap. Add a shared path to "fixer" reads, or the receiver runs after the sender with none of its output (fixer)
   WARN  [V130] line 209: agent "detector" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (detector)

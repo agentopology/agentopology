@@ -122,6 +122,7 @@ function addPayload(add: (area: string, token: string) => void, content: string)
       continue;
     }
     if (/\bjq -nc?\b/.test(line)) continue; // builds a log line, reads no payload
+    if (/\bjq -[a-z]*s[a-z]* /.test(line)) continue; // slurps a log file the guards wrote, reads no payload
     const afterQuote = line.slice(line.indexOf("'"));
     for (const m of afterQuote.matchAll(/(?<![\w$)\]])\.([a-z_]+)\b/g)) {
       const name = m[1];

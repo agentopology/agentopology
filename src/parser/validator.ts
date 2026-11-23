@@ -133,7 +133,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "orchestrator-worker", "debate", "market-routing", "consensus",
   "fan-out", "event-driven", "human-gate", "brain",
   // Extension system keywords
-  "context", "extensions", "max-turns",
+  "context", "extensions", "max-turns", "max-subagents", "max-cost",
   "disable-model-invocation", "user-invocable", "allowed-tools",
   "domain", "fork",
   // Provider keywords
@@ -4149,6 +4149,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v134EntryAgent(ast, opts),
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
+    ...v137Caps(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4353,6 +4354,37 @@ function v136ScheduledRoutingAction(ast: TopologyAST): ValidationResult[] {
       rule: "V136", level: "warning", node: j.id, line: lookupLine(ast, j.id),
       message: `Schedule job "${j.id}" runs action "${action.id}", ${what}: the orchestrator does it in conversation, so its script has nothing to run and the job does nothing. Give "${action.id}" commands: [...], or schedule an agent instead.`,
     });
+  }
+  return results;
+}
+
+const MAX_COST_ADVISORY = "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
+
+/**
+ * V137: caps. `max-subagents` must be a positive integer (error). `max-cost`,
+ * on an agent or in `metering` (where `cap:` is its alias), must be a positive
+ * number (error), and is a warning when set: a hook payload carries no spend,
+ * so nothing stops a run at the cap.
+ */
+function v137Caps(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    const line = lookupLine(ast, node.id);
+    if (node.maxSubagentsRaw !== undefined) {
+      results.push({ rule: "V137", level: "error", node: node.id, line, message: `Agent "${node.id}" has max-subagents "${node.maxSubagentsRaw}" — must be a positive whole number such as 3` });
+    }
+    if (node.maxCostRaw !== undefined) {
+      results.push({ rule: "V137", level: "error", node: node.id, line, message: `Agent "${node.id}" has max-cost "${node.maxCostRaw}" — must be a positive number of US dollars such as 2.50` });
+    } else if (node.maxCost !== undefined) {
+      results.push({ rule: "V137", level: "warning", node: node.id, line, message: `Agent "${node.id}": ${MAX_COST_ADVISORY}` });
+    }
+  }
+  const m = ast.metering;
+  if (m?.maxCostRaw !== undefined) {
+    results.push({ rule: "V137", level: "error", node: "metering", message: `metering has max-cost "${m.maxCostRaw}" — must be a positive number of US dollars such as 50` });
+  } else if (m?.maxCost !== undefined) {
+    results.push({ rule: "V137", level: "warning", node: "metering", message: `metering: ${MAX_COST_ADVISORY}` });
   }
   return results;
 }

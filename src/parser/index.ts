@@ -814,6 +814,17 @@ export function parseAgent(
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
   if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
+  // Caps: kept as written when not valid, so V137 can name the value.
+  if (fields["max-subagents"] !== undefined) {
+    const raw = unquote(fields["max-subagents"].trim());
+    if (/^[1-9]\d*$/.test(raw)) node.maxSubagents = parseInt(raw, 10);
+    else node.maxSubagentsRaw = raw;
+  }
+  if (fields["max-cost"] !== undefined) {
+    const cost = parseUsd(fields["max-cost"]);
+    if (cost.value !== undefined) node.maxCost = cost.value;
+    else node.maxCostRaw = cost.raw;
+  }
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
 
@@ -1706,13 +1717,27 @@ export function parseMetering(body: string): MeteringDef | null {
 
   if (track.length === 0 && !fields.output) return null;
 
+  // `cap:` is the older name for `max-cost:`; max-cost wins when both are written.
+  const capText = fields["max-cost"] ?? fields.cap;
+  const cap = capText !== undefined ? parseUsd(capText) : null;
+
   return {
     track,
     per,
     output: fields.output ? unquote(fields.output) : "",
     format: fields.format ?? "",
     pricing: fields.pricing ?? "",
+    ...(cap && cap.value !== undefined ? { maxCost: cap.value } : {}),
+    ...(cap && cap.value === undefined ? { maxCostRaw: cap.raw } : {}),
   };
+}
+
+/** A USD amount: `2`, `1.50`, `$1.50`, quoted or not. `value` is set only for a positive number. */
+function parseUsd(text: string): { value?: number; raw: string } {
+  const raw = unquote(text.trim());
+  const m = /^\$?\s*(\d+(?:\.\d+)?)$/.exec(raw);
+  const n = m ? Number(m[1]) : NaN;
+  return n > 0 ? { value: n, raw } : { raw };
 }
 
 /**

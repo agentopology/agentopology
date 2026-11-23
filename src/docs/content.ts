@@ -130,6 +130,9 @@ agent NAME {
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
 | max-turns | number | no | -- | Max agentic turns before stopping |
+| max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V137) |
+| max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V137) |
+| timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
 | sandbox | string or boolean | no | -- | "docker", "none", "network-only", true, false |
 | skip | string | no | -- | Skip condition: "not identifier" or "identifier.identifier op value" |
 | runs | string | no | "subagent" | \`subagent\`, \`session\`, \`inline\` or \`fork\`. A \`session\` agent is its own named Claude Code session (V113) |
@@ -2056,6 +2059,7 @@ metering {
 | output | string | yes | -- | Output file or directory path |
 | format | string | yes (V28) | -- | "json", "jsonl", or "csv" |
 | pricing | string | yes (V29) | -- | Pricing model identifier |
+| max-cost | number | no | -- | Spend cap in USD (\`cap:\` is accepted as an alias). Advisory, not enforced: written to the metering output for reporting (V137) |
 
 ## Track Metrics
 
@@ -3392,6 +3396,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
+### V137: Caps (error/warning)
+\`max-subagents\` on an agent must be a positive whole number, and \`max-cost\` (on an agent, or in \`metering\`, where \`cap:\` is its alias) a positive number of US dollars; anything else is an error. A \`max-cost\` that is set is a warning: \`max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting\`. \`max-subagents\` and \`timeout\` are enforced on claude-code by generated hooks.
+
+**Violation:** \`agent lead { max-subagents: 0 }\`.
+**Fix:** \`max-subagents: 3\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3429,6 +3439,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V134 | error/warning | Entry Agent |
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
+| V137 | error/warning | Caps |
 `,
   },
 
@@ -3643,6 +3654,7 @@ kind        role        version           description
 permissions prompt      generates         handles   argument
 behavior    invocation  background        skills    sandbox
 fallback-chain max-turns
+max-subagents max-cost
 \`\`\`
 
 ### Flow & Edge Fields

@@ -53,6 +53,10 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
+
+/** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
+const CAPS_TIMEOUT_HOOK = "agentopology-timeout";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -756,10 +760,16 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     let fmStr = frontmatter(fm);
 
     // Per-agent hooks → Claude Code AGENT.md frontmatter hooks
-    if (agent.hooks && agent.hooks.length > 0) {
+    // A timeout: on the agent adds a PreToolUse hook that refuses its tool calls once it has run too long.
+    const timeoutScriptName = timeoutScriptFor(ast, agent);
+    const agentHooks: HookDef[] = [
+      ...(agent.hooks ?? []),
+      ...(timeoutScriptName ? [{ name: CAPS_TIMEOUT_HOOK, on: "PreToolUse", matcher: "", run: timeoutScriptName, type: "command", strength: "refuse" } as HookDef] : []),
+    ];
+    if (agentHooks.length > 0) {
       const topologyName = ast.topology.name;
       const hooksByEvent: Record<string, HookDef[]> = {};
-      for (const hook of agent.hooks) {
+      for (const hook of agentHooks) {
         if (hook.type === "mod") continue; // engine-wide only (V94)
         // In an agent's frontmatter Claude Code turns Stop into SubagentStop itself.
         const event = hook.on === "AgentStop" ? "Stop" : claudeEvent(hook.on);
@@ -771,9 +781,10 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
+          const isCaps = hook.name === CAPS_TIMEOUT_HOOK;
           const scriptName = scriptNameFromRun(hook.run);
-          if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
-          const handler = hookHandler(hook, () => isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
+          if (!isCaps && isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
+          const handler = hookHandler(hook, () => isCaps ? `bash ${skillScriptPath(topologyName, hook.run)}` : isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
           // JSON strings are valid YAML double-quoted scalars, so a regex
           // matcher or a prompt with quotes or colons can never break the file.
           hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
@@ -1712,6 +1723,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push(`- Output: ${ast.metering.output}`);
     sections.push(`- Format: ${ast.metering.format}`);
     sections.push(`- Pricing: ${ast.metering.pricing}`);
+    for (const l of meteringCapLines(ast)) sections.push(`- ${l.replace(/^# /, "")}`);
     sections.push("");
   }
 
@@ -2622,6 +2634,12 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // Caps: the subagent log, and the max-subagents guard on Agent|Task.
+  for (const [event, entries] of Object.entries(capsSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
+    if (!hooksByEvent[event]) hooksByEvent[event] = [];
+    hooksByEvent[event].push(...entries);
+  }
+
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
   for (const [event, entries] of Object.entries(sessionSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -2822,6 +2840,16 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
+/** The max-cost lines for the metering output: advisory, nothing stops a run at the cap. */
+function meteringCapLines(ast: TopologyAST): string[] {
+  const perAgent = ast.nodes.filter((n): n is AgentNode => n.type === "agent" && (n as AgentNode).maxCost !== undefined);
+  const lines: string[] = [];
+  if (ast.metering?.maxCost !== undefined) lines.push(`# Max cost: ${ast.metering.maxCost} USD`);
+  if (perAgent.length > 0) lines.push(`# Max cost per agent (USD): ${perAgent.map((a) => `${a.id}=${a.maxCost}`).join(", ")}`);
+  if (lines.length > 0) lines.push("# max-cost is advisory, not enforced: Claude Code hooks do not see spend. Report against it; nothing stops a run at the cap.");
+  return lines;
+}
+
 /** Generate metering script stub. */
 function generateMetering(ast: TopologyAST): GeneratedFile | null {
   if (!ast.metering) return null;
@@ -2838,6 +2866,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     `# Per: ${m.per.join(", ")}`,
     `# Output: ${m.output} (${m.format})`,
     `# Pricing: ${m.pricing}`,
+    ...meteringCapLines(ast),
     "",
     'echo "TODO: implement metrics collection" >&2',
     "exit 1",
@@ -3785,6 +3814,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+
+    // Caps: subagent log, max-subagents guard, per-agent timeout guards
+    files.push(...generateCapsScripts(ast));
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));
