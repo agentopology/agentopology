@@ -298,16 +298,15 @@ export function recordOf(raw: string): HookRecord[] {
 export function recordAfterUnrecordedMerge(mergedRaw: string, generatedRaw: string): HookRecord[] {
   const merged = recordOf(mergedRaw);
   const taken = new Set<number>();
-  const out: HookRecord[] = [];
   for (const g of recordOf(generatedRaw)) {
     const at = merged.findIndex(
       (m, i) => !taken.has(i) && m.event === g.event && (m.matcher ?? "") === (g.matcher ?? "") && normalCommand(m.command) === normalCommand(g.command),
     );
-    if (at === -1) continue;
-    taken.add(at);
-    out.push(merged[at]);
+    if (at !== -1) taken.add(at);
   }
-  return out;
+  // In the file's order, as a run by the record writes it, so a rerun that
+  // changes nothing records the same list.
+  return merged.filter((_, i) => taken.has(i));
 }
 
 /** A hook entry as one line: `<event> <matcher> <command>` (`(no matcher)` for a group without one). */
