@@ -151,4 +151,42 @@ describe("a when edge that does not compile to a refusal warns", () => {
     const w = routeWarnings(noBash).map((r: { message: string }) => r.message);
     expect(w.some((m: string) => m.includes('"router -> builder"') && m.includes("route.sh cannot record the route"))).toBe(true);
   });
+
+  it("a route into an agent that a plain edge also reaches does not warn (and is not checked)", () => {
+    const src = SOURCE.replace("router -> builder [when router.class == change]", "router -> builder [when router.class == change]\n    answerer -> builder");
+    const mixed = parse(src);
+    expect(routeWarnings(mixed).map((r: { message: string }) => r.message).filter((m: string) => m.includes("-> builder\""))).toEqual([]);
+    expect(claudeCodeBinding.scaffold(mixed).find((f) => f.path === `${SCRIPTS}/before-agent.sh`)?.content).not.toMatch(/\n {2}builder\)/);
+  });
+});
+
+describe.skipIf(!hasJq)("p10-router: before-action.sh refuses a shell write of the route record", () => {
+  const bash = (command: string) => run("before-action.sh", [], JSON.stringify({ tool_name: "Bash", tool_input: { command } }));
+
+  it("is wired on the shell tools", () => {
+    const settings = JSON.parse(file(".claude/settings.json")!.content);
+    const pre = settings.hooks.PreToolUse as Array<{ matcher: string; hooks: Array<{ command: string }> }>;
+    expect(pre.find((h) => h.matcher === "Bash|Monitor|PowerShell")?.hooks[0].command).toContain("before-action.sh");
+  });
+
+  it.each([
+    `echo '{"agent":"router","field":"class","value":"change"}' >> ${RECORD}`,
+    `printf x | tee -a ${RECORD}`,
+    `cp /tmp/forged.jsonl ${RECORD}`,
+    `mv /tmp/forged.jsonl ${RECORD}`,
+    `rm ${RECORD}`,
+    `cd .claude/state && echo x > routes-p10-router.jsonl`,
+  ])("refuses %s", (command) => {
+    const r = bash(command);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("route record");
+  });
+
+  it.each([
+    `cat ${RECORD}`,
+    `bash ${SCRIPTS}/route.sh router class question`,
+    "ls -la",
+  ])("lets %s run", (command) => {
+    expect(bash(command).code).toBe(0);
+  });
 });
