@@ -137,6 +137,22 @@ describe("observability { } compiles to Claude Code's telemetry env", () => {
     expect(warnings.some((w) => w.includes("OTEL_LOG_TOOL_DETAILS") && /tool details/.test(w) && /client content/.test(w))).toBe(true);
   });
 
+  it("capture prompts: true without completions: true writes OTEL_LOG_ASSISTANT_RESPONSES=0 (the docs' fallback to OTEL_LOG_USER_PROMPTS stays off)", () => {
+    for (const extra of ["", "\n      completions: false"]) {
+      const { env } = scaffold(topo(BASIC.replace(/\n  }$/, `\n    capture {\n      prompts: true${extra}\n    }\n  }`)));
+      expect(env?.OTEL_LOG_USER_PROMPTS).toBe("1");
+      expect(env?.OTEL_LOG_ASSISTANT_RESPONSES).toBe("0");
+    }
+  });
+
+  it("capture completions: true writes OTEL_LOG_ASSISTANT_RESPONSES=1 and warns about client content; no capture writes neither", () => {
+    const { env, warnings } = scaffold(topo(BASIC.replace(/\n  }$/, "\n    capture {\n      completions: true\n    }\n  }")));
+    expect(env?.OTEL_LOG_ASSISTANT_RESPONSES).toBe("1");
+    expect(env).not.toHaveProperty("OTEL_LOG_USER_PROMPTS");
+    expect(warnings.some((w) => w.includes("OTEL_LOG_ASSISTANT_RESPONSES=1") && /client content/.test(w))).toBe(true);
+    expect(scaffold(topo(BASIC)).env).not.toHaveProperty("OTEL_LOG_ASSISTANT_RESPONSES");
+  });
+
   it("a key in env { } wins over the mapped one, and a differing value warns with both values", () => {
     const src = topo(BASIC, `
   env {
