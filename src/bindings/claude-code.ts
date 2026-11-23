@@ -57,6 +57,7 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { generateRouteScript, routeActionTargets, routeInstructions, routeKeys } from "./lib/route.js";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
@@ -596,7 +597,9 @@ function formatSchemaField(f: SchemaFieldDef): string {
  * step there, never the usage exemption the hook gives a typed command.
  */
 function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
-  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
+  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id))
+    // 0.13.0: a step held by its route checks itself the same way.
+    || routeActionTargets(ast, CLAUDE_CODE_GUARDS).has(action.id);
   if (!gated || !buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) return [];
   const name = ast.topology.name;
   const words = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))];
@@ -988,6 +991,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [field, values] of Object.entries(agent.outputs)) {
         sections.push(`- ${field}: ${values.join(" | ")}`);
       }
+      sections.push("");
+    }
+
+    // 0.13.0: a router records its choice; the launch guard reads it.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS).filter((k) => k.agent === agent.id)) {
+      sections.push(`## Route: ${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
       sections.push("");
     }
 
@@ -1597,6 +1608,13 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       sections.push(`- ${line}`);
     }
     sections.push("");
+    // 0.13.0: the routes the launch guard holds, and who records them.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS)) {
+      sections.push(`### Route: ${key.agent}.${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
+      sections.push("");
+    }
   }
 
   // Gates section
@@ -3876,6 +3894,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+    // 0.13.0: the route record a router writes and before-agent.sh reads.
+    const routeScript = generateRouteScript(ast, CLAUDE_CODE_GUARDS);
+    if (routeScript) files.push(routeScript);
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));

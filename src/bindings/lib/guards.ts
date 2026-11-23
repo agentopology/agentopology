@@ -25,6 +25,7 @@ import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
 import { isWorkflowSeamAgent } from "./seam.js";
+import { hasRoutes, routeActionCheckLines, routeActionTargets, routeCheckFunction, routeCheckLines, routeRecordPath, routeTargets } from "./route.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -313,6 +314,8 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
   const steps = new Map<string, string[]>();
   const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
 
+  // 0.13.0: an agent every way into which is a `when` route starts only on its route (lib/route.ts).
+  for (const agent of routeTargets(ast, p).keys()) add(agent, routeCheckLines(ast, agent, p));
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
@@ -368,6 +371,10 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
           "ask() { ASK=\"${ASK:+$ASK; }$1\"; }",
           "",
         ]
+      : []),
+    ...routeCheckFunction(ast, p),
+    ...(p.supportsAsk
+      ? []
       : hasHuman(ast, p)
         ? [
             `APPROVALS="${p.stateDir}/approvals.jsonl"`,
@@ -1330,16 +1337,24 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
   if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
-  return [...new Set(paths)].map((path) => {
-    const base = path.replace(/^.*\//, "");
-    const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
-    // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
-    const unitInName = base.includes("{unit}");
-    // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
-    const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
-    return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
-  });
+  return [...new Set(paths)].map(protectedFile);
+}
+
+/** A project-relative path (`{unit}` allowed) as the patterns and letters the guards match it by. */
+function protectedFile(path: string): ProtectedLedger {
+  const base = path.replace(/^.*\//, "");
+  const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
+  // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
+  const unitInName = base.includes("{unit}");
+  // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
+  const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
+  return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
+}
+
+/** The route record as a protected file (0.13.0), or null when no launch reads one (lib/route.ts). */
+function protectedRouteRecord(ast: TopologyAST, p: GuardPlatform): ProtectedLedger | null {
+  return hasRoutes(ast, p) ? protectedFile(routeRecordPath(ast, p)) : null;
 }
 
 /**
@@ -1348,11 +1363,49 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
  * the command only reads its arguments (AT_READS, a reading git subcommand) and the command holds no
  * `>` and no `tee`. Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS, and runs under `set -f`.
  */
-function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
-  if (ledgers.length === 0) return [];
+function ledgerGuardLines(ledgers: ProtectedLedger[], route: ProtectedLedger | null = null): string[] {
+  if (ledgers.length === 0 && !route) return [];
+  const routeLines = route
+    ? [
+        "# 0.13.0: the route record is refused the same way: only route.sh writes it.",
+        "# route_guard 'PATTERN' LETTERS PATH: refuse the command when it names the route record and does more than read it.",
+        "route_guard() {",
+        "  local hit=0 w",
+        "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+        "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+        "  [ \"$hit\" = 1 ] || return 0",
+        "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+        "  echo \"agentopology: the command touches the route record $3; only route.sh writes it ($CMD)\" >&2",
+        "  exit 2",
+        "}",
+        `route_guard ${shellQuote(route.glob)} ${shellQuote(route.letters)} ${shellQuote(route.path)}`,
+        "",
+      ]
+    : [];
+  if (ledgers.length === 0) return [...atOnlyReadsLines(), ...routeLines];
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
     "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
+    ...atOnlyReadsLines(),
+    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
+    "ledger_guard() {",
+    "  local hit=0 w",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  [ \"$hit\" = 1 ] || return 0",
+    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
+    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    "",
+    ...routeLines,
+  ];
+}
+
+/** at_only_reads (F-4): every program in the command only reads its arguments, and nothing is redirected or tee'd. */
+function atOnlyReadsLines(): string[] {
+  return [
     "at_only_reads() {",
     "  local seg x base; local -a ws",
     "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
@@ -1368,18 +1421,6 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "  done <<< \"$SEGS\"",
     "  return 0",
     "}",
-    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
-    "ledger_guard() {",
-    "  local hit=0 w",
-    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
-    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
-    "  [ \"$hit\" = 1 ] || return 0",
-    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
-    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
-    "  exit 2",
-    "}",
-    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
-    "",
   ];
 }
 
@@ -1425,7 +1466,8 @@ function goScriptGuardLines(paths: string[]): string[] {
  */
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
-  if (ledgers.length === 0) return null;
+  const route = protectedRouteRecord(ast, p);
+  if (ledgers.length === 0 && !route) return null;
   const goScripts = goScriptPaths(ast, p);
   const name = ast.topology.name;
   const v = p.projectDirVar;
@@ -1435,6 +1477,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on`,
     `# ${p.supportsAsk ? "Write|Edit|MultiEdit|NotebookEdit" : "apply_patch"}. A gate's ledger is a file the agent could write, so an edit`,
     `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
+    ...(route ? [`# The route record ${route.path} is refused the same way: only route.sh writes it.`] : []),
     "set -euo pipefail",
     ...FAIL_CLOSED,
     ...(v === null
@@ -1446,7 +1489,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
-      inOrder: [...ledgers.map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))])],
+      inOrder: [...[...ledgers, ...(route ? [route] : [])].map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))])],
     }),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
@@ -1460,6 +1503,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     '[ -n "$PATHS" ] || { echo "agentopology: no file path could be read from the edit, so it is blocked" >&2; exit 2; }',
     ...CANON_FUNCTION,
     "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
+    ...(route ? ["refuse_route() { echo \"agentopology: the edit touches the route record $1 ($2); only route.sh writes it\" >&2; exit 2; }"] : []),
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
@@ -1474,6 +1518,10 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   // The go: an edit of a go hook would let the agent write the go row nobody typed.
   for (const s of goScripts) {
     lines.push(`  if [[ \${RL##*/} == ${shellQuote(s.replace(/^.*\//, "").toLowerCase())} ]]; then echo "agentopology: the edit changes the go hook ${s} ($R); only agentopology scaffold writes it" >&2; exit 2; fi`);
+  }
+  if (route) {
+    lines.push(`  PAT=${shellQuote(route.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
+    lines.push(`  PAT=${shellQuote(route.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
@@ -1579,13 +1627,15 @@ const GO_CHECK_FUNCTIONS: string[] = [
 ];
 
 /** Every action a gate guards, with its gates, in declaration order. */
-function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
+function actionGuards(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
+  // 0.13.0: a script step that only `when` routes reach is guarded too, by its route (lib/route.ts).
+  const routed = routeActionTargets(ast, p);
   const out: Array<{ action: ActionNode; gates: GateNode[] }> = [];
   for (const node of ast.nodes) {
     if (node.type !== "action") continue;
     const mine = gates.filter((g) => guardedActions(ast, g).some((a) => a.id === node.id));
-    if (mine.length > 0) out.push({ action: node as ActionNode, gates: mine });
+    if (mine.length > 0 || routed.has(node.id)) out.push({ action: node as ActionNode, gates: mine });
   }
   return out;
 }
@@ -1603,10 +1653,12 @@ function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: Gate
  * itself with `agentopology step check`.
  */
 export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
-  const guards = actionGuards(ast);
+  const guards = actionGuards(ast, p);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
-  if (guards.length === 0 && ledgers.length === 0) return null;
+  // 0.13.0: a topology whose launches read the route record gets the shell check for it too.
+  const route = protectedRouteRecord(ast, p);
+  if (guards.length === 0 && ledgers.length === 0 && !route) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // A gate after a human with a valid: window or binds: checks the go row beyond ok (check_go).
@@ -1636,6 +1688,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       // inline git alias (`V=commit git -calias.x=V x`), which can name a git step in no words of its own
       inOrder: [
         ...ledgers.map(ledgerWords),
+        ...(route ? [ledgerWords(route)] : []),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
       ],
       expansion: stepWords.map((s) => s.key),
@@ -1654,6 +1707,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "",
     "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
     "",
+    ...routeCheckFunction(ast, p, "action"),
     ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
@@ -1713,7 +1767,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    ...ledgerGuardLines(ledgers),
+    ...ledgerGuardLines(ledgers, route),
     ...goScriptGuardLines(goScriptPaths(ast, p)),
   ];
   const sq = shellQuote;
@@ -1744,7 +1798,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
     const names = [...new Set(keys.map((k) => k.key))];
     const gateChecks = (indent: string) => {
-      const out: string[] = [];
+      // 0.13.0: the step's route first, when only `when` routes reach it.
+      const out: string[] = [...routeActionCheckLines(ast, action.id, p, indent)];
       for (const gate of gates) {
         out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
         const ledger = gateLedger(ast, gate);
@@ -1764,7 +1819,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       }
       return out;
     };
-    const unreadable = (why: string, indent: string) => action.unitFrom
+    // A step held only by its route has no gate to name, and its route reads no unit.
+    const byUnit = !!action.unitFrom && gates.length > 0;
+    const unreadable = (why: string, indent: string) => byUnit
       ? [`${indent}deny ${sq(gates[0].id)} "it names ${names.join("/")} in a form this guard cannot read (${why}); write the step as a plain command"`]
       : [`${indent}UNIT=''`, ...gateChecks(indent)];
     lines.push(`# step ${action.id}`);
@@ -1780,7 +1837,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
-    if (action.unitFrom) {
+    if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
       lines.push(
         `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // ""] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,

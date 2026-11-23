@@ -1038,6 +1038,17 @@ flow {
 
 **Unconditional edges:** An edge without `[when]` is always taken. If a node has both unconditional and conditional edges, the unconditional edge is always taken regardless of conditions.
 
+**What a `when` edge compiles to (claude-code).** An edge whose condition is `<agent>.<field> == <value>`, where `<field>` is an enum the agent or orchestrator `<agent>` declares in `outputs:` and `<value>` is one of its values, is a *route*. When every edge into a subagent is a route, and each route's owner can run Bash (an orchestrator, or an agent with no `tools` list or one that names Bash), the binding writes:
+
+- `.claude/skills/<topology>/scripts/route.sh <agent> <field> <value>`. The router runs it to record its choice: it appends one JSON line, `{"agent": "<agent>", "field": "<field>", "value": "<value>", "ts": "<ISO time>"}`, to `.claude/state/routes-<topology>.jsonl`. A routed output it does not know, a value the output does not declare, or a wrong number of words exits 2 and writes nothing. The owner's agent file (for the orchestrator, SKILL.md's Flow section) gets the command and the route table, each value with the nodes its edges lead to.
+- a route check in `before-agent.sh`, the PreToolUse hook on `Agent|Task`. Before the subagent starts, the last record for each `<agent>.<field>` that routes to it must hold a value whose edge leads to it. Otherwise the hook exits 2 and says which value the last record holds (or that there is no record) and which edge the launch needed. A record file that cannot be read blocks. A subagent that no route leads to is not affected.
+- in `before-edit.sh` (PreToolUse on `Write|Edit|MultiEdit|NotebookEdit`), a refusal of any edit of the route record.
+
+- for a script step (an action with `commands:`) every edge into which is a route, the same route check in `before-action.sh`, before the step's command runs (and in the step's own `action-<id>.sh`, which hands its commands to that check). It exits 2 naming the recorded value and the edge it needed. This holds under inline delegation too.
+- in `before-action.sh` (PreToolUse on `Bash|Monitor|PowerShell`), the gate-ledger check applied to the route record: a command that names it and does more than read it (a redirect, `tee`, `cp`, `mv`, `rm`) exits 2. Reading it, and running `route.sh`, pass.
+
+Every other `when` edge keeps its line in SKILL.md's Flow list and is not enforced. Where it promises a refusal that is not made, `validate` (no target, or `--target claude-code`) warns, naming the edge and why (rule id `CC-route`): a condition of another form; an edge to an action with no `commands:` (done in conversation, so there is no step to refuse); a route whose owner has no Bash in its tools; inline delegation. A route into an agent that an edge without a condition also reaches is not checked (the launch cannot tell which edge it follows) and does not warn. Codex, Cursor and claude-workflow do not compile routes.
+
 **Flow nodes** must resolve to one of:
 - An `agent` name
 - An `action` name

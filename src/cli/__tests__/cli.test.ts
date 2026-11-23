@@ -44,10 +44,14 @@ describe("agentopology CLI", () => {
   });
 
   describe("validate", () => {
-    it("exits 0 and says so on a clean topology", () => {
+    it("exits 0 on a topology whose only finding is one unenforced when edge", () => {
       const { out, code } = run(["validate", ex("simple-pipeline.at")]);
       expect(code).toBe(0);
-      expect(out).toContain("All validation rules passed");
+      // 0.13.0: reviewer -> done leads to an action with no commands, so the route is not enforced and warns.
+      const warns = out.split("\n").filter((l) => l.includes("WARN"));
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toMatch(/\[CC-route\] Flow edge "reviewer -> done" \[when reviewer\.verdict == approve\] is not enforced on Claude Code/);
+      expect(out).toContain("0 error(s), 1 warning(s)");
     });
 
     it("exits 1 and names the rule on an invalid topology", () => {
