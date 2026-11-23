@@ -557,7 +557,41 @@ human NAME {
 | timeout | string | no | -- | How long to wait (e.g. "1h", "30m") |
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
-| valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it |
+| valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
+| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it and a space, writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
+| binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
+
+## The go: a typed word
+
+\`\`\`at
+human owner-go {
+  who: owner
+  valid: "2026-11-01..2026-12-31"
+  word: "go release"
+  binds: ["docs/release-notes.md"]
+}
+records {
+  record go-ledger { path: "logs/go.jsonl" }
+}
+gates {
+  gate go-given {
+    after: owner-go
+    before: release
+    ledger: go-ledger
+  }
+}
+\`\`\`
+
+On claude-code this writes \`go-owner-go.sh\`, a UserPromptSubmit hook. When the person types \`go release\`, it appends
+\`{"step": "owner-go", "ok": true, "word": "go release", "ts": "...", "binds": {"docs/release-notes.md": "<sha256>"}}\`
+to \`logs/go.jsonl\`. It never blocks a prompt. Claude Code also runs this hook for prompts nobody typed, such as a
+message from another session; a prompt that opens with \`<cross-session-message\` writes no row. Claude Code's hook input
+does not say where a prompt came from, so a scheduled task or a background subagent's report that holds the word is
+not told apart.
+
+\`before-action.sh\` then lets \`release\` run only while \`docs/release-notes.md\` is unchanged since the go (a changed
+file fails and is named) and inside the \`valid\` window. The agent cannot write the row: editing the ledger, writing it
+from Bash, running the go hook with its own input, or editing the hook is refused.
 
 ## Example
 

@@ -1062,6 +1062,27 @@ gates {
 
 **Gates before a script step.** A gate whose `before:` is an `action` with `commands:` refuses that step in Claude Code sessions. The claude-code binding writes one script, `before-action.sh`, wired as a `PreToolUse` hook on `Bash|Monitor|PowerShell` (every Claude Code tool that runs a shell command; Monitor from Claude Code 2.1.314) with `onFailure: "block"`. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; a Monitor call with no `command` passes. When the command starts with one of the action's `commands:` (leading `VAR=value` words are ignored), the script checks the gate: if it has a ledger, the **last** line for the `after:` step (and the same unit, when the command names one with `unit-from`) must have `ok: true`; if it has `run:`, that wrapper must exit 0. Anything else exits 2 and says which gate, step, unit and ledger path refused. A gate with neither a ledger nor `run:` has nothing to check (V110).
 
+**The go: a typed word.** A `human` step may carry `word: "<go word>"` (a string) and `binds: [<project paths>]` (a list). On claude-code the human gets a generated `UserPromptSubmit` hook, `go-<human>.sh`. When a prompt the person typed is the word, after leading and trailing spaces are trimmed, or starts with the word followed by a space (`go release, notes look right`), the hook appends the go row to the ledger of every gate whose `after:` names the human: `{"step": "<human id>", "ok": true, "word": "<word>", "ts": "<UTC ISO time>", "binds": {"<path>": "<sha256>"}}`. A bound file that is missing is recorded as `null`. The word is matched case-sensitively. The hook never blocks a prompt. Claude Code also runs `UserPromptSubmit` for prompts nobody typed (a message from another session, a scheduled task, a background subagent reporting back), and its input does not say where a prompt came from. So the hook uses the same typed test as a deciding session's prompt log: a prompt that opens with `<cross-session-message` arrived from another session and writes no row. In `before-action.sh`, a gate after such a human counts the go row only while every bound file's current sha256 equals the one in the row (a changed or deleted file fails the gate and names the file), and, when the human has `valid:`, only while today is not past the window's end and the row's `ts` (or `at`) falls inside the window. The agent cannot write the row: an edit of the ledger, and a Bash command that writes it, are refused, and so are an edit of the go hook and a command that runs or changes it. V127: `word:` needs a ledger to write to (a gate after the human, with a record whose path has no `{unit}`); `binds:` needs `word:`, and its paths must be inside the project.
+
+```agenttopology
+human owner-go {
+  who: owner
+  valid: "2026-11-01..2026-12-31"
+  word: "go release"
+  binds: ["docs/release-notes.md"]
+}
+records {
+  record go-ledger { path: "logs/go.jsonl" }
+}
+gates {
+  gate go-given {
+    after: owner-go
+    before: release
+    ledger: go-ledger
+  }
+}
+```
+
 **A gate that refuses needs a moment a hook can mark (V135).** On Claude Code (and Codex, which wires gates the same way) a gate's `run:` script runs from a hook in three cases: every `after:` is a subagent (an `agent` without `runs: inline/fork`, or a `group`), so a `SubagentStop` hook runs it; a `before:` is a subagent, so `before-agent.sh` runs it before that agent starts; or a `before:` is a script step, so `before-action.sh` runs it before the step's command. With `orchestrator { delegation: inline }` no subagent runs, and only the script step wires. Any other gate gets its wrapper script and nothing that calls it. When such a gate is meant to refuse (its `run:` names a script, it is not `behavior: advisory`, and its `strength` is `refuse` or not written), validate reports a V135 error naming each anchor and what it is, unless an edge between its anchors cites (`guard:`) a declared hook with `strength: refuse` that can block, or another gate a hook runs, or a declared hook with `strength: refuse` that can block runs the gate's own `run:` command (then a V135 warning names that hook, its matcher and `if:`: it runs only on the calls they select, and `guard --check` grades the gate hope, or cited with `at:`, never refuse). A hook can block when it is a command hook, not async, on an event the platform blocks on (the list `guard --check` reads). Fix the anchor, or write `strength: hope` when a playbook runs the gate by hand; a cited gate may instead drop `run:` and keep the citation as the claim. A citation (`at:`) does not exempt it: only the gate's own generated hook makes it refuse. On Claude Code an `execution: workflow` agent is not a subagent (it runs in the workflow script). On Codex a gate run only by SubagentStop passes V135 but cannot hold the next step (CX9-noblock warns). Cursor writes a hook for every gate and is not checked; `plan` (interpreted mode) places the gate by its anchors and does not stop on V135.
 
 ```agenttopology
