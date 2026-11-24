@@ -873,6 +873,7 @@ const AT_PKG_FUNCTIONS: string[] = [
   "at_pkgname() {",
   "  local s=$1 pre r",
   "  AT_PKG=$1",
+  "  case $s in */agentopology/dist/cli/index.js|agentopology/dist/cli/index.js) AT_PKG=agentopology; return 0 ;; esac",
   "  while :; do",
   "    while [[ $s == npm:* ]]; do s=${s#npm:}; done",
   "    pre=''",
@@ -897,9 +898,11 @@ const AT_PKG_FUNCTIONS: string[] = [
   "# bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
   "at_pkg_seg() {",
   "  AT_PW=(\"$@\")",
-  "  case \" $* \" in *@*|*.tgz*|*.tar*|*.git*|*://*|*git+*|*github:*|*gitlab:*|*bitbucket:*|*file:*) ;; *) return 0 ;; esac",
+  "  case \" $* \" in *@*|*.tgz*|*.tar*|*.git*|*://*|*git+*|*github:*|*gitlab:*|*bitbucket:*|*file:*|*/dist/cli/index.js*|*--call=*) ;; *) return 0 ;; esac",
   "  local j k n=$# x b o",
   "  for ((j=0; j<n; j++)); do",
+  "    # the CLI's own file, run by node or any program, is the CLI",
+  "    case ${AT_PW[j]} in */agentopology/dist/cli/index.js|agentopology/dist/cli/index.js) AT_PW[j]=agentopology; continue ;; esac",
   "    b=${AT_PW[j]##*/}",
   "    case $b in",
   "      npx|pnpx|bunx) k=$((j+1)) ;;",
@@ -925,6 +928,8 @@ const AT_PKG_FUNCTIONS: string[] = [
   "        --) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; break ;;",
   "        -p|--package) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; k=$((k+1)) ;;",
   "        --package=*) at_pkgname \"${x#--package=}\"; AT_PW[k]=--package=$AT_PKG; k=$((k+1)) ;;",
+  "        # --call runs its value as a shell's -c does: its first word is a program, read as one",
+  "        --call=?*) AT_PW[k]=${x#--call=}; k=$((k+1)) ;;",
   "        -c|--call|--registry|--cache|--userconfig|--prefix|--node-arg|-w|--workspace|--filter|-C|--cwd) k=$((k+2)) ;;",
   "        -*) k=$((k+1)) ;;",
   "        *) at_pkgname \"$x\"; AT_PW[k]=$AT_PKG; break ;;",
@@ -1192,6 +1197,8 @@ export const MATCH_FUNCTIONS: string[] = [
   "letters() { printf '%s' \"$1\" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'; }",
   "strip_redir() {",
   "  local t=$1 re='(&>>|&>|>>|>\\||>&|<&|<<<|<<-|<<|<>|>|<)[[:space:]]*[^[:space:];&|()<>]*'",
+  "  # a here-string's text is read on its own line, as a here-doc's body is: a shell may run it",
+  "  t=${t//'<<<'/$'\\n'}",
   "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
   "  printf '%s' \"$t\"",
   "}",
@@ -2844,6 +2851,8 @@ const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|k
  * The shell functions at_pkgname and at_pkg_seg do the same to a command.
  */
 export function pkgName(spec: string): string {
+  // the CLI's own file is the CLI
+  if (/(^|\/)agentopology\/dist\/cli\/index\.js$/.test(spec)) return "agentopology";
   let s = spec;
   let scope = "";
   for (;;) {
