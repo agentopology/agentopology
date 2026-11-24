@@ -3306,6 +3306,38 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "  done",
     "  return 1",
     "}",
+    "# at_code_cmd CMD: AT_CODE=1 when the command may hand text to a program that runs text as code (a shell, an",
+    "# interpreter, a remote or container run, a build tool, a wrapper, a git alias, -c, --call, --eval), AT_SA=1",
+    "# when it runs sed or awk. Quoted text with a space is left out first, so the words of a message name no",
+    "# program. A program not on this list that runs text it is given is not seen: its quoted text reads as text.",
+    "at_code_cmd() {",
+    "  local t=$1 x re; local -a ws",
+    "  AT_CODE=0; AT_SA=0",
+    String.raw`  re="\"[^\"]* [^\"]*\"|'[^']* [^']*'"`,
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  t=$(lower \"$(norm \"$t\")\")",
+    "  for x in '&' '|' ';' '(' ')' '`' '<' '>' '{' '}' $'\\n'; do t=${t//\"$x\"/ }; done",
+    "  read -ra ws <<< \"$t\"",
+    "  for x in ${ws[@]+\"${ws[@]}\"}; do",
+    "    case ${x##*/} in",
+    "      bash|sh|zsh|dash|ksh|mksh|yash|fish|csh|tcsh|tclsh|wish|expect|eval|source|exec|perl|ruby|php|lua|luajit|deno|bun|node|nodejs|python*|pypy*|busybox|env|script|watch|ssh|docker|podman|kubectl|make|gmake|xargs|find|parallel|nohup|setsid|sudo|doas|su|timeout|osascript|pwsh|powershell|at|batch|crontab|tmux|screen|vi|vim|nvim|emacs|less|more|man) AT_CODE=1 ;;",
+    "      awk|gawk|mawk|nawk|sed) AT_SA=1 ;;",
+    "    esac",
+    "    case $x in -c|--call*|--eval*|'!'*|*alias.*) AT_CODE=1 ;; esac",
+    "  done",
+    "}",
+    "# at_text_seg RAW L: LT, the segment as the coarse reading reads it: L, or, when the command hands no text to",
+    "# a program that runs it (AT_CODE and AT_SA both 0), L with each quoted text that holds a space left out.",
+    "at_text_seg() {",
+    "  LT=$2",
+    "  [ \"$AT_CODE$AT_SA\" = 00 ] || return 0",
+    String.raw`  [[ $1 == *[\"\']* ]] || return 0`,
+    "  local t=$1 re",
+    String.raw`  re="\"[^\"]* [^\"]*\"|'[^']* [^']*'"`,
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  LT=$(lower \"$(norm \"$t\")\")",
+    "}",
+    "at_code_cmd \"$CMD\"",
   );
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
   guards.forEach(({ action }, a) => {
@@ -3368,14 +3400,18 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       const pwshDoubt = names.map((n) => `[ "$(key_count ${sq(n.replace(/[^a-z0-9]/g, ""))})" -gt "$K${pwshKeys.indexOf(n)}" ]`).join(" || ");
       lines.push(`if [ "$PWSH" = 1 ] && { ${pwshDoubt}; }; then`, ...unreadable("a PowerShell form", "  "), "fi");
     }
-    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
+    // A step read coarsely (COARSE_PROGRAMS) reads LT: the segment with quoted text left out when nothing in the
+    // command runs text as code (at_text_seg); both its plain and its coarse reading read LT.
+    const ck = coarseKeys(action);
+    const isCoarse = (k: { key: string; rest: string }) => ck.some((c) => c.key === k.key && c.rest === k.rest);
+    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", ...(ck.length ? ["  RC=$C"] : []), '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
+    if (ck.length) lines.push('  at_text_seg "$RC" "$L"');
     lines.push("  SEG_DOUBT=0; T=0");
-    for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
+    for (const k of keys) lines.push(`  seg_steps "${isCoarse(k) ? "$LT" : "$L"}" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
     // Fail closed: a segment the plain reading found no step in, but which names the step's program (or an
     // expansion where a program stands) and holds the step's words, is the step too (at_coarse).
-    const ck = coarseKeys(action);
-    const coarse = ck.map((k) => `at_coarse "$L" ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ");
+    const coarse = ck.map((k) => `at_coarse "$LT" ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ");
     if (ck.length) lines.push(`  if [ "$T" -eq 0 ] && [ "$SEG_DOUBT" = 0 ] && { ${coarse}; }; then`, ...unreadable("it names the step's program and words in a form this guard does not read as plain", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
     if (byUnit && action.unitFrom) {
