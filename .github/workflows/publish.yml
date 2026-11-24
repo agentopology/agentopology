@@ -1,0 +1,121 @@
+# Publishes agentopology to npm with trusted publishing (OIDC): no npm token
+# is stored anywhere. npm's docs (https://docs.npmjs.com/trusted-publishers):
+# trusted publishing "requires npm CLI version 11.5.1 or later and Node
+# version 22.14.0 or higher", "supports only cloud-hosted runners", needs the
+# `id-token: write` permission, and generates provenance by default.
+#
+# Triggers:
+# - a pushed v* tag publishes that tag;
+# - workflow_dispatch publishes an existing tag (dry run unless dry_run is false);
+# - a pull request that changes this file runs a dry run only.
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish, e.g. v0.13.0'
+        required: true
+        type: string
+      dry_run:
+        description: 'Pack and check only; do not publish'
+        required: true
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - '.github/workflows/publish.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EVENT: ${{ github.event_name }}
+      INPUT_TAG: ${{ github.event.inputs.tag }}
+      INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+      REF_NAME: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Use npm 11 (trusted publishing needs 11.5.1 or later)
+        run: npm install -g npm@11
+
+      - name: Check the npm and Node versions
+        run: |
+          node --version
+          npm --version
+          node -e '
+            const [a, b, c] = process.argv[1].split(".").map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) { console.error("npm " + process.argv[1] + " is older than 11.5.1"); process.exit(1); }
+          ' "$(npm --version)"
+
+      - name: Decide the mode
+        id: mode
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "dry=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+            echo "dry=$INPUT_DRY_RUN" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "dry=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check the tag matches package.json
+        if: steps.mode.outputs.tag != ''
+        env:
+          TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match package.json version $version"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      # No test suite here for now. The release gate is the full suite run
+      # alone at the tagged commit before the tag is pushed. Some tests still
+      # assume Claude Code is installed, and one watchdog test fails on a stock
+      # Linux runner; the tests return to this workflow once both are fixed.
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      # A pull request checks the code on main, whose version is already on
+      # npm, so it only packs; a manual dry run of a tag asks the registry too.
+      - name: Pack (pull request)
+        if: env.EVENT == 'pull_request'
+        run: npm pack --dry-run
+
+      - name: Publish (dry run)
+        if: steps.mode.outputs.dry == 'true' && env.EVENT != 'pull_request'
+        run: npm publish --dry-run
+
+      - name: Publish
+        if: steps.mode.outputs.dry != 'true'
+        run: npm publish
