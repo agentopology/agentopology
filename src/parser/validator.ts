@@ -4244,6 +4244,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
     ...v158StopWord(ast),
+    ...v159WallTime(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4932,6 +4933,23 @@ function v152MetaTarget(ast: TopologyAST): ValidationResult[] {
     rule: "V152", level: "error",
     message: `meta target "${target}" is not a path: ${bad}. Write a directory, absolute or relative to the project, for example target: "app".`,
   }];
+}
+
+/**
+ * V159: `wall-time:` caps the whole session, so it sits on the entry agent (`meta { entry }`) only; a
+ * subagent's own limit is `timeout`. The value is a duration: a positive whole number and s, m, h or d.
+ */
+function v159WallTime(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "agent" || n.wallTime === undefined) continue;
+    const err = (message: string) => results.push({ rule: "V159", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    const entry = ast.topology.entry;
+    if (entry === undefined) err(`Agent "${n.id}" has wall-time: ${n.wallTime}, but the topology names no entry. wall-time caps the whole session, so write meta { entry: ${n.id} }, or use timeout: for a subagent's own limit.`);
+    else if (entry !== n.id) err(`Agent "${n.id}" has wall-time: ${n.wallTime}, but the entry agent is "${entry}". wall-time caps the whole session and sits on the entry agent only; use timeout: for a subagent's own limit.`);
+    if (!/^[1-9]\d*[smhd]$/.test(n.wallTime)) err(`Agent "${n.id}" wall-time: "${n.wallTime}" is not a duration. Write a positive whole number and s, m, h or d, such as 4h or 90m.`);
+  }
+  return results;
 }
 
 /** A go or stop word as the go hook reads it: lower case, runs of other characters one space. */

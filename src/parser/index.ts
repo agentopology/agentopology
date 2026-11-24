@@ -834,6 +834,7 @@ export function parseAgent(
     if (/^[1-9]\d*$/.test(raw)) node.maxSubagents = parseInt(raw, 10);
     else node.maxSubagentsRaw = raw;
   }
+  if (fields["wall-time"] !== undefined) node.wallTime = unquote(fields["wall-time"].trim());
   if (fields["max-cost"] !== undefined) {
     const cost = parseUsd(fields["max-cost"]);
     if (cost.value !== undefined) node.maxCost = cost.value;

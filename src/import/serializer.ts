@@ -174,6 +174,7 @@ function serializeAgent(node: AgentNode): string {
   }
   if (node.fallbackChain?.length) lines.push(`    fallback-chain: ${inlineList(node.fallbackChain)}`);
   if (node.maxTurns) lines.push(`    max-turns: ${node.maxTurns}`);
+  if (node.wallTime !== undefined) lines.push(`    wall-time: ${node.wallTime}`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);

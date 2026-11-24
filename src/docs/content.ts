@@ -132,6 +132,7 @@ agent NAME {
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
 | max-turns | number | no | -- | Max agentic turns before stopping |
+| wall-time | duration | no | -- | Wall-clock cap on the whole session (\`4h\`, \`90m\`), on the entry agent only (V159). A SessionStart hook records the start; a PreToolUse guard on every tool refuses each call, a subagent's too, once the cap has passed, with a reason naming it; no recorded start refuses too. A text check of elapsed time between calls: it does not interrupt a call already running |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -3866,6 +3867,10 @@ The top-level \`ci { provider: github, on: [...], gates: [...] }\` block names a
 **Violation:** \`agent lead { max-subagents: 0 }\`.
 **Fix:** \`max-subagents: 3\`.
 
+### V159: Wall Time (error)
+
+\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`.
+
 ### V158: Stop Word (error)
 
 A human's \`stop-word:\` needs \`word:\`, must be one non-empty line, must differ from the word, and neither may open with the other (the go hook reads a prompt that opens with a word as that word, so one prompt would give the go and the stop).
@@ -3935,6 +3940,7 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
 | V158 | error | Stop Word |
+| V159 | error | Wall Time |
 `,
   },
 

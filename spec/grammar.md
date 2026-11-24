@@ -431,6 +431,7 @@ agent-field     = 'role' ':' identifier
                 | 'max-turns' ':' number
                 | 'max-subagents' ':' number
                 | 'max-cost' ':' number
+                | 'wall-time' ':' duration
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
                 | agent-extensions
@@ -484,6 +485,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `description` | string | no | -- | Human-readable purpose of this agent |
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
 | `max-subagents` | number | no | -- | Most subagents this agent may have open at once; a positive whole number (V156). On claude-code a PreToolUse hook on `Agent\|Task` refuses a launch at the cap, counted per session from a log the SubagentStart and SubagentStop hooks write |
+| `wall-time` | duration | no | -- | Wall-clock cap on the whole session, such as `4h` or `90m`; on the entry agent (`meta { entry }`) only, V159 refuses it on any other agent (a subagent's own limit is `timeout`). On claude-code a `SessionStart` hook, `wall-start.sh`, records the session's start time in `.claude/state/wall-time/<session_id>` (once: a resume or compact keeps the first start), and `wall-time.sh`, a PreToolUse hook on every tool, refuses each tool call, a subagent's too, once more than the cap has passed, with a reason naming the cap. With no start recorded (the file is gone, jq missing, no usable session id) it refuses too. A text check of elapsed time between tool calls: it does not interrupt a call already running, and a command that rewrites the state file is not seen (only the sandbox stops that) |
 | `max-cost` | number | no | -- | Spend cap in US dollars (V156). Advisory, not enforced: Claude Code hooks do not see spend; the value is written to the metering output for reporting |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime). May be written more than once: the first block's hooks belong to the agent; a second and later block's hooks are project hooks (settings.json), as in 0.11.4. A hook name in two of its blocks is a V23 error |
@@ -2267,6 +2269,7 @@ All optional fields and their defaults when omitted:
 | `agent` | `max-turns` | -- (none) |
 | `agent` | `max-subagents` | -- (no cap) |
 | `agent` | `max-cost` | -- (no cap) |
+| `agent` | `wall-time` | -- (no cap) |
 | `agent` | `sandbox` | -- (none) |
 | `agent` | `fallback-chain` | `[]` |
 | `agent` | `extensions` | -- (none) |

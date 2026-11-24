@@ -761,6 +761,8 @@ export interface AgentNode extends BaseNode {
   maxTurns?: number;
   /** Most subagents this agent may have open at once (`max-subagents:`). */
   maxSubagents?: number;
+  /** Wall-clock cap on the whole session, as written (`4h`, `90m`); the entry agent only (V159). On claude-code a PreToolUse guard refuses every tool once it has passed. */
+  wallTime?: string;
   /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
   maxSubagentsRaw?: string;
   /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */

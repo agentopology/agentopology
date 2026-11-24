@@ -67,7 +67,7 @@ import { isSandboxPath } from "./lib/threat.js";
 import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
 import { generateBeforeReadScript as buildBeforeReadScript } from "./lib/walls.js";
 import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
-import { generateHaltScript, HALT_SCRIPT } from "./lib/controls.js";
+import { generateHaltScript, generateWallScripts, HALT_SCRIPT, WALL_START_SCRIPT, WALL_TIME_SCRIPT } from "./lib/controls.js";
 
 /** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
 const CAPS_TIMEOUT_HOOK = "agentopology-timeout";
@@ -2862,6 +2862,17 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // wall-time on the entry agent: record the session start, refuse every tool past the cap.
+  if (generateWallScripts(ast, CLAUDE_CODE_GUARDS).length > 0) {
+    if (!hooksByEvent.SessionStart) hooksByEvent.SessionStart = [];
+    hooksByEvent.SessionStart.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, WALL_START_SCRIPT)}` }] });
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "*",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, WALL_TIME_SCRIPT)}`, onFailure: "block" }],
+    });
+  }
+
   // A scheduled or /loop prompt the model creates is submitted as written: one starting with a go word is refused.
   if (generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
@@ -4130,6 +4141,7 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) files.push(goHook(ast, h, CLAUDE_CODE_GUARDS)!);
     const haltScript = generateHaltScript(ast, CLAUDE_CODE_GUARDS);
     if (haltScript) files.push(haltScript);
+    files.push(...generateWallScripts(ast, CLAUDE_CODE_GUARDS));
     const beforeSchedule = generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeSchedule) files.push(beforeSchedule);
 

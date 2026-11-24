@@ -2017,6 +2017,7 @@ function guardScriptNames(ast: TopologyAST): string[] {
     ...ids("agent").flatMap((id) => [promptLogScript(id), `output-schema-${id}.sh`]),
     // 0.13.1: the run controls' scripts, named only when the topology uses their field (other topologies are unchanged)
     ...(ast.nodes.some((n) => n.type === "human" && (n as HumanNode).stopWord !== undefined) ? ["go-halt.sh"] : []),
+    ...(ast.nodes.some((n) => n.type === "agent" && n.id === ast.topology.entry && (n as AgentNode).wallTime !== undefined) ? ["wall-start.sh", "wall-time.sh"] : []),
   ];
 }
 
