@@ -10,6 +10,7 @@
 import type {
   TopologyAST,
   AgentNode,
+  RecordDef,
   ActionNode,
   GateNode,
   GroupNode,
@@ -31,9 +32,9 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
+import { sandboxFromAst, sandboxPlan, sandboxWeakenings, weakeningMessage } from "./lib/sandbox.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE, STUB_BLOCKS_ON, blockingHookStubMessage, denyingHookStubMessage, denyOnExit2 } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
-import { generateCiWorkflow } from "./lib/ci.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
 import { overrideMessage, telemetryPlan } from "./lib/claude-code-telemetry.js";
 import {
@@ -56,6 +57,9 @@ import {
   goHumans,
   hooklessGateReason,
   isRegisteredSubagentType,
+  outputIntoScript,
+  outputIntoTargets,
+  projectRootLines,
   runsAsSkill,
   shellQuote,
   stepMatchWords,
@@ -65,8 +69,10 @@ import { generateRouteScript, routeActionTargets, routeInstructions, routeKeys }
 import { generateTaintGuardScript, generateTaintMarkScript, taintGuardMatcher, taintMarkMatcher } from "./lib/taint.js";
 import { isSandboxPath } from "./lib/threat.js";
 import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
-import { generateBeforeReadScript as buildBeforeReadScript } from "./lib/walls.js";
+import { generateBeforeReadScript as buildBeforeReadScript, wallPermissionRules } from "./lib/walls.js";
+import { BOUNDARY_MATCHER, boundaryAllowedDomains, boundaryDenyRules, generateBeforeBoundaryScript, generateBoundariesDoc } from "./lib/boundaries.js";
 import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
+import { egressCovers, egressMatcher, EGRESS_GUARD_SCRIPT, EGRESS_OBS_SCRIPT, generateEgressGuard, generateEgressObservability, generateHaltScript, generateWallScripts, HALT_SCRIPT, WALL_START_SCRIPT, WALL_TIME_SCRIPT } from "./lib/controls.js";
 
 /** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
 const CAPS_TIMEOUT_HOOK = "agentopology-timeout";
@@ -85,6 +91,9 @@ import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { PluginError, pluginScaffoldOf, preparePluginTarget, refusalEventsOn } from "../plugins/runtime.js";
+import { withRefusalEvent } from "./lib/refusal-event.js";
+import { checkHooks } from "../conformance/claude-code.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -669,6 +678,79 @@ function generateOutputSchemaScripts(ast: TopologyAST): GeneratedFile[] {
     ].join("\n");
     return {
       path: `.claude/skills/${ast.topology.name}/scripts/output-schema-${agent.id}.sh`,
+      content,
+      category: "script",
+      executable: true,
+    } as GeneratedFile;
+  });
+}
+
+/** The agents whose output a SubagentStop hook appends to a record (`output-into:`, 0.13.1): a subagent with an output-schema and a declared record. */
+export function outputIntoAgents(ast: TopologyAST): Array<{ agent: AgentNode; record: RecordDef }> {
+  return outputIntoTargets(ast, CLAUDE_CODE_GUARDS);
+}
+
+/**
+ * The SubagentStop script for `output-into:` (0.13.1). It reads the same input the output-schema check reads
+ * (https://code.claude.com/docs/en/hooks, SubagentStop input): `last_assistant_message`, the text of the
+ * subagent's final response, which is parsed as JSON or as the first ```json block in it. `agent_type`
+ * (the subagent's name) is what the settings matcher filters on, so the hook runs only for this agent;
+ * `agent_id` is not used. A message that holds every declared field with its type appends
+ * {ts, agent, ...declared fields}; any other message appends {ts, agent, error: "schema"} and never the raw
+ * output. The hook exits 0 whatever it read: it is a recorder, and the output-schema check is what keeps a
+ * subagent working. Because that check can send the subagent back, one run can leave an error row and then
+ * a good one: one row for each stop.
+ *
+ * A subagent that reports through the SubagentHandback tool (Claude Code 2.1.271 or later) has its report
+ * in that call's `message`, and `last_assistant_message` holds only its closing text: such a subagent's rows
+ * read as error rows. The hook writes the file directly, not through record-<id>.sh, so the record's
+ * `fields:` and `max-per-day` do not apply to these rows.
+ */
+function generateOutputIntoScripts(ast: TopologyAST): GeneratedFile[] {
+  return outputIntoAgents(ast).map(({ agent, record }) => {
+    const schema = agent.outputSchema!;
+    const checks = schema.map((f) => {
+      const n = JSON.stringify(f.name);
+      const missing = f.optional ? "empty" : JSON.stringify(`field "${f.name}" is missing`);
+      const wrong = JSON.stringify(`field "${f.name}" has the wrong type`);
+      return `(if has(${n}) and .[${n}] != null then (.[${n}] | if ${jqTypeTest(f.type)} then empty else ${wrong} end) else ${missing} end)`;
+    });
+    const check = `if type != "object" then "the output is not a JSON object" else (first(${checks.join(", ")}) // empty) end`;
+    const names = schema.map((f) => JSON.stringify(f.name)).join(", ");
+    const take = `(with_entries(select(.key | IN(${names}))) | del(.ts, .agent)) as $f | {ts: $ts, agent: $agent} + $f`;
+    const sq = (s: string) => s.replace(/'/g, "'\\''");
+    const content = [
+      "#!/usr/bin/env bash",
+      `# Appends the output of agent "${agent.id}" to the record "${record.id}" (${record.path}) when the agent stops (SubagentStop).`,
+      "# Auto-generated by agentopology scaffold. Reads last_assistant_message from the SubagentStop input.",
+      `# A matching output appends {"ts", "agent", <the output-schema fields>}; any other appends {"ts", "agent", "error": "schema"}, never the raw output.`,
+      "# Exits 0 always: it records, and does not hold the subagent.",
+      "set -u",
+      ...projectRootLines(CLAUDE_CODE_GUARDS, ast.topology.name, "fallback"),
+      "command -v jq >/dev/null 2>&1 || { echo \"output-into: jq is not installed, so nothing was appended to the record\" >&2; exit 0; }",
+      "input=$(cat)",
+      `msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' 2>/dev/null) || msg=''`,
+      "# The whole message as JSON, else the first ```json block in it.",
+      "out=$(printf '%s' \"$msg\" | jq -c . 2>/dev/null) || out=''",
+      "if [ -z \"$out\" ]; then",
+      "  block=$(printf '%s\\n' \"$msg\" | awk '/^[[:space:]]*```json[[:space:]]*$/{f=1;next} f&&/^[[:space:]]*```[[:space:]]*$/{exit} f')",
+      "  out=$(printf '%s' \"$block\" | jq -c . 2>/dev/null) || out=''",
+      "fi",
+      "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+      "row=''",
+      "if [ -n \"$out\" ]; then",
+      `  problem=$(printf '%s' "$out" | jq -r '${sq(check)}' 2>/dev/null) || problem='unreadable'`,
+      `  [ -n "$problem" ] || row=$(printf '%s' "$out" | jq -c --arg ts "$ts" --arg agent ${shellQuote(agent.id)} '${sq(take)}' 2>/dev/null) || row=''`,
+      "fi",
+      `[ -n "$row" ] || row=$(jq -nc --arg ts "$ts" --arg agent ${shellQuote(agent.id)} '{ts: $ts, agent: $agent, error: "schema"}')`,
+      `FILE=${shellQuote(record.path.replace(/^\.\//, ""))}`,
+      "mkdir -p \"$(dirname \"$FILE\")\"",
+      "printf '%s\\n' \"$row\" >> \"$FILE\"",
+      "exit 0",
+      "",
+    ].join("\n");
+    return {
+      path: `.claude/skills/${ast.topology.name}/scripts/output-into-${agent.id}.sh`,
       content,
       category: "script",
       executable: true,
@@ -1556,6 +1638,12 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   if (ast.triggers.length > 0) {
     fm.entry = `commands/${ast.triggers[0].name}.md`;
   }
+  // meta { entry } naming a declared agent: the agent id under its own key,
+  // `entry-agent`, so a tool can recognise the generated flow map. `entry`
+  // above (the trigger command path) is left as it is. Claude Code ignores
+  // keys it does not know (https://code.claude.com/docs/en/skills).
+  const entryNode = ast.topology.entry === undefined ? undefined : ast.nodes.find((n) => n.id === ast.topology.entry);
+  if (entryNode && entryNode.type === "agent") fm["entry-agent"] = entryNode.id;
 
   // Add skill-level fields from the first matching skill (if skills exist)
   // For the main topology skill, look for a skill with the same name as the topology
@@ -2792,6 +2880,14 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
         hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, `output-schema-${agent.id}.sh`)}` }],
       });
     }
+    // output-into: the agent's output is appended to its record when it stops (0.13.1).
+    for (const { agent } of outputIntoAgents(ast)) {
+      if (!hooksByEvent.SubagentStop) hooksByEvent.SubagentStop = [];
+      hooksByEvent.SubagentStop.push({
+        matcher: agent.id,
+        hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, `output-into-${agent.id}.sh`)}` }],
+      });
+    }
   }
 
   // HYBRID: host-layer concurrent Blackboard observer.
@@ -2852,6 +2948,39 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent.UserPromptSubmit.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, goHookScript(h.id))}` }] });
   }
 
+  // The stop word: while the last go-ledger row of a human with a stop-word is a halt, every tool is refused.
+  if (generateHaltScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "*",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, HALT_SCRIPT)}`, onFailure: "block" }],
+    });
+  }
+
+  // wall-time on the entry agent: record the session start, refuse every tool past the cap.
+  if (generateWallScripts(ast, CLAUDE_CODE_GUARDS).length > 0) {
+    if (!hooksByEvent.SessionStart) hooksByEvent.SessionStart = [];
+    hooksByEvent.SessionStart.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, WALL_START_SCRIPT)}` }] });
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "*",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, WALL_TIME_SCRIPT)}`, onFailure: "block" }],
+    });
+  }
+
+  // egress { }: web, network and mcp are refused until the gate clears; the telemetry env is written after it.
+  if (generateEgressGuard(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: egressMatcher(ast),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, EGRESS_GUARD_SCRIPT)}`, onFailure: "block" }],
+    });
+  }
+  if (generateEgressObservability(ast, CLAUDE_CODE_GUARDS, telemetryPlan(ast).env)) {
+    if (!hooksByEvent.SessionStart) hooksByEvent.SessionStart = [];
+    hooksByEvent.SessionStart.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, EGRESS_OBS_SCRIPT)}` }] });
+  }
+
   // A scheduled or /loop prompt the model creates is submitted as written: one starting with a go word is refused.
   if (generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
@@ -2886,6 +3015,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // boundary { }: the text check on edits and on git push (the Edit deny rules are written with the permissions below).
+  if (generateBeforeBoundaryScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: BOUNDARY_MATCHER,
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-boundary.sh")}`, onFailure: "block" }],
+    });
+  }
+
   // Caps: the subagent log, and the max-subagents guard on Agent|Task.
   for (const [event, entries] of Object.entries(capsSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -2904,6 +3042,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[observeHook.event].push(observeHook.entry);
   }
 
+  // Plugins (EXPERIMENTAL): their hook entries; none without plugins.
+  mergePluginSettingsHooks(ast, hooksByEvent);
+
   // Write hooksByEvent to settings if any hooks or gates were registered
   if (Object.keys(hooksByEvent).length > 0) {
     settings.hooks = hooksByEvent;
@@ -2920,7 +3061,14 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // rules written in settings { allow } (lib/repo-tools.ts).
   const perms = ast.settings;
   const toolRules = toolAllowRules(ast);
-  if (perms || toolRules.length > 0) {
+  // A go word turns the sandbox on (lib/sandbox.ts): the files only hooks and
+  // scaffold write are denied to the agent's commands and to its Edit tool.
+  const sandbox = sandboxPlan(ast);
+  // ask-reads and a secret nobody may read: permission rules (lib/walls.ts).
+  const wallRules = wallPermissionRules(ast);
+  // boundary { in: read-only }: Edit deny rules (permission rules; the text check is before-boundary.sh).
+  wallRules.deny.push(...boundaryDenyRules(ast).filter((r) => !wallRules.deny.includes(r)));
+  if (perms || toolRules.length > 0 || sandbox || wallRules.ask.length > 0 || wallRules.deny.length > 0) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
       const rules = perms?.[key] as string[] | undefined;
@@ -2928,7 +3076,27 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     }
     const extra = toolRules.filter((r) => !(permObj.allow ?? []).includes(r));
     if (extra.length > 0) permObj.allow = [...(permObj.allow ?? []), ...extra];
+    for (const key of ["ask", "deny"] as const) {
+      const add = wallRules[key].filter((r) => !(permObj[key] ?? []).includes(r));
+      if (add.length > 0) permObj[key] = [...(permObj[key] ?? []), ...add];
+    }
+    if (sandbox) {
+      const deny = [...(permObj.deny ?? [])];
+      for (const r of sandbox.editDeny) if (!deny.includes(r)) deny.push(r);
+      permObj.deny = deny;
+    }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
+  }
+  if (sandbox) {
+    setSettingsPath(settings, "sandbox.enabled", true);
+    setSettingsPath(settings, "sandbox.allowUnsandboxedCommands", false);
+    setSettingsPath(settings, "sandbox.failIfUnavailable", true);
+    setSettingsPath(settings, "sandbox.filesystem.denyWrite", sandbox.denyWrite);
+    // boundary { outbound }: the hosts the work may reach, in the sandbox's network allow-list
+    // (extensions add to it below). Without the sandbox block they stay in boundaries.md (V166).
+    const hosts = boundaryAllowedDomains(ast);
+    if (hosts.length > 0) setSettingsPath(settings, "sandbox.network.allowedDomains", hosts);
+    for (const w of sandboxWeakenings(sandboxFromAst(ast), sandbox)) console.warn(`[claude-code] ${weakeningMessage(w)}`);
   }
   if (perms) {
 
@@ -3823,7 +3991,8 @@ function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null 
   // observability { }: the telemetry keys Claude Code reads. A key env { }
   // sets is the user's (even a reference left to the shell), so the plan
   // leaves it out.
-  Object.assign(env, telemetryPlan(ast).env);
+  // egress { covers: [observability] } holds them back: egress-observability.sh writes them after the gate clears.
+  if (!egressCovers(ast).observability) Object.assign(env, telemetryPlan(ast).env);
 
   if (Object.keys(env).length === 0) return null;
   return env;
@@ -4084,6 +4253,7 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     // Gate scripts
     files.push(...generateGateScripts(ast));
     files.push(...generateOutputSchemaScripts(ast));
+    files.push(...generateOutputIntoScripts(ast));
     files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, (run, topology) => hookCommand(run, topology, projectRootRef(ast))));
     const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
@@ -4109,6 +4279,10 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (recordsJson) files.push(recordsJson);
     const beforeRead = buildBeforeReadScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeRead) files.push(beforeRead);
+    const beforeBoundary = generateBeforeBoundaryScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeBoundary) files.push(beforeBoundary);
+    const boundariesDoc = generateBoundariesDoc(ast, CLAUDE_CODE_GUARDS);
+    if (boundariesDoc) files.push(boundariesDoc);
 
     // Caps: subagent log, max-subagents guard, per-agent timeout guards
     files.push(...generateCapsScripts(ast));
@@ -4118,6 +4292,13 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // The go: a human's typed word writes its go row (UserPromptSubmit)
     for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) files.push(goHook(ast, h, CLAUDE_CODE_GUARDS)!);
+    const haltScript = generateHaltScript(ast, CLAUDE_CODE_GUARDS);
+    if (haltScript) files.push(haltScript);
+    files.push(...generateWallScripts(ast, CLAUDE_CODE_GUARDS));
+    const egressGuard = generateEgressGuard(ast, CLAUDE_CODE_GUARDS);
+    if (egressGuard) files.push(egressGuard);
+    const egressObs = generateEgressObservability(ast, CLAUDE_CODE_GUARDS, telemetryPlan(ast).env);
+    if (egressObs) files.push(egressObs);
     const beforeSchedule = generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeSchedule) files.push(beforeSchedule);
 
@@ -4129,9 +4310,6 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Mods (type: mod) → a plugin directory; never settings.json
     files.push(...generateModPlugin(ast));
-
-    // ci { } → the GitHub Actions workflow that runs `step check`
-    files.push(...generateCiWorkflow(ast));
 
     // HYBRID: host-side launch directives for the embedded workflow rung(s).
     files.push(...generateWorkflowLaunchArtifacts(ast));
@@ -4158,6 +4336,11 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     const settingsFile = generateSettings(ast);
     if (settingsFile) files.push(settingsFile);
 
+    // The files the sandbox denies are created empty when missing: on Linux
+    // and WSL2 a denyWrite entry for a path that does not exist may do
+    // nothing. An existing file is never touched.
+    for (const p of sandboxPlan(ast)?.create ?? []) files.push({ path: p, content: "", category: "machine", createOnly: true });
+
     // MCP servers (with env field)
     const mcpFile = generateMcpJson(ast);
     if (mcpFile) files.push(mcpFile);
@@ -4172,7 +4355,10 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     const contextPath = contextFilePath(ast);
     if (contextPath) files.push({ path: contextPath, content: contextBlock(ast), category: "agent" });
 
-    return deduplicateFiles(files);
+    // Plugins (EXPERIMENTAL): their files, before dedupe; none without plugins.
+    // The refusal event (EXPERIMENTAL), only for a topology that opts in; the plugins' own files are not touched.
+    const evented = refusalEventsOn(ast) ? files.map(withRefusalEvent) : files;
+    return deduplicateFiles(mergePluginFiles(ast, evented));
 }
 
 export const claudeCodeBinding: BindingTarget = {
@@ -4181,11 +4367,85 @@ export const claudeCodeBinding: BindingTarget = {
     "Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
-    return withoutAuthored(ast, generateAll(ast));
+    const prepared = preparePluginTarget(ast, "claude-code");
+    return withoutAuthored(prepared, generateAll(prepared));
   },
 
   scaffoldStructured(ast: TopologyAST) {
-    const all = generateAll(ast);
-    return { files: withoutAuthored(ast, all), structure: structureOf(ast, all) };
+    const prepared = preparePluginTarget(ast, "claude-code");
+    const all = generateAll(prepared);
+    return { files: withoutAuthored(prepared, all), structure: structureOf(prepared, all) };
   },
 };
+
+/**
+ * Add the plugins' files to the core files. A path a core generator writes is
+ * an error naming the plugin, except a gate's stub at the run script a plugin
+ * set for that gate (gateRuns): the plugin's file is that script.
+ */
+function mergePluginFiles(ast: TopologyAST, files: GeneratedFile[]): GeneratedFile[] {
+  const plug = pluginScaffoldOf(ast);
+  if (!plug || (plug.files.length === 0 && plug.gateIds.size === 0)) return files;
+  const out = files.map((f) => withPluginToolEnv(ast, plug.gateIds, f));
+  let merged = out;
+  for (const f of plug.files) {
+    const core = merged.filter((c) => c.path === f.path);
+    // Every gate that runs the plugin's script got its own stub there: all give way.
+    if (core.some((c) => !(c.stub === "gate" && plug.gateScripts.has(f.path)))) {
+      throw new PluginError(`plugin ${f.plugin}: file "${f.path}" is a file the core claude-code scaffold writes; a plugin cannot write it.`);
+    }
+    merged = merged.filter((c) => c.path !== f.path);
+    merged.push({ path: f.path, content: f.content, category: "machine", ...(f.executable ? { executable: true } : {}) });
+  }
+  return merged;
+}
+
+/**
+ * The wrapper of a gate whose check a plugin set exports AT_TOOL before it
+ * runs the check: the matcher of the hook that runs the gate, i.e. the tools
+ * the guarded call is one of. `Bash|Monitor|PowerShell` before a script step
+ * (before-action.sh, which runs the check with no input, so the exact tool is
+ * not passed), `Agent|Task` before a subagent launch (before-agent.sh), and ''
+ * for a SubagentStop hook, which guards a stop, not a tool call. Every other
+ * file, and every wrapper without a plugin, is left as it is.
+ */
+function withPluginToolEnv(ast: TopologyAST, gateIds: ReadonlySet<string>, file: GeneratedFile): GeneratedFile {
+  const m = /^\.claude\/skills\/[^/]+\/scripts\/gate-(.+)\.sh$/.exec(file.path);
+  if (!m || !gateIds.has(m[1]) || !file.path.startsWith(`.claude/skills/${ast.topology.name}/scripts/`)) return file;
+  const gate = ast.nodes.find((n) => n.type === "gate" && n.id === m[1]) as GateNode | undefined;
+  if (!gate) return file;
+  const tool = checkableActionGate(ast, gate) ? "Bash|Monitor|PowerShell"
+    : gateWiring(ast, gate).kind === "before-agent" ? "Agent|Task" : "";
+  const at = file.content.indexOf("set -euo pipefail\n");
+  if (at < 0) return file;
+  const end = at + "set -euo pipefail\n".length;
+  return { ...file, content: `${file.content.slice(0, end)}export AT_TOOL='${tool}'\n${file.content.slice(end)}` };
+}
+
+/**
+ * Add the plugins' settings.json hook entries. Each is checked against the
+ * hook contract (spec/claude-code/hooks-contract.json); an entry that runs a
+ * command the core already wires on that event is an error naming the plugin.
+ */
+function mergePluginSettingsHooks(ast: TopologyAST, hooksByEvent: Record<string, unknown[]>): void {
+  const plug = pluginScaffoldOf(ast);
+  if (!plug || plug.settingsHooks.length === 0) return;
+  const commandsOf = (entry: unknown): string[] =>
+    (((entry as { hooks?: unknown[] })?.hooks ?? []) as Array<{ command?: unknown }>).map((h) => h?.command).filter((c): c is string => typeof c === "string");
+  for (const { plugin, event, entry } of plug.settingsHooks) {
+    const violations = checkHooks({ [event]: [entry] });
+    if (!entry || typeof entry !== "object" || !Array.isArray((entry as { hooks?: unknown }).hooks)) {
+      violations.unshift({ event, rule: "shape", detail: "an entry is { matcher?, hooks: [...] }" });
+    }
+    if (violations.length > 0) {
+      throw new PluginError(`plugin ${plugin}: its ${event} hook breaks the Claude Code hook contract: ${violations.map((v) => v.detail).join("; ")}.`);
+    }
+    const core = (hooksByEvent[event] ?? []).flatMap(commandsOf);
+    const clash = commandsOf(entry).find((c) => core.includes(c));
+    if (clash) throw new PluginError(`plugin ${plugin}: its ${event} hook runs "${clash}", a hook the core claude-code scaffold writes; a plugin cannot write it.`);
+  }
+  for (const { event, entry } of plug.settingsHooks) {
+    if (!hooksByEvent[event]) hooksByEvent[event] = [];
+    hooksByEvent[event].push(entry);
+  }
+}

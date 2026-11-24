@@ -17,7 +17,7 @@ const root = resolve(here, "../../..");
 const mapPath = resolve(root, "spec/surface/claude-code.surface.json");
 const realMap = (): SurfaceMap => JSON.parse(fs.readFileSync(mapPath, "utf8"));
 
-const sources = ["kitchen-sink.at", "src/__tests__/e2e/fixtures/session-ops.at"];
+const sources = ["kitchen-sink.at", "src/__tests__/e2e/fixtures/session-ops.at", "src/__tests__/e2e/fixtures/path-controls.at"];
 function items() {
   const out = [];
   for (const s of sources) {

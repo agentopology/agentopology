@@ -223,6 +223,24 @@ export interface SecretDef {
   readers: string[];
 }
 
+/**
+ * A `boundary <id> { path, in, out, outbound }` block: what crosses the edge of a path.
+ * Values are kept as written so V164/V165 can name a wrong one.
+ */
+export interface BoundaryDef {
+  id: string;
+  /** The path the boundary is about (`~/`, `//` and project paths, see parser/path-forms.ts). */
+  path?: string;
+  /** `read-only` (no edits of the path) or `read-write`. Absent: read-write. */
+  in?: string;
+  /** `none` (no git push), `pr` (no push to a protected branch; changes go through a PR) or `direct`. Absent: direct. */
+  out?: string;
+  /** Hosts the work may reach; written to sandbox.network.allowedDomains when a sandbox is generated. */
+  outbound: string[];
+  /** `out: pr` only: one more branch that may not be pushed to directly (main and master always are). */
+  branch?: string;
+}
+
 /** An external interface definition (webhook, HTTP, etc.). */
 export interface InterfaceDef {
   /** Interface identifier. */
@@ -485,6 +503,10 @@ export interface RecordDef {
   writer?: string;
   /** `run-state`: the fixed fields target and step. Any other value is reported by V139. */
   kind?: string;
+  /** `max-per-day: N`: at most N rows a UTC day (0.13.1). Set when N is a positive whole number. */
+  maxPerDay?: number;
+  /** `max-per-day` as written, kept when it is not a positive whole number so V158 can name it. */
+  maxPerDayRaw?: string;
 }
 
 /** One field of a record, as written: the type is kept as written so V139 can name a wrong one. */
@@ -505,20 +527,6 @@ export const RUN_STATE_FIELDS: RecordFieldDef[] = [
 /** The fields a record's rows must hold: its run-state fixed fields, or the ones it declares. */
 export function recordFields(r: RecordDef): RecordFieldDef[] {
   return r.kind === "run-state" ? RUN_STATE_FIELDS : r.fields ?? [];
-}
-
-/**
- * The top-level `ci { provider: github, on: [...], gates: [...] }` block.
- * Scaffold writes a workflow that runs `agentopology step check` for the step
- * after each listed gate. Only `github` is supported (V155).
- */
-export interface CiDef {
-  /** CI provider as written; only "github" is accepted. */
-  provider: string;
-  /** Events that start the workflow. Default: pull_request and push. */
-  on: string[];
-  /** Ids of declared gates whose following step the workflow checks. */
-  gates: string[];
 }
 
 /** An artifact definition in the top-level `artifacts` block. */
@@ -683,6 +691,11 @@ export interface AgentNode extends BaseNode {
   disallowedTools?: string[];
   /** Path globs this agent may not read (Read, Grep, Glob, and Bash commands naming them). */
   neverReads?: string[];
+  /**
+   * Paths a Read asks about instead of refusing. Compiled to `permissions.ask` Read(...) rules, which
+   * apply to the whole session (a permission rule has no per-agent form). Same path forms as `neverReads`.
+   */
+  askReads?: string[];
   /** Skip condition expression. */
   skip?: string;
   /** Behavior mode (e.g. "advisory", "blocking"). */
@@ -759,8 +772,12 @@ export interface AgentNode extends BaseNode {
   description?: string;
   /** Maximum number of agentic turns before stopping. */
   maxTurns?: number;
+  /** `output-into: <record-id>`: a SubagentStop hook appends the agent's output-schema fields to that record (0.13.1, V159). */
+  outputInto?: string;
   /** Most subagents this agent may have open at once (`max-subagents:`). */
   maxSubagents?: number;
+  /** Wall-clock cap on the whole session, as written (`4h`, `90m`); the entry agent only (V161). On claude-code a PreToolUse guard refuses every tool once it has passed. */
+  wallTime?: string;
   /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
   maxSubagentsRaw?: string;
   /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */
@@ -988,6 +1005,8 @@ export interface HumanNode extends BaseNode {
   valid?: string;
   /** The go word the person types. On claude-code a UserPromptSubmit hook writes the go row to the ledger of the gate after this human when a typed prompt holds it. */
   word?: string;
+  /** The stop word the person types. On claude-code the same go hook then appends a halt row to the same ledger, and go-halt.sh refuses every tool until the person types the go word again. */
+  stopWord?: string;
   /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
   binds?: string[];
   /** Programs that type into the person's terminal (beyond the built-in keystroke tools): a Bash command running one that holds the go word is refused. */
@@ -1011,6 +1030,17 @@ export interface ThreatModelDef {
   refuseAfterUntrusted: string[];
   /** The human whose ok row for an act ends the taint for that act. */
   lift?: string;
+}
+
+/** What an `egress { covers }` list may name. */
+export const EGRESS_COVERS = ["observability", "web", "network", "mcp"] as const;
+
+/** The top-level `egress { gate: <human id | record id>, covers: [observability, web, network, mcp] }` block: the covered tools are held until the gate clears. */
+export interface EgressDef {
+  /** A human with a `word:` (cleared by its go row) or a record id (cleared by a row in it); empty when not written (V162). */
+  gate: string;
+  /** What is held, as written. */
+  covers: string[];
 }
 
 /** The top-level `needs { memory: "<path under home>" connectors: [..] user-skills: [..] }` block (L-4). */
@@ -1159,6 +1189,11 @@ export interface TopologyMeta {
   outpoints?: string[];
   /** Whether durable execution is enabled. */
   durable?: boolean;
+  /**
+   * `meta { refusal-events: true }` (EXPERIMENTAL): every generated claude-code guard that refuses appends one
+   * JSON line to `.claude/agentopology/events/refusals.jsonl`. A loaded plugin that reads refusals turns it on too.
+   */
+  refusalEvents?: boolean;
   /** Version range of the agentopology package this file needs (`meta { requires: ">=0.13.0" }`). */
   requires?: string;
   /**
@@ -1345,12 +1380,12 @@ export interface TopologyAST {
   artifacts: ArtifactDef[];
   /** Records from the top-level `records` block (ledgers gates read). */
   records?: RecordDef[];
-  /** The top-level `ci { }` block: the gates a CI workflow runs (see {@link CiDef}). */
-  ci?: CiDef;
   /** Decision names the topology says must have a seat (`decisions: [...]`). */
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
+  /** `uses-plugins: [...]` at the top level: the plugins this topology needs loaded (a check only, V167; it never loads code). */
+  usesPlugins?: string[];
   /**
    * Absolute path of the file the CLI parsed this from. Set (non-enumerable, so
    * it never reaches `export --format json`) by the CLI; `validate` uses it to
@@ -1361,6 +1396,8 @@ export interface TopologyAST {
   machines?: MachineDef[];
   /** Secrets from the top-level `secrets` block. */
   secrets?: SecretDef[];
+  /** `boundary` blocks. */
+  boundaries?: BoundaryDef[];
   /** People from the top-level `person` blocks (T-09). */
   persons?: PersonDef[];
   /** Extra project folders whose files count as live things, from `inventory { roots: [...] }` (T-08). */
@@ -1369,6 +1406,8 @@ export interface TopologyAST {
   needs?: NeedsDef;
   /** Untrusted inputs and what is refused after reading one, from the top-level `threat-model` block. */
   threatModel?: ThreatModelDef;
+  /** Tools held until a gate clears, from the top-level `egress` block. */
+  egress?: EgressDef;
   /** `inventory { strict: true }`: validate --inventory exits 1 when a live file is unmapped. */
   inventoryStrict?: boolean;
   /** Code regions from the top-level `islands` block: files they match count as accounted for. */
@@ -1426,6 +1465,8 @@ export interface ObservabilityDef {
   endpoint?: string;
   /** Service name for trace attribution. */
   service?: string;
+  /** OTLP protocol as written (`http/json`, `http/protobuf`, `grpc`); V168 judges it. */
+  protocol?: string;
   /**
    * Resource attributes (`attributes { key: "value" }`), in file order. Claude
    * Code gets them in OTEL_RESOURCE_ATTRIBUTES after service.name. Absent when

@@ -1,0 +1,197 @@
+/**
+ * The plugin API: the shape a compile-time plugin module exports.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ *
+ * A plugin adds top-level blocks to the .at language, checks them, and adds
+ * files and hooks to a target's scaffold. It is loaded only by the CLI flag
+ * `--plugin <module>` or by `"agentopology": { "plugins": [...] }` in the
+ * project's package.json; an .at file never loads code. A plugin is code
+ * that runs with your rights at compile time: load only plugins you trust.
+ *
+ * A module exports its plugin as the default export (or as `plugin`).
+ *
+ * @module
+ */
+
+/**
+ * A file a plugin adds to a target's scaffold output.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface GeneratedFile {
+  /** Path relative to the project root, e.g. ".claude/acme/widget.json". */
+  path: string;
+  /** The whole file content. */
+  content: string;
+  /** Write the file with the executable bit. */
+  executable?: boolean;
+}
+
+/** An item of the view: its id, the fields the parser read, and `extensions` where the language has them. */
+type ViewItem<T extends object = object> = Readonly<
+  T & { id: string; extensions?: Readonly<Record<string, Readonly<Record<string, unknown>>>> } & Record<string, unknown>
+>;
+
+/**
+ * The read-only view of the topology a plugin's `validate` and `scaffold` get,
+ * a frozen copy: changing it changes nothing.
+ *
+ * - `nodes`: agents, actions, gates, humans, groups, each with its `type`.
+ * - `records`: the `records { record <id> { path } }` ledgers.
+ * - `persons`: the `person <id> { }` blocks.
+ * - `skills`: the skills, with their `extensions` (read `extensions { <id> { … } }`
+ *   on a skill as on an agent or a gate).
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface ReadonlyTopology {
+  readonly name: string;
+  readonly nodes: ReadonlyArray<ViewItem<{ type: string }>>;
+  readonly records: ReadonlyArray<ViewItem<{ path: string }>>;
+  readonly persons: ReadonlyArray<ViewItem>;
+  readonly skills: ReadonlyArray<ViewItem>;
+}
+
+/**
+ * What a plugin's blocks parsed to, by block keyword: one entry per block
+ * written (a `single` block has at most one).
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export type PluginData = Record<string, unknown[]>;
+
+/**
+ * A finding a plugin's `validate` returns. Its `rule` is namespaced by the
+ * plugin's id: `<id>/<name>`, `<name>` of letters, digits and `-` (e.g.
+ * `acme/widget-needs-a`). Any other rule id is an error that names the plugin.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface Diagnostic {
+  rule: string;
+  level: "error" | "warning";
+  message: string;
+  /** The node the finding is about, if any. */
+  node?: string;
+  /** 1-based source line, if known (a block's `parse` gets `ctx.line`). */
+  line?: number;
+}
+
+/**
+ * One top-level block keyword a plugin owns.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+interface PluginBlock {
+  /** `single`: written at most once (a second copy is a V23 warning). `repeated`: as many as needed, each with an optional id (`widget w1 { }`). */
+  multiplicity: "single" | "repeated";
+  /** The `key:` fields the block takes. When given, any other name inside it is a V102 error, as in a core block. */
+  fields?: string[];
+  /**
+   * Turn the block's body (the text between its braces) into data. `ctx.line(at)`
+   * gives the 1-based source line of an offset in `body`; `ctx.id` is the block's
+   * id, the name after the keyword (`widget w1 { }`), absent when none is written.
+   * Without `parse`, the data is `{ id?, ...fields }` with each field's value as
+   * written (quotes removed).
+   */
+  parse?(body: string, ctx: { line(at: number): number; id?: string }): unknown;
+}
+
+/**
+ * What a plugin adds to one target's scaffold.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+interface PluginScaffoldOutput {
+  /** Files to write. A path a core generator writes is an error. */
+  files?: GeneratedFile[];
+  /** settings.json hook entries by event (Claude Code). Each is checked against the hook contract; one the core already writes is an error. */
+  settingsHooks?: Record<string, unknown[]>;
+  /**
+   * A check command for a gate that carries `extensions { <id> { } }` and has no `run:`. It is wired as if the gate
+   * had `run:` (V135 and guard --check see it). On claude-code the check runs with the env var `AT_TOOL` set to the
+   * matcher of the hook that runs the gate: `Bash|Monitor|PowerShell` before a script step, `Agent|Task` before a
+   * subagent launch, '' after a subagent stops.
+   */
+  gateRuns?: Record<string, string>;
+}
+
+/**
+ * What a plugin command is told about the run.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface PluginCommandContext {
+  /** The plugin's id. */
+  pluginId: string;
+  /** The folder the command was started in. */
+  cwd: string;
+  /** The project folder: `--dir`, else `cwd`. */
+  projectDir: string;
+}
+
+/**
+ * One line of `.claude/agentopology/events/refusals.jsonl`, the refusal event. READ-ONLY and
+ * generic: only the core writes it (a plugin reads it, and the before-edit guard refuses the
+ * Edit and Write tools on it). Written only when the topology opts in, by `meta { refusal-events: true }`
+ * or by a loaded plugin that declares `reads: ["refusals"]`. `reason` is a short fixed label,
+ * never the refused command's text and never the tool's input.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface RefusalEvent {
+  /** The event format: 1. */
+  v: 1;
+  /** UTC time, `YYYY-MM-DDTHH:MM:SSZ`. */
+  ts: string;
+  /** The generated guard script that refused, e.g. `before-action.sh`. */
+  guard: string;
+  /** The gate that refused, or null when no gate is known. */
+  gate: string | null;
+  /** The rule id that refused, or null when none is known. */
+  rule: string | null;
+  /** The tool of the refused call (`Bash`, `Write`, …), or "" when not known. */
+  tool: string;
+  /** A short label for why the guard refused. */
+  reason: string;
+}
+
+/**
+ * A compile-time plugin.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface AtPlugin {
+  /** The plugin's id: the name `uses-plugins: [...]` and rule ids use. */
+  id: string;
+  /** The plugin's own version, printed when it loads ("unversioned" without it). */
+  version?: string;
+  /** The plugin API version this plugin is written for. Only 1 exists. */
+  apiVersion: 1;
+  /** The top-level block keywords it owns. A keyword that is a core section is an error. */
+  blocks: Record<string, PluginBlock>;
+  /** Check the plugin's data against the topology. `ctx.target` is the target being compiled for, if any. */
+  validate?(data: PluginData, view: ReadonlyTopology, ctx: { target?: string }): Diagnostic[];
+  /**
+   * What this plugin reads that only the core writes. `"refusals"`: the refusal event file
+   * `.claude/agentopology/events/refusals.jsonl` (see {@link RefusalEvent}); loading a plugin
+   * that lists it makes every generated guard that refuses append one line there.
+   */
+  reads?: Array<"refusals">;
+  /**
+   * Commands the plugin adds to the CLI, by name. One runs as `agentopology <pluginId>:<name> [args...]`
+   * (the plugin must be loaded: `--plugin`, or the project's package.json). It never replaces a core command:
+   * the namespace keeps them apart. `args` are the words after the command (flags the core knows, such as
+   * `--dir`, are not in it). It returns the process exit code, a whole number from 0 to 255.
+   */
+  commands?: Record<string, (args: string[], ctx: PluginCommandContext) => number>;
+  /**
+   * Rows `guard --check` prints after the core's rows, one `plugin <id> claimed: <row>` line each. They are
+   * what the plugin claims, not what the core checked: they are never part of the core's enforcement
+   * count, and the exit code stays the core's. `ctx.target` is the target checked.
+   */
+  guardReport?(data: PluginData, view: ReadonlyTopology, ctx: { target?: string }): string[];
+  /** Per target name (e.g. "claude-code"): what the plugin adds to that target's scaffold. */
+  scaffold?: Record<string, (data: PluginData, view: ReadonlyTopology) => PluginScaffoldOutput>;
+}

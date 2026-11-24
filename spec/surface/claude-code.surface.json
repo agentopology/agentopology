@@ -407,6 +407,25 @@
       "grade": "cosmetic"
     },
     {
+      "id": "cc.env.OTEL_EXPORTER_OTLP_PROTOCOL",
+      "area": "env",
+      "tokens": [
+        "OTEL_EXPORTER_OTLP_PROTOCOL"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/monitoring-usage"
+      },
+      "usedBy": [
+        "src/bindings/lib/claude-code-telemetry.ts"
+      ],
+      "language": [
+        "observability"
+      ],
+      "proof": "src/bindings/__tests__/observability-protocol.test.ts",
+      "ifBroken": "Claude Code exports telemetry over a protocol the collector does not speak",
+      "grade": "cosmetic"
+    },
+    {
       "id": "cc.files.path:.claude/commands/*",
       "area": "files",
       "tokens": [
@@ -1119,6 +1138,38 @@
       ],
       "proof": "src/__tests__/e2e/f4-ledger.test.ts",
       "ifBroken": "none on the edit tools: before-edit.sh reads it only after file_path and notebook_path; documented for Glob and Grep, not for the tools the hook matches",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.glob",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.glob"
+      ],
+      "usedBy": [
+        "src/bindings/lib/walls.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/walls.test.ts",
+      "ifBroken": "NOT DOCUMENTED in hooks.md (PreToolUse input) for Grep; if the name differs, before-read.sh does not see a Grep glob that names a walled path (the call's other path fields are still read)",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.pattern",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.pattern"
+      ],
+      "usedBy": [
+        "src/bindings/lib/walls.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/walls.test.ts",
+      "ifBroken": "NOT DOCUMENTED in hooks.md (PreToolUse input) for Glob; if the name differs, before-read.sh does not see a Glob pattern that names a walled path (the call's other path fields are still read)",
       "grade": "check"
     },
     {
@@ -2099,6 +2150,26 @@
       "grade": "check"
     },
     {
+      "id": "cc.skills.fm.entry-agent",
+      "area": "skills",
+      "tokens": [
+        "frontmatter:entry-agent"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "topology",
+        "skill"
+      ],
+      "proof": "src/bindings/__tests__/skill-entry-key.test.ts",
+      "ifBroken": "a tool does not recognise the generated flow map",
+      "grade": "check"
+    },
+    {
       "id": "cc.skills.fm.name",
       "area": "skills",
       "tokens": [
@@ -2196,6 +2267,25 @@
       ],
       "proof": "src/__tests__/e2e/compile.test.ts",
       "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/boundaries.ts"
+      ],
+      "language": [
+        "boundary"
+      ],
+      "proof": "src/parser/__tests__/path-controls-boundary.test.ts",
+      "ifBroken": "boundaries.md, the plain-words record of each boundary and its outbound hosts, is not written; nothing Claude Code reads",
       "grade": "check"
     },
     {

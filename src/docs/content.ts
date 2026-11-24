@@ -132,6 +132,8 @@ agent NAME {
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
 | max-turns | number | no | -- | Max agentic turns before stopping |
+| output-into | record id | no | -- | Append the agent's output-schema fields to this record when it stops: a SubagentStop hook writes \`{ts, agent, ...fields}\`, or \`{ts, agent, error: "schema"}\` when the output does not match (never the raw output). Needs an output-schema (V159). It reads \`last_assistant_message\` and matches on \`agent_type\`; a text-level check, claude-code only |
+| wall-time | duration | no | -- | Wall-clock cap on the whole session (\`4h\`, \`90m\`), on the entry agent only (V161). A SessionStart hook records the start; a PreToolUse guard on every tool refuses each call, a subagent's too, once the cap has passed, with a reason naming it; no recorded start refuses too. A text check of elapsed time between calls: it does not interrupt a call already running |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -160,6 +162,7 @@ agent NAME {
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
 | disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
 | never-reads | string[] | no | -- | Path globs this agent may not read; see the \`secrets\` topic |
+| ask-reads | string[] | no | -- | Paths a Read asks about instead of refusing (\`permissions.ask\`, session-wide); see the \`secrets\` topic |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
 | writes | string[] | no | -- | Memory keys this agent writes (V11) |
@@ -485,6 +488,8 @@ gates {
 
 \`before: write "<glob>"\` holds an edit of a matching path until the gate holds: its ledger (the LAST line for its \`after\` step must be ok) and its \`run\` check, as for a script step. The claude-code binding makes \`before-edit.sh\` (PreToolUse on \`Write|Edit|MultiEdit|NotebookEdit\`) refuse an edit whose path, relative to the project root (or \`meta { target }\`), matches the glob, and \`before-action.sh\` refuse a Bash command that names a matching path and does more than read it. \`*\` and \`**\` both match across folders. It is a path anchor, not a node id: a gate with one is written as its own gate. V151: an empty glob is an error; no ledger and no \`run\` is a warning. \`meta { target: "<dir>" }\` makes the generated hooks resolve project paths (ledgers, checks, these globs) against that directory, absolute or relative to the project (V152).
 
+agentopology's own read-only subcommands on a \`.at\` file pass such a gate as reads (\`validate\`, \`inventory\`, \`plan\`, \`info\`, \`step check\`, \`guard --check\` or \`--test\`, \`visualize --no-open\`, \`scaffold --dry-run\`), run as a bare \`agentopology\` found on PATH, \`npx [-y|--yes] agentopology\` or \`npx agentopology@X.Y.Z\`, and only with \`--no-plugins\` (its own word, unquoted, before any \`--\`): a plugin is code that could write, and \`--no-plugins\` loads none. Without it, with \`--plugin\` or \`--dir\`, or as \`export\` (it writes next to the \`.at\`), the call is a write, and the refusal says to add \`--no-plugins\` when that is all it lacks.
+
 \`\`\`at
 gate src-open {
   after: review
@@ -537,6 +542,8 @@ records {
 
 \`fields: [name: type, ..]\` has types \`string\`, \`number\`, \`boolean\` and \`ts\` (an ISO 8601 time). \`schema:\` names a schema declared in \`schemas { }\`. \`writer:\` names an action, an agent or a project-relative script path. \`kind: run-state\` is a record with the fixed fields \`target\` and \`step\` (it takes no \`fields:\`). V139 checks all of it. On claude-code, a record with any of these is written as \`record-<id>.sh '<json>'\`, which appends the row only when it holds every declared field with the declared type (exit 2 naming the field otherwise) and adds \`ts\` when missing. A ledger row \`{step, ok: "n/a", reason}\` goes through it, with \`reason\` required. When a gate's ledger is such a record and its \`after:\` step is an action with \`commands:\`, a PostToolUse hook on Bash (\`after-action.sh\`) appends \`{step, ok: true, ts, model}\` when the step's command succeeded. \`.claude/records.json\` lists every record, with the gates that read it. Codex and cursor write none of this (V140 warns).
 
+\`max-per-day: N\` (0.13.1) caps a record at N rows a UTC day. The N+1th row is refused by the record's writer \`record-<id>.sh\` (exit 2) and, on a direct append, by \`before-action.sh\` (a redirect, \`tee\`, \`cp\`, \`mv\` that names the record's path, once the file holds N rows for today); \`before-edit.sh\` refuses an Edit or Write of the file. A row counts for the UTC day its \`ts\` (or \`at\`) starts with; the writer adds \`ts\` to every row, so a record with no \`ts\` field counts the same way. Reading the file, and every command that does not name it, pass. This is a text check: it cannot know how many rows one command adds, and two writers racing at the cap can both pass. The path must have no \`{unit}\` (V158).
+
 **Ledger line format.** JSON Lines, one object per line, appended by the step's own script (agentopology only reads it):
 
 \`\`\`json
@@ -545,17 +552,7 @@ records {
 
 \`unit\` is omitted when the step has none. A hook covers Claude Code sessions only: a step run from a terminal or a scheduler should call \`agentopology step check FILE.at STEP [--unit U] [--dir D]\` at its start (\`by: code\`). It exits 0 when every gate before STEP is satisfied, 1 otherwise, naming each failing gate and why.
 
-**Run the same gates in CI.** A top-level \`ci\` block lists gates; scaffold writes \`.github/workflows/agentopology-gates.yml\`, which checks out the repo, sets up Node and runs \`npx agentopology@<version> step check FILE.at STEP\` for the step after each listed gate (its \`before:\`):
-
-\`\`\`at
-ci {
-  provider: github
-  on: [pull_request, push]
-  gates: [publish-ready]
-}
-\`\`\`
-
-\`provider\` must be \`github\`; \`on\` defaults to \`[pull_request, push]\`. The workflow is regenerated by scaffold while it is as scaffold wrote it; once you edit it, scaffold keeps your copy. Written for the claude-code target.
+A \`ci { }\` block is not part of this package: a .at that declares one fails validate (V155), unless a loaded plugin reads it.
 
 ## Validation Rules
 
@@ -571,7 +568,7 @@ ci {
 - **V141**: error, \`tests\` on a gate no generated check holds (no script step or subagent in \`before:\`), or an empty tests block or row
 - **V142**: error, \`mode\` is not shadow or refuse, \`let-go\` is not once, \`mode: shadow\` or \`let-go\` on a gate no generated check holds, \`let-go\` with no human (\`lift:\` or a human in \`after\`) or no ledger
 - **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
-- **V155**: error, a \`ci { }\` block with a provider other than github (only github is supported), a gate id that is not declared, or a gate with no step after it (no \`before:\`)
+- **V155**: error, a top-level \`ci { }\` block: it isn't part of this package (a plugin can provide it)
 
 ## Example
 
@@ -626,6 +623,7 @@ human NAME {
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
 | word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
+| stop-word | string | no | -- | The stop word the person types. On claude-code the go hook, on a typed prompt that is the stop word (read as the go word is), appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V160). A text check of the ledger: it does not stop a process already running |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
 | typed-only-programs | list of program names | no | -- | Your own programs that type into the person's terminal or pane, beyond the built-in tmux, screen, xdotool, osascript, wtype and ydotool. On claude-code a Bash command that runs one and holds the go word is refused. Needs \`word\` (V127) |
 
@@ -685,9 +683,53 @@ These forms are refused, each proven by a test that feeds the hook the call:
   by one or across chained calls (\`tmux send-keys g o Space r e l e a s e Enter\`, \`send-keys -l\`, several
   \`send-keys\` joined by \`;\` or \`&&\`).
 
-With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. Enable it
-(\`settings { sandbox: true }\`). An interpreter can still reach the go and the guards: for example, a Python or
-Node script that edits .claude/settings.json or a guard script; only the sandbox (0.13.1) stops it.
+With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. A go word turns it
+on (see Sandbox below). An interpreter can still reach the route record, the gate ledgers your own steps write and
+the guards' own files; the guards' text checks are what protect those.
+
+## Sandbox
+
+When a human has a go word (\`word:\`), the claude-code binding writes into \`.claude/settings.json\`:
+
+- \`sandbox.enabled: true\`, \`sandbox.allowUnsandboxedCommands: false\` (a command the sandbox stops is not run again
+  outside it) and \`sandbox.failIfUnavailable: true\`;
+- \`sandbox.filesystem.denyWrite\`: each go ledger, \`.claude/state/talk.jsonl\` when talk-guard.sh or a
+  session-prompt script is generated, and the scaffold manifest (\`.claude/.scaffold-manifest.json\`); and
+  \`permissions.deny\` \`Edit(...)\` for each of them. A ledger a gate after a step also reads is left out: the step
+  writes it.
+- Hooks run outside the sandbox (Claude Code: command hooks "run with your full access"), so the go hook can still write.
+  No \`excludedCommands\` is written.
+- Scaffold creates each denied ledger and \`talk.jsonl\` as an empty file (and its folder) when it is missing, because on
+  Linux and WSL2 a \`denyWrite\` entry for a path that does not exist may have no effect. A file that exists is never touched.
+
+The sandbox protects the go ledger and the files hooks write; the route record and the gate ledgers your own steps write are protected by the guards' text checks.
+
+Without a go word nothing of this is written.
+
+Platforms: macOS, Linux and WSL2. On native Windows \`failIfUnavailable\` makes Claude Code exit at startup. Writes
+outside the project are blocked. The network allow-list starts empty: npm, git over HTTPS and curl will prompt or
+fail until you list hosts, and \`validate\` warns when the list is empty.
+
+Your own settings come only through \`extensions { claude-code { ... } }\` (no new grammar). Lists add to the defaults:
+
+\`\`\`at
+extensions {
+  claude-code {
+    sandbox.network.allowedDomains: [registry.npmjs.org, github.com]
+    sandbox.excludedCommands: ["docker compose *"]
+    sandbox.filesystem.allowWrite: ["~/.kube"]
+  }
+}
+\`\`\`
+
+A value that weakens a default (\`sandbox.enabled\` false, \`sandbox.allowUnsandboxedCommands\` true,
+\`sandbox.failIfUnavailable\` false, an \`allowWrite\` that covers a denied path) is kept as written; \`validate\` and
+\`scaffold\` warn naming the key, and \`guard --check\` grades the go \`none\` with that reason.
+
+docker does not run inside the sandbox: list it in \`sandbox.excludedCommands\`. Claude Code's rule is that
+\`excludedCommands\` needs every command in a call to match: "\`npm ci && docker compose build\` stays sandboxed unless
+another entry covers \`npm ci\`". The same holds for \`;\` (inferred, not stated by the docs). SSH git does not work
+in the macOS sandbox: use HTTPS.
 
 ## Example
 
@@ -2227,6 +2269,47 @@ Codex and Cursor write nothing for the block: \`validate --target codex\` and \`
   },
 
   // -------------------------------------------------------------------------
+  // 15c. egress
+  // -------------------------------------------------------------------------
+  egress: {
+    name: "egress",
+    description: "Hold web, network, MCP and telemetry until a gate clears",
+    content: () => `# egress
+
+The top-level \`egress\` block holds what leaves the machine until a gate clears. Local work is never held.
+
+## Syntax
+
+\`\`\`at
+egress {
+  gate: owner-go
+  covers: [observability, web, network, mcp]
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| gate | id | yes | A human with a \`word:\` (cleared by the human's go row: the last row for its step, in every go ledger, is ok and not a halt) or a record id (cleared by any row in the record's file; a record path with \`{unit}\` is refused) |
+| covers | list | yes | Any of \`observability\`, \`web\`, \`network\`, \`mcp\` (V162) |
+
+## What claude-code writes
+
+- \`web\`: WebFetch and WebSearch are refused until the gate clears.
+- \`mcp\`: every \`mcp__*\` tool is refused until the gate clears.
+- \`network\`: a Bash command is refused until the gate clears when its program, read by its first word, is one of these: \`curl\`, \`wget\`, \`nc\`, \`ncat\`, \`netcat\`, \`ssh\`, \`scp\`, \`sftp\`, \`telnet\`, \`ftp\`; \`rsync\` with a host (a word like \`host:path\` or \`rsync://...\`); \`git push\`, \`git fetch\`, \`git pull\`, \`git clone\`; \`npm publish\`, \`npm install\`, \`npm i\`, \`npm ci\`, \`npm add\`. The command is read the way a person reads it: split at \`;\`, \`&\`, \`|\`, parentheses, backticks and newlines outside single quotes (and at \`$(\` and backticks inside double quotes); a heredoc body is skipped unless it is fed to a shell; quotes and backslashes are dropped from a word; assignments, shell keywords and the wrappers sudo, doas, env, nohup, nice, command, exec, builtin, setsid, stdbuf, timeout, xargs, unbuffer, ionice, chrt, taskset (with their options) are passed over; \`sh -c\`, \`bash -c\` and \`eval\` are read through. \`git status\`, \`git commit\`, \`git log\`, \`npm test\`, \`npm run\`, \`ls\`, \`rsync\` between local folders and the like pass.
+- \`observability\`: the telemetry env of an \`observability { }\` block (\`CLAUDE_CODE_ENABLE_TELEMETRY\`, \`OTEL_*\`) is left out of \`.claude/settings.json\`. A SessionStart hook, \`egress-observability.sh\`, merges it into \`.claude/settings.local.json\` under \`env\` once the gate has cleared, keeping what is there; before the clear it writes nothing. Claude Code reads settings when it starts, so the export begins with the next session.
+
+The guard is \`egress-guard.sh\`, a PreToolUse hook on the covered tools, failing closed (a ledger it cannot read does not clear the gate).
+
+## What it does not stop
+
+This is a text check of a tool name and of a command's first word, not a firewall. It does not see: pnpm, yarn, pip, gem or any program not listed; a script, Makefile or npm script that runs curl (the command it sees is \`npm run\`, \`make\` or \`./deploy.sh\`); an interpreter that opens a socket (python, node, perl); a program an expansion hides. Those are the sandbox's class: turn on \`settings { sandbox: true }\` and its network rules. A human's go row is read as written: its \`binds:\` and \`valid:\` are not checked here.
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 16. metering
   // -------------------------------------------------------------------------
   metering: {
@@ -3038,6 +3121,7 @@ observability {
 | level | string | no | -- | Log level for output |
 | exporter | string | yes | -- | Backend exporter |
 | endpoint | string | no | -- | Exporter endpoint URL |
+| protocol | string | no | http/protobuf (grpc for a :4317 endpoint) | OTLP protocol, written as OTEL_EXPORTER_OTLP_PROTOCOL: \`http/json\`, \`http/protobuf\` or \`grpc\`; anything else is a V168 error |
 | service | string | no | -- | Service name for trace attribution |
 | sample-rate | number | no | 1.0 | Sampling rate (0-1) |
 | attributes | block of key: "value" | no | -- | Resource attributes (keys may hold dots: \`team.id\`) |
@@ -3386,6 +3470,9 @@ agent reviewer {
 
 - \`readers\` are agent ids, or \`main\` for the main session. Any other agent, and the main session unless \`main\` is listed, is refused.
 - A glob is project-relative. \`**\` and \`*\` match across folders; a pattern with no \`/\` also matches a file name anywhere.
+- A path may start with \`~/\` (the home folder) or \`//\` (absolute, from the filesystem root): the forms Claude Code's Read and Edit rules use (https://code.claude.com/docs/en/permissions, "Read and Edit"). A single leading \`/\` stays the project root.
+- \`ask-reads: [paths]\` on an agent makes a Read ask instead of refuse. It compiles to \`permissions.ask\` \`Read(...)\` rules (\`~/x\` stays \`~/x\`, \`//x\` stays \`//x\`, \`notes/**\` becomes \`Read(/notes/**)\`). That is a permission rule (strong, Claude Code applies it) but it holds for the whole session, not one agent. The same path in \`never-reads\` and \`ask-reads\` is V163.
+- The \`before-read.sh\` hook is a text check (weaker): it reads the paths a call names and the words of a Bash command.
 
 ## What it compiles to (claude-code)
 
@@ -3399,6 +3486,48 @@ Not seen in a Bash command: a path built in a variable or substitution, one reac
 
 - **V153**: a reader must be a declared agent or \`main\`
 - **V154**: a secret needs a \`path\`
+- **V163**: the same path in \`never-reads\` and \`ask-reads\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // boundary
+  // -------------------------------------------------------------------------
+  boundary: {
+    name: "boundary",
+    description: "boundary blocks: a read-only path, no direct push, outbound hosts",
+    content: () => `# boundary
+
+\`boundary <id> { path, in, out, outbound }\` says what may cross the edge of a path.
+
+## Syntax
+
+\`\`\`at
+boundary vendor {
+  path: "vendor/**"
+  in: read-only
+  out: pr
+  outbound: [api.example.com]
+}
+\`\`\`
+
+- \`path\` (required): a project path, \`~/...\` (home) or \`//...\` (absolute); the same forms as \`never-reads\`.
+- \`in: read-only | read-write\`: read-only refuses edits of the path.
+- \`out: none | pr | direct\`: \`none\` refuses every \`git push\`; \`pr\` refuses a push to main or master (and to the optional \`branch: <name>\`), so changes go through a branch and \`gh pr create\`; \`direct\` restricts nothing.
+- \`outbound: [hosts]\`: hosts the work may reach. With a human that has a go word, the sandbox block is generated and they are written to its \`sandbox.network.allowedDomains\` (your own extensions entries are kept beside them). Without one they are listed in \`boundaries.md\` only, and V166 says so.
+
+## What it compiles to (claude-code)
+
+- A **permission rule** (strong, Claude Code applies it): \`in: read-only\` writes \`Edit(<path>)\` deny rules in \`.claude/settings.json\`. Edit rules cover Edit, Write, MultiEdit and NotebookEdit (https://code.claude.com/docs/en/permissions, "Read and Edit").
+- A **text check** (weaker): \`before-boundary.sh\`, a PreToolUse hook on \`Edit|Write|MultiEdit|NotebookEdit|Bash\`. It refuses an edit tool's path under a read-only path, a Bash command that writes one (a redirect, tee, cp, mv, rm, touch, sed -i ...), and a \`git push\` the boundary forbids. There is no permission rule for pushing to a branch, so the push checks are text checks only.
+- Not seen by the text check: a path or branch built in a variable or substitution, a path reached after \`cd\`, a write a script or program does itself, a push under a git alias. Ordinary work passes: git commit, a push to a feature branch, \`gh pr create\`, git status, npm test.
+- \`boundaries.md\` records each boundary, how it is enforced, and the outbound hosts.
+
+## Validation Rules
+
+- **V164**: a boundary needs a \`path\`
+- **V165**: an unknown \`in\` or \`out\` value, an outbound entry that is not a host name, a bad \`branch\`, a repeated id
+- **V166** (warning): outbound hosts are listed but no sandbox block is generated (no go word)
 `,
   },
 
@@ -3854,10 +3983,10 @@ A \`secrets\` entry needs a \`path\` glob; with none it guards nothing.
 **Fix:** Add \`path: "<glob>"\`.
 
 ### V155: CI Block (error)
-The top-level \`ci { provider: github, on: [...], gates: [...] }\` block names a provider other than \`github\`, a gate id that is not declared, or a gate with no step after it (no \`before:\`), so the workflow has no step to check.
+A top-level \`ci { }\` block: the \`ci\` block isn't part of this package; a plugin can provide it. With a loaded plugin that owns the \`ci\` keyword, the plugin reads the block and V155 is not raised.
 
-**Violation:** \`ci { provider: gitlab, gates: [publish-ready] }\`.
-**Fix:** Write \`provider: github\`, list only declared gates, and give each a \`before:\`.
+**Violation:** \`ci { provider: github, gates: [publish-ready] }\` with no plugin that reads it.
+**Fix:** Remove the block, or load a plugin that provides it.
 
 ### V156: Caps (error/warning)
 \`max-subagents\` on an agent must be a positive whole number, and \`max-cost\` (on an agent, or in \`metering\`, where \`cap:\` is its alias) a positive number of US dollars; anything else is an error. A \`max-cost\` that is set is a warning: \`max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting\`. \`max-subagents\` and \`timeout\` are enforced on claude-code by generated hooks.
@@ -3870,6 +3999,63 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 
 **Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
 **Fix:** Close the bracket or quote, or put the field on its own line.
+
+### V158: Record Daily Cap (error)
+A record's \`max-per-day\` must be a positive whole number, and the record's path must not hold \`{unit}\` (the cap counts the rows of one file). The message names the record.
+
+**Violation:** \`record events { path: "logs/events.jsonl", max-per-day: 0 }\`
+**Fix:** \`max-per-day: 20\`
+
+### V159: Output Into A Record (error/warning)
+An agent's \`output-into: <record-id>\` must name a declared record whose path has no \`{unit}\`, and the agent must have an \`output-schema\` (the SubagentStop hook copies the fields the schema declares). With \`--target codex\` or \`cursor\` it is a warning: only claude-code writes the hook.
+
+**Violation:** \`agent reviewer { output-into: results }\` with no \`output-schema\`.
+**Fix:** Add an \`output-schema { verdict: ok | fail }\` block to the agent.
+
+### V160: Stop Word (error)
+
+A human's \`stop-word:\` needs \`word:\`, must be one non-empty line, must differ from the word, and neither may open with the other (the go hook reads a prompt that opens with a word as that word, so one prompt would give the go and the stop).
+
+### V161: Wall Time (error)
+
+\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`.
+
+### V162: Egress (error)
+
+The \`egress { gate, covers }\` block needs a \`gate\` naming a human with a \`word:\` or a record whose path has no \`{unit}\`, and a non-empty \`covers\` of \`observability\`, \`web\`, \`network\`, \`mcp\`.
+
+### V163: Never-reads And Ask-reads Overlap (error)
+The same path is in \`never-reads\` and in \`ask-reads\`. One refuses and the other asks; \`ask-reads\` is a session-wide permission rule, so both cannot hold. Compared by anchor (\`~/\`, \`//\`, project) and path, across all agents.
+
+**Violation:** \`never-reads: ["private/**"]\` and \`ask-reads: ["private/**"]\`.
+**Fix:** Keep one.
+
+### V164: Boundary Path (error)
+A \`boundary\` needs a \`path\`; with none it is about nothing.
+
+**Violation:** \`boundary b { in: read-only }\`.
+**Fix:** Add \`path: "<path>"\`.
+
+### V165: Boundary Values (error)
+\`in\` is \`read-only\` or \`read-write\`; \`out\` is \`none\`, \`pr\` or \`direct\`; an \`outbound\` entry is a host name (not a URL); \`branch\` is a branch name and needs \`out: pr\`; a boundary id is declared once.
+
+**Violation:** \`boundary b { path: "x", out: push }\`.
+**Fix:** Use one of the listed values.
+
+### V166: Boundary Outbound Without Sandbox (warning)
+\`outbound\` hosts are listed, but no sandbox block is generated (only a human with a go word turns it on), so they are not written to \`sandbox.network.allowedDomains\`. They are in \`boundaries.md\`. With a go word they are written to the sandbox's allow-list and this rule is silent.
+
+### V167: Plugin Not Loaded (error)
+EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not load (plugins load only by \`--plugin <module>\` or the project package.json, never from the .at). Each top-level block no core section and no loaded plugin owns is reported as needing it, instead of V102; with no such block, the unloaded plugin is. Without \`uses-plugins\` an unknown block stays V102. See the plugins topic.
+
+**Violation:** \`uses-plugins: [acme]\` and \`widget w1 { a: 1 }\`, run without the plugin: \`block widget needs plugin acme; run with --plugin acme\`.
+**Fix:** Run with \`--plugin <module>\`, or list it in package.json \`agentopology.plugins\`.
+
+### V168: OTLP Protocol (error)
+\`observability { protocol }\` must be one of the values Claude Code documents for \`OTEL_EXPORTER_OTLP_PROTOCOL\`: \`http/json\`, \`http/protobuf\` or \`grpc\`.
+
+**Violation:** \`observability { protocol: http/xml }\`
+**Fix:** \`protocol: http/json\`
 
 ## Summary
 
@@ -3929,6 +4115,17 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V155 | error | CI Block |
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
+| V158 | error | Record Daily Cap |
+| V159 | error/warning | Output Into A Record |
+| V160 | error | Stop Word |
+| V161 | error | Wall Time |
+| V162 | error | Egress |
+| V163 | error | Never-reads And Ask-reads Overlap |
+| V164 | error | Boundary Path |
+| V165 | error | Boundary Values |
+| V166 | warning | Boundary Outbound Without Sandbox |
+| V167 | error | Plugin Not Loaded |
+| V168 | error | OTLP Protocol |
 `,
   },
 
@@ -4129,6 +4326,7 @@ metering    tools       tool        scale       skill
 context     env         extensions  providers   schedule
 job         interfaces  defaults    schemas     schema
 observability fragment  interface   params      threat-model
+egress
 \`\`\`
 
 ## Field Keywords (100+)
@@ -4143,7 +4341,7 @@ kind        role        version           description
 permissions prompt      generates         handles   argument
 behavior    invocation  background        skills    sandbox
 fallback-chain max-turns   max-lines   glossary
-max-subagents max-cost
+max-subagents max-cost output-into
 \`\`\`
 
 ### Flow & Edge Fields
@@ -4809,6 +5007,170 @@ agentopology plan examples/code-review.at          # try it
 agentopology docs flow                             # the control graph
 agentopology docs gate                             # gates and enforcement
 \`\`\`
+`,
+  },
+  // -------------------------------------------------------------------------
+  // plugins
+  // -------------------------------------------------------------------------
+  plugins: {
+    name: "plugins",
+    description: "Compile-time plugins: extra blocks, rules and scaffold output (EXPERIMENTAL)",
+    content: () => `# plugins
+
+**EXPERIMENTAL: may change before 1.0.**
+
+A plugin is a JavaScript module that adds top-level blocks to the language,
+checks them, and adds files and hooks to a target's scaffold.
+
+## Security
+
+A plugin is code that runs with your rights at compile time. Load only plugins
+you trust. Every load is printed, on stderr:
+
+\`\`\`
+loaded plugin <id>@<version> from <path>
+\`\`\`
+
+## Loading
+
+Only two things load a plugin, and an \`.at\` file is neither:
+
+- the repeatable CLI flag \`--plugin <module>\`, on validate, fix, scaffold,
+  sync, visualize, export, plan, info and guard;
+- \`"agentopology": { "plugins": ["<module>", ...] }\` in the package.json of
+  the project folder: \`--dir\` when given, else the folder you run the
+  command in. Never the folder of the \`.at\`: naming an \`.at\` in a folder
+  you cloned does not run the plugins its package.json lists.
+
+\`--no-plugins\` loads no plugin at all, neither \`--plugin\` nor the
+package.json list, on every command. A gate \`before: write "**/*.at"\`
+reads an agentopology call on a \`.at\` as a read only with it.
+
+\`<module>\` is an explicit path (\`./x.mjs\`, \`../x.mjs\` or an absolute path;
+a single bundled file needs no package.json), loaded from where it is, or a
+package name, resolved from the project folder. A package name that resolves
+outside node_modules and the project is refused. A plugin written for an
+\`apiVersion\` other than 1 is an error.
+
+## uses-plugins
+
+\`\`\`at
+topology t : [pipeline] {
+  uses-plugins: [acme]
+  widget w1 { a: "one" }
+  ...
+}
+\`\`\`
+
+\`uses-plugins\` is a check only; it never loads code. When a plugin it names
+is not loaded, V167 is an error: \`block widget needs plugin acme; run with
+--plugin acme\` for each block no loaded plugin owns, or \`uses-plugins names
+plugin acme, which is not loaded\` when there is none. Without
+\`uses-plugins\`, an unknown block is V102, as always.
+
+## Rules
+
+A plugin's findings carry namespaced rule ids, \`<id>/<name>\` (letters, digits
+and \`-\`), such as \`acme/widget-needs-a\`. Any other rule id is an error that
+names the plugin.
+
+## The API (\`agentopology/plugins\`)
+
+\`\`\`ts
+import type { AtPlugin } from "agentopology/plugins";
+
+const plugin: AtPlugin = {
+  id: "acme",
+  version: "1.0.0",            // optional; printed when it loads
+  apiVersion: 1,
+  blocks: {
+    // keyword -> { multiplicity: "single" | "repeated", fields?, parse?(body, ctx) }
+    widget: { multiplicity: "repeated", fields: ["a", "b"] },
+  },
+  // data: Record<block, unknown[]>; view: the topology's name and frozen nodes
+  validate(data, view, ctx) { return []; },
+  scaffold: {
+    "claude-code": (data, view) => ({
+      files: [],          // { path, content, executable? }
+      settingsHooks: {},  // event -> settings.json hook entries
+      gateRuns: {},       // gate id -> check command
+    }),
+  },
+};
+export default plugin;
+\`\`\`
+
+- A block with \`fields\` reports any other name inside it as V102. Without
+  \`parse\`, a block's data is \`{ id?, ...fields }\`. \`parse(body, ctx)\` gets
+  \`ctx.line(at)\` and \`ctx.id\`, the name after the keyword (absent when none).
+- \`view\` is a frozen copy: \`name\`, \`nodes\` (each with \`type\`), \`records\`
+  (id, path), \`persons\` and \`skills\`; nodes and skills carry their
+  \`extensions\`, so a plugin reads \`extensions { <id> { … } }\` on either.
+- \`gateRuns\` sets the check of a gate that carries \`extensions { <id> { } }\`
+  and has no \`run:\`. It is wired through the gate wiring a \`run:\` gets, so
+  V135 and \`guard --check\` see it. The check runs with \`AT_TOOL\` set to the
+  matcher of the hook that runs the gate, the tools the guarded call is one
+  of: \`Bash|Monitor|PowerShell\` before a script step, \`Agent|Task\` before a
+  subagent launch, empty after a subagent stops (a stop, not a tool call).
+- \`settingsHooks\` entries are checked against the Claude Code hook contract.
+
+These are errors that name the plugin: a block keyword that is a core section;
+a file path or a hook the core scaffold writes; a rule id outside the plugin's
+namespace.
+
+## Commands and report rows
+
+\`\`\`ts
+const plugin: AtPlugin = {
+  id: "acme",
+  apiVersion: 1,
+  blocks: {},
+  commands: {
+    // agentopology acme:hello a b   ->   args = ["a", "b"]
+    hello: (args, ctx) => { console.log("hi", args, ctx.projectDir); return 0; },
+  },
+  guardReport: (data, view, ctx) => ["widgets: 2"],
+};
+\`\`\`
+
+- A command runs as \`agentopology <pluginId>:<name> [args...]\`, with the plugin
+  loaded (\`--plugin <module>\`, or the project's package.json). The name is a
+  lower-case word. The colon keeps it apart from the core commands: a plugin
+  command never replaces one. It returns the exit code, a whole number from 0 to
+  255; anything else is an error. \`ctx\` has \`pluginId\`, \`cwd\` and \`projectDir\`
+  (\`--dir\`, else \`cwd\`).
+- \`guardReport\` rows are printed by \`guard --check\` after the core's rows, one
+  line each: \`plugin <id> claimed: <row>\`. They are what the plugin claims, not
+  what the core checked: they are never counted in the core's enforcement
+  total, and the exit code stays the core's. A \`guardReport\` that throws prints
+  one row that says so.
+
+## The refusal event (read-only)
+
+A plugin may read what the guards refused. Only the core writes it. It is on
+when the topology says \`meta { refusal-events: true }\`, or when a loaded
+plugin declares \`reads: ["refusals"]\`. Then every generated claude-code guard
+script that refuses adds one JSON line to
+\`.claude/agentopology/events/refusals.jsonl\`, just before its exit 2:
+
+\`\`\`
+{"v":1,"ts":"2026-01-01T00:00:00Z","guard":"before-action.sh","gate":"accept-ready","rule":null,"tool":"Bash","reason":"a gate refused the call"}
+\`\`\`
+
+\`\`\`ts
+import type { RefusalEvent } from "agentopology/plugins";   // read-only, EXPERIMENTAL
+\`\`\`
+
+- \`gate\` and \`rule\` are null when the guard does not know them. \`reason\` is a
+  short fixed label. It never holds the refused command's text, and never the
+  tool's input.
+- A guard that another guard runs (a gate's wrapper) writes nothing: the guard
+  that ran it writes the one line.
+- A failed append (the folder cannot be made, the disk is full) changes
+  nothing: the script still exits 2. The refusal is never turned into a pass.
+- The before-edit guard refuses the Edit, Write, MultiEdit and NotebookEdit
+  tools on the file.
+- Without the opt-in, every generated file is byte for byte what it was.
 `,
   },
 };

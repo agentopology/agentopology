@@ -35,14 +35,14 @@ const HOOK: BlockSchema = {
 const AGENT: BlockSchema = {
   fields: [
     "file", "role", "model", "permissions", "phase", "description",
-    "tools", "disallowed-tools", "never-reads", "skills", "reads", "writes", "mcp-servers",
+    "tools", "disallowed-tools", "never-reads", "ask-reads", "skills", "reads", "writes", "mcp-servers",
     "produces", "consumes", "outputs", "skip", "behavior", "invocation", "runs",
     "independent", "color", "initial-prompt", "omit-claude-md", "retry", "timeout",
     "on-fail", "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
     "custodian-of", "place", "machine", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
-    "max-subagents", "max-cost",
+    "max-subagents", "max-cost", "output-into", "wall-time",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],
@@ -74,14 +74,14 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "mode", "let-go", "lift", "rule"],
     blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "binds", "typed-only-programs"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "stop-word", "binds", "typed-only-programs"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },
   hook: HOOK,
   job: { fields: ["cron", "every", "agent", "action", "enabled", "machine", "carrier", "survives"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
-  record: { fields: ["path", "fields", "schema", "writer", "kind"] },
+  record: { fields: ["path", "fields", "schema", "writer", "kind", "max-per-day"] },
   tool: { fields: ["script", "command", "description", "args", "lang"] },
   skill: {
     fields: [
@@ -92,13 +92,13 @@ const NODE_SCHEMAS = {
     blocks: { prompt: OPAQUE, extensions: OPAQUE },
   },
   meta: {
-    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "outpoints", "durable", "requires", "target"],
+    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "outpoints", "durable", "requires", "target", "refusal-events"],
   },
 } satisfies Record<string, BlockSchema>;
 
 /** The topology body: the sections it takes. Fields are not allowed there. */
 const TOPOLOGY: BlockSchema = {
-  fields: ["decisions", "pin-models"],
+  fields: ["decisions", "pin-models", "uses-plugins"],
   blocks: {
     meta: NODE_SCHEMAS.meta,
     orchestrator: NODE_SCHEMAS.orchestrator,
@@ -111,11 +111,12 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     person: { fields: ["away"] },
+    boundary: { fields: ["path", "in", "out", "outbound", "branch"] },
     inventory: { fields: ["roots", "strict"] },
     needs: { fields: ["memory", "connectors", "user-skills", "plugins"] },
     "threat-model": { fields: ["untrusted", "outside-sandbox", "refuse-after-untrusted", "lift"] },
+    egress: { fields: ["gate", "covers"] },
     islands: { fields: [], blocks: { island: { fields: ["path", "owner", "test"] } } },
-    ci: { fields: ["provider", "on", "gates"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
     secrets: { fields: [], blocks: { secret: { fields: ["path", "readers"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
@@ -198,7 +199,8 @@ function topLevelItems(body: string): Item[] {
     if (depth === 0 && bracket === 0) {
       const rest = mask.slice(i);
       const field = /^[ \t]*([A-Za-z_][\w-]*)[ \t]*:/.exec(rest);
-      const block = field ? null : /^[ \t]*([A-Za-z_][\w-]*)(?:[ \t]+([A-Za-z_][\w-]*))?[^\n{:"]*\{/.exec(rest);
+      // The brace may be on a later line, with only blank or comment lines (blank on the mask) between.
+      const block = field ? null : /^[ \t]*([A-Za-z_][\w-]*)(?:[ \t]+([A-Za-z_][\w-]*))?(?:[^\n{:"]*|[ \t]*(?:\n[ \t]*)+)\{/.exec(rest);
       if (field) {
         items.push({ kind: "field", name: field[1] });
         // A one-line block (`a: 1, b: 2`): a top-level comma before `key:` starts
@@ -256,7 +258,14 @@ function describeBlock(kind: string, id: string | undefined): string {
   return id ? `${kind} "${id}"` : kind === "topology" ? "the topology" : `"${kind}"`;
 }
 
-function check(body: string, schema: BlockSchema, kind: string, id: string | undefined, out: UnknownNameResult[]): void {
+function check(
+  body: string,
+  schema: BlockSchema,
+  kind: string,
+  id: string | undefined,
+  out: UnknownNameResult[],
+  claim?: (keyword: string, label: string) => boolean,
+): void {
   const where = describeBlock(kind, id);
   const node = id ?? (kind === "topology" ? undefined : kind);
   const blocks = schema.blocks ?? {};
@@ -285,6 +294,7 @@ function check(body: string, schema: BlockSchema, kind: string, id: string | und
       continue;
     }
     const label = item.id ? `${item.name} ${item.id}` : item.name;
+    if (claim?.(item.name, label)) continue;
     const guess = closest(item.name, Object.keys(blocks));
     out.push({
       rule: "V102",
@@ -300,9 +310,20 @@ function check(body: string, schema: BlockSchema, kind: string, id: string | und
  * Report every field and block name in a topology body that the parser does
  * not read. `topBody` is the comment-stripped body of `topology { }`.
  */
-export function findUnknownNames(topBody: string): UnknownNameResult[] {
+export function findUnknownNames(
+  topBody: string,
+  plugins?: {
+    /** Loaded plugins' top-level keywords: known, checked against their fields (null: not looked inside). */
+    blocks?: Readonly<Record<string, { fields: readonly string[] } | null>>;
+    /** An unknown top-level block a declared, unloaded plugin may own: true when it was reported elsewhere (V167). */
+    claim?: (keyword: string, label: string) => boolean;
+  },
+): UnknownNameResult[] {
   const out: UnknownNameResult[] = [];
-  check(topBody, TOPOLOGY, "topology", undefined, out);
+  const schema = plugins?.blocks && Object.keys(plugins.blocks).length > 0
+    ? { ...TOPOLOGY, blocks: { ...TOPOLOGY.blocks, ...plugins.blocks } }
+    : TOPOLOGY;
+  check(topBody, schema, "topology", undefined, out, plugins?.claim);
   return out;
 }
 
