@@ -291,6 +291,37 @@ const KNOWN_FALSE_REFUSALS = [
   "a=x; echo $a agentopology scaffold",
 ];
 
+/**
+ * Known false refusals of the subcommand rule: the step's word stands bare (unquoted) in a command that holds an
+ * expansion, an alias, xargs, eval or a shell -c, so the command may build the CLI's name at run time. Quote the
+ * word, or split the command.
+ */
+const RULE_FALSE_REFUSALS = [
+  "ls $DIR; echo scaffold",
+  "echo scaffold | xargs echo",
+];
+
+/** The subcommand rule: the step's word bare, and an expansion, an alias, xargs, eval or a shell -c somewhere. */
+const RULE_FORMS = [
+  "alias a='npx -y agentopology@1'\na {s}",
+  "alias a='npx -y agentopology@1'; a {s}",
+  "echo agento | xargs -I% %pology {s}",
+  "echo agento | xargs -IX Xpology {s}",
+  "echo agento | xargs --replace=Q Qpology {s}",
+  "a=agento; exec -a x ${a}pology {s}",
+  "a=agento; env -u X ${a}pology {s}",
+  "a=agento; timeout -s KILL 5 ${a}pology {s}",
+  "a=agento; sudo -u root ${a}pology {s}",
+];
+
+/** The validate twins and the rule's must-pass rows run in the tests below. */
+const RULE_PASSED = [
+  "git commit -m \"agentopology scaffold fix\" && echo $HOME",
+  "grep -rl 'agentopology scaffold' . | xargs wc -l",
+  "echo $HOME; git log --grep \"agentopology scaffold\"",
+  "echo 'agentopology scaffold' | xargs echo",
+];
+
 /** The validate step of the two-gate fixture: refused before the sign, in every spelling. */
 const VALIDATE_REFUSED = [
   "agentopology validate gated.at --no-plugins",
@@ -609,6 +640,33 @@ describe.skipIf(!hasJq)("a step gate recognises the CLI named with a version, a 
   }
   for (const cmd of VALIDATE_REFUSED) {
     it(`two step gates: the validate step is refused before the sign: ${cmd}`, () => {
+      expect(off("two-gates", [cmd], 2)).toEqual([]);
+    });
+  }
+});
+
+describe.skipIf(!hasJq)("the subcommand rule: the step's word bare, with an expansion, alias, xargs, eval or shell -c", () => {
+  for (const [label, , name] of TOPOLOGIES) {
+    for (const form of RULE_FORMS) {
+      const cmd = fill(form, "scaffold", "probe.at");
+      it(`${label}: refused: ${JSON.stringify(cmd)}`, () => {
+        expect(off(name, [cmd], 2)).toEqual([]);
+      });
+    }
+    for (const cmd of RULE_PASSED) {
+      it(`${label}: passes: ${cmd}`, () => {
+        expect(off(name, [cmd], 0)).toEqual([]);
+      });
+    }
+    for (const cmd of RULE_FALSE_REFUSALS) {
+      it(`${label}: a known false refusal, documented: ${cmd}`, () => {
+        expect(off(name, [cmd], 2)).toEqual([]);
+      });
+    }
+  }
+  for (const form of [RULE_FORMS[1], RULE_FORMS[2], RULE_FORMS[5]]) {
+    const cmd = fill(form, "validate", "gated.at");
+    it(`two step gates: the validate twin is refused: ${JSON.stringify(cmd)}`, () => {
       expect(off("two-gates", [cmd], 2)).toEqual([]);
     });
   }
