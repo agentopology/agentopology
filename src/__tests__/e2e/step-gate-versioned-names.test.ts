@@ -287,6 +287,9 @@ const KNOWN_FALSE_REFUSALS = [
   "bunx agentopology-extras@1.0.0 scaffold probe.txt",
   "npx @scope/agentopology-tools@1.0.0 scaffold probe.txt",
   "x=other@1; npx $x scaffold",
+  // a command with an unquoted expansion or xargs reads its quoted text too
+  "echo 'agentopology scaffold' | xargs echo",
+  "a=x; echo $a agentopology scaffold",
 ];
 
 /** The validate step of the two-gate fixture: refused before the sign, in every spelling. */
@@ -374,6 +377,23 @@ const STEP_FORMS: ReadonlyArray<readonly [string, readonly string[]]> = [
     "bash <<< agentopology\\ {s1}\\ {s2}",
     "npx --call=$'agentopology {s}'",
   ]],
+  ["the subcommand in quoted text the shell later splits into arguments (an unquoted expansion, or xargs)", [
+    "a='agentopology@1 {s}'; npx $a",
+    "a='agentopology@1 {s}'; npx -y $a",
+    "a='agentopology@1 {s}'; command $a",
+    "a='-y agentopology@1 {s}'; npx $a",
+    "echo '{s}' | xargs npx -y agentopology@1",
+    "printf 'agentopology@1\\n{s1}\\n{s2}\\n' | xargs npx -y",
+    "echo '{s}' | xargs npx agentopology@1",
+  ]],
+  ["a dot reads its file as code, git rebase runs --exec text, npm keeps text as a script", [
+    ". <(echo 'agentopology {s}')",
+    ". /dev/stdin <<< 'agentopology {s}'",
+    "git rebase -x 'agentopology {s}' HEAD~1",
+    "git rebase --exec='agentopology {s}' HEAD~1",
+    "npm pkg set 'scripts.x=agentopology {s}'",
+    "npm set-script x 'agentopology {s}'",
+  ]],
   ["wrappers, letter case and spaces around a versioned name", [
     "env npx agentopology@1 {s}",
     "nice npx agentopology@1 {s}",
@@ -394,6 +414,12 @@ const NEAR_PASSED = [
   "npx --call='echo hi'",
   "node node_modules/other/dist/cli/index.js scaffold",
   "cat <<<'hello world'",
+  "a=docs; ls $a",
+  "echo hi | xargs echo",
+  "git commit -m \"agentopology scaffold notes\"",
+  "git add . && git commit -m \"agentopology scaffold notes\"",
+  "git rebase main",
+  "npm pkg get name",
 ];
 
 /** Text handed to a program that runs text as code: quoted or not, it is the step, and refused. */
