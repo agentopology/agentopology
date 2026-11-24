@@ -33,9 +33,8 @@ const TS_RE = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)
 
 /** True when the record opted into the writer script: it declares fields, a schema, a writer or a kind. */
 export function recordIsTyped(r: RecordDef): boolean {
-  return !!(r.fields || r.schema || r.writer || r.kind);
+  return !!(r.fields || r.schema || r.writer || r.kind || r.maxPerDay !== undefined);
 }
-
 /** The gates that read a record: before-action.sh checks its ledger before a script step. */
 export function recordReaders(ast: TopologyAST, r: RecordDef): GateNode[] {
   return ast.nodes
@@ -93,6 +92,17 @@ export function generateRecordScripts(ast: TopologyAST, p: GuardPlatform): Gener
       "else",
       "  FILE=\"$TMPL\"",
       "fi",
+      ...(r.maxPerDay !== undefined
+        ? [
+          `# max-per-day: ${r.maxPerDay}. The day is UTC. A row counts for the day its "ts" (or "at") starts with; this script adds ts`,
+          "# to every row it writes, so a record that declares no ts field is counted the same way. The check reads the file, so two",
+          "# writers racing at the limit can both pass (a text check, not a lock).",
+          "TODAY=$(date -u +%Y-%m-%d)",
+          "TODAY_N=0",
+          "[ ! -f \"$FILE\" ] || TODAY_N=$(grep -Ec \"\\\"(ts|at)\\\" *: *\\\"$TODAY\" \"$FILE\" 2>/dev/null || true)",
+          `[ "\${TODAY_N:-0}" -lt ${r.maxPerDay} ] || fail "max-per-day: $FILE already holds \${TODAY_N} rows for $TODAY (UTC); the record allows ${r.maxPerDay} a day"`,
+        ]
+        : []),
       "mkdir -p \"$(dirname \"$FILE\")\"",
       "printf '%s\\n' \"$ROW\" >> \"$FILE\"",
       "",
@@ -218,6 +228,7 @@ export function generateRecordsJson(ast: TopologyAST): GeneratedFile | null {
       fields: recordFields(r).map((f) => ({ name: f.name, type: f.type })),
       ...(r.schema ? { schema: r.schema } : {}),
       ...(r.writer ? { writer: r.writer } : {}),
+      ...(r.maxPerDay !== undefined ? { maxPerDay: r.maxPerDay } : {}),
       readBy: recordReaders(ast, r).map((g) => g.id),
     })),
   };

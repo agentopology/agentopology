@@ -2,6 +2,13 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Added
+
+- `record <id> { max-per-day: N }` caps a record at N rows a UTC day (V158: N is a positive whole number, and the path has no `{unit}`). On claude-code the N+1th row of a day is refused by the record's writer `record-<id>.sh` and by `before-action.sh` on a shell command that writes the record's path (a redirect, `tee`, `cp`, `mv`, the forms the guards already read as writes); `before-edit.sh` refuses an Edit or Write of the file. A row counts for the UTC day its `ts` (or `at`) starts with, and the writer adds `ts` to every row it writes, so a record with no `ts` field counts too.
+- **What is a text check:** the shell guard reads the command and counts the rows already in the file. It cannot know how many rows one command appends, two writers racing at the cap can both pass, and a script that appends to the file by itself is not seen. Reading the file and every command that does not name it pass. A topology that does not use `max-per-day` generates the same files as before. Codex and cursor write no check (V140 warns).
+
 ## [0.13.0] - unreleased
 
 ### Changed behaviour

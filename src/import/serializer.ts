@@ -863,7 +863,7 @@ function serializeRecords(records: RecordDef[] | undefined): string | null {
   if (!records?.length) return null;
   const lines: string[] = ["  records {"];
   for (const r of records) {
-    if (!r.fields && !r.schema && !r.writer && !r.kind) {
+    if (!r.fields && !r.schema && !r.writer && !r.kind && r.maxPerDay === undefined && r.maxPerDayRaw === undefined) {
       lines.push(`    record ${r.id} { path: "${r.path}" }`);
       continue;
     }
@@ -872,6 +872,8 @@ function serializeRecords(records: RecordDef[] | undefined): string | null {
     if (r.fields) lines.push(`      fields: [${r.fields.map((f) => `${f.name}: ${f.type}`).join(", ")}]`);
     if (r.schema) lines.push(`      schema: ${r.schema}`);
     if (r.writer) lines.push(`      writer: ${r.writer}`);
+    if (r.maxPerDay !== undefined) lines.push(`      max-per-day: ${r.maxPerDay}`);
+    else if (r.maxPerDayRaw !== undefined) lines.push(`      max-per-day: ${r.maxPerDayRaw}`);
     lines.push("    }");
   }
   lines.push("  }");

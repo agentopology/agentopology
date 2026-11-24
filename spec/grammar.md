@@ -1190,6 +1190,16 @@ records {
 | `schema` | schema id | no | A schema declared in `schemas { }` (V139) |
 | `writer` | action id, agent id or project-relative script path | no | What writes the record (V139) |
 | `kind` | `run-state` | no | A run-state record has the fixed fields `target` and `step` (both `string`); it takes no `fields:` (V139) |
+| `max-per-day` | positive whole number | no | At most this many rows a UTC day (0.13.1, V158) |
+
+**`max-per-day: N`** (0.13.1). The day is the UTC calendar day. The N+1th row appended in one UTC day is refused, in two places on `claude-code`:
+
+- the record's writer, `record-<id>.sh`, counts the rows already in the file for today and exits 2 (naming the cap) before it writes the N+1th;
+- `before-action.sh` refuses a shell command that writes the record's path (the same forms it reads as writes to a gate ledger: a redirect, `tee`, `cp`, `mv`, ...) once the file already holds N rows for today. Under N the command passes. Reading the file (`cat`, `grep`, `wc`, `jq`, ...) and every command that does not name it pass. `before-edit.sh` refuses an Edit or Write of the record's file, so the rows go through the writer.
+
+How a row's day is read: a row counts for the UTC day its `ts` (or `at`) value starts with (`2026-11-24T...`). The writer adds `ts` to every row it writes, whether or not the record declares a `ts` field, so a record with no `ts` field is counted the same way. A row with no `ts` or `at` (written by hand) counts for no day. A row the writer is given with an earlier `ts` is still checked against today's count, since it is appended today.
+
+This is a text check, not a lock. The guard reads the command and the rows already in the file; it cannot know how many rows one command appends (a loop can add more than one), two writers racing at the cap can both pass, and a script that appends to the file itself is not seen. The path must not hold `{unit}` (V158): the count is of the rows of one file. `codex` and `cursor` write no check (V140 warns).
 
 On `claude-code` a record that declares any of these compiles to: (1) `.claude/skills/<topology>/scripts/record-<id>.sh '<json>'`, which appends a row only when it holds every declared field with the declared type, otherwise exits 2 naming the missing or mistyped field and writes nothing, and adds `ts` when missing; a row `{step, ok: "n/a", reason}` goes through it and `reason` is required; (2) when a gate reads the record and its `after:` step is an action with `commands:`, `after-action.sh`, a `PostToolUse` hook on `Bash` that appends `{step, ok: true, ts, model}` (and the unit, when the step has one) when the step's command succeeded. It reads the command with the same step matcher `before-action.sh` uses. `PostToolUse` fires only for a call that succeeded (a failed `Bash` call fires `PostToolUseFailure`, whose `error` starts `Exit code N`), and the hook also skips a payload that says it failed; it writes nothing for a command joined with `;`, `|`, `||` or a single `&`, since the exit status is then not the step's. (3) `.claude/records.json` lists every record, with its id, path, fields, writer and the gates that read it (`readBy`), so a record no gate reads is still written down. Codex and cursor write none of this; `validate --target codex` and `--target cursor` warn (V140).
 

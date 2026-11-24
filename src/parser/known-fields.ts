@@ -81,7 +81,7 @@ const NODE_SCHEMAS = {
   hook: HOOK,
   job: { fields: ["cron", "every", "agent", "action", "enabled", "machine", "carrier", "survives"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
-  record: { fields: ["path", "fields", "schema", "writer", "kind"] },
+  record: { fields: ["path", "fields", "schema", "writer", "kind", "max-per-day"] },
   tool: { fields: ["script", "command", "description", "args", "lang"] },
   skill: {
     fields: [

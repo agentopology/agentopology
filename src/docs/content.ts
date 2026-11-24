@@ -537,6 +537,8 @@ records {
 
 \`fields: [name: type, ..]\` has types \`string\`, \`number\`, \`boolean\` and \`ts\` (an ISO 8601 time). \`schema:\` names a schema declared in \`schemas { }\`. \`writer:\` names an action, an agent or a project-relative script path. \`kind: run-state\` is a record with the fixed fields \`target\` and \`step\` (it takes no \`fields:\`). V139 checks all of it. On claude-code, a record with any of these is written as \`record-<id>.sh '<json>'\`, which appends the row only when it holds every declared field with the declared type (exit 2 naming the field otherwise) and adds \`ts\` when missing. A ledger row \`{step, ok: "n/a", reason}\` goes through it, with \`reason\` required. When a gate's ledger is such a record and its \`after:\` step is an action with \`commands:\`, a PostToolUse hook on Bash (\`after-action.sh\`) appends \`{step, ok: true, ts, model}\` when the step's command succeeded. \`.claude/records.json\` lists every record, with the gates that read it. Codex and cursor write none of this (V140 warns).
 
+\`max-per-day: N\` (0.13.1) caps a record at N rows a UTC day. The N+1th row is refused by the record's writer \`record-<id>.sh\` (exit 2) and, on a direct append, by \`before-action.sh\` (a redirect, \`tee\`, \`cp\`, \`mv\` that names the record's path, once the file holds N rows for today); \`before-edit.sh\` refuses an Edit or Write of the file. A row counts for the UTC day its \`ts\` (or \`at\`) starts with; the writer adds \`ts\` to every row, so a record with no \`ts\` field counts the same way. Reading the file, and every command that does not name it, pass. This is a text check: it cannot know how many rows one command adds, and two writers racing at the cap can both pass. The path must have no \`{unit}\` (V158).
+
 **Ledger line format.** JSON Lines, one object per line, appended by the step's own script (agentopology only reads it):
 
 \`\`\`json
@@ -3871,6 +3873,12 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 **Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
 **Fix:** Close the bracket or quote, or put the field on its own line.
 
+### V158: Record Daily Cap (error)
+A record's \`max-per-day\` must be a positive whole number, and the record's path must not hold \`{unit}\` (the cap counts the rows of one file). The message names the record.
+
+**Violation:** \`record events { path: "logs/events.jsonl", max-per-day: 0 }\`
+**Fix:** \`max-per-day: 20\`
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3929,6 +3937,7 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V155 | error | CI Block |
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
+| V158 | error | Record Daily Cap |
 `,
   },
 

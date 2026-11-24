@@ -4243,6 +4243,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
+    ...v158RecordMaxPerDay(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4710,6 +4711,23 @@ function v138ThreatModel(ast: TopologyAST, opts: ValidateOptions): ValidationRes
 }
 
 /**
+ * V158: a record's `max-per-day` must be a positive whole number, and the record's path must not hold
+ * `{unit}`: the count is of the rows in one file, one UTC day, so a path that splits into a file per
+ * unit has no one file to count.
+ */
+function v158RecordMaxPerDay(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const r of ast.records ?? []) {
+    if (r.maxPerDayRaw !== undefined) {
+      results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day "${r.maxPerDayRaw}" — must be a positive whole number such as 20` });
+    } else if (r.maxPerDay !== undefined && r.path.includes("{unit}")) {
+      results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day and a path with {unit} (${r.path}): the cap counts the rows of one file, so give the record one path with no {unit}` });
+    }
+  }
+  return results;
+}
+
+/**
  * V139: a record's fields, schema, writer and kind are well formed.
  * - every field is `name: type`, the type one of string, number, boolean, ts, and no name twice;
  * - `schema:` names a schema declared in `schemas { }`;
@@ -4843,7 +4861,7 @@ function v142GateMode(ast: TopologyAST, opts: ValidateOptions): ValidationResult
  */
 function v140RecordsNotWritten(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
   if (opts.target !== "codex" && opts.target !== "cursor") return [];
-  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind);
+  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind || r.maxPerDay !== undefined);
   if (rich.length === 0) return [];
   return [{
     rule: "V140", level: "warning",

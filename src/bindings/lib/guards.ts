@@ -1465,6 +1465,51 @@ function protectedFile(path: string): ProtectedLedger {
   return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
 }
 
+/** A record with a `max-per-day` cap, as a protected file with its cap (0.13.1). */
+export interface RateRecord extends ProtectedLedger {
+  max: number;
+}
+
+/**
+ * The records with a `max-per-day` cap that the guards watch (0.13.1). Claude Code only; the other
+ * targets are told by V140. A path with `{unit}` is left out (V158 reports it). Empty for a topology that
+ * uses no cap, so nothing else about its guards changes.
+ */
+export function rateRecords(ast: TopologyAST, p: GuardPlatform): RateRecord[] {
+  if (p.id !== "claude-code") return [];
+  return (ast.records ?? [])
+    .filter((r) => r.maxPerDay !== undefined && r.path !== "" && !r.path.includes("{unit}"))
+    .map((r) => ({ ...protectedFile(r.path.replace(/^\.\//, "")), max: r.maxPerDay! }));
+}
+
+/**
+ * before-action.sh: a command that writes a capped record's file (a redirect, tee, cp, mv, ...: the forms
+ * ledger_guard reads) is refused once the file already holds `max` rows for today (UTC). A row counts for
+ * the day its "ts" (or "at") starts with. A command that only reads the file is never refused. A text
+ * check: it counts the rows already there and cannot know how many rows one command adds.
+ */
+function rateGuardLines(rates: RateRecord[]): string[] {
+  if (rates.length === 0) return [];
+  return [
+    "# 0.13.1 max-per-day: a record's file takes no more than its cap of rows a UTC day. rate_guard 'PATTERN' LETTERS PATH LIT GLOB NAME MAX",
+    "rate_guard() {",
+    "  local hit=0 w n=0 today",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+    "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  at_path_named \"$4\" \"$5\" \"$6\" && hit=1",
+    "  [ \"$hit\" = 1 ] || return 0",
+    "  at_reads_plain \"$4\" \"$5\" \"$6\" \"$2\" && return 0",
+    "  today=$(date -u +%Y-%m-%d)",
+    "  [ ! -f \"$3\" ] || n=$(grep -Ec \"\\\"(ts|at)\\\" *: *\\\"$today\" \"$3\" 2>/dev/null || true)",
+    "  [ \"${n:-0}\" -ge \"$7\" ] || return 0",
+    "  echo \"agentopology: max-per-day: $3 already holds $n rows for $today (UTC) and the record allows $7 a day; the command writes it ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...rates.map((r) => `rate_guard ${shellQuote(r.glob)} ${shellQuote(r.letters)} ${shellQuote(r.path)} ${pathArgs(r.path)} ${r.max}`),
+    "",
+  ];
+}
+
 /** The route record as a protected file (0.13.0), or null when no launch reads one (lib/route.ts). */
 function protectedRouteRecord(ast: TopologyAST, p: GuardPlatform): ProtectedLedger | null {
   return hasRoutes(ast, p) ? protectedFile(routeRecordPath(ast, p)) : null;
@@ -1483,8 +1528,10 @@ function ledgerGuardLines(
   writeGateLines: string[] = [],
   /** Write the helpers (at_only_reads, PATH_FUNCTIONS) even with nothing else to guard: the guards' own files follow (0.13.0). */
   helpers = false,
+  /** The records with a max-per-day cap (0.13.1). */
+  rates: RateRecord[] = [],
 ): string[] {
-  if (ledgers.length === 0 && !route && writeGateLines.length === 0 && !helpers) return [];
+  if (ledgers.length === 0 && !route && writeGateLines.length === 0 && !helpers && rates.length === 0) return [];
   const routeLines = route
     ? [
         "# 0.13.0: the route record is refused the same way: only route.sh writes it.",
@@ -1505,7 +1552,7 @@ function ledgerGuardLines(
     : [];
   // 0.13.0: every word read once, as the paths it may name (PATH_FUNCTIONS).
   const pathLines = ["", ...PATH_FUNCTIONS, "at_pw_init", ""];
-  if (ledgers.length === 0 && writeGateLines.length === 0) return [...atOnlyReadsLines(), ...pathLines, ...routeLines];
+  if (ledgers.length === 0 && writeGateLines.length === 0) return [...atOnlyReadsLines(), ...pathLines, ...routeLines, ...rateGuardLines(rates)];
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
     "# only reads it. Since 0.13.0 a word is matched as a glob, through the command's own variables and after a",
@@ -1529,6 +1576,7 @@ function ledgerGuardLines(
     ...writeGateLines,
     "",
     ...routeLines,
+    ...rateGuardLines(rates),
   ];
 }
 
@@ -2472,7 +2520,8 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   const ledgers = protectedLedgers(ast, p);
   const route = protectedRouteRecord(ast, p);
   const wgates = writeGates(ast);
-  if (ledgers.length === 0 && !route && wgates.length === 0) return null;
+  const rates = rateRecords(ast, p);
+  if (ledgers.length === 0 && !route && wgates.length === 0 && rates.length === 0) return null;
   const goScripts = goScriptPaths(ast, p);
   const name = ast.topology.name;
   const v = p.projectDirVar;
@@ -2484,6 +2533,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     `# ${p.supportsAsk ? "Write|Edit|MultiEdit|NotebookEdit" : "apply_patch"}. A gate's ledger is a file the agent could write, so an edit`,
     `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
     ...(route ? [`# The route record ${route.path} is refused the same way: only route.sh writes it.`] : []),
+    ...(rates.length ? [`# A record with max-per-day (${rates.map((r) => r.path).join(", ")}) is refused the same way: its rows go through record-<id>.sh, which counts them.`] : []),
     ...(wgates.length ? ["# A gate before a write of a path (before: write \"<glob>\") holds an edit of a matching path until it holds."] : []),
     "set -euo pipefail",
     ...FAIL_CLOSED,
@@ -2501,7 +2551,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
-      inOrder: [...[...ledgers, ...(route ? [route] : [])].map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))]), ...ownFileWords(ast, p)],
+      inOrder: [...[...ledgers, ...(route ? [route] : []), ...rates].map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))]), ...ownFileWords(ast, p)],
       // a gate before a write reads the path and the ledger with jq: without it nothing can be told apart
       refuseAll: wgates.length > 0,
     }),
@@ -2528,6 +2578,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     ...CANON_FUNCTION,
     "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
     ...(route ? ["refuse_route() { echo \"agentopology: the edit touches the route record $1 ($2); only route.sh writes it\" >&2; exit 2; }"] : []),
+    ...(rates.length ? ["refuse_rate() { echo \"agentopology: the edit touches $1 ($2), a record with max-per-day; its rows go through the record's script, which counts them\" >&2; exit 2; }"] : []),
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
@@ -2546,6 +2597,10 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   if (route) {
     lines.push(`  PAT=${shellQuote(route.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
     lines.push(`  PAT=${shellQuote(route.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
+  }
+  for (const r of rates) {
+    lines.push(`  PAT=${shellQuote(r.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_rate ${shellQuote(r.path)} "$R"; fi`);
+    lines.push(`  PAT=${shellQuote(r.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_rate ${shellQuote(r.path)} "$R"; fi`);
   }
   for (const g of wgates) {
     // the pattern goes through a variable: unquoted in [[ ]] it is matched as a glob
@@ -2816,7 +2871,8 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   // 0.13.0: a topology whose launches read the route record gets the shell check for it too.
   const route = protectedRouteRecord(ast, p);
   const wgates = writeGates(ast);
-  if (guards.length === 0 && ledgers.length === 0 && !route && wgates.length === 0) return null;
+  const rates = rateRecords(ast, p);
+  if (guards.length === 0 && ledgers.length === 0 && !route && wgates.length === 0 && rates.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
   // A gate after a human with a valid: window or binds: checks the go row beyond ok (check_go).
@@ -2850,6 +2906,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       inOrder: [
         ...ledgers.map(ledgerWords),
         ...(route ? [ledgerWords(route)] : []),
+        ...rates.map(ledgerWords),
         ...wgates.flatMap((g) => writeGlobs(g).map(globWords).filter((w) => w.length > 0)),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
         // 0.13.0: the guards' own files, by their file names' letters
@@ -2936,7 +2993,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    ...ledgerGuardLines(ledgers, route, writeGateGuardLines(ast, wgates), protectsOwnFiles(ast, p)),
+    ...ledgerGuardLines(ledgers, route, writeGateGuardLines(ast, wgates), protectsOwnFiles(ast, p), rates),
     ...goScriptGuardLines(goScriptPaths(ast, p)),
     ...goEntryGuardLines(ast, p),
     // 0.13.0: the guards' own files, and the folders that hold any protected file, last (the messages above stay first).

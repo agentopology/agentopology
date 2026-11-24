@@ -2368,6 +2368,12 @@ export function parseRecords(topBody: string): RecordDef[] {
       if (f.schema !== undefined) rec.schema = unquote(f.schema);
       if (f.writer !== undefined) rec.writer = unquote(f.writer);
       if (f.kind !== undefined) rec.kind = unquote(f.kind);
+      if (f["max-per-day"] !== undefined) {
+        // a positive whole number; anything else is kept as written so V158 can name it
+        const raw = unquote(f["max-per-day"]).trim();
+        if (/^[1-9]\d*$/.test(raw)) rec.maxPerDay = parseInt(raw, 10);
+        else rec.maxPerDayRaw = raw;
+      }
       return rec;
     });
 }
