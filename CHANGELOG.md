@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Fixed
+
+- A gate `before: write "**/*.at"` no longer refuses agentopology's own read-only subcommands (`validate`, `inventory`, `plan`, `info`, `export`, `step check`, `guard --check` or `--test`, `visualize --no-open`, `scaffold --dry-run`, also through `npx agentopology`) that name a `.at` file; `scaffold`, `guard` without `--check` or `--test`, `sync`, `import` and any redirect into a matching path are still refused.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour

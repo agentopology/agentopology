@@ -270,7 +270,7 @@ function action(root: string, name: string, command: string) {
   const env: Record<string, string | undefined> = { ...process.env, CLAUDE_PROJECT_DIR: root };
   delete env.AT_SESSION;
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", session_id: "s1", cwd: root, tool_name: "Bash", tool_input: { command } });
-  return spawnSync("bash", [join(root, `.claude/skills/${name}/scripts/before-action.sh`)], { cwd: root, input: payload, env: env as NodeJS.ProcessEnv, encoding: "utf8", timeout: 20_000 });
+  return spawnSync("bash", [join(root, `.claude/skills/${name.replace(/\+at$/, "")}/scripts/before-action.sh`)], { cwd: root, input: payload, env: env as NodeJS.ProcessEnv, encoding: "utf8", timeout: 20_000 });
 }
 
 /** The rows whose exit is not `want`, each with the guard's first line. */
@@ -301,6 +301,73 @@ describe.skipIf(!hasJq)("proof: ordinary commands run on every topology", () => 
   it("a ledger gate: cat of the ledger passes", () => {
     expect(off("led", ["cat logs/run.jsonl"], 0)).toEqual([]);
   });
+});
+
+// 0.13.1: a gate `before: write "**/*.at"`: agentopology's own read-only subcommands name a .at file and are reads.
+const AT_GATE: Record<string, string> = {
+  plain: `    gate at-open {
+      after: build
+      before: write "**/*.at"
+      run: "scripts/check.sh"
+      strength: refuse
+    }
+`,
+  led: `    gate at-open {
+      after: draft
+      before: write "**/*.at"
+      ledger: run-ledger
+      strength: refuse
+    }
+`,
+  "p09-human": `    gate at-open {
+      after: owner-go
+      before: write "**/*.at"
+      ledger: go-ledger
+      strength: refuse
+    }
+`,
+};
+
+const AT_READ_FORMS = [
+  "agentopology validate x.at",
+  "agentopology guard x.at --check --dir .",
+  "agentopology guard x.at --test",
+  "agentopology inventory x.at",
+  "agentopology plan x.at",
+  "agentopology step check x.at",
+  "agentopology info x.at",
+  "agentopology export x.at",
+  "agentopology visualize x.at --no-open",
+  "agentopology scaffold x.at --dry-run",
+  "npx agentopology validate x.at",
+  "npx agentopology@0.13.0 validate x.at",
+];
+
+const AT_WRITE_FORMS = [
+  "agentopology scaffold x.at",
+  "agentopology guard x.at --target claude-code",
+  "agentopology sync x.at",
+  "agentopology import --dir . x.at",
+  "agentopology validate x.at > packs/new.at",
+  "echo x > packs/new.at",
+  "cp a.at packs/b.at",
+];
+
+describe.skipIf(!hasJq)("proof: agentopology's read-only subcommands on a .at file", () => {
+  for (const [label, src, name] of TOPOLOGIES) {
+    const key = `${name}+at`;
+    beforeAll(() => { roots.set(key, scaffold(src.replace("  gates {\n", `  gates {\n${AT_GATE[name]}`))); });
+    for (const cmd of AT_READ_FORMS) {
+      it(`${label}, a .at gate, passes: ${cmd}`, () => {
+        expect(off(key, [cmd], 0)).toEqual([]);
+      });
+    }
+    for (const cmd of AT_WRITE_FORMS) {
+      it(`${label}, a .at gate, refused: ${cmd}`, () => {
+        expect(off(key, [cmd], 2)).toEqual([]);
+      });
+    }
+  }
 });
 
 describe.skipIf(!hasJq)("proof: the first read's forms stay refused", () => {
