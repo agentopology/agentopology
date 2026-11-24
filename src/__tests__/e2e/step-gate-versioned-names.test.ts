@@ -287,8 +287,7 @@ const KNOWN_FALSE_REFUSALS = [
   "bunx agentopology-extras@1.0.0 scaffold probe.txt",
   "npx @scope/agentopology-tools@1.0.0 scaffold probe.txt",
   "x=other@1; npx $x scaffold",
-  // a command with an unquoted expansion or xargs reads its quoted text too
-  "echo 'agentopology scaffold' | xargs echo",
+  // an expansion where a program stands, or xargs running a runner, reads the command's quoted text too
   "a=x; echo $a agentopology scaffold",
 ];
 
@@ -394,6 +393,22 @@ const STEP_FORMS: ReadonlyArray<readonly [string, readonly string[]]> = [
     "npm pkg set 'scripts.x=agentopology {s}'",
     "npm set-script x 'agentopology {s}'",
   ]],
+  ["an alias whose value is the step is code", [
+    "shopt -s expand_aliases\nalias a='agentopology {s}'\na",
+    "shopt -s expand_aliases; alias a='agentopology {s}'; a",
+    "alias a='npx agentopology@1 {s}'; a",
+  ]],
+  ["an expansion, $0 or the {} replacement where a code string names its program", [
+    "a=agen; eval \"${a}topology {s}\"",
+    "sh -c 'agento$0 {s}' pology",
+    "bash -c '$0$1 {s}' agento pology",
+    "xargs -I{} {}pology {s} <<< agento",
+    "echo agento | xargs -I{} {}pology {s}",
+    "echo agento | xargs -I{} npx {}pology@1 {s}",
+    "echo agento | xargs -I{} sh -c '{}pology {s}'",
+    "compgen -c | xargs -I{} {} {s}",
+    "ls | xargs -I{} {} {s}",
+  ]],
   ["wrappers, letter case and spaces around a versioned name", [
     "env npx agentopology@1 {s}",
     "nice npx agentopology@1 {s}",
@@ -420,6 +435,11 @@ const NEAR_PASSED = [
   "git add . && git commit -m \"agentopology scaffold notes\"",
   "git rebase main",
   "npm pkg get name",
+  // an expansion in an ordinary argument, xargs running an ordinary program: the quoted text stays text
+  "git commit -m \"agentopology scaffold fix\" && echo $HOME",
+  "grep -rl 'agentopology scaffold' . | xargs wc -l",
+  "echo $HOME; git log --grep \"agentopology scaffold\"",
+  "echo 'agentopology scaffold' | xargs echo",
 ];
 
 /** Text handed to a program that runs text as code: quoted or not, it is the step, and refused. */
