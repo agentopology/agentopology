@@ -54,6 +54,7 @@ import { isShellCommand, proseInRun, scriptNameFromRun, runParts, isProjectPath,
 export const AGENTS_MD_BEGIN = "<!-- agentopology:begin (generated; edit outside these markers) -->";
 export const AGENTS_MD_END = "<!-- /agentopology:end -->";
 import { gateAnchors, pluginMcpServer } from "../parser/ast.js";
+import { rulesSection } from "../parser/rules.js";
 import { gateLedger } from "../parser/ledger.js";
 
 // ---------------------------------------------------------------------------
@@ -416,6 +417,9 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
     }
     sections.push("");
   }
+
+  // Conduct rules, with their ids: AGENTS.md is the entry text Codex reads.
+  sections.push(...rulesSection(ast));
 
   // Flow section
   if (ast.edges.length > 0) {
@@ -787,6 +791,7 @@ function generateAgentsMd(ast: TopologyAST): GeneratedFile {
       if (gate.before) sections.push(`- **Before:** ${gateAnchors(gate, "before").join(", ")}`);
       // E-4: the gate's own words and its behavior are not dropped.
       if (gate.description) sections.push(`- **Description:** ${gate.description}`);
+      if (gate.rule) sections.push(`- **Rule:** ${gate.rule}`);
       if (gate.behavior) sections.push(`- **Behavior:** ${gate.behavior}`);
       if (gate.run) sections.push(`- **Run:** ${gate.run}`);
       if (gate.checks && gate.checks.length > 0) {
@@ -1193,6 +1198,8 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
   const files: GeneratedFile[] = [];
 
   for (const tool of ast.toolDefs) {
+    // A tool run by its command: has no script to write.
+    if (tool.command && !tool.script) continue;
     const ext =
       tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
     // E-1: the stub carries the marker and fails until it is written.

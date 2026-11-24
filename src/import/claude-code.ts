@@ -32,6 +32,7 @@ import type {
 import type { PlatformFile } from "../sync/index.js";
 import { extractSectionUntilKnownHeading, CLAUDE_CODE_STRUCTURAL_HEADINGS } from "../sync/index.js";
 import { commandParts } from "./run-words.js";
+import { unwrapDenyOnExit2 } from "../bindings/lib/stub.js";
 
 // ---------------------------------------------------------------------------
 // YAML frontmatter parser (minimal, no deps)
@@ -634,6 +635,7 @@ export function parseSkillMd(content: string): SkillMdResult {
         if (trimmed.startsWith("Retry:")) gate.retry = parseInt(trimmed.slice(6).trim(), 10);
         if (trimmed.startsWith("Timeout:")) gate.timeout = trimmed.slice(8).trim();
         if (trimmed.startsWith("Strength:")) gate.strength = trimmed.slice(9).trim();
+        if (trimmed.startsWith("Bypass:")) gate.bypass = trimmed.slice(7).trim();
       }
 
       result.gates.push(gate);
@@ -816,7 +818,9 @@ export function parseSettingsJson(content: string): {
           if (hookEntry.command && /gate-[\w-]+\.sh|before-agent\.sh/.test(hookEntry.command)) continue;
 
           const type = hookEntry.type ?? "command";
-          const command = hookEntry.command ?? "";
+          // A refuse PermissionRequest hook's command, as scaffold wraps it to deny on exit 2.
+          const denies = type === "command" && event === "PermissionRequest" ? unwrapDenyOnExit2(hookEntry.command ?? "") : null;
+          const command = denies ?? hookEntry.command ?? "";
           const name = uniqueId(hookId(event, matcher, type, command), taken);
 
           hooks.push({
@@ -832,6 +836,7 @@ export function parseSettingsJson(content: string): {
             ...(hookEntry.tool ? { tool: hookEntry.tool } : {}),
             ...(hookEntry.async !== undefined ? { async: hookEntry.async } : {}),
             ...(hookEntry.model ? { model: hookEntry.model } : {}),
+            ...(denies !== null ? { strength: "refuse" } : {}),
           });
         }
       }

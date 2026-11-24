@@ -211,7 +211,7 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     model: haiku
     permissions: autonomous
     phase: 1
-    tools: [Read, Grep, Glob, check-health, query-metrics]
+    tools: [Read, Grep, Glob, Bash, check-health, query-metrics]
     skills: [incident-detection]
     writes: ["workspace/alerts/"]
     mcp-servers: [pagerduty, observability-platform]
@@ -259,7 +259,7 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     model: sonnet
     permissions: supervised
     phase: 2
-    tools: [Read, Grep, Glob, query-metrics]
+    tools: [Read, Grep, Glob, Bash, query-metrics]
     reads: ["workspace/alerts/"]
     writes: ["workspace/triage/"]
     mcp-servers: [log-search]
@@ -353,7 +353,7 @@ topology incident-response : [pipeline, fan-out, human-gate, orchestrator-worker
     model: sonnet
     permissions: autonomous
     phase: 4
-    tools: [Read, Grep, run-smoke-tests, check-health]
+    tools: [Read, Grep, Bash, run-smoke-tests, check-health]
     reads: ["workspace/fixes/"]
     writes: ["workspace/verification/"]
     mcp-servers: [observability-platform]

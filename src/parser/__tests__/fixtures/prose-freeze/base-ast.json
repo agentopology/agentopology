@@ -3682,6 +3682,7 @@
      "Read",
      "Grep",
      "Glob",
+     "Bash",
      "check-health",
      "query-metrics"
     ],
@@ -3750,6 +3751,7 @@
      "Read",
      "Grep",
      "Glob",
+     "Bash",
      "query-metrics"
     ],
     "reads": [
@@ -3895,6 +3897,7 @@
     "tools": [
      "Read",
      "Grep",
+     "Bash",
      "run-smoke-tests",
      "check-health"
     ],

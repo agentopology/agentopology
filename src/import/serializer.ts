@@ -91,6 +91,7 @@ function serializeMeta(ast: TopologyAST): string {
   if (meta.timeout) lines.push(`    timeout: ${q(meta.timeout)}`);
   if (meta.errorHandler) lines.push(`    error-handler: ${meta.errorHandler}`);
   if (meta.entry) lines.push(`    entry: ${meta.entry}`);
+  if (meta.outpoints) lines.push(`    outpoints: ${inlineList(meta.outpoints)}`);
   if (meta.durable) lines.push("    durable: true");
   lines.push("  }");
   return lines.join("\n");
@@ -323,8 +324,18 @@ function serializeGate(node: GateNode): string {
   if (node.match) lines.push(`      match: ${q(node.match)}`);
   if (node.bypass) lines.push(`      bypass: ${q(node.bypass)}`);
   if (node.ledger) lines.push(`      ledger: ${node.ledger}`);
+  if (node.mode) lines.push(`      mode: ${node.mode}`);
+  if (node.letGo) lines.push(`      let-go: ${node.letGo}`);
+  if (node.lift) lines.push(`      lift: ${node.lift}`);
+  if (node.tests) lines.push(...testsLines(node.tests, "      "));
   lines.push("    }");
   return lines.join("\n");
+}
+
+/** A `tests { refuse: [..] allow: [..] }` block, as the parser reads it. */
+function testsLines(tests: { refuse: string[]; allow: string[] }, pad: string): string[] {
+  const rows = (key: string, list: string[]) => (list.length ? [`${pad}  ${key}: [${list.map(q).join(", ")}]`] : []);
+  return [`${pad}tests {`, ...rows("refuse", tests.refuse), ...rows("allow", tests.allow), `${pad}}`];
 }
 
 function serializeHuman(node: HumanNode): string {
@@ -336,6 +347,9 @@ function serializeHuman(node: HumanNode): string {
   if (node.onTimeout) lines.push(`    on-timeout: ${node.onTimeout}`);
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
+  if (node.word !== undefined) lines.push(`    word: ${q(node.word)}`);
+  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
+  if (node.typedOnlyPrograms) lines.push(`    typed-only-programs: [${node.typedOnlyPrograms.map(q).join(", ")}]`);
   lines.push("  }");
   return lines.join("\n");
 }
@@ -365,6 +379,7 @@ function serializeEdge(edge: EdgeDef): string {
 
   if (edge.condition) attrs.push(`when ${edge.condition}`);
   if (edge.maxIterations) attrs.push(`max ${edge.maxIterations}`);
+  if (edge.finish) attrs.push("finish");
   if (edge.per) attrs.push(`per ${edge.per}`);
   if (edge.race) attrs.push("race");
   if (edge.tolerance !== undefined) attrs.push(`tolerance: ${edge.tolerance}`);
@@ -419,6 +434,9 @@ function serializeHook(hook: HookDef, pad: string): string[] {
   if (hook.timeout) lines.push(`${pad}  timeout: ${hook.timeout}`);
   if (hook.strength) lines.push(`${pad}  strength: ${hook.strength}`);
   if (hook.bypass) lines.push(`${pad}  bypass: ${q(hook.bypass)}`);
+  if (hook.mode) lines.push(`${pad}  mode: ${hook.mode}`);
+  if (hook.letGo) lines.push(`${pad}  let-go: ${hook.letGo}`);
+  if (hook.tests) lines.push(...testsLines(hook.tests, `${pad}  `));
   lines.push(`${pad}}`);
   return lines;
 }
@@ -687,7 +705,8 @@ function serializeTools(tools: ToolBlockDef[]): string | null {
   const lines: string[] = ["  tools {"];
   for (const tool of tools) {
     lines.push(`    tool ${tool.id} {`);
-    lines.push(`      script: "${tool.script}"`);
+    if (tool.script || !tool.command) lines.push(`      script: "${tool.script}"`);
+    if (tool.command) lines.push(`      command: ${JSON.stringify(tool.command)}`);
     lines.push(`      description: "${tool.description}"`);
     if (tool.lang) lines.push(`      lang: ${tool.lang}`);
     if (tool.args?.length) lines.push(`      args: ${inlineList(tool.args)}`);
@@ -843,7 +862,18 @@ function serializeArtifacts(artifacts: ArtifactDef[]): string | null {
 function serializeRecords(records: RecordDef[] | undefined): string | null {
   if (!records?.length) return null;
   const lines: string[] = ["  records {"];
-  for (const r of records) lines.push(`    record ${r.id} { path: "${r.path}" }`);
+  for (const r of records) {
+    if (!r.fields && !r.schema && !r.writer && !r.kind) {
+      lines.push(`    record ${r.id} { path: "${r.path}" }`);
+      continue;
+    }
+    lines.push(`    record ${r.id} {`, `      path: "${r.path}"`);
+    if (r.kind) lines.push(`      kind: ${r.kind}`);
+    if (r.fields) lines.push(`      fields: [${r.fields.map((f) => `${f.name}: ${f.type}`).join(", ")}]`);
+    if (r.schema) lines.push(`      schema: ${r.schema}`);
+    if (r.writer) lines.push(`      writer: ${r.writer}`);
+    lines.push("    }");
+  }
   lines.push("  }");
   return lines.join("\n");
 }

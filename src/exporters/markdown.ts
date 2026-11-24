@@ -571,7 +571,8 @@ function renderTools(ast: TopologyAST): string {
   for (const t of ast.toolDefs) {
     const lang = t.lang ? ` (\`${t.lang}\`)` : "";
     lines.push(`- **\`${t.id}\`**${lang} — ${t.description}  `);
-    lines.push(`  Script: \`${t.script}\``);
+    if (t.script || !t.command) lines.push(`  Script: \`${t.script}\``);
+    if (t.command) lines.push(`  Command: \`${t.command}\``);
   }
   lines.push("");
   return lines.join("\n");

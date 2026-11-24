@@ -388,6 +388,25 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.env.CLAUDE_CODE_ENABLE_TELEMETRY",
+      "area": "env",
+      "tokens": [
+        "CLAUDE_CODE_ENABLE_TELEMETRY"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/monitoring-usage"
+      },
+      "usedBy": [
+        "src/bindings/lib/claude-code-telemetry.ts"
+      ],
+      "language": [
+        "observability"
+      ],
+      "proof": "src/bindings/__tests__/claude-code-telemetry.test.ts",
+      "ifBroken": "Claude Code exports no telemetry for an observability block",
+      "grade": "cosmetic"
+    },
+    {
       "id": "cc.files.path:.claude/commands/*",
       "area": "files",
       "tokens": [
@@ -918,6 +937,46 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.agent_id",
+      "area": "hooks.payload",
+      "tokens": [
+        "agent_id"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell one subagent from another, so max-subagents miscounts and timeout lets a call through",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.hook_event_name",
+      "area": "hooks.payload",
+      "tokens": [
+        "hook_event_name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell a start from a stop, so max-subagents miscounts",
+      "grade": "refuse"
+    },
+    {
       "id": "cc.hooks.payload.agent_type",
       "area": "hooks.payload",
       "tokens": [
@@ -937,6 +996,25 @@
       ],
       "proof": "src/__tests__/e2e/guard-check.test.ts",
       "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.last_assistant_message",
+      "area": "hooks.payload",
+      "tokens": [
+        "last_assistant_message"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "output-schema"
+      ],
+      "proof": "src/bindings/__tests__/output-schema-hook.test.ts",
+      "ifBroken": "an agent's output is checked against an empty message",
       "grade": "refuse"
     },
     {
@@ -1006,6 +1084,77 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.file_path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.file_path"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md#pretooluse-input"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "before-edit.sh reads no path from a Write or Edit and refuses every edit (it blocks on input it cannot read); documented for Write, Edit and Read (always absolute)",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.path"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md#pretooluse-input"
+      },
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "none on the edit tools: before-edit.sh reads it only after file_path and notebook_path; documented for Glob and Grep, not for the tools the hook matches",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.notebook_path",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.notebook_path"
+      ],
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "NOT DOCUMENTED: neither hooks.md (PreToolUse input) nor tools-reference.md (NotebookEdit tool behavior) names NotebookEdit's input fields; if the name differs, before-edit.sh reads no path from a NotebookEdit and refuses it (it blocks on input it cannot read)",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.patch",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.patch",
+        "tool_input.input"
+      ],
+      "usedBy": [
+        "src/bindings/lib/guards.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/f4-ledger.test.ts",
+      "ifBroken": "none on Claude Code: not Claude Code fields (hooks.md lists no tool with them); before-edit.sh reads them only when tool_name is apply_patch, Codex's edit tool, which the shared script also handles",
+      "grade": "cosmetic"
+    },
+    {
       "id": "cc.hooks.payload.name",
       "area": "hooks.payload",
       "tokens": [
@@ -1069,6 +1218,25 @@
       ],
       "proof": "src/__tests__/e2e/guard-check.test.ts",
       "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.cwd",
+      "area": "hooks.payload",
+      "tokens": [
+        "cwd"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/guard-ordinary.test.ts",
+      "ifBroken": "before-action.sh reads a glob from the project root instead of the folder the session is in: a glob there is matched against the wrong files",
       "grade": "refuse"
     },
     {

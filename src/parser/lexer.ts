@@ -459,7 +459,7 @@ export function parseMultilineList(body: string, key: string): string[] {
   const rest = body.slice(scanned.end, nl < 0 ? undefined : nl).trim();
   // Another field may share the line (`commands: [x] unit-from: "y"`); any
   // other text means the list ended early, at a `]` that belonged to an item.
-  if (rest && !/^[}\s]*$/.test(rest) && !/^[a-zA-Z_][a-zA-Z0-9_-]*\s*:/.test(rest)) {
+  if (rest && !/^[}\s]*$/.test(rest) && !/^,?\s*[a-zA-Z_][a-zA-Z0-9_-]*\s*:/.test(rest)) {
     throw new Error(
       `The list for "${key}" is malformed: text follows its closing ] ("${rest}"). ` +
         `Quote an item that holds [ or ]: ${shown()}`
@@ -504,13 +504,54 @@ export function parseFields(body: string): Record<string, string> {
     // will have depth > 0 after processing — that line is a block header, not
     // a KV pair, so skipping it is correct.
     if (depth === 0) {
-      const kv = parseKV(masked[li]) && parseKV(line);
-      if (kv) {
-        fields[kv[0]] = kv[1];
+      if (!parseKV(masked[li])) continue;
+      // A one-line block (`a: 1, b: 2`) reads each field like its own line.
+      for (const part of splitOneLineFields(line)) {
+        const kv = parseKV(part);
+        if (kv) fields[kv[0]] = kv[1];
       }
     }
   }
   return fields;
+}
+
+/**
+ * Split a line at the commas that separate `key: value` fields. A comma is a
+ * separator only at the top level (outside quotes, [..], {..} and (..)) and
+ * only when a `key:` follows it; any other comma stays part of the value.
+ */
+export function splitOneLineFields(line: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = false;
+  let start = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === '"') quote = false;
+      continue;
+    }
+    if (ch === '"') quote = true;
+    else if (ch === "[" || ch === "{" || ch === "(") depth++;
+    else if (ch === "]" || ch === "}" || ch === ")") {
+      depth--;
+      // A list closed at the top level and followed by ` key:` ends its
+      // field (`track: [a, b] format: json`), the same as a comma would;
+      // the list reader allows this form, so the next field is not lost.
+      if (ch === "]" && depth === 0 && /^\s+[a-zA-Z_-]+\s*:/.test(line.slice(i + 1))) {
+        parts.push(line.slice(start, i + 1));
+        start = i + 1;
+      }
+    }
+    else if (ch === "#" && /\s/.test(line[i - 1] ?? " ")) break;
+    else if (ch === "," && depth === 0 && /^\s*[a-zA-Z_-]+\s*:/.test(line.slice(i + 1))) {
+      parts.push(line.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(line.slice(start));
+  return parts;
 }
 
 /**

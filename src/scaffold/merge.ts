@@ -16,6 +16,7 @@ import { hashContent } from "./manifest.js";
 import { projectWord } from "../parser/run.js";
 import { AGENTS_MD_BEGIN, AGENTS_MD_END } from "../bindings/codex.js";
 import { fenceSpan } from "../bindings/lib/prompt-fence.js";
+import type { HookRecord } from "./types.js";
 
 /**
  * Return the list of known structural headings for a binding.
@@ -211,6 +212,135 @@ export function deepMergeSettingsJson(
   generatedRaw: string,
   ownedPaths: string[] = [],
 ): string {
+  return mergeSettings(existingRaw, generatedRaw, (ex, gen) => mergeHooks(ex, gen, ownedPaths));
+}
+
+/** What a merge by the hook record did (see {@link mergeSettingsByRecord}). */
+export interface RecordMerge {
+  /** The merged file. */
+  content: string;
+  /** The hook entries scaffold owns in `content`: the next run's record. */
+  record: HookRecord[];
+  /** Each recorded entry removed, as `<event> <matcher> <command>`. */
+  removed: string[];
+  /**
+   * Each user entry worth a line, as `hooks.<event>: …`: one that equals a
+   * generated entry, one that looks like the user's edit of a recorded
+   * entry, and (as 0.12.6 said) one in a group with the topology's entries
+   * or naming one of its scripts.
+   */
+  kept: Array<{ event: string; line: string }>;
+}
+
+/**
+ * Merge a hooks file (`.claude/settings.json`, `.codex/hooks.json`) by the
+ * record of the entries scaffold wrote there (ScaffoldManifest.hooks).
+ * Every key but `hooks` merges as {@link deepMergeSettingsJson} merges it.
+ *
+ * Per hook entry, by event, matcher and command as written:
+ *   - recorded, and the .at still generates it (same event and matcher, the
+ *     same command by the merge's identity): stays where it is, as the file
+ *     has it;
+ *   - recorded, and the .at no longer generates it: removed, and named in
+ *     `removed`;
+ *   - not recorded: the user's, whatever it runs. Never removed or changed.
+ *     One that equals a generated entry stands for it (the generated one is
+ *     not written beside it, so it does not run twice) and is named in
+ *     `kept`; one that looks like a recorded entry the user edited (same
+ *     matcher, or same command under another matcher) is named in `kept` too.
+ * Generated entries not in the file yet are added, and recorded.
+ *
+ * An entry that is not a command (a prompt hook) is never recorded: one
+ * already in the file where the .at generates it stands for it, and any
+ * other stays, as before.
+ *
+ * @throws {Error} if existingRaw is non-empty and is invalid JSON
+ */
+export function mergeSettingsByRecord(
+  existingRaw: string,
+  generatedRaw: string,
+  record: HookRecord[],
+  ownedPaths: string[] = [],
+  heldBy: (r: HookRecord) => string | undefined = () => undefined,
+): RecordMerge {
+  const outcome: RecordMerge = { content: "", record: [], removed: [], kept: [] };
+  outcome.content = mergeSettings(existingRaw, generatedRaw, (ex, gen) => mergeHooksByRecord(ex, gen, record, outcome, ownedPaths, heldBy));
+  if (existingRaw.trim() === "") outcome.record = recordOf(generatedRaw);
+  return outcome;
+}
+
+/** Every command entry in a hooks file, as written: the record of a file scaffold writes whole. */
+export function recordOf(raw: string): HookRecord[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const out: HookRecord[] = [];
+  if (!isPlainObject(parsed) || !isPlainObject(parsed.hooks)) return out;
+  for (const [event, groups] of Object.entries(parsed.hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const g of groups) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        if (isPlainObject(h) && typeof h.command === "string") out.push({ event, matcher: matcherOf(g), command: h.command });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The record after a merge of a file with no record (0.12.6's merge): the
+ * entry that stands for each generated one in the merged file, as it is
+ * written there (the one 0.12.6 kept in place, or the generated one it added).
+ */
+export function recordAfterUnrecordedMerge(mergedRaw: string, generatedRaw: string): HookRecord[] {
+  const merged = recordOf(mergedRaw);
+  const taken = new Set<number>();
+  for (const g of recordOf(generatedRaw)) {
+    const at = merged.findIndex(
+      (m, i) => !taken.has(i) && m.event === g.event && (m.matcher ?? "") === (g.matcher ?? "") && normalCommand(m.command) === normalCommand(g.command),
+    );
+    if (at !== -1) taken.add(at);
+  }
+  // In the file's order, as a run by the record writes it, so a rerun that
+  // changes nothing records the same list.
+  return merged.filter((_, i) => taken.has(i));
+}
+
+/** A hook entry as one line: `<event> <matcher> <command>` (`(no matcher)` for a group without one). */
+export function hookLine(r: HookRecord): string {
+  return `${r.event} ${showMatcher(r.matcher)} ${r.command}`;
+}
+
+/**
+ * The script a generated command runs, as a project path: the last path
+ * after `$CLAUDE_PROJECT_DIR/` or `$AT_ROOT/` (the forms the bindings write),
+ * else the first word; null when there is none.
+ */
+function scriptOf(command: string): string | null {
+  const anchored = [...command.matchAll(/\$\{?(?:CLAUDE_PROJECT_DIR|AT_ROOT)\}?\/([^\s"'`;|&)]+)/g)].map((m) => m[1]);
+  if (anchored.length > 0) return anchored[anchored.length - 1];
+  const first = command.trim().split(/\s+/)[0]?.replace(/["']/g, "");
+  return first ? first.replace(/^\.\//, "") : null;
+}
+
+function showMatcher(matcher: string | null): string {
+  return matcher === null ? "(no matcher)" : matcher;
+}
+
+function matcherOf(group: Record<string, unknown>): string | null {
+  return typeof group.matcher === "string" ? group.matcher : null;
+}
+
+/** The settings merge, with the hooks merged by `hooks`. */
+function mergeSettings(
+  existingRaw: string,
+  generatedRaw: string,
+  hooks: (existingHooks: unknown, generatedHooks: unknown) => Record<string, unknown[]> | undefined,
+): string {
   // Empty existing means first scaffold — return generated unchanged
   if (existingRaw.trim() === "") {
     return generatedRaw;
@@ -271,7 +401,7 @@ export function deepMergeSettingsJson(
   }
 
   // --- hooks: replace the topology's own groups, keep the user's ---
-  const mergedHooks = mergeHooks(existing.hooks, generated.hooks, ownedPaths);
+  const mergedHooks = hooks(existing.hooks, generated.hooks);
   if (mergedHooks) {
     merged.hooks = mergedHooks;
   } else {
@@ -552,6 +682,208 @@ function mergeHooks(
       return true;
     });
     if (unique.length > 0) out[event] = unique;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const recordKey = (event: string, matcher: string | null, command: string) => JSON.stringify([event, matcher, command]);
+
+/**
+ * The hooks merge by record (see mergeSettingsByRecord). Per event: the
+ * file's groups first, each entry where it is (a recorded entry the .at no
+ * longer generates taken out), then the generated entries the file lacks.
+ * No group is dropped or merged with another but a group whose entries were
+ * all removed.
+ */
+function mergeHooksByRecord(
+  existingHooks: unknown,
+  generatedHooks: unknown,
+  record: HookRecord[],
+  outcome: RecordMerge,
+  ownedPaths: string[],
+  heldBy: (r: HookRecord) => string | undefined,
+): Record<string, unknown[]> | undefined {
+  const scripts = ownedPaths.filter((p) => !/\.(md|json)$/.test(p)).map((p) => p.replace(/^\.\//, ""));
+  const ex = isPlainObject(existingHooks) ? existingHooks : {};
+  const gen = isPlainObject(generatedHooks) ? generatedHooks : {};
+  const recorded = new Map<string, number>();
+  for (const r of record) recorded.set(recordKey(r.event, r.matcher, r.command), (recorded.get(recordKey(r.event, r.matcher, r.command)) ?? 0) + 1);
+  const out: Record<string, unknown[]> = {};
+
+  for (const event of new Set([...Object.keys(ex), ...Object.keys(gen)])) {
+    const genGroups = (Array.isArray(gen[event]) ? gen[event] : []) as unknown[];
+    // Each generated entry not yet in the file, by matcher and identity.
+    const free = new Map<string, number>();
+    for (const g of genGroups) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) free.set(hookPlace(g.matcher, h), (free.get(hookPlace(g.matcher, h)) ?? 0) + 1);
+    }
+    const take = (place: string): boolean => {
+      if ((free.get(place) ?? 0) === 0) return false;
+      free.set(place, free.get(place)! - 1);
+      placed.set(place, (placed.get(place) ?? 0) + 1);
+      return true;
+    };
+    const placed = new Map<string, number>();
+    const exGroups = (Array.isArray(ex[event]) ? ex[event] : []) as unknown[];
+
+    // Each file entry: "ours" (recorded, still generated), "gone" (recorded,
+    // no longer generated) or "user". Recorded entries are read first, so a
+    // user's entry equal to one never takes its place.
+    type Entry = {
+      g: number;
+      h: number;
+      matcher: string | null;
+      command: string | null;
+      place: string;
+      /** ours: recorded, still generated. gone: recorded, no longer generated. same: the user's, equal to a generated one. user: any other. */
+      state?: "ours" | "gone" | "same" | "user";
+      /** A user entry's line, when it looks like the edit of a recorded one. */
+      edited?: string;
+      /** The recorded entry this edit stands for, while the .at still generates it. */
+      holds?: HookRecord;
+      /** After a rename: the line saying the copy still runs the old script. */
+      stillRuns?: string;
+    };
+    const entries: Entry[] = [];
+    exGroups.forEach((g, gi) => {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) return;
+      g.hooks.forEach((h, hi) => {
+        const command = isPlainObject(h) && typeof h.command === "string" ? h.command : null;
+        entries.push({ g: gi, h: hi, matcher: matcherOf(g), command, place: hookPlace(g.matcher, h) });
+      });
+    });
+    for (const e of entries) {
+      if (e.command === null) continue;
+      const k = recordKey(event, e.matcher, e.command);
+      if ((recorded.get(k) ?? 0) === 0) continue;
+      recorded.set(k, recorded.get(k)! - 1);
+      e.state = take(e.place) ? "ours" : "gone";
+    }
+    for (const e of entries) {
+      if (!e.state) e.state = take(e.place) ? "same" : "user";
+    }
+
+    // A recorded entry no longer in the file was edited (or deleted) by the
+    // user. Its edit is a user entry with the same command under another
+    // matcher, or, under the same matcher, a command holding the recorded
+    // one (an argument appended, a command chained) or held by it. The edit
+    // is the user's; while the .at still generates the original, the
+    // original is not written again beside it (the edit stands for it, and
+    // stays recorded as such), until the user deletes the copy.
+    const userEntries = entries.filter((e) => e.state === "user" && e.command !== null);
+    const sameMatcher = (a: string | null, b: string | null) => (a ?? "") === (b ?? "");
+    for (const r of record) {
+      if (r.event !== event) continue;
+      const k = recordKey(r.event, r.matcher, r.command);
+      if ((recorded.get(k) ?? 0) === 0) continue;
+      recorded.set(k, recorded.get(k)! - 1);
+      const was = normalCommand(r.command);
+      const edit =
+        userEntries.find((e) => !e.edited && normalCommand(e.command!) === was) ??
+        userEntries.find((e) => {
+          if (e.edited || !sameMatcher(e.matcher, r.matcher)) return false;
+          const now = normalCommand(e.command!);
+          return now.includes(was) || was.includes(now);
+        });
+      if (!edit) continue;
+      if (take(hookPlace(r.matcher, { command: r.command }))) {
+        edit.holds = r;
+        edit.edited = `hooks.${event}: kept your edited copy of ${event} ${showMatcher(r.matcher)}; the generated hook is not added again; delete your copy to get it back`;
+      } else {
+        edit.edited =
+          `hooks.${event}: kept your hook ${showMatcher(edit.matcher)} ${edit.command}: you edited the entry scaffold wrote ` +
+          `(${showMatcher(r.matcher)} ${r.command}), so it is yours now`;
+        // The .at renamed the hook's script (it writes a new entry under the
+        // same event and matcher): the copy still runs the old one.
+        const renamed = [...free].some(([place, n]) => n > 0 && (JSON.parse(place) as [string])[0] === (r.matcher ?? ""));
+        const script = scriptOf(r.command);
+        if (renamed && script) edit.stillRuns = `hooks.${event}: your edited copy of ${event} ${showMatcher(r.matcher)} still runs ${script}`;
+      }
+    }
+
+    const state = new Map(entries.map((e) => [`${e.g}:${e.h}`, e] as const));
+    // Each group with the topology's entries it holds; `ours`: it holds
+    // nothing of the user's, so 0.12.6's deduplication applies to it.
+    const items: Array<{ group: unknown; rec: HookRecord[]; ours: boolean }> = [];
+    exGroups.forEach((g, gi) => {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
+        items.push({ group: g, rec: [], ours: false });
+        return;
+      }
+      const rec: HookRecord[] = [];
+      // A group holding the topology's entries, as 0.12.6 read it: its other
+      // entries, and any naming one of the topology's scripts, are said kept.
+      const withOurs = g.hooks.some((_, hi) => state.get(`${gi}:${hi}`)!.state !== "user");
+      const keep = g.hooks.filter((h, hi) => {
+        const e = state.get(`${gi}:${hi}`)!;
+        if (e.state === "gone") {
+          const line = hookLine({ event, matcher: e.matcher, command: e.command! });
+          // Another .at's manifest records the same entry: it is still that
+          // topology's, so it stays (and is no longer this one's).
+          const other = heldBy({ event, matcher: e.matcher, command: e.command! });
+          if (other !== undefined) {
+            outcome.kept.push({ event, line: `hooks.${event}: kept generated hook ${line} for ${other}: its manifest still records it` });
+            return true;
+          }
+          outcome.removed.push(line);
+          return false;
+        }
+        if (e.state === "ours") rec.push({ event, matcher: e.matcher, command: e.command! });
+        if (e.holds) rec.push(e.holds);
+        if (e.command === null) return true;
+        if (e.state === "same") {
+          outcome.kept.push({
+            event,
+            line:
+              `hooks.${event}: kept your hook ${showMatcher(e.matcher)} ${e.command}: scaffold did not write it, ` +
+              "and the .at generates the same entry, so it stays yours and is not written twice",
+          });
+        } else if (e.edited) {
+          outcome.kept.push({ event, line: e.edited });
+          if (e.stillRuns) outcome.kept.push({ event, line: e.stillRuns });
+        } else if (e.state === "user" && (withOurs || namesOwnedScript(h, scripts))) {
+          outcome.kept.push({ event, line: `hooks.${event}: kept a command the .at does not generate: ${e.command}` });
+        }
+        return true;
+      });
+      // Every entry kept is the topology's (the others were removed).
+      const ours = g.hooks.every((_, hi) => ["ours", "gone"].includes(state.get(`${gi}:${hi}`)!.state!));
+      if (keep.length === g.hooks.length) items.push({ group: g, rec, ours });
+      else if (keep.length > 0) items.push({ group: { ...g, hooks: keep }, rec, ours });
+    });
+    for (const g of genGroups) {
+      if (!isPlainObject(g) || !Array.isArray(g.hooks)) {
+        items.push({ group: g, rec: [], ours: true });
+        continue;
+      }
+      const rest = g.hooks.filter((h) => {
+        const k = hookPlace(g.matcher, h);
+        if ((placed.get(k) ?? 0) === 0) return true;
+        placed.set(k, placed.get(k)! - 1);
+        return false;
+      });
+      const rec = rest.flatMap((h) =>
+        isPlainObject(h) && typeof h.command === "string" ? [{ event, matcher: matcherOf(g), command: h.command }] : [],
+      );
+      if (rest.length === g.hooks.length) items.push({ group: g, rec, ours: true });
+      else if (rest.length > 0) items.push({ group: { ...g, hooks: rest }, rec, ours: true });
+    }
+    // 0.12.6's deduplication, for the topology's own groups only: one equal
+    // (by matcher and each entry's identity) to a group before it is dropped,
+    // as two .at hooks on one script with different if: were merged. A
+    // group holding a user's entry is never dropped.
+    const seen = new Set<string>();
+    const groups: unknown[] = [];
+    for (const item of items) {
+      const key = hookGroupKey(item.group);
+      if (item.ours && seen.has(key)) continue;
+      seen.add(key);
+      groups.push(item.group);
+      outcome.record.push(...item.rec);
+    }
+    if (groups.length > 0) out[event] = groups;
   }
 
   return Object.keys(out).length > 0 ? out : undefined;

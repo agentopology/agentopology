@@ -16,7 +16,10 @@ agent, action, orchestrator, meta, roles, memory, flow, gates, gate,
 depth, batch, environments, triggers, command, event, level,
 hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
 context, env, extensions, providers, schedule, job, interfaces,
-defaults, schemas, schema, observability, fragment, interface, params
+defaults, schemas, schema, observability, fragment, interface, params,
+threat-model
+rules, rule
+secrets, secret
 ```
 
 ---
@@ -26,7 +29,7 @@ defaults, schemas, schema, observability, fragment, interface, params
 These are used as field names or enum values:
 
 ```
-model, tools, disallowed-tools, reads, writes, outputs, skip, retry, isolation,
+model, tools, disallowed-tools, never-reads, readers, reads, writes, outputs, skip, retry, isolation,
 phase, kind, role, version, description, permissions, prompt,
 generates, handles, argument, factors, behavior, invocation, omit,
 when, max, parallel, per, manual, advisory, blocking,
@@ -51,12 +54,13 @@ path, mode, files, routing, protocol, structure, blueprints,
 domains, references, external-docs, metrics, workspace, conflicts,
 detect, resolve, sequential-rebase, source, commands,
 external, git, decision, inline, report, not, ticket, true, false,
-max-turns, description, disable-model-invocation, user-invocable, allowed-tools,
+max-turns, max-lines, glossary, max-subagents, max-cost, description, disable-model-invocation, user-invocable, allowed-tools,
 domain, fork, api-key, base-url, default,
 cron, every, enabled, webhook, channel, auth, port,
 sandbox, docker, network-only, fallback-chain,
 pipeline, supervisor, blackboard, orchestrator-worker, debate,
-market-routing, consensus, fan-out, event-driven, human-gate
+market-routing, consensus, fan-out, event-driven, human-gate,
+tests, refuse, shadow, let-go, lift, once
 ```
 
 ---
@@ -106,7 +110,9 @@ as, with, include,
 entry, exit, sha256
 ```
 
-`entry` is in use, and stays reserved so it cannot name a node: `interface { entry: <id> exit: <id> }` (a fragment's flow entry point) and `meta { entry: <agent-id> }` (the agent every session starts as, V134).
+`entry` is in use, and stays reserved so it cannot name a node: `interface { entry: <id>, exit: <id> }` (a fragment's flow entry point) and `meta { entry: <agent-id> }` (the agent every session starts as, V134).
+
+`write` (in a gate's `before: write "<glob>"`, V151) and `target` (`meta { target: "<dir>" }`, V152) are read only in those places and are not reserved: a node may still be named `write` or `target`. A `before: write` with no quoted glob after it names a node.
 
 ---
 
@@ -160,7 +166,9 @@ These are free-form values and can be used as names:
 branch, render, supabase, target-branch
 ```
 
-Environment block field names, custom role names, and user-defined enum values are not reserved.
+Environment block field names, custom role names, and user-defined enum values are not reserved. `finish` (the edge attribute `[finish]`) and `outpoints` (the `meta` field) are likewise not reserved: they are read only inside an edge's brackets and the `meta` block, so a node may still be named `finish`.
+
+The `record` block's field names `fields`, `schema`, `writer` and `kind`, its value `run-state`, and its field types `string`, `number`, `boolean` and `ts` are read only inside a `record { }` block. None of them is reserved: a node may still be named `writer` or `schema`.
 
 ---
 

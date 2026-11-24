@@ -53,15 +53,36 @@ export interface ScaffoldManifest {
    * manifest from before it has no base, and the .at value then wins.
    */
   fields?: Record<string, Record<string, FieldValue>>;
+  /**
+   * Per hooks file (`.claude/settings.json`, `.codex/hooks.json`): every hook
+   * entry scaffold wrote there, as written. The next run owns exactly these:
+   * one the .at still generates stays, one it no longer generates is
+   * removed, and any other entry, or one the user edited, is the user's.
+   * Optional; a file the manifest lists without a record (a manifest from
+   * 0.12.x) is merged as 0.12.6 merged it, once, and then recorded.
+   */
+  hooks?: Record<string, HookRecord[]>;
+}
+
+/** One hook entry scaffold wrote: its event, its group's matcher (null when the group has none) and its command. */
+export interface HookRecord {
+  event: string;
+  matcher: string | null;
+  command: string;
 }
 
 /** An action to perform on a single file during incremental scaffold. */
 export type FileAction =
-  | { type: "create"; path: string; content: string; executable?: boolean }
-  /** `notes`: lines to print about the file (a settings file: each user hook command kept). */
-  | { type: "update"; path: string; content: string; detail: string; executable?: boolean; notes?: string[] }
+  /**
+   * `notes`: lines to print about the file (a settings file: each user hook
+   * command kept). `removedHooks`: each generated hook entry this write
+   * removes (`<event> <matcher> <command>`). `hookRecord`: a hooks file's
+   * entries scaffold owns once `content` is on disk (see ScaffoldManifest.hooks).
+   */
+  | { type: "create"; path: string; content: string; executable?: boolean; hookRecord?: HookRecord[] }
+  | { type: "update"; path: string; content: string; detail: string; executable?: boolean; notes?: string[]; removedHooks?: string[]; hookRecord?: HookRecord[] }
   | { type: "delete"; path: string }
-  | { type: "unchanged"; path: string; notes?: string[] }
+  | { type: "unchanged"; path: string; notes?: string[]; hookRecord?: HookRecord[] }
   | { type: "conflict"; path: string; content: string; detail: string }
   /**
    * Never written or deleted, even with --force. `unsafe` marks a path that
