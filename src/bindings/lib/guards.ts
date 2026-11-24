@@ -860,51 +860,57 @@ const AT_NAMES_FUNCTIONS: string[] = [
  * (`@scope/name@1` is `@scope/name`), and at_names reads its basename, as it reads any path. at_pkg_seg
  * does this to the package a runner is told to fetch or run: npx, pnpx, bunx, `pnpm|yarn|npm|bun` then
  * dlx, exec or x (options may stand before the subcommand), after `-p`/`--package`/`--package=`, and the
- * word after `--`. It sets AT_PS to the segment with those words rewritten; every other word, such as
- * `git@github.com`, stays as written. Mirrors pkgName in TypeScript.
+ * word after `--`. It takes the segment's words and sets AT_PW to them, one for each, with those words
+ * rewritten; every other word, such as `git@github.com`, stays as written. at_pkgname never gives an empty
+ * name: a spec that reads as none (`npm:`, `x@npm:`) stays as written, so no word is ever lost.
+ * Mirrors pkgName in TypeScript.
  */
 const AT_PKG_FUNCTIONS: string[] = [
   "# at_pkgname SPEC: AT_PKG, SPEC as a bare package name: @version or @tag dropped, an npm: alias resolved.",
+  "# Never empty: a spec that reads as no name (npm:, x@npm:) stays as written.",
   "at_pkgname() {",
-  "  local s=$1 pre='' r",
-  "  while [[ $s == npm:* ]]; do s=${s#npm:}; done",
-  "  if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
-  "  if [[ $s == *@* ]]; then",
-  "    r=${s#*@}",
-  "    if [[ $r == npm:* ]]; then at_pkgname \"${r#npm:}\"; return 0; fi",
-  "    s=${s%%@*}",
-  "  fi",
-  "  AT_PKG=$pre$s",
+  "  local s=$1 pre r",
+  "  AT_PKG=$1",
+  "  while :; do",
+  "    while [[ $s == npm:* ]]; do s=${s#npm:}; done",
+  "    pre=''; if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
+  "    if [[ $s == *@* ]]; then",
+  "      r=${s#*@}",
+  "      if [[ $r == npm:* ]]; then s=${r#npm:}; continue; fi",
+  "      s=${s%%@*}",
+  "    fi",
+  "    break",
+  "  done",
+  "  [ -z \"$s\" ] || AT_PKG=$pre$s",
   "}",
-  "# at_pkg_seg SEGMENT: AT_PS, SEGMENT with the package a runner runs (npx, pnpx, bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
+  "# at_pkg_seg WORD...: AT_PW, the words, one for each (never fewer), with the package a runner runs (npx, pnpx,",
+  "# bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
   "at_pkg_seg() {",
-  "  AT_PS=$1",
-  "  [[ $1 == *@* ]] || return 0",
-  "  local j k n x b; local -a v",
-  "  read -ra v <<< \"$1\"; n=${#v[@]}",
+  "  AT_PW=(\"$@\")",
+  "  [[ \" $* \" == *@* ]] || return 0",
+  "  local j k n=$# x b",
   "  for ((j=0; j<n; j++)); do",
-  "    b=${v[j]##*/}",
+  "    b=${AT_PW[j]##*/}",
   "    case $b in",
   "      npx|pnpx|bunx) k=$((j+1)) ;;",
   "      pnpm|yarn|npm|bun)",
   "        k=$((j+1))",
-  "        while [ \"$k\" -lt \"$n\" ] && [[ ${v[k]} == -* ]]; do k=$((k+1)); done",
-  "        case ${v[k]:-} in dlx|exec|x) k=$((k+1)) ;; *) continue ;; esac ;;",
+  "        while [ \"$k\" -lt \"$n\" ] && [[ ${AT_PW[k]} == -* ]]; do k=$((k+1)); done",
+  "        case ${AT_PW[k]:-} in dlx|exec|x) k=$((k+1)) ;; *) continue ;; esac ;;",
   "      *) continue ;;",
   "    esac",
   "    while [ \"$k\" -lt \"$n\" ]; do",
-  "      x=${v[k]}",
+  "      x=${AT_PW[k]}",
   "      case $x in",
-  "        --) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${v[k]}\"; v[k]=$AT_PKG; fi; break ;;",
-  "        -p|--package) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${v[k]}\"; v[k]=$AT_PKG; fi; k=$((k+1)) ;;",
-  "        --package=*) at_pkgname \"${x#--package=}\"; v[k]=--package=$AT_PKG; k=$((k+1)) ;;",
+  "        --) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; break ;;",
+  "        -p|--package) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; k=$((k+1)) ;;",
+  "        --package=*) at_pkgname \"${x#--package=}\"; AT_PW[k]=--package=$AT_PKG; k=$((k+1)) ;;",
   "        -c|--call|--registry|--cache|--userconfig|--prefix|--node-arg|-w|--workspace|--filter|-C|--cwd) k=$((k+2)) ;;",
   "        -*) k=$((k+1)) ;;",
-  "        *) at_pkgname \"$x\"; v[k]=$AT_PKG; break ;;",
+  "        *) at_pkgname \"$x\"; AT_PW[k]=$AT_PKG; break ;;",
   "      esac",
   "    done",
   "  done",
-  "  AT_PS=''; for x in \"${v[@]}\"; do AT_PS+=\"$x \"; done",
   "}",
 ];
 
@@ -1235,7 +1241,9 @@ export const MATCH_FUNCTIONS: string[] = [
   "  # w: the segment's words as written (the stdin, git and expansion checks read these); pw: the same",
   "  # words with a runner's package as its bare name (at_pkg_seg), for the name matching",
   "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
-  "  at_pkg_seg \"$1\"; read -ra pw <<< \"$AT_PS\"; [ \"${#pw[@]}\" -eq \"${#w[@]}\" ] || pw=(\"${w[@]}\")",
+  "  at_pkg_seg \"${w[@]}\"; pw=(\"${AT_PW[@]}\")",
+  "  # one word for each word; were the two ever to differ, the segment cannot be read: doubt",
+  "  [ \"${#pw[@]}\" -eq \"${#w[@]}\" ] || { SEG_DOUBT=1; pw=(\"${w[@]}\"); }",
   "  # the tool's letters, kept for the next call with the same tool (AT_KLS: \" KEY=LETTERS ...\"), since",
   "  # one command reads every segment for every tool",
   "  kl=${AT_KLS-}",
@@ -2585,7 +2593,7 @@ function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
     "AT_KEYS=''",
     "at_keys_seg() {",
     "  local n m='' lit=0 w t; local -a ws",
-    "  at_pkg_seg \"$1\"; read -ra ws <<< \"$AT_PS\"; n=${#ws[@]}",
+    "  read -ra ws <<< \"$1\"; at_pkg_seg ${ws[@]+\"${ws[@]}\"}; ws=(${AT_PW[@]+\"${AT_PW[@]}\"}); n=${#ws[@]}",
     "  at_prog_at \"${ws[@]}\"",
     "  [ \"$AT_PX\" -lt \"$n\" ] || return 0",
     "  w=${ws[AT_PX]}",
@@ -2808,17 +2816,25 @@ const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|k
 /**
  * A package spec as its bare name: a trailing `@version` or `@tag` dropped and an `npm:` alias resolved
  * (`alias@npm:name@1.2.3` is `name`). A leading scope is kept (`@scope/name@1` is `@scope/name`).
+ * Never empty: a spec that reads as no name (`npm:`, `x@npm:`) is returned as written.
  * The shell functions at_pkgname and at_pkg_seg do the same to a command.
  */
 export function pkgName(spec: string): string {
   let s = spec;
-  while (s.startsWith("npm:")) s = s.slice(4);
-  const scope = s.startsWith("@") ? "@" : "";
-  if (scope) s = s.slice(1);
-  const at = s.indexOf("@");
-  if (at < 0) return scope + s;
-  const rest = s.slice(at + 1);
-  return rest.startsWith("npm:") ? pkgName(rest.slice(4)) : scope + s.slice(0, at);
+  let scope = "";
+  for (;;) {
+    while (s.startsWith("npm:")) s = s.slice(4);
+    scope = s.startsWith("@") ? "@" : "";
+    if (scope) s = s.slice(1);
+    const at = s.indexOf("@");
+    if (at >= 0) {
+      const rest = s.slice(at + 1);
+      if (rest.startsWith("npm:")) { s = rest.slice(4); continue; }
+      s = s.slice(0, at);
+    }
+    break;
+  }
+  return s ? scope + s : spec;
 }
 
 /**
