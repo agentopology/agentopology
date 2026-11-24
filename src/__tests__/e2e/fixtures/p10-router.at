@@ -1,0 +1,38 @@
+topology p10-router : [market-routing] {
+  meta {
+    version: "0.1.0"
+    description: "The entry is a router: classify the message, route each class"
+  }
+  agent router {
+    model: opus
+    description: "Classifies every message"
+    outputs: {
+      class: question | change | status
+    }
+    on-fail: halt
+    prompt {
+      Say the route. If unsure, ask one question.
+    }
+  }
+  agent answerer {
+    model: sonnet
+    description: "Answers"
+  }
+  agent builder {
+    model: sonnet
+    description: "Builds"
+  }
+  action status-screen {
+    kind: report
+    description: "One measured screen"
+  }
+  orchestrator {
+    model: opus
+    handles: [status-screen]
+  }
+  flow {
+    router -> answerer [when router.class == question]
+    router -> builder [when router.class == change]
+    router -> status-screen [when router.class == status]
+  }
+}

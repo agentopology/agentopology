@@ -19,7 +19,9 @@ Validating simple-pipeline.at (simple-pipeline v1.0.0)
 
   stubs (claude-code): 1 of 12 generated files are stubs: 1 gate check script
 
-  All validation rules passed.
+  WARN  [CC-route] Flow edge "reviewer -> done" [when reviewer.verdict == approve] is not enforced on Claude Code: "done" is an action with no commands: the orchestrator does it in conversation, so there is no step to refuse; it stays a line in the playbook. (reviewer)
+
+  0 error(s), 1 warning(s)
 
 <version line>
 --- exit 3

@@ -27,6 +27,7 @@ import { gateLedger, ledgerPath, stepIsOk, unsafeUnit } from "../parser/ledger.j
 import { scriptNameFromRun } from "../parser/run.js";
 import { parseWindow, today as todayDate } from "../parser/window.js";
 import { hookCommand } from "../bindings/claude-code.js";
+import { projectRootRef, targetOf } from "../bindings/lib/guards.js";
 
 export interface StepCheckOptions {
   /** The unit (an episode id, a ticket); filters ledger records. */
@@ -56,8 +57,11 @@ export interface StepReport {
 /** Longest a gate's `run:` may take. */
 const RUN_TIMEOUT_MS = 5 * 60_000;
 
-function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string, stepHasUnit: boolean): GateResult {
+function checkGate(ast: TopologyAST, gate: GateNode, unit: string, project: string, stepHasUnit: boolean): GateResult {
   const reasons: string[] = [];
+  // meta { target }: ledgers and check scripts are found in the target directory, as the hooks find them.
+  const target = targetOf(ast);
+  const root = target === undefined ? project : resolve(project, target);
   const ledger = gateLedger(ast, gate);
   const runnable = !!scriptNameFromRun(gate.run);
 
@@ -85,9 +89,9 @@ function checkGate(ast: TopologyAST, gate: GateNode, unit: string, root: string,
   }
 
   if (gate.run && runnable) {
-    const r = spawnSync("/bin/sh", ["-c", hookCommand(gate.run, ast.topology.name)], {
+    const r = spawnSync("/bin/sh", ["-c", hookCommand(gate.run, ast.topology.name, projectRootRef(ast))], {
       cwd: root,
-      env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+      env: { ...process.env, CLAUDE_PROJECT_DIR: project },
       encoding: "utf8",
       timeout: RUN_TIMEOUT_MS,
     });

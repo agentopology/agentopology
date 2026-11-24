@@ -31,21 +31,29 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
-import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE } from "./lib/stub.js";
+import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE, STUB_BLOCKS_ON, blockingHookStubMessage, denyingHookStubMessage, denyOnExit2 } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
+import { generateCiWorkflow } from "./lib/ci.js";
 import { agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent } from "./lib/entry.js";
+import { overrideMessage, telemetryPlan } from "./lib/claude-code-telemetry.js";
 import {
   CLAUDE_CODE_GUARDS,
   LEDGER_WRITABLE_NOTE,
   approvalTargets,
   beforeActionHookTimeout,
+  beforeEditHookTimeout,
+  projectRootRef,
   checkableActionGate,
   gateWiring,
   generateBeforeActionScript as buildBeforeActionScript,
   generateBeforeAgentScript as buildBeforeAgentScript,
   generateBeforeEditScript as buildBeforeEditScript,
+  generateBeforeScheduleScript,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
+  goHook,
+  goHookScript,
+  goHumans,
   hooklessGateReason,
   isRegisteredSubagentType,
   runsAsSkill,
@@ -53,14 +61,26 @@ import {
   stepMatchWords,
 } from "./lib/guards.js";
 import { describeHook, sameCommandHook } from "./lib/hook-blocks.js";
+import { generateRouteScript, routeActionTargets, routeInstructions, routeKeys } from "./lib/route.js";
+import { generateTaintGuardScript, generateTaintMarkScript, taintGuardMatcher, taintMarkMatcher } from "./lib/taint.js";
+import { isSandboxPath } from "./lib/threat.js";
+import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
+import { generateBeforeReadScript as buildBeforeReadScript } from "./lib/walls.js";
+import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
+
+/** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
+const CAPS_TIMEOUT_HOOK = "agentopology-timeout";
 export { approvalTargets, checkableActionGate, gateWiring };
 export type { GateWiring } from "./lib/guards.js";
 import { PROMPT_FENCE_CLOSE, PROMPT_FENCE_OPEN } from "./lib/prompt-fence.js";
+import { rulesSection } from "../parser/rules.js";
+import { contextBlock, contextFilePath } from "./lib/context-block.js";
 import {
   AT_OWNED_TOPOLOGY_SKILL_KEYS, assertCcFrontmatter, ccKey, coerceCcValue, isClaudeCodeModelName, resolveSettingsKey, setSettingsPath, unknownSettingsPaths,
   type CcSurface, type FrontmatterFields,
 } from "./claude-code-schema.js";
 import { isWorkflowSeamAgent, seamFiles } from "./lib/seam.js";
+import { compileAgentTools, compileAllowedTools, toolAllowRules } from "./lib/repo-tools.js";
 import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
@@ -74,6 +94,28 @@ import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, sc
  * Convert .at MCP tool notation (mcp.server.method) to Claude Code format (mcp__server__method).
  * Non-MCP tool names pass through unchanged.
  */
+/**
+ * Flow text for finish edges. A finish edge closes the run and hands the line
+ * back to the entry agent. When the topology declares a record, the step before
+ * the edge, closing ok, also writes `{"run": "closed", "ts": ...}` to it. No
+ * generated script writes step rows (a step's own script does), so this is an
+ * instruction in the text, not a hook.
+ */
+function finishFlowLines(ast: TopologyAST): string[] {
+  const finish = ast.edges.filter((e) => e.finish);
+  if (finish.length === 0) return [];
+  const record = ast.records?.[0];
+  const out = ["", "A `[finish]` edge closes the run and hands the line back to the entry agent; it is an end, not a loop."];
+  for (const e of finish) {
+    out.push(
+      record
+        ? `- Finish ${e.from} -> ${e.to}: when ${e.from} closes ok, append \`{"run": "closed", "ts": "<ISO time>"}\` as one line to the run ledger \`${record.path}\` (the file the step rows go to), then hand back to ${e.to}.`
+        : `- Finish ${e.from} -> ${e.to}: when ${e.from} closes ok, the run is closed; hand back to ${e.to}.`,
+    );
+  }
+  return out;
+}
+
 export function convertMcpToolName(tool: string): string {
   if (!tool.startsWith("mcp.")) return tool;
   // mcp.server → mcp__server (every tool on it); mcp.server.* → mcp__server__*;
@@ -191,6 +233,11 @@ function isCommandHook(hook: HookDef): boolean {
   return (hook.type ?? "command") === "command";
 }
 
+/** A `strength: refuse` command hook on PermissionRequest (not async): it refuses by the deny decision, never by exit 2. */
+function deniesPermission(hook: HookDef): boolean {
+  return hook.strength === "refuse" && claudeEvent(hook.on) === "PermissionRequest" && !hook.async && isCommandHook(hook);
+}
+
 /** A settings.json hook handler, in the shape Claude Code reads for its type. */
 function hookHandler(hook: HookDef, command: () => string): Record<string, unknown> {
   const timeout = hook.timeout ? { timeout: hook.timeout } : {};
@@ -210,7 +257,9 @@ function hookHandler(hook: HookDef, command: () => string): Record<string, unkno
       // F-14: a refuse hook on PreToolUse that cannot start, times out or exits other than 0/2 blocks the
       // call (onFailure, Claude Code 2.1.295+) instead of letting it run. No effect on async hooks.
       const block = hook.strength === "refuse" && claudeEvent(hook.on) === "PreToolUse" && !hook.async ? { onFailure: "block" } : {};
-      return { type: "command", command: command(), ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
+      // A refuse hook on PermissionRequest denies through the decision object: exit 2 alone denies nothing there.
+      const cmd = deniesPermission(hook) ? denyOnExit2(command(), hook.name) : command();
+      return { type: "command", command: cmd, ...(hook.async ? { async: true } : {}), ...timeout, ...filter, ...block };
     }
   }
 }
@@ -489,15 +538,27 @@ function workflowRunLabel(ast: TopologyAST, run: number[]): string {
   return run.length === 1 ? `phase-${run[0]}` : `phases-${run[0]}-${run[run.length - 1]}`;
 }
 
+/** Claude Code's own permissionMode values (sub-agents frontmatter and `--permission-mode`). */
+export const CLAUDE_CODE_PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+
+/**
+ * The frontmatter permissionMode an agent's `permission-mode:` writes: one of
+ * Claude Code's own values, as written; `default` and an unknown value (V113)
+ * write none.
+ */
+export function nativePermissionMode(mode: string): string | undefined {
+  return CLAUDE_CODE_PERMISSION_MODES.includes(mode) && mode !== "default" ? mode : undefined;
+}
+
 /**
  * Map topology permission strings to Claude Code permissionMode values.
  * Returns undefined when the permission mode should be omitted (the session's
  * own mode: default, autonomous, confirm, interactive). `auto` is Claude
  * Code's auto mode, not a short form of `autonomous` (V132).
  */
-function mapPermissionMode(perm: string): string | undefined {
+export function mapPermissionMode(perm: string): string | undefined {
   // Claude Code native values — pass through
-  const nativeValues = ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
+  const nativeValues = CLAUDE_CODE_PERMISSION_MODES;
   if (nativeValues.includes(perm)) {
     // "default" is the default, omit it
     if (perm === "default") return undefined;
@@ -548,6 +609,73 @@ function formatSchemaType(t: SchemaType, schemas?: SchemaDef[]): string {
 }
 
 /** Format a SchemaFieldDef to a readable line. */
+/** A jq test of the value `.` against a schema type (a named schema is checked as an object). */
+function jqTypeTest(t: SchemaType): string {
+  switch (t.kind) {
+    case "primitive":
+      if (t.value === "integer") return `(type == "number" and . == floor)`;
+      return `(type == ${JSON.stringify(t.value)})`;
+    case "array":
+      return `(type == "array" and all(.[]; ${jqTypeTest(t.itemType)}))`;
+    case "enum":
+      return `(. as $v | any((${t.values.map((v) => JSON.stringify(v)).join(", ")}); . == $v))`;
+    case "ref":
+      return `(type == "object")`;
+  }
+}
+
+/** Agents whose output-schema is checked when they finish (a subagent; the session agent never fires SubagentStop). */
+function outputSchemaAgents(ast: TopologyAST): AgentNode[] {
+  const session = sessionAgentId(ast);
+  return ast.nodes.filter(
+    (n): n is AgentNode => n.type === "agent" && !!n.outputSchema && n.outputSchema.length > 0 && n.id !== session,
+  );
+}
+
+/**
+ * The SubagentStop script for one agent's output-schema. SubagentStop's input
+ * carries `last_assistant_message` (hooks reference: "Hooks that need the final
+ * assistant text of the current turn should use `last_assistant_message` on Stop
+ * and SubagentStop instead of reading the transcript"). It is parsed as JSON, or
+ * as the first ```json block in it; exit 2 names the first missing or mistyped
+ * field and keeps the subagent working. A matching output exits 0.
+ */
+function generateOutputSchemaScripts(ast: TopologyAST): GeneratedFile[] {
+  return outputSchemaAgents(ast).map((agent) => {
+    const checks = agent.outputSchema!.map((f) => {
+      const n = JSON.stringify(f.name);
+      const missing = f.optional ? "empty" : JSON.stringify(`field "${f.name}" is missing`);
+      const wrong = JSON.stringify(`field "${f.name}" has the wrong type (expected ${formatSchemaType(f.type)})`);
+      return `(if has(${n}) and .[${n}] != null then (.[${n}] | if ${jqTypeTest(f.type)} then empty else ${wrong} end) else ${missing} end)`;
+    });
+    const program = `if type != "object" then "the output is not a JSON object" else (first(${checks.join(", ")}) // empty) end`;
+    const content = [
+      "#!/usr/bin/env bash",
+      `# Output schema check for agent "${agent.id}" (SubagentStop). Exit 2 keeps the agent working.`,
+      "input=$(cat)",
+      "command -v jq >/dev/null 2>&1 || { echo \"output-schema check: jq is not installed\" >&2; exit 2; }",
+      `msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""')`,
+      "# The whole message as JSON, else the first ```json block in it.",
+      "out=$(printf '%s' \"$msg\" | jq -c . 2>/dev/null)",
+      "if [ -z \"$out\" ]; then",
+      "  block=$(printf '%s\\n' \"$msg\" | awk '/^[[:space:]]*```json[[:space:]]*$/{f=1;next} f&&/^[[:space:]]*```[[:space:]]*$/{exit} f')",
+      "  out=$(printf '%s' \"$block\" | jq -c . 2>/dev/null)",
+      "fi",
+      `[ -n "$out" ] || { echo "Output of ${agent.id} is not JSON: reply with the JSON object its output-schema describes." >&2; exit 2; }`,
+      `problem=$(printf '%s' "$out" | jq -r '${program.replace(/'/g, "'\\''")}')`,
+      `if [ -n "$problem" ]; then echo "Output of ${agent.id} does not match its output-schema: $problem" >&2; exit 2; fi`,
+      "exit 0",
+      "",
+    ].join("\n");
+    return {
+      path: `.claude/skills/${ast.topology.name}/scripts/output-schema-${agent.id}.sh`,
+      content,
+      category: "script",
+      executable: true,
+    } as GeneratedFile;
+  });
+}
+
 function formatSchemaField(f: SchemaFieldDef): string {
   const opt = f.optional ? "?" : "";
   return `- ${f.name}${opt}: ${formatSchemaType(f.type)}`;
@@ -572,7 +700,9 @@ function formatSchemaField(f: SchemaFieldDef): string {
  * step there, never the usage exemption the hook gives a typed command.
  */
 function actionGateCheck(ast: TopologyAST, action: ActionNode): string[] {
-  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id));
+  const gated = ast.nodes.some((n) => n.type === "gate" && checkableActionGate(ast, n as GateNode) && guardedActions(ast, n as GateNode).some((a) => a.id === action.id))
+    // 0.13.0: a step held by its route checks itself the same way.
+    || routeActionTargets(ast, CLAUDE_CODE_GUARDS).has(action.id);
   if (!gated || !buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS)) return [];
   const name = ast.topology.name;
   const words = [...new Set((action.commands ?? []).map((c) => stepMatchWords(c).words))];
@@ -712,7 +842,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       }
     }
     if (agent.maxTurns != null) fm.maxTurns = agent.maxTurns;
-    if (agent.tools && agent.tools.length > 0) fm.tools = agent.tools.map(mcpRefs(ast).tool).join(", ");
+    // A repo tool (tools { tool <id> }) is not a Claude Code tool name: it compiles to Bash (lib/repo-tools.ts).
+    if (agent.tools && agent.tools.length > 0) fm.tools = compileAgentTools(ast, agent.tools, mcpRefs(ast).tool).join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) fm.disallowedTools = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     // A plugin's server is left out of mcpServers: its scoped name there is not
     // verified, and the agent's tools (in the plugin form) already reach it
@@ -733,6 +864,23 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
             `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
             `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
         );
+      }
+    }
+    // `permission-mode:` is Claude Code's own word, written as is. A session
+    // agent's goes on its start line (--permission-mode) instead. When it and
+    // `permissions:` both map to a mode they agree (V113 refuses a mismatch),
+    // so there is one key.
+    if (agent.permissionMode && agent.runs !== "session") {
+      const mode = nativePermissionMode(agent.permissionMode);
+      if (mode && fm.permissionMode !== mode) {
+        fm.permissionMode = mode;
+        if (LOOSER_MODES.has(mode)) {
+          console.warn(
+            `[claude-code] Agent "${agent.id}" permission-mode: ${agent.permissionMode} compiles to permissionMode ${mode}. ` +
+              `Claude Code ignores it when the session already runs in acceptEdits, auto or bypassPermissions, ` +
+              `and a subagent cannot get permissions its session lacks: grant them in settings { allow: [...] }.`,
+          );
+        }
       }
     }
     // thinking is the language's reasoning-effort field; Claude Code calls it effort.
@@ -756,10 +904,16 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     let fmStr = frontmatter(fm);
 
     // Per-agent hooks → Claude Code AGENT.md frontmatter hooks
-    if (agent.hooks && agent.hooks.length > 0) {
+    // A timeout: on the agent adds a PreToolUse hook that refuses its tool calls once it has run too long.
+    const timeoutScriptName = timeoutScriptFor(ast, agent);
+    const agentHooks: HookDef[] = [
+      ...(agent.hooks ?? []),
+      ...(timeoutScriptName ? [{ name: CAPS_TIMEOUT_HOOK, on: "PreToolUse", matcher: "", run: timeoutScriptName, type: "command", strength: "refuse" } as HookDef] : []),
+    ];
+    if (agentHooks.length > 0) {
       const topologyName = ast.topology.name;
       const hooksByEvent: Record<string, HookDef[]> = {};
-      for (const hook of agent.hooks) {
+      for (const hook of agentHooks) {
         if (hook.type === "mod") continue; // engine-wide only (V94)
         // In an agent's frontmatter Claude Code turns Stop into SubagentStop itself.
         const event = hook.on === "AgentStop" ? "Stop" : claudeEvent(hook.on);
@@ -771,9 +925,10 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [eventName, hooks] of Object.entries(hooksByEvent)) {
         hookLines.push(`  ${eventName}:`);
         for (const hook of hooks) {
+          const isCaps = hook.name === CAPS_TIMEOUT_HOOK;
           const scriptName = scriptNameFromRun(hook.run);
-          if (isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
-          const handler = hookHandler(hook, () => isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
+          if (!isCaps && isCommandHook(hook) && !scriptName) continue; // V96: prose in run names no script
+          const handler = hookHandler(hook, () => isCaps ? `bash ${skillScriptPath(topologyName, hook.run)}` : isShellCommand(hook.run) ? hook.run.trim() : `bash ${skillScriptPath(topologyName, `${agent.id}-${scriptName}`)}`);
           // JSON strings are valid YAML double-quoted scalars, so a regex
           // matcher or a prompt with quotes or colons can never break the file.
           hookLines.push(hook.matcher ? `    - matcher: ${JSON.stringify(hook.matcher)}` : `    -`);
@@ -816,6 +971,8 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
     }
     sections.push(PROMPT_FENCE_CLOSE);
     sections.push("");
+    // Conduct rules: written into the entry agent only, the agent every session starts as.
+    if (agent.id === sessionAgentId(ast)) sections.push(...rulesSection(ast));
     if (agent.independent) {
       sections.push("## Independence");
       sections.push("");
@@ -946,6 +1103,14 @@ function generateAgents(ast: TopologyAST): GeneratedFile[] {
       for (const [field, values] of Object.entries(agent.outputs)) {
         sections.push(`- ${field}: ${values.join(" | ")}`);
       }
+      sections.push("");
+    }
+
+    // 0.13.0: a router records its choice; the launch guard reads it.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS).filter((k) => k.agent === agent.id)) {
+      sections.push(`## Route: ${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
       sections.push("");
     }
 
@@ -1404,9 +1569,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     }
     if (mainSkill.context) fm.context = mainSkill.context;
     if (mainSkill.agent) fm.agent = mainSkill.agent;
-    if (mainSkill.allowedTools && mainSkill.allowedTools.length > 0) {
-      fm["allowed-tools"] = mainSkill.allowedTools.map(mcpRefs(ast).tool).join(", ");
-    }
+    const mainAllowed = compileAllowedTools(ast, mainSkill.allowedTools ?? [], mcpRefs(ast).tool);
+    if (mainAllowed.length > 0) fm["allowed-tools"] = mainAllowed.join(", ");
   }
 
   const sections: string[] = [];
@@ -1553,10 +1717,22 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
       if (edge.wait) line += ` [wait ${edge.wait}]`;
       if (edge.reflection) line += ` [reflection]`;
+      if (edge.finish) line += ` [finish]`;
       sections.push(`- ${line}`);
     }
+    sections.push(...finishFlowLines(ast));
     sections.push("");
+    // 0.13.0: the routes the launch guard holds, and who records them.
+    for (const key of routeKeys(ast, CLAUDE_CODE_GUARDS)) {
+      sections.push(`### Route: ${key.agent}.${key.field}`);
+      sections.push("");
+      sections.push(...routeInstructions(ast, key, CLAUDE_CODE_GUARDS));
+      sections.push("");
+    }
   }
+
+  // Conduct rules: the topology skill carries them only when no entry agent can.
+  if (sessionAgentId(ast) === undefined) sections.push(...rulesSection(ast));
 
   // Gates section
   const gates = ast.nodes.filter((n) => n.type === "gate") as GateNode[];
@@ -1565,6 +1741,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push("");
     for (const gate of gates) {
       sections.push(`### ${toTitle(gate.id)}`);
+      if (gate.rule) sections.push(`Rule: ${gate.rule}`);
       if (gate.after) sections.push(`After: ${gateAnchors(gate, "after").join(", ")}`);
       if (gate.before) sections.push(`Before: ${gateAnchors(gate, "before").join(", ")}`);
       if (gate.run) sections.push(`Run: ${gate.run}`);
@@ -1576,6 +1753,8 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
       if (gate.timeout) sections.push(`Timeout: ${gate.timeout}`);
       // Read back by import, so a gate written strength: hope (V135) stays one.
       if (gate.strength) sections.push(`Strength: ${gate.strength}`);
+      // The declared way around the gate, read back by import too.
+      if (gate.bypass) sections.push(`Bypass: ${gate.bypass}`);
       // F-4: a gate whose check reads a ledger says on its grade that the agent can write that ledger.
       if (checkableActionGate(ast, gate) && gateLedger(ast, gate)) {
         sections.push(`Enforcement: refuse (Bash), unverified (PowerShell: not measured), ${LEDGER_WRITABLE_NOTE} — before-action.sh (PreToolUse on Bash, Monitor and PowerShell; Monitor from Claude Code 2.1.314) refuses the step's command until the ledger shows ${gateAnchors(gate, "after").join(", ")} finished ok; it also refuses a command or an edit that writes the ledger, but a write through a path it cannot see (a variable set elsewhere, another script) is not stopped`);
@@ -1712,6 +1891,7 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
     sections.push(`- Output: ${ast.metering.output}`);
     sections.push(`- Format: ${ast.metering.format}`);
     sections.push(`- Pricing: ${ast.metering.pricing}`);
+    for (const l of meteringCapLines(ast)) sections.push(`- ${l.replace(/^# /, "")}`);
     sections.push("");
   }
 
@@ -1792,7 +1972,8 @@ function generateAgentSkills(ast: TopologyAST): GeneratedFile[] {
     if (agent.runs === "fork") fm.context = "fork";
     if (agent.model && isClaudeCodeModel(agent.model)) fm.model = agent.model;
     if (agent.thinking && agent.thinking !== "off") fm.effort = agent.thinking;
-    if (agent.tools && agent.tools.length > 0) fm["allowed-tools"] = agent.tools.map(mcpRefs(ast).tool).join(", ");
+    const inlineAllowed = compileAllowedTools(ast, agent.tools ?? [], mcpRefs(ast).tool);
+    if (inlineAllowed.length > 0) fm["allowed-tools"] = inlineAllowed.join(", ");
     if (agent.disallowedTools && agent.disallowedTools.length > 0) {
       fm["disallowed-tools"] = agent.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
@@ -1834,9 +2015,8 @@ function generateSkills(ast: TopologyAST): GeneratedFile[] {
     }
     if (skill.context) sfm.context = skill.context;
     if (skill.agent) sfm.agent = skill.agent;
-    if (skill.allowedTools && skill.allowedTools.length > 0) {
-      sfm["allowed-tools"] = skill.allowedTools.map(mcpRefs(ast).tool).join(", ");
-    }
+    const skillAllowed = compileAllowedTools(ast, skill.allowedTools ?? [], mcpRefs(ast).tool);
+    if (skillAllowed.length > 0) sfm["allowed-tools"] = skillAllowed.join(", ");
     if (skill.disallowedTools && skill.disallowedTools.length > 0) {
       sfm["disallowed-tools"] = skill.disallowedTools.map(mcpRefs(ast).tool).join(", ");
     }
@@ -2127,13 +2307,16 @@ function generateGateScripts(ast: TopologyAST): GeneratedFile[] {
 /**
  * Generate an observability-aware hook stub (Changes 4+5).
  *
- * For SubagentStop/Stop hooks: extract agent_type from the Claude Code stdin
- * JSON payload and export as AGENT_TYPE, then append a metrics.jsonl entry.
- * For other events: emit a simple TODO stub.
+ * For SubagentStop/Stop hooks with no strength or `strength: detect`: extract
+ * agent_type from the Claude Code stdin JSON payload and export as AGENT_TYPE,
+ * then append a metrics.jsonl entry (real work, so no stub marker).
+ * For other events, and for a Stop/SubagentStop hook declared `strength:
+ * refuse` (a logger there looked wired and refused nothing): the regular stub,
+ * marked and exiting 1, so the stub count and guard --check see it.
  */
-function observabilityStub(hookName: string, eventName: string, matcherHint: string): string {
+function observabilityStub(hookName: string, eventName: string, matcherHint: string, strength?: string, blocking?: string): string {
   const isFinishEvent = eventName === "SubagentStop" || eventName === "Stop";
-  if (isFinishEvent) {
+  if (isFinishEvent && strength !== "refuse") {
     return [
       "#!/usr/bin/env bash",
       `# Auto-generated by agentopology scaffold`,
@@ -2162,10 +2345,22 @@ function observabilityStub(hookName: string, eventName: string, matcherHint: str
     'PAYLOAD=$(cat)',
     'AGENT_TYPE=$(echo "$PAYLOAD" | jq -r \'.agent_type // "unknown"\')',
     "",
-    `echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`,
-    "exit 1",
+    ...(blocking
+      // A refuse hook on an event exit 2 blocks: unwritten, it blocks (as a gate's stub does).
+      ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+      : [`echo "TODO: implement ${hookName} hook (event: ${eventName}, agent: $AGENT_TYPE)" >&2`, "exit 1"]),
     "",
   ].join("\n");
+}
+
+/**
+ * The stderr line of an unwritten refuse hook script that blocks its call, or
+ * undefined: only a `strength: refuse` hook on an event where exit 2 blocks
+ * (STUB_BLOCKS_ON; never Stop or SubagentStop) gets one.
+ */
+function blockingStub(hook: HookDef, path: string): string | undefined {
+  const event = claudeEvent(hook.on);
+  return hook.strength === "refuse" && STUB_BLOCKS_ON.has(event) ? blockingHookStubMessage(hook.name, event, path) : undefined;
 }
 
 /**
@@ -2325,11 +2520,14 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
         : null;
     if (!filePath) continue;
 
+    const blocking = blockingStub(hook, filePath);
     files.push({
       path: filePath,
-      content: interp === "bash"
-        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""))
-        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { fail: hook.strength === "refuse" }),
+      content: deniesPermission(hook)
+        ? scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, { deny: denyingHookStubMessage(hook.name, filePath) })
+        : interp === "bash"
+        ? observabilityStub(hook.name, hook.on, mcpRefs(ast).matcher(hook.matcher ?? ""), hook.strength, blocking)
+        : scriptStub(`Hook: ${hook.name} — fires on ${hook.on}`, interp, blocking ? { fail: true, message: blocking } : {}),
       category: "script",
       stub: "hook",
       executable: true,
@@ -2337,7 +2535,7 @@ function generateHookScripts(ast: TopologyAST): GeneratedFile[] {
       // fills the gap until it exists. --force used to overwrite it.
       ...(isProjectPath(script) ? { createOnly: true } : {}),
       // At the generated path too, once the user writes it, it is theirs
-      // (the Stop/SubagentStop stub carries no stub marker to say so).
+      // (the Stop/SubagentStop logger carries no stub marker to say so).
       userScript: true,
     });
   }
@@ -2360,17 +2558,22 @@ function generateAgentHookScripts(ast: TopologyAST): GeneratedFile[] {
       if (isShellCommand(hook.run)) continue; // run as written: no script to stub
       const scriptName = scriptNameFromRun(hook.run);
       if (!scriptName) continue; // V96: prose in run names no script
+      const path = `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`;
+      const blocking = blockingStub(hook, path);
       files.push({
-        path: `.claude/skills/${name}/scripts/${agent.id}-${scriptName}`,
-        content: [
+        path,
+        content: deniesPermission(hook)
+          ? scriptStub(`Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`, "bash", { deny: denyingHookStubMessage(hook.name, path) })
+          : [
           "#!/usr/bin/env bash",
           `# Hook: ${hook.name} — fires on ${hook.on} (scoped to agent: ${agent.id})`,
           "# Auto-generated by agentopology scaffold — edit as needed.",
           STUB_MARKER,
           'set -euo pipefail',
           "",
-          `echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`,
-          "exit 1",
+          ...(blocking
+            ? [`echo ${shellQuote(blocking)} >&2`, "exit 2"]
+            : [`echo "TODO: implement ${hook.name} hook for ${agent.id}" >&2`, "exit 1"]),
           "",
         ].join("\n"),
         category: "script",
@@ -2403,7 +2606,7 @@ export function skillScriptPath(topologyName: string, file: string): string {
  *
  * Any other `run:` is a script this topology's skill scaffolds, by basename.
  */
-export function hookCommand(run: string, topologyName: string): string {
+export function hookCommand(run: string, topologyName: string, projectRoot: string = "$CLAUDE_PROJECT_DIR"): string {
   if (isShellCommand(run)) return run.trim();
   const { interpreter: named, flags = [], script: first, args: rest } = runParts(run);
   // F-25: the interpreter `run:` names, else the one the extension names, as the stub is written for.
@@ -2415,7 +2618,7 @@ export function hookCommand(run: string, topologyName: string): string {
   }
   const where = first.startsWith("/")
     ? first
-    : `"$CLAUDE_PROJECT_DIR/${first.replace(/^\.\//, "")}"`;
+    : `"${projectRoot}/${first.replace(/^\.\//, "")}"`;
   return [interpreter, where, ...rest].join(" ");
 }
 
@@ -2456,7 +2659,7 @@ export function settingsHooksOf(ast: TopologyAST): Record<string, unknown[]> {
     }
 
     const hookEntry: Record<string, unknown> = {
-      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName))],
+      hooks: [hookHandler(hook, () => hookCommand(hook.run, topologyName, projectRootRef(ast)))],
     };
 
     // Only add matcher when it has a value
@@ -2579,6 +2782,18 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[eventName].push(...hookEntries);
   }
 
+  // An agent's output-schema is checked when it finishes. Inline delegation
+  // spawns no subagent, so SubagentStop would never fire there.
+  if (getDelegationMode(ast) !== "inline") {
+    for (const agent of outputSchemaAgents(ast)) {
+      if (!hooksByEvent.SubagentStop) hooksByEvent.SubagentStop = [];
+      hooksByEvent.SubagentStop.push({
+        matcher: agent.id,
+        hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, `output-schema-${agent.id}.sh`)}` }],
+      });
+    }
+  }
+
   // HYBRID: host-layer concurrent Blackboard observer.
   //
   // The topology's bare-event `hooks { PostToolUse { matcher: "Write" ... } }`
@@ -2613,13 +2828,68 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // A step's ledger row: PostToolUse fires only for a Bash call that succeeded.
+  if (generateAfterActionScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PostToolUse) hooksByEvent.PostToolUse = [];
+    hooksByEvent.PostToolUse.push({
+      matcher: "Bash",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "after-action.sh")}` }],
+    });
+  }
+
   // F-4: an edit of a gate's ledger is refused on the file-edit tools.
   if (buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
       matcher: "Write|Edit|MultiEdit|NotebookEdit",
-      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, onFailure: "block" }],
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-edit.sh")}`, ...(beforeEditHookTimeout(ast) ? { timeout: beforeEditHookTimeout(ast) } : {}), onFailure: "block" }],
     });
+  }
+
+  // The go: one UserPromptSubmit hook per human with a word; it never blocks, so no onFailure.
+  for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.UserPromptSubmit) hooksByEvent.UserPromptSubmit = [];
+    hooksByEvent.UserPromptSubmit.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, goHookScript(h.id))}` }] });
+  }
+
+  // A scheduled or /loop prompt the model creates is submitted as written: one starting with a go word is refused.
+  if (generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "CronCreate|ScheduleWakeup",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "before-schedule.sh")}`, onFailure: "block" }],
+    });
+  }
+
+  // threat-model { }: mark the session after an untrusted read; refuse listed acts while it is marked.
+  if (generateTaintMarkScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool)) {
+    if (!hooksByEvent.PostToolUse) hooksByEvent.PostToolUse = [];
+    hooksByEvent.PostToolUse.push({
+      matcher: taintMarkMatcher(ast, mcpRefs(ast).tool),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "taint-mark.sh")}` }],
+    });
+  }
+  if (generateTaintGuardScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: taintGuardMatcher(ast, mcpRefs(ast).tool),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "taint-guard.sh")}`, onFailure: "block" }],
+    });
+  }
+
+  // Per-agent walls: never-reads and secrets, refused on the read tools and on Bash.
+  if (buildBeforeReadScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: "Read|Grep|Glob|Bash",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-read.sh")}`, onFailure: "block" }],
+    });
+  }
+
+  // Caps: the subagent log, and the max-subagents guard on Agent|Task.
+  for (const [event, entries] of Object.entries(capsSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
+    if (!hooksByEvent[event]) hooksByEvent[event] = [];
+    hooksByEvent[event].push(...entries);
   }
 
   // Session agents: spawn guard, talk guard, and the decision-seat prompt log.
@@ -2646,14 +2916,21 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   }
 
   // Permissions section from settings block — nested under "permissions" key
+  // A repo tool with a command or a script adds its Bash allow rule after the
+  // rules written in settings { allow } (lib/repo-tools.ts).
   const perms = ast.settings;
-  if (perms) {
+  const toolRules = toolAllowRules(ast);
+  if (perms || toolRules.length > 0) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
-      const rules = perms[key] as string[] | undefined;
+      const rules = perms?.[key] as string[] | undefined;
       if (rules && rules.length > 0) permObj[key] = rules.map(mcpRefs(ast).tool);
     }
+    const extra = toolRules.filter((r) => !(permObj.allow ?? []).includes(r));
+    if (extra.length > 0) permObj.allow = [...(permObj.allow ?? []), ...extra];
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
+  }
+  if (perms) {
 
     // settings { sandbox: true | false } is Claude Code's sandbox switch. Any
     // other value (a Codex sandbox mode) has no Claude Code key: V130 says so.
@@ -2667,8 +2944,23 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     }
   }
 
-  // Defaults and observability are documented in the CLAUDE.md context file,
-  // not in settings.json (Claude Code doesn't recognize these keys).
+  // threat-model { outside-sandbox }: a command runs outside the sandbox
+  // (sandbox.excludedCommands); a path is one the sandbox may write (sandbox.filesystem.allowWrite).
+  const outside = ast.threatModel?.outsideSandbox ?? [];
+  if (outside.length > 0) {
+    const commands = outside.filter((e) => !isSandboxPath(e));
+    const paths = outside.filter(isSandboxPath);
+    if (commands.length > 0) setSettingsPath(settings, "sandbox.excludedCommands", commands);
+    if (paths.length > 0) setSettingsPath(settings, "sandbox.filesystem.allowWrite", paths);
+  }
+
+  // Defaults are documented in the CLAUDE.md context file, not in
+  // settings.json (Claude Code has no keys for them). Observability is
+  // written above, as the telemetry keys in `env` (telemetryPlan); here it
+  // says what it could not write, and which env { } values won.
+  const telemetry = telemetryPlan(ast);
+  for (const o of telemetry.overrides) console.warn(`[claude-code] ${overrideMessage(o)}`);
+  for (const note of telemetry.notes) console.warn(`[claude-code] ${note}`);
 
   // meta { entry }: the subagent every session starts as (the `agent` key).
   // An extensions { claude-code { agent } } below is more specific and wins
@@ -2822,6 +3114,16 @@ function generateMcpJson(ast: TopologyAST): GeneratedFile | null {
   };
 }
 
+/** The max-cost lines for the metering output: advisory, nothing stops a run at the cap. */
+function meteringCapLines(ast: TopologyAST): string[] {
+  const perAgent = ast.nodes.filter((n): n is AgentNode => n.type === "agent" && (n as AgentNode).maxCost !== undefined);
+  const lines: string[] = [];
+  if (ast.metering?.maxCost !== undefined) lines.push(`# Max cost: ${ast.metering.maxCost} USD`);
+  if (perAgent.length > 0) lines.push(`# Max cost per agent (USD): ${perAgent.map((a) => `${a.id}=${a.maxCost}`).join(", ")}`);
+  if (lines.length > 0) lines.push("# max-cost is advisory, not enforced: Claude Code hooks do not see spend. Report against it; nothing stops a run at the cap.");
+  return lines;
+}
+
 /** Generate metering script stub. */
 function generateMetering(ast: TopologyAST): GeneratedFile | null {
   if (!ast.metering) return null;
@@ -2838,6 +3140,7 @@ function generateMetering(ast: TopologyAST): GeneratedFile | null {
     `# Per: ${m.per.join(", ")}`,
     `# Output: ${m.output} (${m.format})`,
     `# Pricing: ${m.pricing}`,
+    ...meteringCapLines(ast),
     "",
     'echo "TODO: implement metrics collection" >&2',
     "exit 1",
@@ -2858,6 +3161,8 @@ function generateToolScripts(ast: TopologyAST): GeneratedFile[] {
   const name = ast.topology.name;
 
   for (const tool of ast.toolDefs) {
+    // A tool run by its command: has no script to write.
+    if (tool.command && !tool.script) continue;
     const ext = tool.lang === "python" ? "py" : tool.lang === "node" ? "js" : "sh";
     const lines = [toolStub(tool)];
     // The stub goes where the tool's script: says, not to a copy beside it: a
@@ -3040,8 +3345,10 @@ function generateCommandFiles(ast: TopologyAST): GeneratedFile[] {
         if (edge.tolerance != null) line += ` [tolerance: ${edge.tolerance}]`;
         if (edge.wait) line += ` [wait ${edge.wait}]`;
         if (edge.reflection) line += ` [reflection]`;
+        if (edge.finish) line += ` [finish]`;
         sections.push(`- ${line}`);
       }
+      sections.push(...finishFlowLines(ast));
       sections.push("");
     }
 
@@ -3152,25 +3459,18 @@ function generateWorkspaceProtocol(ast: TopologyAST): GeneratedFile | null {
 /**
  * Generate context/instructions file inside `.claude/`.
  *
- * If `ast.context.file` is set and points inside `.claude/`, that path is
- * used.  Otherwise the file is written to `.claude/CONTEXT.md`.
- *
- * **Important**: We never generate a file at the project-root `CLAUDE.md`
- * because that is the user's own instructions file and overwriting it would
- * destroy their content.
+ * Always `.claude/rules/<topology>.md`. The project's own CLAUDE.md is the
+ * user's file: it is written only when `context { file }` names it, and then
+ * only as one marked block (see lib/context-block.ts), never as a whole.
  */
 function generateContextFile(ast: TopologyAST): GeneratedFile {
   // A rules file, one per topology: Claude Code loads .claude/rules/*.md like
   // CLAUDE.md, so the context still reaches every session, but it never
   // competes with the project's own CLAUDE.md or .claude/CLAUDE.md (it used to
   // be written to .claude/CLAUDE.md, a conflict in any project that had one).
-  const DEFAULT_PATH = `.claude/rules/${ast.topology.name}.md`;
-  let fileName = ast.context.file ?? DEFAULT_PATH;
-
-  // Safety: never overwrite the user's root-level CLAUDE.md
-  if (fileName === "CLAUDE.md" || fileName === "./CLAUDE.md") {
-    fileName = DEFAULT_PATH;
-  }
+  // The declared `file:` is written separately (generateContextBlockFile),
+  // as one marked block; the full description always goes to the rules file.
+  const fileName = `.claude/rules/${ast.topology.name}.md`;
   const sections: string[] = [];
 
   sections.push(`# ${toTitle(ast.topology.name)}`);
@@ -3520,6 +3820,11 @@ function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null 
     env[key] = literal;
   }
 
+  // observability { }: the telemetry keys Claude Code reads. A key env { }
+  // sets is the user's (even a reference left to the shell), so the plan
+  // leaves it out.
+  Object.assign(env, telemetryPlan(ast).env);
+
   if (Object.keys(env).length === 0) return null;
   return env;
 }
@@ -3778,16 +4083,43 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Gate scripts
     files.push(...generateGateScripts(ast));
-    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, hookCommand));
+    files.push(...generateOutputSchemaScripts(ast));
+    files.push(...buildGateWrapperScripts(ast, CLAUDE_CODE_GUARDS, (run, topology) => hookCommand(run, topology, projectRootRef(ast))));
     const beforeAgent = buildBeforeAgentScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAgent) files.push(beforeAgent);
     const beforeAction = buildBeforeActionScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeAction) files.push(beforeAction);
     const beforeEdit = buildBeforeEditScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeEdit) files.push(beforeEdit);
+    // 0.13.0: the route record a router writes and before-agent.sh reads.
+    const routeScript = generateRouteScript(ast, CLAUDE_CODE_GUARDS);
+    if (routeScript) files.push(routeScript);
+
+    // threat-model { }: the taint mark and the guard that reads it.
+    const taintMark = generateTaintMarkScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool);
+    if (taintMark) files.push(taintMark);
+    const taintGuard = generateTaintGuardScript(ast, CLAUDE_CODE_GUARDS, mcpRefs(ast).tool);
+    if (taintGuard) files.push(taintGuard);
+
+    // Records: the writer script of each typed record, the step's ledger-row hook, and the list of every record.
+    files.push(...generateRecordScripts(ast, CLAUDE_CODE_GUARDS));
+    const afterAction = generateAfterActionScript(ast, CLAUDE_CODE_GUARDS);
+    if (afterAction) files.push(afterAction);
+    const recordsJson = generateRecordsJson(ast);
+    if (recordsJson) files.push(recordsJson);
+    const beforeRead = buildBeforeReadScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeRead) files.push(beforeRead);
+
+    // Caps: subagent log, max-subagents guard, per-agent timeout guards
+    files.push(...generateCapsScripts(ast));
 
     // Session agents: sessions.md, the launcher, the guards
     files.push(...generateSessionFiles(ast));
+
+    // The go: a human's typed word writes its go row (UserPromptSubmit)
+    for (const h of goHumans(ast, CLAUDE_CODE_GUARDS)) files.push(goHook(ast, h, CLAUDE_CODE_GUARDS)!);
+    const beforeSchedule = generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeSchedule) files.push(beforeSchedule);
 
     // Hook scripts (global)
     files.push(...generateHookScripts(ast));
@@ -3797,6 +4129,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Mods (type: mod) → a plugin directory; never settings.json
     files.push(...generateModPlugin(ast));
+
+    // ci { } → the GitHub Actions workflow that runs `step check`
+    files.push(...generateCiWorkflow(ast));
 
     // HYBRID: host-side launch directives for the embedded workflow rung(s).
     files.push(...generateWorkflowLaunchArtifacts(ast));
@@ -3833,6 +4168,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Context file (.claude/CONTEXT.md or custom — never root CLAUDE.md)
     files.push(generateContextFile(ast));
+    // `context { file }`: that file, as one marked block among the user's lines.
+    const contextPath = contextFilePath(ast);
+    if (contextPath) files.push({ path: contextPath, content: contextBlock(ast), category: "agent" });
 
     return deduplicateFiles(files);
 }

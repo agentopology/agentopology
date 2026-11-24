@@ -28,7 +28,7 @@ export const SINGLE_SECTIONS = [
   "environments", "triggers", "settings", "mcp-servers", "metering", "context",
   "env", "providers", "schedule", "interfaces", "tools", "defaults", "schemas",
   "observability", "params", "interface", "checkpoint", "artifacts", "records",
-  "machines", "extensions", "inventory", "needs",
+  "machines", "extensions", "inventory", "needs", "threat-model", "rules", "islands", "secrets", "ci",
 ] as const;
 
 export const CHILD_KEYWORDS = ["gate", "hook", "tool", "job", "command", "level"] as const;

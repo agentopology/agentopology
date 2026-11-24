@@ -19,8 +19,12 @@ Validating scheduled-monitor.at (scheduled-monitor v1.0)
   WARN  [V130] line 56: agent "analyzer" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel. (analyzer)
   WARN  [V130] line 71: agent "reporter" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled). (reporter)
   WARN  [V130] settings sandbox: "docker" is not written for Claude Code, which turns its sandbox on or off (sandbox.enabled): write true or false, or set sandbox.* keys in extensions { claude-code }.
+  WARN  [CC-route] Flow edge "analyzer -> reporter" [when analyzer.severity == info] is not enforced on Claude Code: "analyzer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (analyzer)
+  WARN  [CC-route] Flow edge "analyzer -> reporter" [when analyzer.severity == warning] is not enforced on Claude Code: "analyzer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (analyzer)
+  WARN  [CC-route] Flow edge "analyzer -> reporter" [when analyzer.severity == critical] is not enforced on Claude Code: "analyzer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (analyzer)
+  WARN  [CC-route] Flow edge "analyzer -> alerter" [when analyzer.severity == critical] is not enforced on Claude Code: "analyzer" has no Bash in its tools, so route.sh cannot record the route; it stays a line in the playbook. (analyzer)
 
-  0 error(s), 5 warning(s)
+  0 error(s), 9 warning(s)
 
 <version line>
 --- stderr

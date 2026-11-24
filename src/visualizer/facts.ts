@@ -29,8 +29,8 @@ export interface ValidateResult {
   warnings: number;
 }
 
-export function validateResult(ast: TopologyAST, filePath?: string, target?: string): ValidateResult {
-  const results = validate(ast, { ...(filePath ? { filePath } : {}), ...(target ? { target } : {}) });
+export function validateResult(ast: TopologyAST, filePath?: string, target?: string, dir?: string): ValidateResult {
+  const results = validate(ast, { ...(filePath ? { filePath } : {}), ...(target ? { target } : {}), ...(dir ? { dir } : {}) });
   return {
     results,
     errors: results.filter((r) => r.level === "error").length,
