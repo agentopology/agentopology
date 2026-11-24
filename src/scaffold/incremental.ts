@@ -242,7 +242,13 @@ export function computeIncrementalPlan(
     // user's, and recorded only when scaffold next writes it.
     const tracked = isBodyTracked(file.path);
     const recordedBody = tracked && typeof manifestEntry?.body === "string" ? manifestEntry.body : undefined;
-    const bodyUnedited = recordedBody !== undefined && bodyHash(existingContent) === recordedBody;
+    // No body record (a 0.13.0 manifest): the whole-file hash decides. A file
+    // still matching it was written by scaffold and not touched, so it is
+    // unedited; one that differs is the user's, kept as it is.
+    const noRecord = tracked && manifestEntry !== null && recordedBody === undefined;
+    const legacyUnedited = noRecord && shouldOverwriteScript(existingContent, manifestEntry!.hash);
+    const legacyUserOwned = noRecord && !legacyUnedited;
+    const bodyUnedited = (recordedBody !== undefined && bodyHash(existingContent) === recordedBody) || legacyUnedited;
     const bodyEdited = recordedBody !== undefined && !bodyUnedited;
     const spec = structureAt.get(file.path);
     // A file whose whole text is as scaffold wrote it, unless its recorded body says it was edited.
@@ -263,7 +269,7 @@ export function computeIncrementalPlan(
           action.content = next;
           action.changes.push("body updated from the .at");
         }
-      } else if (action.type === "patch" && edit && !edit.outside && markersIntact(existingContent)) {
+      } else if (action.type === "patch" && !legacyUserOwned && edit && !edit.outside && markersIntact(existingContent)) {
         // Only the prompt (and maybe frontmatter) was edited: the generated
         // sections are scaffold's, so they are regenerated around the
         // user's prompt, as 0.11.4 did; the frontmatter is the patch's.
@@ -370,14 +376,14 @@ export function computeIncrementalPlan(
     if (!untouched) {
       // Only the text between the prompt markers was edited: the rest is
       // scaffold's, regenerated around the user's prompt.
-      if (edit && !edit.outside && !edit.head && markersIntact(existingContent)) {
+      if (!legacyUserOwned && edit && !edit.outside && !edit.head && markersIntact(existingContent)) {
         const merged = mergeAgentFile(existingContent, file.content, target);
         actions.push(merged === existingContent
           ? { type: "unchanged", path: file.path }
           : { type: "update", path: file.path, content: merged, detail: "prompt preserved" });
         continue;
       }
-      if (manifestEntry && category === "agent" && hasManagedBlock(existingContent, file.content)) {
+      if (!legacyUserOwned && manifestEntry && category === "agent" && hasManagedBlock(existingContent, file.content)) {
         const merged = mergeAgentFile(existingContent, file.content, target);
         actions.push(merged === existingContent
           ? { type: "unchanged", path: file.path }
@@ -405,13 +411,6 @@ export function computeIncrementalPlan(
       });
       continue;
     }
-    // No record of the body (0.13.0 or earlier): a file with no prompt to
-    // keep (the rules file) is read as the user's, kept, and said.
-    if (tracked && recordedBody === undefined && category !== "agent" && !spec) {
-      actions.push({ type: "kept", path: file.path, detail: BODY_UNRECORDED_KEPT });
-      continue;
-    }
-
     // Regenerated (an agent file keeps the text between its prompt markers,
     // as it always did, when the body has no record).
     if (category === "agent") {

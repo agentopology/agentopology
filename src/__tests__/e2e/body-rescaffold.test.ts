@@ -5,8 +5,10 @@
  * last wrote. On a later run: a body that still hashes to the record is
  * unedited and is rewritten from the .at (counted as updated); one that
  * differs is the user's and is kept; a manifest with no record (a project
- * scaffolded by 0.13.0 or earlier) is read as the user's body, kept, and
- * recorded only when scaffold next writes that body. Frontmatter is
+ * scaffolded by 0.13.0 or earlier) takes the same rule from the whole-file
+ * hash: a file still matching it is unedited and follows the .at (its body
+ * hash is recorded from then on); one that differs, or has no manifest
+ * entry, is the user's and is kept. Frontmatter is
  * unchanged: the three-way patch.
  *
  * Each test runs the built CLI against temporary projects.
@@ -225,42 +227,81 @@ describe("(b) an edited body is kept", () => {
   });
 });
 
-describe("(c) a manifest without body records keeps the bodies", () => {
-  it("an upgrade from 0.13.0 keeps every body and records nothing", () => {
+describe("(c') a 0.13.0 manifest (whole-file hashes, no body hash)", () => {
+  it("an unedited agent and an unedited skill get the new prompt, and the manifest records their body hash", () => {
     scaffold();
     dropRecords(BODY_FILES);
-    const before = Object.fromEntries(BODY_FILES.map((p) => [p, read(p)]));
     fs.writeFileSync(at, topology("NEW"));
     scaffold();
-    for (const p of BODY_FILES) {
-      // A skill's text around its instructions is regenerated, as before: its instructions are kept.
-      if (p === SKILL) {
-        expect(read(p)).toContain("Skill prompt OLD.");
-        expect(read(p)).not.toContain("NEW");
-      } else {
-        expect(read(p), p).toBe(before[p]);
-      }
-      expect(manifest().files[p].body, p).toBeUndefined();
+    for (const p of [...AGENTS, SKILL]) {
+      expect(read(p), p).toContain("NEW.");
+      expect(read(p), p).not.toContain("OLD.");
+      expect(typeof manifest().files[p].body, p).toBe("string");
     }
   });
 
-  it("deleting a kept body has scaffold write it fresh and record it; the next change reaches it", () => {
+  it("regression: an unedited rules file follows the .at again", () => {
     scaffold();
     dropRecords(BODY_FILES);
     fs.writeFileSync(at, topology("NEW"));
     scaffold();
+    expect(read(RULES)).toContain("Shop NEW");
+    expect(typeof manifest().files[RULES].body).toBe("string");
+  });
+
+  it("an edited file (whole-file hash differs) is kept byte for byte, with the user-owned message", () => {
+    scaffold();
+    dropRecords(BODY_FILES);
+    const edited: Record<string, string> = {};
+    for (const p of [AGENTS[0], SKILL, RULES]) {
+      edited[p] = read(p) + "\nMine.\n";
+      write(p, edited[p]);
+    }
+    // an agent whose prompt alone was edited is the user's too
+    const promptEdit = read(AGENTS[1]).replace("Prompt of a2 OLD.", "My prompt.");
+    write(AGENTS[1], promptEdit);
+    fs.writeFileSync(at, topology("NEW"));
+    const { out } = scaffold();
+    for (const p of [AGENTS[0], SKILL, RULES]) {
+      expect(read(p), p).toBe(edited[p]);
+      expect(manifest().files[p].body, p).toBeUndefined();
+    }
+    // the rules file has no frontmatter to patch, so it is the one said as kept
+    expect(out).toContain(`${RULES} (user edited — kept)`);
+    expect(read(AGENTS[1])).toBe(promptEdit);
+  });
+
+  it("a file with no manifest entry is kept byte for byte", () => {
+    scaffold();
+    const m = manifest();
+    const mine: Record<string, string> = {};
+    for (const p of [AGENTS[0], SKILL, RULES]) {
+      delete m.files[p];
+      mine[p] = read(p);
+    }
+    write(MANIFEST, JSON.stringify(m, null, 2) + "\n");
+    fs.writeFileSync(at, topology("NEW"));
+    scaffold();
+    for (const p of [AGENTS[0], SKILL, RULES]) expect(read(p), p).toBe(mine[p]);
+  });
+
+  it("a second scaffold with no .at change changes nothing", () => {
+    scaffold();
+    dropRecords(BODY_FILES);
+    fs.writeFileSync(at, topology("NEW"));
+    scaffold();
+    const before = tree(project);
+    const { out } = scaffold();
+    expect(out).toMatch(/\b0 created, 0 updated/);
+    expect(out).not.toMatch(/\bkept\b/);
+    expect(tree(project)).toEqual(before);
+  });
+
+  it("deleting a file has scaffold write it fresh and record it", () => {
+    scaffold();
+    dropRecords(BODY_FILES);
     fs.unlinkSync(file(AGENTS[0]));
-    fs.unlinkSync(file(SKILL));
-    fs.unlinkSync(file(RULES));
     scaffold();
-    expect(read(AGENTS[0])).toContain("Prompt of a1 NEW.");
-    for (const p of [AGENTS[0], SKILL, RULES]) expect(typeof manifest().files[p].body, p).toBe("string");
-    fs.writeFileSync(at, topology("NEWER"));
-    scaffold();
-    expect(read(AGENTS[0])).toContain("Prompt of a1 NEWER.");
-    expect(read(SKILL)).toContain("Skill prompt NEWER.");
-    expect(read(RULES)).toContain("Shop NEWER");
-    // the files that stayed old are still the user's
-    expect(read(AGENTS[1])).toContain("Prompt of a2 OLD.");
+    expect(typeof manifest().files[AGENTS[0]].body).toBe("string");
   });
 });
