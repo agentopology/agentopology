@@ -2356,7 +2356,7 @@ function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
     "    w=${ws[AT_PX]}",
     "    case $m in",
     "      tmux) case $w in send-keys|send) m=keys; lit=0 ;; -l|-s|-f|-c|-t) AT_PX=$((AT_PX+1)) ;; esac ;;",
-    "      screen) [ \"$w\" = stuff ] && m=stuff ;;",
+    "      screen) [ \"$w\" != stuff ] || m=stuff ;;",
     "      stuff) AT_KEYS+=$w ;;",
     "      keys)",
     "        case $w in",
