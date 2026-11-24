@@ -2,7 +2,7 @@
 
 All notable changes to agentopology are documented here.
 
-## [0.13.0] - unreleased
+## [0.13.0] - 2026-11-24
 
 ### Changed behaviour
 
