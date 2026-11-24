@@ -38,6 +38,7 @@ import { shouldOverwriteScript } from "../scaffold/merge.js";
 import { packageVersion } from "../bindings/lib/ci.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
+import { sandboxProblems } from "../bindings/lib/sandbox.js";
 import { isStubContent } from "../bindings/lib/stub.js";
 import { BLOCKING_EVENTS, installedMark, matcherMatches, monitorUncheckedNote, sessionHooksProven, unanchoredScript, VERIFIED_ON } from "../conformance/claude-code.js";
 import { sessionAgentsOf, talkEdgesOf } from "../bindings/lib/session.js";
@@ -338,6 +339,10 @@ export function checkGuards(ast: TopologyAST, root: string, source?: string): Gu
       else {
         const bad = commandProblem(hooks[0].command);
         if (bad) problems.push(bad);
+      }
+      // A go gate (a human with a word before it) leans on the sandbox for its ledger.
+      if (gateAnchors(gate, "after").some((a) => ast.nodes.some((n) => n.id === a && n.type === "human" && (n as HumanNode).word?.trim()))) {
+        problems.push(...sandboxProblems(ast, settings));
       }
       const script = readText(join(root, scriptsDir, "before-action.sh"));
       if (script === null) problems.push(`${scriptsDir}/before-action.sh is missing`);

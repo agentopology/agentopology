@@ -2,6 +2,16 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Changed behaviour
+
+- **A topology with a human that has a go word (`word:`) now gets the Claude Code sandbox in `.claude/settings.json`.** It writes `sandbox.enabled: true`, `sandbox.allowUnsandboxedCommands: false`, `sandbox.failIfUnavailable: true` and `sandbox.filesystem.denyWrite` for the files only hooks and scaffold write: each go ledger (not one a gate after a step also reads), `.claude/state/talk.jsonl` when a hook writes it, and the scaffold manifest; and a `permissions.deny` `Edit(...)` rule for each. No `excludedCommands` is written. A topology without a go word is unchanged.
+- Scaffold creates each denied go ledger and `talk.jsonl` as an empty file, and its folder, when it is missing (on Linux and WSL2 a `denyWrite` entry for a path that does not exist may do nothing). An existing file is never changed.
+- Your own `extensions { claude-code { sandbox.* } }` lists add to the defaults. A value that weakens a default is kept as written: V130 and scaffold warn naming the key, and `guard --check` grades the go `none`, also for a `settings.json` scaffolded before 0.13.1 that has no sandbox.
+- V130 warns for a go-word topology whose network allow-list (`sandbox.network.allowedDomains`) is empty: npm, git over HTTPS and curl will prompt or fail; it also names docker (`sandbox.excludedCommands`) and SSH git on macOS.
+- On native Windows `failIfUnavailable` makes Claude Code exit at startup.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour

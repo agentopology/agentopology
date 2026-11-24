@@ -31,6 +31,9 @@ import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../con
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
 import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
+import { asList as asCcList } from "../bindings/claude-code-schema.js";
+import { NO_HOSTS_MESSAGE, sandboxFromAst, sandboxPlan, sandboxWeakenings, weakeningMessage } from "../bindings/lib/sandbox.js";
+const asStrings = (v: unknown): string[] => asCcList(v) ?? [];
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
@@ -5515,6 +5518,16 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
   }
 
   if (opts.target && opts.target !== "claude-code") return results;
+
+  // A go word turns the sandbox on (lib/sandbox.ts): a value that weakens a
+  // default is kept as written and warned; an empty network allow-list says
+  // what will prompt or fail.
+  const sbx = sandboxPlan(ast);
+  if (sbx) {
+    const values = sandboxFromAst(ast);
+    for (const w of sandboxWeakenings(values, sbx)) warn(weakeningMessage(w));
+    if (asStrings(values.allowedDomains).length === 0) warn(NO_HOSTS_MESSAGE);
+  }
 
   // A dotted if: (mcp.server.tool(…)) compiles to Claude Code's tool name
   // since 0.12.2; 0.12.1 wrote it as is, so it never matched and the hook

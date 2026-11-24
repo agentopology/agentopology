@@ -31,6 +31,7 @@ import type {
 import { deduplicateFiles } from "./types.js";
 import type { BindingTarget, GeneratedFile, StructureSpec } from "./types.js";
 import { patchFrontmatter, readFrontmatter } from "../scaffold/frontmatter-patch.js";
+import { sandboxFromAst, sandboxPlan, sandboxWeakenings, weakeningMessage } from "./lib/sandbox.js";
 import { scriptStub, toolStub, STUB_MARKER, FAIL_CLOSED, FAIL_CLOSED_DONE, STUB_BLOCKS_ON, blockingHookStubMessage, denyingHookStubMessage, denyOnExit2 } from "./lib/stub.js";
 import { generateSessionFiles, sessionSettingsHooks } from "./lib/session.js";
 import { generateCiWorkflow } from "./lib/ci.js";
@@ -2920,7 +2921,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // rules written in settings { allow } (lib/repo-tools.ts).
   const perms = ast.settings;
   const toolRules = toolAllowRules(ast);
-  if (perms || toolRules.length > 0) {
+  // A go word turns the sandbox on (lib/sandbox.ts): the files only hooks and
+  // scaffold write are denied to the agent's commands and to its Edit tool.
+  const sandbox = sandboxPlan(ast);
+  if (perms || toolRules.length > 0 || sandbox) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
       const rules = perms?.[key] as string[] | undefined;
@@ -2928,7 +2932,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     }
     const extra = toolRules.filter((r) => !(permObj.allow ?? []).includes(r));
     if (extra.length > 0) permObj.allow = [...(permObj.allow ?? []), ...extra];
+    if (sandbox) {
+      const deny = [...(permObj.deny ?? [])];
+      for (const r of sandbox.editDeny) if (!deny.includes(r)) deny.push(r);
+      permObj.deny = deny;
+    }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
+  }
+  if (sandbox) {
+    setSettingsPath(settings, "sandbox.enabled", true);
+    setSettingsPath(settings, "sandbox.allowUnsandboxedCommands", false);
+    setSettingsPath(settings, "sandbox.failIfUnavailable", true);
+    setSettingsPath(settings, "sandbox.filesystem.denyWrite", sandbox.denyWrite);
+    for (const w of sandboxWeakenings(sandboxFromAst(ast), sandbox)) console.warn(`[claude-code] ${weakeningMessage(w)}`);
   }
   if (perms) {
 
@@ -4157,6 +4173,11 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     // Settings (hooks + permissions + extensions)
     const settingsFile = generateSettings(ast);
     if (settingsFile) files.push(settingsFile);
+
+    // The files the sandbox denies are created empty when missing: on Linux
+    // and WSL2 a denyWrite entry for a path that does not exist may do
+    // nothing. An existing file is never touched.
+    for (const p of sandboxPlan(ast)?.create ?? []) files.push({ path: p, content: "", category: "machine", createOnly: true });
 
     // MCP servers (with env field)
     const mcpFile = generateMcpJson(ast);

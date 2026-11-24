@@ -20,6 +20,8 @@ import { parse } from "../../parser/index.js";
 import { validate } from "../../parser/validator.js";
 import { claudeCodeBinding } from "../claude-code.js";
 import { checkGuards } from "../../guard/check.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles } from "../../scaffold/incremental.js";
+import { hashContent, readManifest, writeManifest } from "../../scaffold/manifest.js";
 
 function goSrc(extra = "", ext = ""): string {
   return `topology p09-human : [pipeline, human-gate] {
@@ -130,15 +132,10 @@ describe("[sandbox] defaults only with a go word", () => {
     description: "Checks"
     commands: ["./tool check"]
   }
-  gates {
-    gate checked {
-      after: check
-      before: release
-      ledger: go-ledger
-    }
-  }
 `;
-    const s = settingsOf(goSrc(shared));
+    // The parser reads one gates block: the step's gate goes inside it.
+    const withGate = goSrc(shared).replace("    gate go-given {", "    gate checked {\n      after: check\n      before: release\n      ledger: go-ledger\n    }\n    gate go-given {");
+    const s = settingsOf(withGate);
     expect(s.sandbox.filesystem.denyWrite).toEqual(["./.claude/.scaffold-manifest.json"]);
   });
 
@@ -217,6 +214,56 @@ describe("[sandbox] the empty network allow-list", () => {
 
   it("no go word: no sandbox warning at all", () => {
     expect(v130(NO_WORD).some((x) => x.includes("sandbox"))).toBe(false);
+  });
+});
+
+describe("[sandbox] scaffold creates each denied ledger empty and never touches an existing one", () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(join(os.tmpdir(), "at-sandbox-files-")); });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  function run(src: string) {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const files = claudeCodeBinding.scaffold(parse(src));
+      const manifest = readManifest(root, "claude-code", "p.at");
+      const actions = computeIncrementalPlan(root, "claude-code", files, manifest);
+      const result = executeActions(root, actions, { prune: false, force: false });
+      writeManifest(root, "claude-code", {
+        source: "p.at",
+        sourceHash: hashContent(src),
+        target: "claude-code",
+        generatedAt: "",
+        files: nextManifestFiles(root, actions, files, manifest, result),
+      });
+    } finally {
+      console.warn = warn;
+    }
+  }
+
+  it("the go ledger and its folder are created empty", () => {
+    run(goSrc());
+    expect(fs.readFileSync(join(root, "logs/go.jsonl"), "utf8")).toBe("");
+  });
+
+  it("the talk log is created empty when a hook writes it", () => {
+    const sessions = `  agent lead {\n    model: opus\n    description: "Leads"\n    runs: session\n  }\n  agent helper {\n    model: sonnet\n    description: "Helps"\n    runs: session\n  }\n`;
+    run(goSrc(sessions).replace("    owner-go -> release\n", "    owner-go -> release\n    lead -> helper\n    talk: hub lead\n"));
+    expect(fs.readFileSync(join(root, ".claude/state/talk.jsonl"), "utf8")).toBe("");
+  });
+
+  it("a re-scaffold keeps a non-empty ledger byte for byte", () => {
+    run(goSrc());
+    const row = '{"step":"owner-go","ok":true,"word":"go release","ts":"2026-01-01T00:00:00Z"}\n';
+    fs.writeFileSync(join(root, "logs/go.jsonl"), row);
+    run(goSrc());
+    expect(fs.readFileSync(join(root, "logs/go.jsonl"), "utf8")).toBe(row);
+  });
+
+  it("no go word: no ledger file is created", () => {
+    run(NO_WORD);
+    expect(fs.existsSync(join(root, "logs/go.jsonl"))).toBe(false);
   });
 });
 

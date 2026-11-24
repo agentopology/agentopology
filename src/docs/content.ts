@@ -685,9 +685,53 @@ These forms are refused, each proven by a test that feeds the hook the call:
   by one or across chained calls (\`tmux send-keys g o Space r e l e a s e Enter\`, \`send-keys -l\`, several
   \`send-keys\` joined by \`;\` or \`&&\`).
 
-With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. Enable it
-(\`settings { sandbox: true }\`). An interpreter can still reach the go and the guards: for example, a Python or
-Node script that edits .claude/settings.json or a guard script; only the sandbox (0.13.1) stops it.
+With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. A go word turns it
+on (see Sandbox below). An interpreter can still reach the route record, the gate ledgers your own steps write and
+the guards' own files; the guards' text checks are what protect those.
+
+## Sandbox
+
+When a human has a go word (\`word:\`), the claude-code binding writes into \`.claude/settings.json\`:
+
+- \`sandbox.enabled: true\`, \`sandbox.allowUnsandboxedCommands: false\` (a command the sandbox stops is not run again
+  outside it) and \`sandbox.failIfUnavailable: true\`;
+- \`sandbox.filesystem.denyWrite\`: each go ledger, \`.claude/state/talk.jsonl\` when talk-guard.sh or a
+  session-prompt script is generated, and the scaffold manifest (\`.claude/.scaffold-manifest.json\`); and
+  \`permissions.deny\` \`Edit(...)\` for each of them. A ledger a gate after a step also reads is left out: the step
+  writes it.
+- Hooks run outside the sandbox (Claude Code: command hooks "run with your full access"), so the go hook can still write.
+  No \`excludedCommands\` is written.
+- Scaffold creates each denied ledger and \`talk.jsonl\` as an empty file (and its folder) when it is missing, because on
+  Linux and WSL2 a \`denyWrite\` entry for a path that does not exist may have no effect. A file that exists is never touched.
+
+The sandbox protects the go ledger and the files hooks write; the route record and the gate ledgers your own steps write are protected by the guards' text checks.
+
+Without a go word nothing of this is written.
+
+Platforms: macOS, Linux and WSL2. On native Windows \`failIfUnavailable\` makes Claude Code exit at startup. Writes
+outside the project are blocked. The network allow-list starts empty: npm, git over HTTPS and curl will prompt or
+fail until you list hosts, and \`validate\` warns when the list is empty.
+
+Your own settings come only through \`extensions { claude-code { ... } }\` (no new grammar). Lists add to the defaults:
+
+\`\`\`at
+extensions {
+  claude-code {
+    sandbox.network.allowedDomains: [registry.npmjs.org, github.com]
+    sandbox.excludedCommands: ["docker compose *"]
+    sandbox.filesystem.allowWrite: ["~/.kube"]
+  }
+}
+\`\`\`
+
+A value that weakens a default (\`sandbox.enabled\` false, \`sandbox.allowUnsandboxedCommands\` true,
+\`sandbox.failIfUnavailable\` false, an \`allowWrite\` that covers a denied path) is kept as written; \`validate\` and
+\`scaffold\` warn naming the key, and \`guard --check\` grades the go \`none\` with that reason.
+
+docker does not run inside the sandbox: list it in \`sandbox.excludedCommands\`. Claude Code's rule is that
+\`excludedCommands\` needs every command in a call to match: "\`npm ci && docker compose build\` stays sandboxed unless
+another entry covers \`npm ci\`". The same holds for \`;\` (inferred, not stated by the docs). SSH git does not work
+in the macOS sandbox: use HTTPS.
 
 ## Example
 

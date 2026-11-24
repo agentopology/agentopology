@@ -262,7 +262,7 @@ export function resolveSettingsKey(key: string): { row?: CcKey; path: string } |
 export type Coerced = { ok: true; value: string | number | boolean | string[] } | { ok: false; reason: string };
 
 /** A list written in the .at as `[a, "b"]` (the parser keeps it as text) or a comma-separated string. */
-function asList(v: unknown): string[] | undefined {
+export function asList(v: unknown): string[] | undefined {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v !== "string") return undefined;
   const text = v.trim();
