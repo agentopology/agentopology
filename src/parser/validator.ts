@@ -23,14 +23,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { contextBlock, contextFilePath, mergeContextBlock } from "../bindings/lib/context-block.js";
 import { MISSING } from "./index.js";
-import { gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
+import { EGRESS_COVERS, gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
 import { CLAUDE_CODE_PERMISSION_MODES, mapPermissionMode, mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { repoTool, runsThroughBash } from "../bindings/lib/repo-tools.js";
 import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
+import { samePathKey } from "./path-forms.js";
 import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
 import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
+import { asList as asCcList } from "../bindings/claude-code-schema.js";
+import { NO_HOSTS_MESSAGE, sandboxFromAst, sandboxPlan, sandboxWeakenings, weakeningMessage } from "../bindings/lib/sandbox.js";
+const asStrings = (v: unknown): string[] => asCcList(v) ?? [];
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
@@ -44,9 +48,10 @@ import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/ho
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
-import { overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
+import { OTLP_PROTOCOLS, overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
+import { pluginDiagnostics, preparePluginTarget } from "../plugins/runtime.js";
 import type {
   HookDef,
   TopologyAST,
@@ -104,9 +109,9 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "agent", "action", "orchestrator", "meta", "roles", "memory", "flow",
   "gates", "gate", "depth", "batch", "environments", "triggers", "command",
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
-  "tools", "tool", "scale", "skill", "threat-model", "rules", "rule", "secrets", "secret",
+  "tools", "tool", "scale", "skill", "threat-model", "egress", "rules", "rule", "secrets", "secret",
   // Field keywords
-  "model", "disallowed-tools", "never-reads", "readers", "reads", "writes", "outputs", "skip",
+  "model", "disallowed-tools", "never-reads", "ask-reads", "readers", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
   "permissions", "prompt", "generates", "handles", "argument", "factors",
   "behavior", "invocation", "delegation", "subagent",
@@ -4148,6 +4153,10 @@ export interface ValidateOptions {
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
+  // Plugins (EXPERIMENTAL): judge the gates a plugin checks (gateRuns) for the
+  // target, claude-code when none is given (the default scaffold target), so
+  // V110 and V135 see the check. Without plugins this is `ast` itself.
+  ast = preparePluginTarget(ast, opts.target ?? "claude-code");
   return [
     ...(opts.target === "codex" ? codexWarnings(ast) : []),
     ...v1UniqueNames(ast),
@@ -4243,6 +4252,18 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
+    ...v158RecordMaxPerDay(ast),
+    ...v159OutputInto(ast, opts),
+    ...v160StopWord(ast),
+    ...v161WallTime(ast),
+    ...v162Egress(ast),
+    ...v163AskNeverOverlap(ast),
+    ...v164BoundaryPath(ast),
+    ...v165BoundaryValues(ast),
+    ...v166BoundaryOutbound(ast),
+    ...v167PluginsLoaded(ast),
+    ...v168OtlpProtocol(ast),
+    ...pluginDiagnostics(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4408,6 +4429,99 @@ function v154SecretPath(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/**
+ * V163: the same path in `never-reads` and `ask-reads`. One says refuse and the other says ask; an ask
+ * rule applies to the whole session, so the pair cannot both hold. Compared by anchor (`~/`, `//`, project)
+ * and path, across all agents.
+ */
+function v163AskNeverOverlap(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const never = new Map<string, string>();
+  for (const n of ast.nodes.filter(isAgent)) {
+    for (const p of n.neverReads ?? []) if (p.trim()) never.set(samePathKey(p), n.id);
+  }
+  for (const n of ast.nodes.filter(isAgent)) {
+    for (const p of n.askReads ?? []) {
+      const owner = never.get(samePathKey(p));
+      if (owner === undefined) continue;
+      results.push({
+        rule: "V163", level: "error", node: n.id, line: lookupLine(ast, n.id),
+        message: `Path "${p}" is in ask-reads of agent "${n.id}" and in never-reads of agent "${owner}": refuse and ask cannot both hold for one path; keep one`,
+      });
+    }
+  }
+  return results;
+}
+
+export const BOUNDARY_IN = ["read-only", "read-write"] as const;
+export const BOUNDARY_OUT = ["none", "pr", "direct"] as const;
+/** A host name (a.b, *.b) or an IPv4 address, with an optional :port. */
+const HOST_NAME = /^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:\d{1,5})?$/;
+/** A git branch name the guard can compare as one word. */
+const BRANCH_NAME = /^[A-Za-z0-9._\/-]+$/;
+
+/** V164: a `boundary` needs a `path`; with none it is about nothing. */
+function v164BoundaryPath(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const b of ast.boundaries ?? []) {
+    if (b.path !== undefined && b.path.trim()) continue;
+    results.push({
+      rule: "V164", level: "error", node: b.id, line: lookupLine(ast, b.id),
+      message: `Boundary "${b.id}" has no path: add path: "<path>" so the guard knows what the boundary is about`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V165: an `in` or `out` value that is not one of the known ones, an `outbound` entry that is not a host
+ * name, a `branch` that is not a branch name or is set without `out: pr`, or two boundaries with one id.
+ */
+function v165BoundaryValues(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const b of ast.boundaries ?? []) {
+    const line = lookupLine(ast, b.id);
+    const err = (message: string) => results.push({ rule: "V165", level: "error", node: b.id, line, message });
+    if (seen.has(b.id)) err(`Boundary "${b.id}" is declared more than once`);
+    seen.add(b.id);
+    if (b.in !== undefined && !(BOUNDARY_IN as readonly string[]).includes(b.in)) {
+      err(`Boundary "${b.id}" has in: "${b.in}", which is not one of ${BOUNDARY_IN.join(", ")}`);
+    }
+    if (b.out !== undefined && !(BOUNDARY_OUT as readonly string[]).includes(b.out)) {
+      err(`Boundary "${b.id}" has out: "${b.out}", which is not one of ${BOUNDARY_OUT.join(", ")}`);
+    }
+    for (const h of b.outbound) {
+      if (!HOST_NAME.test(h)) err(`Boundary "${b.id}" lists outbound "${h}", which is not a host name (write api.example.com, not a URL)`);
+    }
+    if (b.branch !== undefined) {
+      if (!BRANCH_NAME.test(b.branch)) err(`Boundary "${b.id}" has branch "${b.branch}", which is not a branch name`);
+      else if (b.out !== "pr") err(`Boundary "${b.id}" has branch "${b.branch}" but out is not pr: branch names one more protected branch for out: pr`);
+    }
+  }
+  return results;
+}
+
+/**
+ * V166 (warning): `outbound` hosts are listed, and no sandbox block is generated (no human has a go word),
+ * so they are written to boundaries.md only. With the sandbox block they go into
+ * sandbox.network.allowedDomains (bindings/claude-code.ts) and this says nothing.
+ */
+function v166BoundaryOutbound(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  if (sandboxPlan(ast)) return results;
+  for (const b of ast.boundaries ?? []) {
+    const line = lookupLine(ast, b.id);
+    if (b.outbound.length > 0) {
+      results.push({
+        rule: "V166", level: "warning", node: b.id, line,
+        message: `Boundary "${b.id}" lists outbound hosts (${b.outbound.join(", ")}), but no sandbox block is generated (only a human with a go word turns it on), so they are not written to sandbox.network.allowedDomains; they are listed in boundaries.md for you to add`,
+      });
+    }
+  }
+  return results;
+}
+
 const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
 
 /**
@@ -4537,27 +4651,12 @@ function v149FinishEdge(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
- * V155: the `ci { }` block. The provider must be github; every id in `gates`
- * must be a declared gate; and each listed gate needs a step after it (a
- * `before:`), since the workflow runs `step check` for that step.
+ * V155: a top-level `ci { }` block is not part of this package. Collected at
+ * parse time (src/parser/index.ts): the parser no longer reads the block, and a
+ * loaded plugin that owns the `ci` keyword reads it instead (no V155 then).
  */
 function v155CiBlock(ast: TopologyAST): ValidationResult[] {
-  const ci = ast.ci;
-  if (!ci) return [];
-  const results: ValidationResult[] = [];
-  const err = (message: string) => results.push({ rule: "V155", level: "error", message });
-  if (ci.provider !== "github") {
-    err(`ci { provider: ${ci.provider || "(none)"} }: only github is supported`);
-  }
-  for (const id of ci.gates) {
-    const gate = ast.nodes.find((n) => n.id === id && n.type === "gate") as GateNode | undefined;
-    if (!gate) {
-      err(`ci { gates } names "${id}", which is not a declared gate`);
-    } else if (gateAnchors(gate, "before").length === 0) {
-      err(`ci { gates } names gate "${id}", which has no step after it (no before:), so there is no step for the workflow to check`);
-    }
-  }
-  return results;
+  return (ast as TopologyAST & { _ciBlockErrors?: ValidationResult[] })._ciBlockErrors ?? [];
 }
 
 /**
@@ -4710,6 +4809,51 @@ function v138ThreatModel(ast: TopologyAST, opts: ValidateOptions): ValidationRes
 }
 
 /**
+ * V158: a record's `max-per-day` must be a positive whole number, and the record's path must not hold
+ * `{unit}`: the count is of the rows in one file, one UTC day, so a path that splits into a file per
+ * unit has no one file to count.
+ */
+function v158RecordMaxPerDay(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const r of ast.records ?? []) {
+    if (r.maxPerDayRaw !== undefined) {
+      results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day "${r.maxPerDayRaw}" — must be a positive whole number such as 20` });
+    } else if (r.maxPerDay !== undefined && r.path.includes("{unit}")) {
+      results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day and a path with {unit} (${r.path}): the cap counts the rows of one file, so give the record one path with no {unit}` });
+    }
+  }
+  return results;
+}
+
+/**
+ * V159: `output-into: <record-id>` on an agent. The record must be declared, the agent must have an
+ * `output-schema` (the hook copies the schema's fields), and the record's path must have no `{unit}`
+ * (a SubagentStop hook knows no unit). On codex and cursor nothing is written: a warning.
+ */
+function v159OutputInto(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const records = ast.records ?? [];
+  for (const node of ast.nodes) {
+    if (node.type !== "agent" || node.outputInto === undefined) continue;
+    const line = lookupLine(ast, node.id);
+    const err = (message: string) => results.push({ rule: "V159", level: "error", node: node.id, line, message });
+    const rec = records.find((r) => r.id === node.outputInto);
+    if (!rec) {
+      err(`Agent "${node.id}" has output-into "${node.outputInto}", but no record of that name is declared in records { } (records: ${records.map((r) => r.id).join(", ") || "none"})`);
+    } else if (rec.path.includes("{unit}")) {
+      err(`Agent "${node.id}" has output-into "${rec.id}", whose path has {unit} (${rec.path}): the SubagentStop hook knows no unit, so give the record one path with no {unit}`);
+    }
+    if (!node.outputSchema || node.outputSchema.length === 0) {
+      err(`Agent "${node.id}" has output-into but no output-schema: the hook copies the fields the schema declares, so write an output-schema { } block on the agent`);
+    }
+    if (opts.target === "codex" || opts.target === "cursor") {
+      results.push({ rule: "V159", level: "warning", node: node.id, line, message: `${opts.target} writes no SubagentStop hook, so output-into on agent "${node.id}" appends nothing here; only claude-code writes it` });
+    }
+  }
+  return results;
+}
+
+/**
  * V139: a record's fields, schema, writer and kind are well formed.
  * - every field is `name: type`, the type one of string, number, boolean, ts, and no name twice;
  * - `schema:` names a schema declared in `schemas { }`;
@@ -4843,7 +4987,7 @@ function v142GateMode(ast: TopologyAST, opts: ValidateOptions): ValidationResult
  */
 function v140RecordsNotWritten(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
   if (opts.target !== "codex" && opts.target !== "cursor") return [];
-  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind);
+  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind || r.maxPerDay !== undefined);
   if (rich.length === 0) return [];
   return [{
     rule: "V140", level: "warning",
@@ -4933,6 +5077,71 @@ function v152MetaTarget(ast: TopologyAST): ValidationResult[] {
   }];
 }
 
+/**
+ * V161: `wall-time:` caps the whole session, so it sits on the entry agent (`meta { entry }`) only; a
+ * subagent's own limit is `timeout`. The value is a duration: a positive whole number and s, m, h or d.
+ */
+function v161WallTime(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "agent" || n.wallTime === undefined) continue;
+    const err = (message: string) => results.push({ rule: "V161", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    const entry = ast.topology.entry;
+    if (entry === undefined) err(`Agent "${n.id}" has wall-time: ${n.wallTime}, but the topology names no entry. wall-time caps the whole session, so write meta { entry: ${n.id} }, or use timeout: for a subagent's own limit.`);
+    else if (entry !== n.id) err(`Agent "${n.id}" has wall-time: ${n.wallTime}, but the entry agent is "${entry}". wall-time caps the whole session and sits on the entry agent only; use timeout: for a subagent's own limit.`);
+    if (!/^[1-9]\d*[smhd]$/.test(n.wallTime)) err(`Agent "${n.id}" wall-time: "${n.wallTime}" is not a duration. Write a positive whole number and s, m, h or d, such as 4h or 90m.`);
+  }
+  return results;
+}
+
+/**
+ * V162: the `egress { gate, covers }` block. The gate names a human with a `word:` (cleared by its go row)
+ * or a record whose path has no `{unit}` (cleared by a row in it); covers is a non-empty list of
+ * observability, web, network, mcp.
+ */
+function v162Egress(ast: TopologyAST): ValidationResult[] {
+  const e = ast.egress;
+  if (!e) return [];
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V162", level: "error", node: "egress", message });
+  const human = ast.nodes.find((n) => n.id === e.gate && n.type === "human");
+  const record = (ast.records ?? []).find((r) => r.id === e.gate);
+  if (e.gate === "") err("egress has no gate:. Name a human with a word: (cleared by its go row) or a record (cleared by a row in it).");
+  else if (human && human.type === "human" && !(human.word !== undefined && human.word.trim() !== "")) {
+    if (!record) err(`egress gate: "${e.gate}" is a human with no word:, so nothing the person types can clear it. Add word: "<the go word>" to the human, or name a record.`);
+  } else if (!human && !record) err(`egress gate: "${e.gate}" names no human with a word: and no record. Name one declared in this topology.`);
+  if (!(human && human.type === "human" && human.word !== undefined && human.word.trim() !== "") && record && record.path.includes("{unit}"))
+    err(`egress gate: record "${record.id}" has the path "${record.path}", with {unit}; the gate reads one file. Name a record whose path has no {unit}.`);
+  if (e.covers.length === 0) err(`egress covers: is empty. Name what is held: ${EGRESS_COVERS.join(", ")}.`);
+  for (const c of e.covers)
+    if (!(EGRESS_COVERS as readonly string[]).includes(c)) err(`egress covers: "${c}" is not one of ${EGRESS_COVERS.join(", ")}.`);
+  return results;
+}
+
+/** A go or stop word as the go hook reads it: lower case, runs of other characters one space. */
+const wordWords = (w: string) => w.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * V160: a human's `stop-word:`. It needs `word:` (the stop ends at the go word), must be one non-empty line,
+ * must differ from the word, and neither may open with the other: the go hook reads a prompt that opens with
+ * a word and then a space or one of , . : ; ! ? as that word, so "go" and "go stop" would give both from one prompt.
+ */
+function v160StopWord(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || n.stopWord === undefined) continue;
+    const err = (message: string) => results.push({ rule: "V160", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    if (n.stopWord.trim() === "" || /[\r\n]/.test(n.stopWord)) { err(`Human "${n.id}" stop-word: must be a non-empty word on one line, the text the person types to halt the run.`); continue; }
+    if (n.word === undefined || n.word.trim() === "") { err(`Human "${n.id}" has stop-word: but no word:. The stop is lifted by the go word, so add word: "<the go word>".`); continue; }
+    const go = wordWords(n.word) || n.word.trim().toLowerCase();
+    const stop = wordWords(n.stopWord) || n.stopWord.trim().toLowerCase();
+    if (go === stop) { err(`Human "${n.id}" stop-word: "${n.stopWord}" must differ from word: "${n.word}"; typed, they would be the same prompt.`); continue; }
+    if (stop.startsWith(go + " ") || go.startsWith(stop + " "))
+      err(`Human "${n.id}" stop-word: "${n.stopWord}" and word: "${n.word}" overlap: one opens with the other, so a prompt that holds the longer would also read as the shorter. Choose words that do not open with each other.`);
+  }
+  return results;
+}
+
 const MAX_COST_ADVISORY = "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
 
 /**
@@ -4965,6 +5174,19 @@ function v156Caps(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
+ * V168: `observability { protocol }` must be a value Claude Code documents for
+ * OTEL_EXPORTER_OTLP_PROTOCOL: http/json, http/protobuf or grpc.
+ */
+function v168OtlpProtocol(ast: TopologyAST): ValidationResult[] {
+  const p = ast.observability?.protocol;
+  if (p === undefined || OTLP_PROTOCOLS.includes(p)) return [];
+  return [{
+    rule: "V168", level: "error", node: "observability",
+    message: `observability protocol "${p}" is not one of ${OTLP_PROTOCOLS.join(", ")}`,
+  }];
+}
+
+/**
  * V157: a value in a one-line block that still holds `, <field>:`, where
  * <field> is a field of that same block. A comma at the top level of a block
  * separates fields; this one stayed in the value (an unclosed ( or [ or quote
@@ -4974,7 +5196,7 @@ const V157_BLOCK_FIELDS: Record<string, readonly string[]> = {
   checkpoint: ["backend", "strategy", "connection", "ttl", "replay"],
   interface: ["entry", "exit"],
   defaults: ["temperature", "max-tokens", "top-p", "model"],
-  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level"],
+  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level", "protocol"],
   metering: ["track", "per", "output", "format", "pricing"],
   secrets: ["path", "readers"],
   toolDefs: ["command", "script", "description", "lang", "args"],
@@ -5045,6 +5267,17 @@ function v157SwallowedFields(ast: TopologyAST): ValidationResult[] {
 
 /** Keys whose values are free text, where `" word:` may be meant. */
 const V157_FREE_TEXT = new Set(["prompt", "instructions", "body", "content", "text", "system", "role", "message", "notes", "raw", "source"]);
+
+/**
+ * V167: `uses-plugins: [...]` names a plugin that is not loaded (EXPERIMENTAL).
+ * Collected at parse time, which knows the loaded set: each top-level block
+ * no core section and no loaded plugin owns is an error naming the plugin it
+ * needs (instead of V102); with no such block, the unloaded plugin itself is.
+ * Without `uses-plugins` an unknown block stays V102.
+ */
+function v167PluginsLoaded(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyAST & { _pluginNeedErrors?: ValidationResult[] })._pluginNeedErrors ?? [];
+}
 
 /** V125 (L-2): a job carried by a session cannot outlive it. */
 function v125SessionCronSurvives(ast: TopologyAST): ValidationResult[] {
@@ -5515,6 +5748,16 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
   }
 
   if (opts.target && opts.target !== "claude-code") return results;
+
+  // A go word turns the sandbox on (lib/sandbox.ts): a value that weakens a
+  // default is kept as written and warned; an empty network allow-list says
+  // what will prompt or fail.
+  const sbx = sandboxPlan(ast);
+  if (sbx) {
+    const values = sandboxFromAst(ast);
+    for (const w of sandboxWeakenings(values, sbx)) warn(weakeningMessage(w));
+    if (asStrings(values.allowedDomains).length === 0) warn(NO_HOSTS_MESSAGE);
+  }
 
   // A dotted if: (mcp.server.tool(…)) compiles to Claude Code's tool name
   // since 0.12.2; 0.12.1 wrote it as is, so it never matched and the hook

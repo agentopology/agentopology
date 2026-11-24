@@ -27,6 +27,8 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../parser/index.js";
 import { resolveIncludes } from "../parser/includes.js";
 import { parseRange, satisfiesRange } from "../parser/range.js";
+import { PluginError, pluginReportLines, preparePluginTarget, runPluginCommand, setActivePlugins } from "../plugins/runtime.js";
+import { loadPlugins, packagePluginRequests, type PluginRequest } from "../plugins/load.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
@@ -54,7 +56,7 @@ import {
 import type { ClaudeProject } from "../import/walk.js";
 import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { otherRecordLines, sameTopologyLines } from "../scaffold/other-records.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, BODY_UNRECORDED_KEPT, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
 import { echoFields } from "../scaffold/echo.js";
@@ -226,6 +228,12 @@ ${c.bold("Options:")}
   --agent           Compact guide for writing a .at from scratch (~3 KB, not 104 KB).
   --all             Show all documentation topics (for LLM ingestion).
   --search <term>   Search across all documentation topics.
+  --plugin <module> Load a compile-time plugin (repeatable; EXPERIMENTAL). Also read from
+                    "agentopology": { "plugins": [...] } in the package.json of --dir,
+                    else of the current folder (never of the .at's own folder).
+                    A plugin is code that runs with your rights: load only plugins you trust.
+  --no-plugins      Load no plugin at all, neither --plugin nor package.json. A write gate
+                    reads an agentopology call on a .at as a read only with this flag.
   --help, -h        Show this help message.
 `);
 }
@@ -339,6 +347,10 @@ interface ParsedArgs {
   at: string[];
   /** More .at files after the first: `validate --inventory DIR a.at b.at`. */
   more: string[];
+  /** `--plugin <module>` (repeatable): plugin modules to load (EXPERIMENTAL). */
+  plugins: string[];
+  /** `--no-plugins`: load no plugin, neither `--plugin` nor the package.json list. */
+  noPlugins: boolean;
   help: boolean;
 }
 
@@ -375,6 +387,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     json: false,
     at: [],
     more: [],
+    plugins: [],
+    noPlugins: false,
     help: false,
   };
 
@@ -433,6 +447,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--user") { result.user = true; i++; continue; }
     if (arg === "--json") { result.json = true; i++; continue; }
     if (arg === "--at" && i + 1 < args.length) { result.at.push(args[i + 1]); i += 2; continue; }
+    if (arg === "--plugin" && i + 1 < args.length) { result.plugins.push(args[i + 1]); i += 2; continue; }
+    if (arg === "--no-plugins") { result.noPlugins = true; i++; continue; }
     if (arg === "--all") {
       result.all = true;
       i++;
@@ -504,7 +520,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.command = arg;
     } else if (!result.file) {
       result.file = arg;
-    } else if (result.command === "validate") {
+    } else if (result.command === "validate" || result.command.includes(":")) {
       result.more.push(arg);
     }
     i++;
@@ -568,8 +584,9 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
 
   let ast;
   try {
-    ast = parseAt(source, filePath);
+    ast = forTarget(parseAt(source, filePath), target);
   } catch (err) {
+    if (err instanceof PluginError) throw err;
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
@@ -837,8 +854,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
 
   let ast;
   try {
-    ast = parseAt(source, filePath);
+    ast = forTarget(parseAt(source, filePath), targetName);
   } catch (err) {
+    if (err instanceof PluginError) throw err;
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
@@ -1027,7 +1045,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       case "kept":
         // A file the user edited (or wrote) whose text scaffold would have
         // replaced: said on every run, so nothing is skipped silently.
-        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT) {
+        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT || action.detail === BODY_UNRECORDED_KEPT) {
           console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`);
           if (guardScripts.has(action.path)) console.log(`  ${c.bold("!")} ${c.yellow(keptGuardScriptLine(action.path, packageVersion()))}`);
         }
@@ -1077,7 +1095,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         ),
       );
     }
-    const keptFiles = actions.filter((a) => a.type === "kept" && (a.detail === USER_EDITED_KEPT || a.detail === NOT_OURS_KEPT)).length;
+    const keptFiles = actions.filter((a) => a.type === "kept" && (a.detail === USER_EDITED_KEPT || a.detail === NOT_OURS_KEPT || a.detail === BODY_UNRECORDED_KEPT)).length;
     if (keptFiles > 0) {
       console.log(
         c.yellow(
@@ -1861,7 +1879,7 @@ function printVersionLines(target?: string): void {
  */
 function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): void {
   const source = fs.readFileSync(path.resolve(filePath), "utf-8");
-  const ast = parseAt(source, filePath);
+  const parsed = parseAt(source, filePath);
   const root = path.resolve(dirPath);
   // E-5: a Codex project is graded from .codex/; with no --target, a project with .codex/ and no .claude/ is one.
   const target = targetName ?? (!fs.existsSync(path.join(root, ".claude")) && fs.existsSync(path.join(root, ".codex")) ? "codex" : "claude-code");
@@ -1869,6 +1887,7 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
     console.error(c.red(`Error: guard --check supports claude-code and codex only (got "${target}").`));
     process.exit(1);
   }
+  const ast = forTarget(parsed, target);
   const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root, path.basename(filePath));
   // A gate whose tests rows all matched in the last `guard --test --dir` run of this very file is said to be tested.
   const tested = testedGateIds(root, source);
@@ -1883,6 +1902,12 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
     console.log("");
     console.log("islands (test commands are listed, not run):");
     for (const x of islands) console.log(`  island ${x.id}  owner ${x.owner || "(none)"}  ${x.path}${x.test ? `  test: ${x.test}` : "  (no test command)"}`);
+  }
+  // A plugin's own rows (EXPERIMENTAL), after everything the core checked: claimed by the plugin, not counted in the total, no say in the exit code.
+  const claimed = pluginReportLines(ast, { target });
+  if (claimed.length) {
+    console.log("");
+    for (const line of claimed) console.log(line);
   }
   process.exit(report.missing > 0 ? 1 : 0);
 }
@@ -1945,8 +1970,9 @@ function cmdGuardTarget(filePath: string, targetName: string, dirPath: string, d
   const source = readFile(filePath);
   let ast;
   try {
-    ast = parseAt(source, filePath);
+    ast = forTarget(parseAt(source, filePath), targetName);
   } catch (err) {
+    if (err instanceof PluginError) throw err;
     console.error(c.red(`Parse error: ${(err as Error).message}`));
     process.exit(1);
   }
@@ -2176,15 +2202,51 @@ function cmdStubs(dirPath: string): void {
 // Main
 // ---------------------------------------------------------------------------
 
-function main(): void {
-  // --version / -v as the first word: print the version, nothing else.
-  const first = process.argv[2];
-  if (first === "--version" || first === "-v") {
-    console.log(packageVersion());
-    process.exit(0);
-  }
-  const args = parseArgs(process.argv);
+/** `<pluginId>:<name>`: a command a plugin adds (EXPERIMENTAL). No core command has a colon. */
+function isPluginCommand(command: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_-]*:[a-z][a-z0-9-]*$/.test(command);
+}
 
+/** Commands that read an .at file, and so may load plugins. */
+const PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["validate", "fix", "scaffold", "sync", "visualize", "export", "plan", "info", "guard"]);
+
+/**
+ * The plugin modules this run asks for (EXPERIMENTAL): the `--plugin` flags,
+ * then the project's package.json `agentopology.plugins`. The project folder
+ * is --dir, else the working folder: never the .at's own folder, so a cloned
+ * folder's package.json runs nothing when its .at is only named. Nothing an
+ * .at says is read here.
+ */
+function pluginRequests(args: ParsedArgs): { requests: PluginRequest[]; projectDir: string } {
+  const pluginCommand = !!args.command && isPluginCommand(args.command);
+  const projectDir = path.resolve(args.dir ?? ".");
+  if (!args.command || !(PLUGIN_COMMANDS.has(args.command) || pluginCommand)) return { requests: [], projectDir };
+  // --no-plugins: no plugin at all, neither --plugin nor package.json (a write gate's reads need it).
+  if (args.noPlugins) return { requests: [], projectDir };
+  const flags = args.plugins.map((spec) => ({ spec, base: process.cwd(), from: "--plugin" }));
+  return { requests: [...flags, ...packagePluginRequests(projectDir)], projectDir };
+}
+
+/** Load the requested plugins, print each, set them for every parse, then run the command; a plugin error exits 1. */
+async function mainWithPlugins(args: ParsedArgs, requests: PluginRequest[], projectDir: string): Promise<void> {
+  try {
+    const loaded = await loadPlugins(requests, projectDir);
+    for (const p of loaded) console.error(`loaded plugin ${p.plugin.id}@${p.version} from ${p.path}`);
+    setActivePlugins(loaded.map((p) => p.plugin));
+    main(args);
+  } catch (err) {
+    if (!(err instanceof PluginError)) throw err;
+    console.error(c.red(`Error: ${err.message}`));
+    process.exit(1);
+  }
+}
+
+/** A plugin's gate checks (gateRuns) for this target, applied before validation and generation; `ast` itself without plugins. */
+function forTarget<T extends TopologyAST>(ast: T, target: string | undefined): T {
+  return target ? (preparePluginTarget(ast, target) as T) : ast;
+}
+
+function main(args: ParsedArgs): void {
   if (args.help || !args.command) {
     usage();
     process.exit(args.help ? 0 : 1);
@@ -2392,10 +2454,40 @@ function main(): void {
       break;
 
     default:
+      if (isPluginCommand(args.command)) {
+        // The words after the command, the file slot included: the plugin reads them as it likes.
+        try {
+          process.exit(runPluginCommand(args.command, [...(args.file ? [args.file] : []), ...args.more], { cwd: process.cwd(), projectDir: path.resolve(args.dir ?? ".") }));
+        } catch (err) {
+          if (!(err instanceof PluginError)) throw err;
+          console.error(c.red(`Error: ${err.message}`));
+          process.exit(1);
+        }
+      }
       console.error(c.red(`Unknown command: "${args.command}"`));
       usage();
       process.exit(1);
   }
 }
 
-main();
+// Without plugins the run is synchronous, exactly as before; loading a plugin
+// needs dynamic import(), so with one the command runs after it loads.
+{
+  // --version / -v as the first word: print the version, nothing else.
+  const first = process.argv[2];
+  if (first === "--version" || first === "-v") {
+    console.log(packageVersion());
+    process.exit(0);
+  }
+  const args = parseArgs(process.argv);
+  let wanted: ReturnType<typeof pluginRequests>;
+  try {
+    wanted = pluginRequests(args);
+  } catch (err) {
+    if (!(err instanceof PluginError)) throw err;
+    console.error(c.red(`Error: ${err.message}`));
+    process.exit(1);
+  }
+  if (wanted.requests.length === 0) main(args);
+  else void mainWithPlugins(args, wanted.requests, wanted.projectDir);
+}

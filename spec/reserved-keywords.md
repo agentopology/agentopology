@@ -18,6 +18,7 @@ hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
 context, env, extensions, providers, schedule, job, interfaces,
 defaults, schemas, schema, observability, fragment, interface, params,
 threat-model
+egress
 rules, rule
 secrets, secret
 ```
@@ -54,7 +55,7 @@ path, mode, files, routing, protocol, structure, blueprints,
 domains, references, external-docs, metrics, workspace, conflicts,
 detect, resolve, sequential-rebase, source, commands,
 external, git, decision, inline, report, not, ticket, true, false,
-max-turns, max-lines, glossary, max-subagents, max-cost, description, disable-model-invocation, user-invocable, allowed-tools,
+max-turns, max-lines, glossary, max-subagents, max-cost, output-into, description, disable-model-invocation, user-invocable, allowed-tools,
 domain, fork, api-key, base-url, default,
 cron, every, enabled, webhook, channel, auth, port,
 sandbox, docker, network-only, fallback-chain,

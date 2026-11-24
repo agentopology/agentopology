@@ -32,6 +32,14 @@ export interface ManifestEntry {
    */
   head?: string;
   outside?: string;
+  /**
+   * An agent, skill, command or rules file: the hash of its body (the text
+   * after the frontmatter) as scaffold last wrote it from the .at. A body
+   * that still hashes to it is unedited and follows the .at; one that
+   * differs is the user's. Recorded only when scaffold writes the body itself;
+   * an entry without it (written by 0.13.0 or earlier) is read as the user's.
+   */
+  body?: string;
 }
 
 /** Manifest written to disk after each scaffold run. */

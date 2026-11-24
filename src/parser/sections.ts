@@ -19,7 +19,7 @@
  * exactly one of these lists, so a new section cannot fall between them.
  */
 
-export const REPEATED_SECTIONS = ["agent", "action", "human", "group", "skill", "person", "skills"] as const;
+export const REPEATED_SECTIONS = ["agent", "action", "human", "group", "skill", "person", "skills", "boundary"] as const;
 
 export const MERGED_SECTIONS = ["hooks"] as const;
 
@@ -28,7 +28,7 @@ export const SINGLE_SECTIONS = [
   "environments", "triggers", "settings", "mcp-servers", "metering", "context",
   "env", "providers", "schedule", "interfaces", "tools", "defaults", "schemas",
   "observability", "params", "interface", "checkpoint", "artifacts", "records",
-  "machines", "extensions", "inventory", "needs", "threat-model", "rules", "islands", "secrets", "ci",
+  "machines", "extensions", "inventory", "needs", "threat-model", "egress", "rules", "islands", "secrets",
 ] as const;
 
 export const CHILD_KEYWORDS = ["gate", "hook", "tool", "job", "command", "level"] as const;

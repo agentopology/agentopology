@@ -262,7 +262,7 @@ export function resolveSettingsKey(key: string): { row?: CcKey; path: string } |
 export type Coerced = { ok: true; value: string | number | boolean | string[] } | { ok: false; reason: string };
 
 /** A list written in the .at as `[a, "b"]` (the parser keeps it as text) or a comma-separated string. */
-function asList(v: unknown): string[] | undefined {
+export function asList(v: unknown): string[] | undefined {
   if (Array.isArray(v)) return v.map(String);
   if (typeof v !== "string") return undefined;
   const text = v.trim();
@@ -312,11 +312,13 @@ export function coerceCcValue(row: CcKey | undefined, raw: unknown): Coerced {
 
 /**
  * The one exception to "no key without a row": the topology's own SKILL.md
- * carries these four for `import` to recognise it (parseSkillMd keys on
- * `topology:`). Claude Code ignores them. They move under `metadata:` (the
- * documented place for a tool's own data) once import reads them there.
+ * carries these for `import` to recognise it (parseSkillMd keys on
+ * `topology:`), and `entry-agent` (the meta { entry } agent) so a tool can
+ * recognise the flow map. Claude Code ignores them. They move under
+ * `metadata:` (the documented place for a tool's own data) once import reads
+ * them there.
  */
-export const AT_OWNED_TOPOLOGY_SKILL_KEYS: readonly string[] = ["version", "topology", "patterns", "entry"];
+export const AT_OWNED_TOPOLOGY_SKILL_KEYS: readonly string[] = ["version", "topology", "patterns", "entry", "entry-agent"];
 
 /** Frontmatter key → value, where a list is written as a YAML list. */
 export type FrontmatterFields = Record<string, string | number | boolean | string[]>;

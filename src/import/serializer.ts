@@ -93,6 +93,7 @@ function serializeMeta(ast: TopologyAST): string {
   if (meta.entry) lines.push(`    entry: ${meta.entry}`);
   if (meta.outpoints) lines.push(`    outpoints: ${inlineList(meta.outpoints)}`);
   if (meta.durable) lines.push("    durable: true");
+  if (meta.refusalEvents) lines.push("    refusal-events: true");
   lines.push("  }");
   return lines.join("\n");
 }
@@ -174,6 +175,8 @@ function serializeAgent(node: AgentNode): string {
   }
   if (node.fallbackChain?.length) lines.push(`    fallback-chain: ${inlineList(node.fallbackChain)}`);
   if (node.maxTurns) lines.push(`    max-turns: ${node.maxTurns}`);
+  if (node.outputInto) lines.push(`    output-into: ${node.outputInto}`);
+  if (node.wallTime !== undefined) lines.push(`    wall-time: ${node.wallTime}`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);
@@ -348,6 +351,7 @@ function serializeHuman(node: HumanNode): string {
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
   if (node.word !== undefined) lines.push(`    word: ${q(node.word)}`);
+  if (node.stopWord !== undefined) lines.push(`    stop-word: ${q(node.stopWord)}`);
   if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
   if (node.typedOnlyPrograms) lines.push(`    typed-only-programs: [${node.typedOnlyPrograms.map(q).join(", ")}]`);
   lines.push("  }");
@@ -863,7 +867,7 @@ function serializeRecords(records: RecordDef[] | undefined): string | null {
   if (!records?.length) return null;
   const lines: string[] = ["  records {"];
   for (const r of records) {
-    if (!r.fields && !r.schema && !r.writer && !r.kind) {
+    if (!r.fields && !r.schema && !r.writer && !r.kind && r.maxPerDay === undefined && r.maxPerDayRaw === undefined) {
       lines.push(`    record ${r.id} { path: "${r.path}" }`);
       continue;
     }
@@ -872,6 +876,8 @@ function serializeRecords(records: RecordDef[] | undefined): string | null {
     if (r.fields) lines.push(`      fields: [${r.fields.map((f) => `${f.name}: ${f.type}`).join(", ")}]`);
     if (r.schema) lines.push(`      schema: ${r.schema}`);
     if (r.writer) lines.push(`      writer: ${r.writer}`);
+    if (r.maxPerDay !== undefined) lines.push(`      max-per-day: ${r.maxPerDay}`);
+    else if (r.maxPerDayRaw !== undefined) lines.push(`      max-per-day: ${r.maxPerDayRaw}`);
     lines.push("    }");
   }
   lines.push("  }");
@@ -928,6 +934,11 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push(`  pin-models: ${ast.pinModels}`);
   }
 
+  if (ast.usesPlugins?.length) {
+    sections.push("");
+    sections.push(`  uses-plugins: ${inlineList(ast.usesPlugins)}`);
+  }
+
   for (const p of ast.persons ?? []) {
     sections.push("");
     sections.push(`  person ${p.id} {${p.away ? ` away: ${q(p.away)} ` : ""}}`);
@@ -944,6 +955,14 @@ export function serializeAST(ast: TopologyAST): string {
     if (ast.needs.memory !== undefined) sections.push(`    memory: ${q(ast.needs.memory)}`);
     if (ast.needs.connectors?.length) sections.push(`    connectors: ${inlineList(ast.needs.connectors)}`);
     if (ast.needs.userSkills?.length) sections.push(`    user-skills: ${inlineList(ast.needs.userSkills)}`);
+    sections.push("  }");
+  }
+
+  if (ast.egress) {
+    sections.push("");
+    sections.push("  egress {");
+    if (ast.egress.gate) sections.push(`    gate: ${ast.egress.gate}`);
+    sections.push(`    covers: ${inlineList(ast.egress.covers)}`);
     sections.push("  }");
   }
 

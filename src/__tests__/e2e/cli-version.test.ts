@@ -24,10 +24,10 @@ describe("agentopology --version", () => {
     });
   }
 
-  it("the package is 0.13.0, in package.json and package-lock.json", () => {
-    expect(pkg.version).toBe("0.13.0");
-    expect(lock.version).toBe("0.13.0");
-    expect(lock.packages[""].version).toBe("0.13.0");
+  it("the package is 0.13.1, in package.json and package-lock.json", () => {
+    expect(pkg.version).toBe("0.13.1");
+    expect(lock.version).toBe("0.13.1");
+    expect(lock.packages[""].version).toBe("0.13.1");
   });
 
   it("the help text names --version", () => {
