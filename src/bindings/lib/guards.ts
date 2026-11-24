@@ -1197,8 +1197,6 @@ export const MATCH_FUNCTIONS: string[] = [
   "letters() { printf '%s' \"$1\" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'; }",
   "strip_redir() {",
   "  local t=$1 re='(&>>|&>|>>|>\\||>&|<&|<<<|<<-|<<|<>|>|<)[[:space:]]*[^[:space:];&|()<>]*'",
-  "  # a here-string's text is read on its own line, as a here-doc's body is: a shell may run it",
-  "  t=${t//'<<<'/$'\\n'}",
   "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
   "  printf '%s' \"$t\"",
   "}",
@@ -3249,6 +3247,26 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       : []),
   ];
   const sq = shellQuote;
+  // A here-string's text, read by the step gates on its own lines, as a here-doc's body already is: a shell
+  // fed `<<<'tool step'` runs it. Added after the checks above, which read the command as written.
+  lines.push(
+    "# at_herestr CMD: the text of each here-string (<<<) in CMD, one per line: a quoted word up to its closing",
+    "# quote, any other up to a blank or an operator.",
+    "at_herestr() {",
+    "  local t=$1 x q",
+    "  while [[ $t == *'<<<'* ]]; do",
+    "    t=${t#*'<<<'}; t=${t#\"${t%%[![:space:]]*}\"}",
+    "    q=${t:0:1}",
+    "    if [ \"$q\" = \"'\" ] || [ \"$q\" = '\"' ]; then x=${t:1}; x=${x%%\"$q\"*}; else x=${t%%[[:space:];&|()<>]*}; fi",
+    "    printf '%s\\n' \"$x\"",
+    "  done",
+    "}",
+    "if [[ $CMD == *'<<<'* ]]; then",
+    "  AT_HS=$(at_herestr \"$CMD\")",
+    "  for sep in '&' '|' ';' '(' ')' '`'; do AT_HS=${AT_HS//\"$sep\"/$'\\n'}; done",
+    "  SEGS+=$'\\n'$AT_HS",
+    "fi",
+  );
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
   guards.forEach(({ action }, a) => {
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
