@@ -257,6 +257,20 @@ function decodedArgs(script: string, args: string[]): string[] {
 }
 
 /**
+ * Whether the run reader turns a run's `\"` into `"`: only when an
+ * interpreter (one with a flag table) runs a script word that names a
+ * project file (decodedArgs, the 0.12.6 path). Everywhere else, an inline
+ * command, a direct script run, another program, the `\"` reaches the
+ * command with its backslash (strings are not unescaped in 0.13.0).
+ */
+export function runDecodesQuotes(run: string): boolean {
+  const first = run.trim().split(/\s+/)[0] ?? "";
+  if (!INTERPRETER.test(first.replace(/^.*\//, "")) || !flagTable(first)) return false;
+  const p = runParts(run);
+  return !!p.interpreter && isProjectPath(p.script);
+}
+
+/**
  * Whether a script word names a file in the project (run where it is) rather
  * than one in the topology skill's scripts/ folder (scaffolded by basename).
  * `./x`, `/x` and any path with a folder count (a path through a variable,

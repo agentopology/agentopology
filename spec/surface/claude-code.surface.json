@@ -937,6 +937,46 @@
       "grade": "refuse"
     },
     {
+      "id": "cc.hooks.payload.agent_id",
+      "area": "hooks.payload",
+      "tokens": [
+        "agent_id"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell one subagent from another, so max-subagents miscounts and timeout lets a call through",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.hook_event_name",
+      "area": "hooks.payload",
+      "tokens": [
+        "hook_event_name"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/caps.ts"
+      ],
+      "language": [
+        "max-subagents",
+        "timeout"
+      ],
+      "proof": "src/bindings/__tests__/caps.test.ts",
+      "ifBroken": "the subagent log cannot tell a start from a stop, so max-subagents miscounts",
+      "grade": "refuse"
+    },
+    {
       "id": "cc.hooks.payload.agent_type",
       "area": "hooks.payload",
       "tokens": [
@@ -956,6 +996,25 @@
       ],
       "proof": "src/__tests__/e2e/guard-check.test.ts",
       "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.last_assistant_message",
+      "area": "hooks.payload",
+      "tokens": [
+        "last_assistant_message"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "output-schema"
+      ],
+      "proof": "src/bindings/__tests__/output-schema-hook.test.ts",
+      "ifBroken": "an agent's output is checked against an empty message",
       "grade": "refuse"
     },
     {
@@ -1159,6 +1218,25 @@
       ],
       "proof": "src/__tests__/e2e/guard-check.test.ts",
       "ifBroken": "a guard reads an empty field and decides on nothing",
+      "grade": "refuse"
+    },
+    {
+      "id": "cc.hooks.payload.cwd",
+      "area": "hooks.payload",
+      "tokens": [
+        "cwd"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/hooks.md"
+      },
+      "usedBy": [
+        "src/bindings/claude-code.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/guard-ordinary.test.ts",
+      "ifBroken": "before-action.sh reads a glob from the project root instead of the folder the session is in: a glob there is matched against the wrong files",
       "grade": "refuse"
     },
     {

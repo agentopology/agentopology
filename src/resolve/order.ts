@@ -81,7 +81,7 @@ export interface ResolvedOrder {
 function trueBackEdges(edges: EdgeDef[], nodeIds: Set<string>): Set<string> {
   const out = new Map<string, string[]>();
   for (const e of edges) {
-    if (e.isError) continue;
+    if (e.isError || e.finish) continue;
     if (!nodeIds.has(e.from) || !nodeIds.has(e.to)) continue;
     if (!out.has(e.from)) out.set(e.from, []);
     out.get(e.from)!.push(e.to);
@@ -143,7 +143,8 @@ export function resolveOrder(ast: TopologyAST): ResolvedOrder {
   // ELEVEN downstream nodes as unreachable on a topology that validates clean.
   const backKeys = trueBackEdges(ast.edges, flowIds);
   const forwardEdges = ast.edges.filter(
-    (e) => !e.isError && !backKeys.has(`${e.from} ${e.to}`)
+    // A finish edge is an end, not a step or a loop: it hands the line back to the entry agent.
+    (e) => !e.isError && !e.finish && !backKeys.has(`${e.from} ${e.to}`)
   );
   const layers = computeLayers(
     // computeLayers strips `maxIterations` itself, so clear it on the edges we

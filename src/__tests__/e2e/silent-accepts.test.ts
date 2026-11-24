@@ -62,7 +62,7 @@ describe("a refuse hook on Stop / SubagentStop with an unwritten script is a stu
 describe("unknown keys in settings { } and metering { } are V102 errors", () => {
   const v102 = () => validate(parse(SOURCE)).filter((r) => r.rule === "V102");
 
-  for (const [key, block] of [["scope", "settings"], ["pin-models", "settings"], ["cap", "metering"]] as const) {
+  for (const [key, block] of [["scope", "settings"], ["pin-models", "settings"], ["limit", "metering"]] as const) {
     it(`${block} ${key}: is named, as an error`, () => {
       const hit = v102().find((r) => r.message.includes(`\`${key}`) && r.message.includes(block));
       expect(hit, `${block} ${key}`).toBeDefined();

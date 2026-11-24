@@ -20,6 +20,7 @@ import type {
   ActionNode,
   AgentNode,
   GateNode,
+  GateTests,
   HumanNode,
   GroupNode,
   NodeDef,
@@ -54,12 +55,16 @@ import type {
   ReplayConfig,
   ArtifactDef,
   RecordDef,
+  CiDef,
   PromptVariant,
   AuthDef,
   StoreNode,
   MachineDef,
+  SecretDef,
   PersonDef,
+  IslandDef,
   NeedsDef,
+  ThreatModelDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -84,6 +89,7 @@ import {
   maskProse,
   closingBrace,
   braceText,
+  splitOneLineFields,
 } from "./lexer.js";
 
 /**
@@ -107,6 +113,7 @@ function namedSubBlocks(body: string, skipNested = false): Array<{ name: string;
 import { findUnknownNames } from "./known-fields.js";
 import { findLostStructure } from "./lost-structure.js";
 import { SINGLE_SECTIONS } from "./sections.js";
+import { parseRules } from "./rules.js";
 import { activePlugins, checkPluginSet, parsePluginBlocks, setHidden } from "../plugins/runtime.js";
 import type { AtPlugin } from "../plugins/types.js";
 
@@ -432,7 +439,12 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   // Kept as written, an empty value included: V134 reports one that is not an agent id.
   if (fields.entry !== undefined) result.entry = unquote(fields.entry.trim());
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
+  if (fields.outpoints !== undefined) result.outpoints = parseList(fields.outpoints);
   if (fields.durable) result.durable = fields.durable === "true";
+  if (fields.requires !== undefined) result.requires = unquote(fields.requires.trim());
+  // Kept as written, an empty value included: V152 reports one that is not a path.
+  if (fields.target !== undefined) result.target = unquote(fields.target.trim());
+  else if (/^\s*target\s*:\s*(#.*)?$/m.test(body)) result.target = "";
 
   return result;
 }
@@ -576,6 +588,7 @@ export function parseAgent(
   const reads = parseMultilineList(body, "reads");
   const writes = parseMultilineList(body, "writes");
   const disallowedTools = parseMultilineList(body, "disallowed-tools");
+  const neverReads = parseMultilineList(body, "never-reads");
   const outputs = parseOutputsBlock(body);
 
   const node: AgentNode = {
@@ -619,6 +632,7 @@ export function parseAgent(
   if (reads.length) node.reads = reads;
   if (writes.length) node.writes = writes;
   if (disallowedTools.length) node.disallowedTools = disallowedTools;
+  if (neverReads.length) node.neverReads = neverReads;
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
@@ -757,7 +771,7 @@ export function parseAgent(
       if (_blockFieldMisuseWarnings) {
         detectSwallowedFields(hFields, `${id}.${hBlock.id}`, _blockFieldMisuseWarnings);
       }
-      const agentHook = hookFromFields(hBlock.id, hFields);
+      const agentHook = hookFromFields(hBlock.id, hFields, hBlock.body);
 
       // Parse extensions sub-block inside per-agent hook
       const hookExtensions = parseExtensionsBlock(hBlock.body);
@@ -825,6 +839,17 @@ export function parseAgent(
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
   if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
+  // Caps: kept as written when not valid, so V156 can name the value.
+  if (fields["max-subagents"] !== undefined) {
+    const raw = unquote(fields["max-subagents"].trim());
+    if (/^[1-9]\d*$/.test(raw)) node.maxSubagents = parseInt(raw, 10);
+    else node.maxSubagentsRaw = raw;
+  }
+  if (fields["max-cost"] !== undefined) {
+    const cost = parseUsd(fields["max-cost"]);
+    if (cost.value !== undefined) node.maxCost = cost.value;
+    else node.maxCostRaw = cost.raw;
+  }
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
 
@@ -841,6 +866,17 @@ export function parseAgent(
   }
 
   return node;
+}
+
+/**
+ * The `tests { refuse: [..] allow: [..] }` block of a gate or a hook, or
+ * undefined when there is none. A block with no rows reads as two empty lists
+ * (V141 reports it).
+ */
+function parseTestsBlock(body: string): GateTests | undefined {
+  const block = extractBlock(body, "tests");
+  if (!block) return undefined;
+  return { refuse: parseMultilineList(block.body, "refuse"), allow: parseMultilineList(block.body, "allow") };
 }
 
 /**
@@ -870,9 +906,18 @@ export function parseGate(
   if (afterList.length) node.after = afterList;
   else if (fields.after) node.after = fields.after;
 
+  // `before: write "<glob>"` is a path anchor, not a node id: it goes to beforeWrite.
   const beforeList = parseMultilineList(body, "before");
-  if (beforeList.length) node.before = beforeList;
-  else if (fields.before) node.before = fields.before;
+  const beforeItems = beforeList.length ? beforeList : fields.before ? [fields.before] : [];
+  const beforeNodes: string[] = [];
+  const beforeWrite: string[] = [];
+  for (const item of beforeItems) {
+    const w = /^write\s+(".*")$/.exec(item.trim());
+    if (w) beforeWrite.push(unquote(w[1]));
+    else beforeNodes.push(item);
+  }
+  if (beforeWrite.length) node.beforeWrite = beforeWrite;
+  if (beforeNodes.length) node.before = beforeList.length ? beforeNodes : beforeNodes[0];
   if (fields.run) node.run = unquote(fields.run);
   if (checks.length) node.checks = checks;
   if (fields.retry) node.retry = parseInt(fields.retry, 10);
@@ -886,6 +931,12 @@ export function parseGate(
   if (fields.match) node.match = unquote(fields.match);
   if (fields.bypass) node.bypass = unquote(fields.bypass);
   if (fields.ledger) node.ledger = fields.ledger;
+  const tests = parseTestsBlock(body);
+  if (tests) node.tests = tests;
+  if (fields.mode) node.mode = fields.mode;
+  if (fields["let-go"]) node.letGo = fields["let-go"];
+  if (fields.lift) node.lift = fields.lift;
+  if (fields.rule) node.rule = unquote(fields.rule);
 
   const extensions = parseExtensionsBlock(body);
   if (extensions) node.extensions = extensions;
@@ -920,6 +971,7 @@ export function parseHuman(
   if (fields.valid) node.valid = unquote(fields.valid);
   if (fields.word !== undefined) node.word = unquote(fields.word);
   if (fields.binds) node.binds = parseList(fields.binds);
+  if (fields["typed-only-programs"]) node.typedOnlyPrograms = parseList(fields["typed-only-programs"]);
 
   return node;
 }
@@ -986,6 +1038,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     let wait: string | undefined;
     let weight: number | undefined;
     let reflection: boolean | undefined;
+    let finish: boolean | undefined;
     let strength: string | undefined;
     let at: string | undefined;
     let guard: string[] | undefined;
@@ -994,9 +1047,14 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
 
     // Match annotation at end of line: [when ..., max N, per agent-id, tolerance: N, race, wait 30s, reflection]
     // Must start with "when", "max", "per", "tolerance", "race", "wait", "join", "weight", or "reflection" to avoid matching fan-out lists.
-    const bracketMatch = trimmed.match(
-      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?)\]\s*$/
+    let bracketMatch = trimmed.match(
+      /\[(when\s+.+?|max\s+\d+.*?|per\s+\S+.*?|tolerance\s*:.+?|race.*?|wait\s+\S+.*?|join\s+\S+.*?|weight\s+\S+.*?|reflection.*?|strength\s*:.+?|guard\s*:.+?|at\s*:.+?|message\s*:.+?|finish(?:\s*,.*?)?)\]\s*$/
     );
+    // `a -> [finish, b]` is a fan-out list that names a node "finish", not an
+    // annotation: an annotation follows a target, a fan-out list follows an arrow.
+    if (bracketMatch && /^finish\b/.test(bracketMatch[1]) && /(?:->|\])\s*$/.test(trimmed.slice(0, bracketMatch.index!))) {
+      bracketMatch = null;
+    }
     // V92: two bracket groups on one edge. The grammar defines ONE annotation
     // with comma-separated attributes (`[when ..., max N]`). Written as
     // `[when ...] [max N]`, the matcher below spans from the first `[` to the
@@ -1005,7 +1063,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
     // Count only ANNOTATION brackets. A fan-out list is also bracketed —
     // `analyzer -> [reporter, alerter] [when ...]` is legal — so testing for
     // `] [` alone flagged valid topologies.
-    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message)\b/g;
+    const ATTR = /\[\s*(?:when|max|per|tolerance|race|wait|join|weight|reflection|strength|guard|at|message|finish)\b/g;
     const annotationBrackets = (trimmed.match(ATTR) ?? []).length;
     if (annotationBrackets > 1 && _edgeAttributeErrors) {
       _edgeAttributeErrors.push({
@@ -1032,7 +1090,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
         });
       }
 
-      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b)|$)/);
+      const whenMatch = annotation.match(/when\s+(.+?)(?:,\s*(?:max|per|tolerance|race|wait|weight|reflection|strength|guard|at\b|message\b|finish\b)|$)/);
       if (whenMatch) condition = whenMatch[1].trim();
 
       const maxMatch = annotation.match(/max\s+(\d+)/);
@@ -1068,6 +1126,11 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       // reflection
       if (/\breflection\b/.test(annotation)) {
         reflection = true;
+      }
+
+      // finish (a word of its own: `when x.finish == y` is not it)
+      if (/(?:^|,)\s*finish\s*(?:,|$)/.test(annotation)) {
+        finish = true;
       }
 
       // strength: refuse | detect | hope | none; at: "path:line"; guard: id | [id, id]
@@ -1157,6 +1220,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
       if (isLastSegment && wait) baseEdge.wait = wait;
       if (isLastSegment && weight !== undefined) baseEdge.weight = weight;
       if (isLastSegment && reflection) baseEdge.reflection = true;
+      if (isLastSegment && finish) baseEdge.finish = true;
       if (isLastSegment && strength) baseEdge.strength = strength;
       if (isLastSegment && at !== undefined) baseEdge.at = at;
       if (isLastSegment && guard) baseEdge.guard = guard;
@@ -1178,6 +1242,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
             ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
             ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
             ...(baseEdge.reflection ? { reflection: true } : {}),
+            ...(baseEdge.finish ? { finish: true } : {}),
             ...enforcement(baseEdge),
             ...(baseEdge.message ? { message: baseEdge.message } : {}),
           });
@@ -1196,6 +1261,7 @@ export function parseFlow(body: string, _edgeAttributeErrors?: Array<{ rule: str
           ...(baseEdge.wait ? { wait: baseEdge.wait } : {}),
           ...(baseEdge.weight !== undefined ? { weight: baseEdge.weight } : {}),
           ...(baseEdge.reflection ? { reflection: true } : {}),
+          ...(baseEdge.finish ? { finish: true } : {}),
           ...enforcement(baseEdge),
           ...(baseEdge.message ? { message: baseEdge.message } : {}),
         });
@@ -1633,7 +1699,8 @@ export function parseTriggers(body: string): TriggerDef[] {
  * Build a HookDef from a hook block's parsed fields. Shared by global and
  * per-agent hooks so the two cannot drift apart.
  */
-function hookFromFields(name: string, fields: Record<string, string>): HookDef {
+function hookFromFields(name: string, fields: Record<string, string>, body?: string): HookDef {
+  const tests = body ? parseTestsBlock(body) : undefined;
   return {
     name,
     on: fields.on ?? "",
@@ -1652,6 +1719,10 @@ function hookFromFields(name: string, fields: Record<string, string>): HookDef {
     ...(fields.model ? { model: unquote(fields.model) } : {}),
     ...(fields.strength ? { strength: fields.strength } : {}),
     ...(fields.bypass ? { bypass: unquote(fields.bypass) } : {}),
+    ...(tests ? { tests } : {}),
+    ...(fields.mode ? { mode: fields.mode } : {}),
+    ...(fields["let-go"] ? { letGo: fields["let-go"] } : {}),
+    ...(fields.rule ? { rule: unquote(fields.rule) } : {}),
   };
 }
 
@@ -1672,7 +1743,7 @@ export function parseHooks(
     if (_blockFieldMisuseWarnings) {
       detectSwallowedFields(fields, block.id, _blockFieldMisuseWarnings);
     }
-    const hook = hookFromFields(block.id, fields);
+    const hook = hookFromFields(block.id, fields, block.body);
 
     // Parse extensions sub-block inside hook
     const extensions = parseExtensionsBlock(block.body);
@@ -1719,13 +1790,27 @@ export function parseMetering(body: string): MeteringDef | null {
 
   if (track.length === 0 && !fields.output) return null;
 
+  // `cap:` is the older name for `max-cost:`; max-cost wins when both are written.
+  const capText = fields["max-cost"] ?? fields.cap;
+  const cap = capText !== undefined ? parseUsd(capText) : null;
+
   return {
     track,
     per,
     output: fields.output ? unquote(fields.output) : "",
     format: fields.format ?? "",
     pricing: fields.pricing ?? "",
+    ...(cap && cap.value !== undefined ? { maxCost: cap.value } : {}),
+    ...(cap && cap.value === undefined ? { maxCostRaw: cap.raw } : {}),
   };
+}
+
+/** A USD amount: `2`, `1.50`, `$1.50`, quoted or not. `value` is set only for a positive number. */
+function parseUsd(text: string): { value?: number; raw: string } {
+  const raw = unquote(text.trim());
+  const m = /^\$?\s*(\d+(?:\.\d+)?)$/.exec(raw);
+  const n = m ? Number(m[1]) : NaN;
+  return n > 0 ? { value: n, raw } : { raw };
 }
 
 /**
@@ -1835,12 +1920,23 @@ export function parseSkillBlocks(topBody: string): SkillDef[] {
  *
  * Returns context file configuration with optional file path and includes list.
  */
-export function parseContext(body: string): { file?: string; includes?: string[] } {
+export function parseContext(body: string): TopologyAST["context"] {
   const fields = parseFields(body);
-  const result: { file?: string; includes?: string[] } = {};
+  const result: TopologyAST["context"] = {};
   if (fields.file) result.file = unquote(fields.file);
   const includes = parseMultilineList(body, "includes");
   if (includes.length) result.includes = includes;
+  const max = fields["max-lines"];
+  if (max !== undefined && /^\d+$/.test(max.trim())) result.maxLines = Number(max.trim());
+  const glossary = extractBlock(body, "glossary");
+  if (glossary) {
+    const terms: { term: string; definition: string }[] = [];
+    for (const line of glossary.body.split("\n")) {
+      const m = /^\s*"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/.exec(line);
+      if (m) terms.push({ term: m[1].replace(/\\(.)/g, "$1"), definition: m[2].replace(/\\(.)/g, "$1") });
+    }
+    if (terms.length) result.glossary = terms;
+  }
   return result;
 }
 
@@ -1853,7 +1949,8 @@ export function parseContext(body: string): { file?: string; includes?: string[]
  */
 export function parseEnv(body: string): Record<string, string | SensitiveValue> {
   const result: Record<string, string | SensitiveValue> = {};
-  for (const line of body.split("\n")) {
+  // A one-line env { A: "1", B: "2" } reads each key like its own line.
+  for (const line of body.split("\n").flatMap(splitOneLineFields)) {
     const kv = parseKV(line);
     if (kv) {
       const rawValue = kv[1].trim();
@@ -2269,7 +2366,63 @@ export function parseRecords(topBody: string): RecordDef[] {
   if (!block) return [];
   return extractAllBlocks(block.body, "record")
     .filter((b) => b.id)
-    .map((b) => ({ id: b.id!, path: unquote(parseFields(b.body).path ?? "") }));
+    .map((b) => {
+      const f = parseFields(b.body);
+      const rec: RecordDef = { id: b.id!, path: unquote(f.path ?? "") };
+      if (f.fields !== undefined) {
+        // `fields: [name: type, ..]`; an item with no `name: type` shape keeps an empty type so V139 can name it.
+        rec.fields = parseList(f.fields).filter(Boolean).map((item) => {
+          const i = item.indexOf(":");
+          return i < 0 ? { name: item.trim(), type: "" } : { name: item.slice(0, i).trim(), type: item.slice(i + 1).trim() };
+        });
+      }
+      if (f.schema !== undefined) rec.schema = unquote(f.schema);
+      if (f.writer !== undefined) rec.writer = unquote(f.writer);
+      if (f.kind !== undefined) rec.kind = unquote(f.kind);
+      return rec;
+    });
+}
+
+/**
+ * Parse the top-level `ci { provider: github, on: [...], gates: [...] }`
+ * block. Fields sit one per line or, as the one-line form writes them, apart
+ * by commas outside the brackets. `on` defaults to pull_request and push; a
+ * missing provider reads as empty so V155 can name it.
+ */
+export function parseCi(topBody: string): CiDef | undefined {
+  // Only a `ci {` of the topology's own level: a looser match would also read
+  // `circuit-breaker {` or a block nested in an agent.
+  const at = depthZeroText(topBody).search(/(?:^|\n)[ \t]*ci[ \t]*\{/);
+  if (at === -1) return undefined;
+  const block = extractBlock(topBody.slice(at), "ci");
+  if (!block) return undefined;
+  const entries: string[] = [];
+  for (const line of block.body.split("\n")) {
+    let depth = 0;
+    let quote = false;
+    let start = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"' && line[i - 1] !== "\\") quote = !quote;
+      else if (quote) continue;
+      else if (ch === "[") depth++;
+      else if (ch === "]") depth--;
+      else if (ch === "," && depth === 0) { entries.push(line.slice(start, i)); start = i + 1; }
+    }
+    entries.push(line.slice(start));
+  }
+  const fields: Record<string, string> = {};
+  for (const e of entries) {
+    const m = /^\s*([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$/.exec(e);
+    if (m) fields[m[1]] = m[2];
+  }
+  const list = (raw: string | undefined, fallback: string[]) =>
+    raw === undefined ? fallback : parseList(raw).map(unquote).filter((s) => s !== "");
+  return {
+    provider: unquote(fields.provider ?? ""),
+    on: list(fields.on, ["pull_request", "push"]),
+    gates: list(fields.gates, []),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2600,7 +2753,10 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     ...(metaFields.timeout ? { timeout: metaFields.timeout } : {}),
     ...(metaFields.errorHandler ? { errorHandler: metaFields.errorHandler } : {}),
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
+    ...(metaFields.outpoints !== undefined ? { outpoints: metaFields.outpoints } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
+    ...(metaFields.requires !== undefined ? { requires: metaFields.requires } : {}),
+    ...(metaFields.target !== undefined ? { target: metaFields.target } : {}),
   };
 
   // --- Roles ---
@@ -2684,7 +2840,7 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
 
-  // `uses-plugins: [a, b]`: a check only (V138). It never loads code.
+  // `uses-plugins: [a, b]`: a check only (V158). It never loads code.
   const usesList = parseMultilineList(topText, "uses-plugins");
   const usesField = usesList.length ? null : topText.match(/(?:^|\n)[ \t]*uses-plugins[ \t]*:[ \t]*([^\n]*)/);
   const usesPlugins = usesList.length ? usesList.map(unquote) : usesField ? parseList(usesField[1]).map(unquote) : undefined;
@@ -2695,6 +2851,33 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     ? extractAllBlocks(machinesBlock.body, "machine").filter((b) => b.id).map((b) => {
         const f = parseFields(b.body);
         return { id: b.id as string, ...(f.os ? { os: unquote(f.os) } : {}) };
+      })
+    : undefined;
+
+  // --- Secrets (top-level `secrets { secret <id> { path: "<glob>", readers: [<agents>] } }`) ---
+  // The fields may share one line, separated by commas outside quotes and brackets.
+  const commaLines = (s: string): string => {
+    let out = "", depth = 0, quote = "";
+    for (const ch of s) {
+      if (quote) { if (ch === quote) quote = ""; }
+      else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "[") depth++;
+      else if (ch === "]") depth--;
+      else if (ch === "," && depth === 0) { out += "\n"; continue; }
+      out += ch;
+    }
+    return out;
+  };
+  const secretsBlock = extractBlock(topBody, "secrets");
+  const secrets: SecretDef[] | undefined = secretsBlock
+    ? extractAllBlocks(secretsBlock.body, "secret").filter((b) => b.id).map((b) => {
+        const body = commaLines(b.body);
+        const f = parseFields(body);
+        return {
+          id: b.id as string,
+          ...(f.path ? { path: unquote(f.path) } : {}),
+          readers: parseMultilineList(body, "readers"),
+        };
       })
     : undefined;
 
@@ -2709,19 +2892,54 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
 
   // --- Inventory roots (top-level `inventory { roots: ["harness/"] }`) ---
   const inventoryBlock = extractBlock(topBody, "inventory");
-  const inventoryRootsField = inventoryBlock ? parseFields(inventoryBlock.body).roots : undefined;
+  // The fields may share a line: `inventory { roots: ["a/"]  strict: true }`.
+  const inventoryFields = inventoryBlock ? parseFields(inventoryBlock.body.replace(/[ \t]+(?=(?:roots|strict)[ \t]*:)/g, "\n")) : {};
+  const inventoryRootsField = inventoryFields.roots;
   const inventoryRoots = inventoryRootsField ? parseList(inventoryRootsField).map(unquote) : undefined;
+  const inventoryStrict = inventoryFields.strict === "true";
+
+  // --- Islands (top-level `islands { island <id> { path: "<glob>" owner: <person> test: "<cmd>" } }`) ---
+  const islandsBlock = extractBlock(topBody, "islands");
+  const islandList: IslandDef[] = islandsBlock
+    ? extractAllBlocks(islandsBlock.body, "island").filter((b) => b.id).map((b) => {
+        const f = parseFields(b.body);
+        return {
+          id: b.id as string,
+          path: f.path !== undefined ? unquote(f.path) : "",
+          owner: f.owner !== undefined ? unquote(f.owner) : "",
+          ...(f.test !== undefined ? { test: unquote(f.test) } : {}),
+        };
+      })
+    : [];
 
   // --- Needs outside the repo (top-level `needs { memory: "~/x" connectors: [..] user-skills: [..] }`) ---
   const needsBlock = extractBlock(topBody, "needs");
   const needs: NeedsDef | undefined = needsBlock
     ? (() => {
         // The fields may share a line: `needs { memory: "~/m"  connectors: [a] }`.
-        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills)[ \t]*:)/g, "\n"));
+        const f = parseFields(needsBlock.body.replace(/[ \t]+(?=(?:memory|connectors|user-skills|plugins)[ \t]*:)/g, "\n"));
         return {
+          ...(f.plugins ? { plugins: parseList(f.plugins).map(unquote) } : {}),
           ...(f.memory ? { memory: unquote(f.memory) } : {}),
           ...(f.connectors ? { connectors: parseList(f.connectors).map(unquote) } : {}),
           ...(f["user-skills"] ? { userSkills: parseList(f["user-skills"]).map(unquote) } : {}),
+        };
+      })()
+    : undefined;
+
+  // --- Threat model (top-level `threat-model { untrusted, outside-sandbox, refuse-after-untrusted, lift }`) ---
+  const threatBlock = extractBlock(topBody, "threat-model");
+  const threatModel: ThreatModelDef | undefined = threatBlock
+    ? (() => {
+        // The fields may share a line: `threat-model { untrusted: [web] lift: boss }`.
+        const body = threatBlock.body.replace(/(?<=[\]\w"])[ \t]+(?=(?:untrusted|outside-sandbox|refuse-after-untrusted|lift)[ \t]*:)/g, "\n");
+        const f = parseFields(body);
+        const list = (key: string) => parseMultilineList(body, key).map(unquote);
+        return {
+          untrusted: list("untrusted"),
+          outsideSandbox: list("outside-sandbox"),
+          refuseAfterUntrusted: list("refuse-after-untrusted"),
+          ...(f.lift ? { lift: unquote(f.lift) } : {}),
         };
       })()
     : undefined;
@@ -2871,6 +3089,9 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
   // --- Records ---
   const records = parseRecords(topBody);
 
+  // --- CI ---
+  const ci = parseCi(topBody);
+
   // --- Top-level Extensions ---
   // Only an `extensions` block at the topology's own level. The first one
   // anywhere used to win, so an agent's extensions (effort, color, ...) were
@@ -2941,7 +3162,7 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
   // and validate passed (N23). V102 names each one with its block.
   // Plugins (EXPERIMENTAL): a loaded plugin's keywords are known; their
   // blocks parse to data kept off the enumerable AST. With `uses-plugins`
-  // naming a plugin that is not loaded, an unknown top-level block is V138
+  // naming a plugin that is not loaded, an unknown top-level block is V158
   // (it needs that plugin) instead of V102. Without either, nothing changes.
   const pluginParse = plugins.length > 0 ? parsePluginBlocks(topBody, plugins, lineInTopBody) : undefined;
   if (pluginParse) duplicateSectionWarnings.push(...pluginParse.warnings);
@@ -2954,7 +3175,7 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     ...(unloaded.length > 0
       ? {
           claim: (keyword: string) => {
-            pluginNeedErrors.push({ rule: "V138", level: "error", message: `block ${keyword} needs plugin ${unloaded.join(" or ")}; run with ${runWith}` });
+            pluginNeedErrors.push({ rule: "V158", level: "error", message: `block ${keyword} needs plugin ${unloaded.join(" or ")}; run with ${runWith}` });
             return true;
           },
         }
@@ -2962,7 +3183,7 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
   });
   if (unloaded.length > 0 && pluginNeedErrors.length === 0) {
     for (const id of unloaded) {
-      pluginNeedErrors.push({ rule: "V138", level: "error", message: `uses-plugins names plugin ${id}, which is not loaded; run with --plugin ${id}` });
+      pluginNeedErrors.push({ rule: "V158", level: "error", message: `uses-plugins names plugin ${id}, which is not loaded; run with --plugin ${id}` });
     }
   }
   // F5: since S-13 only a top-level `env { }` is the topology env; the keys of
@@ -3013,6 +3234,11 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     interfaces,
     defaults,
     schemas,
+    // Left off the AST when there is no block, so a file without rules parses as before.
+    ...(() => {
+      const block = extractBlock(topBody, "rules");
+      return block ? { rules: parseRules(block.body) } : {};
+    })(),
     ...(topLevelExtensions ? { extensions: topLevelExtensions } : {}),
     observability,
     params,
@@ -3022,13 +3248,18 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     checkpoint,
     artifacts,
     records,
+    ...(ci ? { ci } : {}),
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(usesPlugins ? { usesPlugins } : {}),
     ...(machines ? { machines } : {}),
+    ...(secrets ? { secrets } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),
+    ...(threatModel ? { threatModel } : {}),
+    ...(inventoryStrict ? { inventoryStrict } : {}),
+    ...(islandList.length ? { islands: islandList } : {}),
     ...(isFragment ? { isFragment: true } : {}),
   };
 

@@ -19,22 +19,27 @@
  * @module
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { contextBlock, contextFilePath, mergeContextBlock } from "../bindings/lib/context-block.js";
 import { MISSING } from "./index.js";
-import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
+import { gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
 import { CLAUDE_CODE_PERMISSION_MODES, mapPermissionMode, mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { repoTool, runsThroughBash } from "../bindings/lib/repo-tools.js";
-import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
+import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
+import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
 import { checkImports, type ImportCache } from "./imports.js";
 import { parseWindow, today } from "./window.js";
+import { parseRange } from "./range.js";
 import { isClaudeModelName } from "../conformance/codex.js";
 import { allowRuleWarning, planCodexRules } from "../bindings/lib/codex-rules.js";
 import { GUARD_TIMEOUT, codexGateHold, codexHookProblems, gateWorstCase, guardHookTimeout } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
-import { checkableActionGate, hooklessGateReason, stepMatchWords } from "../bindings/lib/guards.js";
+import { checkableActionGate, gateChecks, hooklessGateReason, letGoHuman, stepMatchWords } from "../bindings/lib/guards.js";
 import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/hook-blocks.js";
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
@@ -100,9 +105,9 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "agent", "action", "orchestrator", "meta", "roles", "memory", "flow",
   "gates", "gate", "depth", "batch", "environments", "triggers", "command",
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
-  "tools", "tool", "scale", "skill",
+  "tools", "tool", "scale", "skill", "threat-model", "rules", "rule", "secrets", "secret",
   // Field keywords
-  "model", "disallowed-tools", "reads", "writes", "outputs", "skip",
+  "model", "disallowed-tools", "never-reads", "readers", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
   "permissions", "prompt", "generates", "handles", "argument", "factors",
   "behavior", "invocation", "delegation", "subagent",
@@ -136,7 +141,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "orchestrator-worker", "debate", "market-routing", "consensus",
   "fan-out", "event-driven", "human-gate", "brain",
   // Extension system keywords
-  "context", "extensions", "max-turns",
+  "context", "extensions", "max-turns", "max-lines", "glossary", "max-subagents", "max-cost",
   "disable-model-invocation", "user-invocable", "allowed-tools",
   "domain", "fork",
   // Provider keywords
@@ -297,6 +302,8 @@ function collectOutputs(
 export function findBackEdges(edges: EdgeDef[], nodeIds: Set<string>): EdgeDef[] {
   // Step 1: Remove edges that already have [max N] — those are acknowledged loops.
   // We compute the topological order on the remaining "forward" edges only.
+  // A finish edge is an end, not a loop (V149): it is never a back-edge.
+  edges = edges.filter((e) => !e.finish);
   const forwardEdges = edges.filter((e) => e.maxIterations === null);
   const loopEdges = edges.filter((e) => e.maxIterations !== null);
 
@@ -1210,6 +1217,18 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
   const check = (owner: string, run: string | undefined, nodeId?: string, agentHook = false) => {
     if (run === undefined) return;
     const why = proseInRun(run) ?? (agentHook ? null : unsafeScriptPath(run));
+    // Strings are not unescaped in 0.13.0: a \" the run reader does not decode reaches the
+    // command with its backslash, so the check may never match what it was written to
+    // match. A warning on every hook and gate, refusing ones included (unescaping comes
+    // later). A run V96 already refuses below is not reported twice.
+    if (!why && run.includes('\\"') && !runDecodesQuotes(run)) {
+      results.push({
+        rule: "V96",
+        level: "warning",
+        message: `${owner} "run": \`\\"\` reaches the command unescaped; this check may never pass or refuse as written`,
+        ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
+      });
+    }
     if (!why) return;
     results.push({
       rule: "V96",
@@ -4125,6 +4144,8 @@ export interface ValidateOptions {
   importCache?: ImportCache;
   /** Binding target being compiled for. Target-specific warnings (rule ids CX*) appear only when it is set. */
   target?: string;
+  /** Project folder (`validate --dir`): rules that look at files in it run only when it is set. */
+  dir?: string;
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
@@ -4207,7 +4228,27 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
     ...v137ObservabilityEnv(ast, opts),
-    ...v138PluginsLoaded(ast),
+    ...v138ThreatModel(ast, opts),
+    ...v139RecordFields(ast),
+    ...v140RecordsNotWritten(ast, opts),
+    ...v141GateTests(ast, opts),
+    ...v142GateMode(ast, opts),
+    ...v143RulesBlock(ast),
+    ...v144RuleCitation(ast),
+    ...v145ContextIncludes(ast, opts),
+    ...v146ContextMaxLines(ast, opts),
+    ...v147IslandOwners(ast),
+    ...v148RequiresRange(ast),
+    ...v149FinishEdge(ast),
+    ...v150Outpoints(ast),
+    ...v151WriteAnchor(ast),
+    ...v152MetaTarget(ast),
+    ...v153SecretReaders(ast),
+    ...v154SecretPath(ast),
+    ...v155CiBlock(ast),
+    ...v156Caps(ast),
+    ...v157SwallowedFields(ast),
+    ...v158PluginsLoaded(ast),
     ...pluginDiagnostics(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
@@ -4342,6 +4383,38 @@ function v122MachineKnown(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/**
+ * V153: a `secrets` reader must be a declared agent, or "main" (the main session, which sends no agent name).
+ * A misspelt reader would otherwise lock the path against the agent it was meant for.
+ */
+function v153SecretReaders(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const agents = new Set(ast.nodes.filter(isAgent).map((n) => n.id));
+  for (const s of ast.secrets ?? []) {
+    for (const r of s.readers) {
+      if (r === "main" || agents.has(r)) continue;
+      results.push({
+        rule: "V153", level: "error", node: s.id, line: lookupLine(ast, s.id),
+        message: `Secret "${s.id}" lists reader "${r}", which is not a declared agent (or "main" for the main session)`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V154: a `secrets` entry needs a `path` (a glob); with none it guards nothing. */
+function v154SecretPath(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const s of ast.secrets ?? []) {
+    if (s.path && s.path.trim()) continue;
+    results.push({
+      rule: "V154", level: "error", node: s.id, line: lookupLine(ast, s.id),
+      message: `Secret "${s.id}" has no path: add path: "<glob>" so the guard knows what to protect`,
+    });
+  }
+  return results;
+}
+
 const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
 
 /**
@@ -4445,13 +4518,549 @@ function v137ObservabilityEnv(ast: TopologyAST, opts: ValidateOptions): Validati
 }
 
 /**
- * V138: `uses-plugins: [...]` names a plugin that is not loaded (EXPERIMENTAL).
+ * V149: a `[finish]` edge closes the run and hands the line back to the entry
+ * agent, so it must point at `meta { entry }` (and the topology must have one).
+ * It needs no `[max N]`: V6 does not apply to it.
+ */
+function v149FinishEdge(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const entry = ast.topology.entry;
+  for (const e of ast.edges) {
+    if (!e.finish) continue;
+    const label = `${e.from} -> ${e.to}`;
+    if (!entry) {
+      results.push({
+        rule: "V149", level: "error", node: e.from, line: lookupLine(ast, e.from),
+        message: `Finish edge ${label} hands the line back to the entry agent, but the topology has no entry. Declare meta { entry: <agent-id> }.`,
+      });
+    } else if (e.to !== entry) {
+      results.push({
+        rule: "V149", level: "error", node: e.from, line: lookupLine(ast, e.from),
+        message: `Finish edge ${label} must point at the entry agent "${entry}", the agent a finish hands the line back to.`,
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * V155: the `ci { }` block. The provider must be github; every id in `gates`
+ * must be a declared gate; and each listed gate needs a step after it (a
+ * `before:`), since the workflow runs `step check` for that step.
+ */
+function v155CiBlock(ast: TopologyAST): ValidationResult[] {
+  const ci = ast.ci;
+  if (!ci) return [];
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V155", level: "error", message });
+  if (ci.provider !== "github") {
+    err(`ci { provider: ${ci.provider || "(none)"} }: only github is supported`);
+  }
+  for (const id of ci.gates) {
+    const gate = ast.nodes.find((n) => n.id === id && n.type === "gate") as GateNode | undefined;
+    if (!gate) {
+      err(`ci { gates } names "${id}", which is not a declared gate`);
+    } else if (gateAnchors(gate, "before").length === 0) {
+      err(`ci { gates } names gate "${id}", which has no step after it (no before:), so there is no step for the workflow to check`);
+    }
+  }
+  return results;
+}
+
+/**
+ * V150: `meta { outpoints: [..] }` lists the nodes a run may end at. Each must
+ * be a declared node (error). Once the list is written, a flow node with no
+ * outgoing edge that is not on it is probably a dead end (warning).
+ */
+function v150Outpoints(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const outpoints = ast.topology.outpoints;
+  if (!outpoints) return results;
+  const ids = allNodeIds(ast);
+  for (const id of outpoints) {
+    if (!ids.has(id)) {
+      results.push({ rule: "V150", level: "error", message: `meta outpoints names "${id}", which is not a declared node.`, node: id });
+    }
+  }
+  const listed = new Set(outpoints);
+  const hasOut = new Set(ast.edges.map((e) => e.from));
+  const inFlow = new Set(ast.edges.flatMap((e) => [e.from, e.to]));
+  for (const n of ast.nodes) {
+    if (n.type === "orchestrator" || n.type === "gate") continue;
+    if (!inFlow.has(n.id) || hasOut.has(n.id) || listed.has(n.id)) continue;
+    results.push({
+      rule: "V150", level: "warning", node: n.id, line: lookupLine(ast, n.id),
+      message: `Node "${n.id}" has no outgoing edge and is not in meta outpoints, so a run that reaches it ends there unlisted. Add it to outpoints or give it an edge.`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V145: a `context { includes }` path that does not exist in the project is a
+ * warning, checked only when a project folder is given (`validate --dir`).
+ * The file would import a path Claude Code cannot read. Paths starting with
+ * `~` name the user's home and are not checked.
+ */
+function v145ContextIncludes(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  if (!opts.dir) return [];
+  const results: ValidationResult[] = [];
+  for (const inc of ast.context.includes ?? []) {
+    if (inc.startsWith("~")) continue;
+    if (existsSync(resolvePath(opts.dir, inc))) continue;
+    results.push({
+      rule: "V145", level: "warning", node: "context", line: lookupLine(ast, "context"),
+      message: `context includes "${inc}", but no such file exists in ${opts.dir}; the generated @${inc} import points at nothing.`,
+    });
+  }
+  return results;
+}
+
+/** The guard platform V141 and V142 judge a gate against: Codex when validating for it. */
+const guardPlatformFor = (opts: ValidateOptions): GuardPlatform => (opts.target === "codex" ? CODEX_GUARDS : CLAUDE_CODE_GUARDS);
+
+/**
+ * V141: `tests { refuse: [..] allow: [..] }` on a gate or a hook is run by
+ * `guard --test`, which feeds each row through the generated check. A gate's
+ * tests need a check that holds it: before-action.sh (a script step in
+ * `before:`) or before-agent.sh (a subagent in `before:`). A hook's tests are
+ * Bash commands fed to its own script as a PreToolUse payload, so the hook
+ * must be a command hook on PreToolUse with a `run:`. Each row is a non-empty
+ * text, and a block with no rows tests nothing.
+ */
+function v141GateTests(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const p = guardPlatformFor(opts);
+  const rows = (t: { refuse: string[]; allow: string[] }) => [...t.refuse, ...t.allow];
+  const problem = (node: string, message: string) =>
+    results.push({ rule: "V141", level: "error", node, line: lookupLine(ast, node), message });
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.tests) continue;
+    if (rows(gate.tests).length === 0) {
+      problem(gate.id, `Gate "${gate.id}" has a tests block with no rows: write refuse: ["<command>"] and/or allow: ["<command>"].`);
+    } else if (rows(gate.tests).some((r) => r.trim() === "")) {
+      problem(gate.id, `Gate "${gate.id}" has an empty tests row: each row is a command (or, before a subagent, an agent name).`);
+    }
+    if (gateChecks(ast, gate, p).length === 0) {
+      problem(
+        gate.id,
+        `Gate "${gate.id}" has tests, but no generated check runs it: guard --test feeds the rows to before-action.sh (a script step, an action with commands:, in before:) or before-agent.sh (a subagent in before: with a run: script). ` +
+          `Give the gate one of those anchors, or drop tests.`,
+      );
+    }
+  }
+  for (const { hook } of allHooks(ast)) {
+    if (!hook.tests) continue;
+    if (rows(hook.tests).length === 0) problem(hook.name, `Hook "${hook.name}" has a tests block with no rows: write refuse: ["<command>"] and/or allow: ["<command>"].`);
+    else if (rows(hook.tests).some((r) => r.trim() === "")) problem(hook.name, `Hook "${hook.name}" has an empty tests row: each row is a Bash command.`);
+    const why = !hook.run
+      ? "it has no run: script to feed"
+      : hook.type && hook.type !== "command"
+        ? `it is a ${hook.type} hook, not a command hook`
+        : hook.on !== "PreToolUse"
+          ? `it is on ${hook.on || "no event"}: the rows are fed as PreToolUse payloads`
+          : null;
+    if (why) problem(hook.name, `Hook "${hook.name}" has tests, but ${why}, so guard --test cannot run them.`);
+  }
+  return results;
+}
+
+/**
+ * V138: the `threat-model { }` block names what it can compile.
+ *
+ * Errors: an `untrusted` entry that is not `web`, `mcp:<id>` of a declared
+ * MCP server, or a path glob; a `lift` that names no declared human; a
+ * `refuse-after-untrusted` string that is not a permission rule
+ * (`Tool` or `Tool(specifier)`); a server written `trust:` with a word other
+ * than `untrusted` or `trusted`. Warnings: a refuse rule with nothing
+ * untrusted (or the other way round), and, on `--target codex` and
+ * `--target cursor`, that the block is not written there (only Claude Code
+ * runs the hooks that mark and refuse).
+ */
+function v138ThreatModel(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V138", level: "error", message });
+  const warn = (message: string) => results.push({ rule: "V138", level: "warning", message });
+  for (const [id, server] of Object.entries(ast.mcpServers ?? {})) {
+    const t = server.trust;
+    if (t !== undefined && t !== "untrusted" && t !== "trusted") err(`MCP server "${id}" has trust: ${String(t)}; use untrusted or trusted.`);
+  }
+  const tm = ast.threatModel;
+  if (!tm) return results;
+  const untrusted = untrustedEntries(ast);
+  for (const entry of tm.untrusted) {
+    if (entry === "web") continue;
+    if (entry.startsWith("mcp:")) {
+      const id = entry.slice(4);
+      if (!Object.prototype.hasOwnProperty.call(ast.mcpServers ?? {}, id)) err(`threat-model untrusted: "${entry}" names no MCP server declared in mcp-servers { }; declared: ${Object.keys(ast.mcpServers ?? {}).join(", ") || "none"}.`);
+      continue;
+    }
+    if (!isPathGlob(entry)) err(`threat-model untrusted: "${entry}" is not web, mcp:<server id> or a path glob (a quoted path such as "inbox/**").`);
+  }
+  if (tm.lift !== undefined) {
+    const node = ast.nodes.find((n) => n.id === tm.lift);
+    if (!node) err(`threat-model lift: "${tm.lift}" names no declared human step.`);
+    else if (node.type !== "human") err(`threat-model lift: "${tm.lift}" is ${node.type === "agent" ? "an agent" : `a ${node.type}`}, not a human step.`);
+  }
+  for (const rule of tm.refuseAfterUntrusted) {
+    if (!isPermissionRule(rule)) err(`threat-model refuse-after-untrusted: "${rule}" is not a permission rule; write a tool name or Tool(specifier) as in settings { deny }, for example "Bash(git push *)" or "SendMessage".`);
+  }
+  if (tm.refuseAfterUntrusted.length > 0 && untrusted.length === 0) warn(`threat-model refuse-after-untrusted has rules but no untrusted input, so nothing ever marks a session and nothing is refused.`);
+  if (untrusted.length > 0 && tm.refuseAfterUntrusted.length === 0) warn(`threat-model names untrusted input but no refuse-after-untrusted rule, so a marked session is still allowed to do everything.`);
+  if (tm.outsideSandbox.length > 0 && ast.settings?.sandbox !== true) warn(`threat-model outside-sandbox is written to the sandbox keys of settings.json, which Claude Code reads only when the sandbox is on: set settings { sandbox: true }.`);
+  if (opts.target === "codex" || opts.target === "cursor") {
+    warn(`threat-model is not written for ${opts.target}: the hooks that mark a session after an untrusted read and refuse after it are Claude Code hooks, so nothing marks or refuses here.`);
+  }
+  return results;
+}
+
+/**
+ * V139: a record's fields, schema, writer and kind are well formed.
+ * - every field is `name: type`, the type one of string, number, boolean, ts, and no name twice;
+ * - `schema:` names a schema declared in `schemas { }`;
+ * - `writer:` names a declared action or agent, or a project-relative script path (a safe path);
+ * - `kind:` is `run-state`, and a run-state record has the fixed fields target and step, so it writes no `fields:`.
+ */
+function v139RecordFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const types = RECORD_FIELD_TYPES as readonly string[];
+  const err = (message: string) => results.push({ rule: "V139", level: "error", message });
+  for (const r of ast.records ?? []) {
+    if (r.kind !== undefined && r.kind !== "run-state") {
+      err(`Record "${r.id}" has kind: ${r.kind}; the only kind is run-state`);
+    }
+    if (r.kind === "run-state" && r.fields !== undefined) {
+      err(`Record "${r.id}" has kind: run-state and fields: a run-state record has the fixed fields target and step, so it writes no fields:`);
+    }
+    if (r.kind !== "run-state" && r.fields !== undefined) {
+      const seen = new Set<string>();
+      for (const f of r.fields) {
+        if (!f.name || !f.type) {
+          err(`Record "${r.id}" has a field "${f.name || "?"}" with no type: write each field as name: type (types: ${types.join(", ")})`);
+        } else if (!types.includes(f.type)) {
+          err(`Record "${r.id}" field "${f.name}" has type "${f.type}", which is not a record field type (types: ${types.join(", ")})`);
+        }
+        if (f.name && seen.has(f.name)) err(`Record "${r.id}" declares the field "${f.name}" twice`);
+        seen.add(f.name);
+      }
+    }
+    if (r.schema !== undefined && !(ast.schemas ?? []).some((s) => s.id === r.schema)) {
+      err(`Record "${r.id}" has schema "${r.schema}", but no schema of that name is declared in schemas { } (schemas: ${(ast.schemas ?? []).map((s) => s.id).join(", ") || "none"})`);
+    }
+    if (r.writer !== undefined) {
+      const node = ast.nodes.find((n) => n.id === r.writer);
+      const named = node?.type === "action" || node?.type === "agent";
+      const pathLike = /[/.]/.test(r.writer);
+      if (!named && !(pathLike && !unsafePathReason(r.writer.replace(/^\.\//, "")))) {
+        const why = pathLike ? `, and as a script path it is unsafe: ${unsafePathReason(r.writer.replace(/^\.\//, ""))}` : "";
+        err(`Record "${r.id}" has writer "${r.writer}", which names no declared action or agent and is no project-relative script path${why}`);
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * V143: a `rules { }` block must hold rules a person can trace: each id appears
+ * once, and each rule has text. A duplicate id would make a citation (`rule:`)
+ * ambiguous; an empty rule would be written into the entry agent as a bare id.
+ */
+function v143RulesBlock(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const r of ast.rules ?? []) {
+    if (r.id.trim() === "") {
+      results.push({ rule: "V143", level: "error", message: `A rule in the rules block has an empty id; give it a quoted id such as rule "R-1" { text: "..." }.` });
+    } else if (seen.has(r.id)) {
+      results.push({ rule: "V143", level: "error", node: r.id, message: `Rule "${r.id}" is declared twice in the rules block; a rule: citation could not tell them apart. Give each rule its own id.` });
+    }
+    seen.add(r.id);
+    if (r.text.trim() === "") {
+      results.push({ rule: "V143", level: "error", node: r.id, message: `Rule "${r.id}" has no text; write what the rule says: text: "...".` });
+    }
+  }
+  return results;
+}
+
+/**
+ * V142: `mode: shadow | refuse` and `let-go: once` (with `lift: <human id>`)
+ * on a gate. They change what the generated check does, so a value it does not
+ * read, a gate no generated check holds (shadow and let-go do nothing there),
+ * and let-go with no human to give it, are errors rather than silent text.
+ * A hook runs the author's own script: mode and let-go on one are errors.
+ * Let-go reads the human's row from the gate's ledger, so it needs one, and a
+ * gate that holds a subagent launch (no unit is known there) needs a ledger
+ * path without `{unit}`.
+ */
+function v142GateMode(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const p = guardPlatformFor(opts);
+  const problem = (node: string, message: string) =>
+    results.push({ rule: "V142", level: "error", node, line: lookupLine(ast, node), message });
+  for (const { hook } of allHooks(ast)) {
+    if (hook.mode !== undefined || hook.letGo !== undefined) {
+      problem(hook.name, `Hook "${hook.name}" has ${hook.mode !== undefined ? "mode:" : "let-go:"}, which belongs to a gate: a hook runs your own script, so write the shadow or let-go behaviour in it.`);
+    }
+  }
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (gate.mode !== undefined && gate.mode !== "shadow" && gate.mode !== "refuse") {
+      problem(gate.id, `Gate "${gate.id}" has mode: ${gate.mode}; use shadow (log what it would refuse, and let the step run) or refuse (the default).`);
+    }
+    if (gate.letGo !== undefined && gate.letGo !== "once") {
+      problem(gate.id, `Gate "${gate.id}" has let-go: ${gate.letGo}; the only value is once (one override per step).`);
+    }
+    const checks = gateChecks(ast, gate, p);
+    if ((gate.mode === "shadow" || gate.letGo !== undefined) && checks.length === 0) {
+      problem(
+        gate.id,
+        `Gate "${gate.id}" has ${gate.mode === "shadow" ? "mode: shadow" : "let-go:"}, but no generated check holds it, so it would do nothing: shadow and let-go work in before-action.sh (a script step in before:) and before-agent.sh (a subagent in before: with a run: script).`,
+      );
+    }
+    if (gate.lift !== undefined && gate.letGo === undefined) {
+      problem(gate.id, `Gate "${gate.id}" has lift: ${gate.lift} without let-go: once, so it lifts nothing.`);
+    }
+    if (gate.letGo === undefined) continue;
+    if (gate.lift !== undefined && !ast.nodes.some((n) => n.id === gate.lift && n.type === "human")) {
+      problem(gate.id, `Gate "${gate.id}" has lift: ${gate.lift}, which is not a declared human.`);
+      continue;
+    }
+    if (!letGoHuman(ast, gate)) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once but no human to give it: write lift: <human id>, or put a human in its after:.`);
+      continue;
+    }
+    const ledger = gateLedger(ast, gate);
+    if (!ledger) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once, which reads the human's row from the gate's ledger, but the gate has no ledger (name one with ledger:, and give the gate an after:).`);
+    } else if (checks.length > 0 && !checks.includes("action") && ledger.path.includes("{unit}")) {
+      problem(gate.id, `Gate "${gate.id}" has let-go: once, but it holds a subagent launch, where no unit is known, and its ledger path ${ledger.path} needs one. Use a ledger path without {unit}.`);
+    }
+  }
+  return results;
+}
+
+/**
+ * V140 (codex, cursor): a record that declares fields, a schema, a writer or a kind
+ * is written only on claude-code (its writer script, the step's ledger row and
+ * .claude/records.json). With `--target codex` or `--target cursor` none of it
+ * is written, so the record stays a path a gate reads.
+ */
+function v140RecordsNotWritten(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  if (opts.target !== "codex" && opts.target !== "cursor") return [];
+  const rich = (ast.records ?? []).filter((r) => r.fields || r.schema || r.writer || r.kind);
+  if (rich.length === 0) return [];
+  return [{
+    rule: "V140", level: "warning",
+    message: `${opts.target} writes nothing for the fields, schema, writer or kind of record ${rich.map((r) => `"${r.id}"`).join(", ")}: no record script, no ledger row from a step, no records list. Only claude-code writes them; here each is a path a gate may read`,
+  }];
+}
+
+/**
+ * V144: a gate or hook that cites `rule: "<id>"` must name a rule the `rules { }`
+ * block declares. A citation to nothing is a trace that leads nowhere.
+ */
+function v144RuleCitation(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const ids = new Set((ast.rules ?? []).map((r) => r.id));
+  const check = (kind: string, name: string, rule: string | undefined) => {
+    if (rule === undefined || ids.has(rule)) return;
+    const known = ids.size ? `declared rules: ${[...ids].join(", ")}` : "the topology declares no rules block";
+    results.push({ rule: "V144", level: "error", node: name, line: lookupLine(ast, name), message: `The ${kind} "${name}" cites rule "${rule}", which the rules block does not declare (${known}).` });
+  };
+  for (const n of ast.nodes) if (n.type === "gate") check("gate", n.id, (n as GateNode).rule);
+  for (const h of ast.hooks ?? []) check("hook", h.name, h.rule);
+  return results;
+}
+
+/**
+ * V146: the context file (the block plus the user's own lines) is longer than
+ * `max-lines`. With a project folder the file on disk is counted with the new
+ * block in it; without one, the block alone is.
+ */
+function v146ContextMaxLines(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const max = ast.context.maxLines;
+  const file = contextFilePath(ast);
+  if (max === undefined || !file) return [];
+  let text = contextBlock(ast);
+  if (opts.dir) {
+    try {
+      text = mergeContextBlock(readFileSync(resolvePath(opts.dir, file), "utf-8"), text);
+    } catch { /* no file yet: the block alone */ }
+  }
+  const lines = text.replace(/\n$/, "").split("\n").length;
+  if (lines <= max) return [];
+  return [{
+    rule: "V146", level: "warning", node: "context", line: lookupLine(ast, "context"),
+    message: `The context file "${file}" would be ${lines} lines (the generated block plus your own lines), over max-lines: ${max}. Shorten it or raise max-lines.`,
+  }];
+}
+
+/**
+ * V151: a gate's `before: write "<glob>"` anchor names a path pattern that is not empty (error), and
+ * the gate has something to check: a ledger (an `after:` step) or a `run:` script (warning, as V110).
+ */
+function v151WriteAnchor(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (node.type !== "gate") continue;
+    const gate = node as GateNode;
+    if (!gate.beforeWrite?.length) continue;
+    for (const glob of gate.beforeWrite) {
+      if (glob.trim() === "" || /[\u0000-\u001f]/.test(glob)) {
+        results.push({
+          rule: "V151", level: "error", node: gate.id, line: lookupLine(ast, gate.id),
+          message: `Gate "${gate.id}" has a write anchor with ${glob.trim() === "" ? "an empty glob" : "a control character in its glob"}: write before: write "<path glob>", for example before: write "src/**".`,
+        });
+      }
+    }
+    if (gate.behavior !== "advisory" && !gateLedger(ast, gate) && !scriptNameFromRun(gate.run)) {
+      results.push({
+        rule: "V151", level: "warning", node: gate.id, line: lookupLine(ast, gate.id),
+        message: `Gate "${gate.id}" stands before a write of ${gate.beforeWrite.map((g) => `"${g}"`).join(", ")} but has no ledger and no run:, so there is nothing to check and the edit is never refused. Give it an after: step with a records { } ledger, or a run: script.`,
+      });
+    }
+  }
+  return results;
+}
+
+/** V152: `meta { target: ... }` is a directory path: absolute or relative to the project, plain characters only. */
+function v152MetaTarget(ast: TopologyAST): ValidationResult[] {
+  const target = ast.topology.target;
+  if (target === undefined) return [];
+  const bad = target.trim() === ""
+    ? "it is empty"
+    : !/^[A-Za-z0-9_.@+/ -]+$/.test(target) ? "it holds a character a directory path does not (use letters, digits, . _ @ + - / and spaces)" : null;
+  if (!bad) return [];
+  return [{
+    rule: "V152", level: "error",
+    message: `meta target "${target}" is not a path: ${bad}. Write a directory, absolute or relative to the project, for example target: "app".`,
+  }];
+}
+
+const MAX_COST_ADVISORY = "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
+
+/**
+ * V156: caps. `max-subagents` must be a positive integer (error). `max-cost`,
+ * on an agent or in `metering` (where `cap:` is its alias), must be a positive
+ * number (error), and is a warning when set: a hook payload carries no spend,
+ * so nothing stops a run at the cap.
+ */
+function v156Caps(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const node of ast.nodes) {
+    if (!isAgent(node)) continue;
+    const line = lookupLine(ast, node.id);
+    if (node.maxSubagentsRaw !== undefined) {
+      results.push({ rule: "V156", level: "error", node: node.id, line, message: `Agent "${node.id}" has max-subagents "${node.maxSubagentsRaw}" — must be a positive whole number such as 3` });
+    }
+    if (node.maxCostRaw !== undefined) {
+      results.push({ rule: "V156", level: "error", node: node.id, line, message: `Agent "${node.id}" has max-cost "${node.maxCostRaw}" — must be a positive number of US dollars such as 2.50` });
+    } else if (node.maxCost !== undefined) {
+      results.push({ rule: "V156", level: "warning", node: node.id, line, message: `Agent "${node.id}": ${MAX_COST_ADVISORY}` });
+    }
+  }
+  const m = ast.metering;
+  if (m?.maxCostRaw !== undefined) {
+    results.push({ rule: "V156", level: "error", node: "metering", message: `metering has max-cost "${m.maxCostRaw}" — must be a positive number of US dollars such as 50` });
+  } else if (m?.maxCost !== undefined) {
+    results.push({ rule: "V156", level: "warning", node: "metering", message: `metering: ${MAX_COST_ADVISORY}` });
+  }
+  return results;
+}
+
+/**
+ * V157: a value in a one-line block that still holds `, <field>:`, where
+ * <field> is a field of that same block. A comma at the top level of a block
+ * separates fields; this one stayed in the value (an unclosed ( or [ or quote
+ * hid it), so the field after it was lost. Names the block and the field.
+ */
+const V157_BLOCK_FIELDS: Record<string, readonly string[]> = {
+  checkpoint: ["backend", "strategy", "connection", "ttl", "replay"],
+  interface: ["entry", "exit"],
+  defaults: ["temperature", "max-tokens", "top-p", "model"],
+  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level"],
+  metering: ["track", "per", "output", "format", "pricing"],
+  secrets: ["path", "readers"],
+  toolDefs: ["command", "script", "description", "lang", "args"],
+};
+function v157SwallowedFields(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const blocks: Record<string, unknown> = {
+    checkpoint: ast.checkpoint,
+    interface: ast.interfaceEndpoints,
+    defaults: ast.defaults,
+    observability: ast.observability,
+    metering: ast.metering,
+  };
+  for (const [block, value] of Object.entries(blocks)) {
+    if (!value || typeof value !== "object") continue;
+    const fields = V157_BLOCK_FIELDS[block];
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v !== "string") continue;
+      for (const m of v.matchAll(/,\s*([a-zA-Z_-]+)\s*:/g)) {
+        if (!fields.includes(m[1])) continue;
+        results.push({
+          rule: "V157", level: "error", node: block,
+          message: `In the ${block} block, the value of "${key}" still holds ", ${m[1]}:" (${v}). A comma between fields separates them only outside quotes and brackets: close the ( [ or " that holds it open, or put ${m[1]} on its own line.`,
+        });
+        break;
+      }
+    }
+  }
+  // A second field run into the first with no comma or newline:
+  // `path: "a/**" readers: [x]` keeps `"a/**" readers: [x]` as the path. In
+  // any block, a value holding `" <word>:` or `] <word>:` (a closed quote or
+  // list followed by a key), or `<value> <field>:` for a known field of that
+  // block, is a lost field. Free text (prompts, instructions) is not read.
+  const seen = new Set<string>();
+  const report = (block: string, key: string, field: string, v: string) => {
+    const id = `${block}\0${key}\0${field}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    results.push({
+      rule: "V157", level: "error", node: block,
+      message: `In ${block}, the value of "${key}" swallowed the field "${field}" (${v}). Two fields on one line need a comma between them: write "${key}: ..., ${field}: ...", or put ${field} on its own line.`,
+    });
+  };
+  const walk = (node: unknown, block: string, fields: readonly string[]): void => {
+    if (Array.isArray(node)) { for (const n of node) walk(n, block, fields); return; }
+    if (!node || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    const here = typeof obj.id === "string" ? `${block} "${obj.id}"` : block;
+    for (const [key, v] of Object.entries(obj)) {
+      if (V157_FREE_TEXT.has(key)) continue;
+      if (typeof v === "string") {
+        const closed = v.match(/["'\]]\s+([a-zA-Z_][\w-]*)\s*:/);
+        if (closed) { report(here, key, closed[1], v); continue; }
+        for (const m of v.matchAll(/\s([a-zA-Z_][\w-]*)\s*:/g)) {
+          if (fields.includes(m[1])) { report(here, key, m[1], v); break; }
+        }
+      } else {
+        walk(v, here, fields);
+      }
+    }
+  };
+  for (const [top, value] of Object.entries(ast as unknown as Record<string, unknown>)) {
+    const block = top === "interfaceEndpoints" ? "interface" : top;
+    walk(value, block, V157_BLOCK_FIELDS[block] ?? V157_BLOCK_FIELDS[top] ?? []);
+  }
+  return results;
+}
+
+/** Keys whose values are free text, where `" word:` may be meant. */
+const V157_FREE_TEXT = new Set(["prompt", "instructions", "body", "content", "text", "system", "role", "message", "notes", "raw", "source"]);
+
+/**
+ * V158: `uses-plugins: [...]` names a plugin that is not loaded (EXPERIMENTAL).
  * Collected at parse time, which knows the loaded set: each top-level block
  * no core section and no loaded plugin owns is an error naming the plugin it
  * needs (instead of V102); with no such block, the unloaded plugin itself is.
  * Without `uses-plugins` an unknown block stays V102.
  */
-function v138PluginsLoaded(ast: TopologyAST): ValidationResult[] {
+function v158PluginsLoaded(ast: TopologyAST): ValidationResult[] {
   return (ast as TopologyAST & { _pluginNeedErrors?: ValidationResult[] })._pluginNeedErrors ?? [];
 }
 
@@ -4525,6 +5134,12 @@ function v127PersonWindows(ast: TopologyAST): ValidationResult[] {
         if (!p || isAbsolute(p) || p.startsWith("~") || hasDotDot(p) || /[\r\n]/.test(p))
           err(`Human "${n.id}" binds: "${p}" must be a path inside the project: relative, with no ".." and no absolute or home path.`);
     }
+    if (n.typedOnlyPrograms !== undefined) {
+      if (n.word === undefined) err(`Human "${n.id}" has typed-only-programs: but no word:. The programs are refused a command holding the go word, so add word: "<the go word>".`);
+      for (const prog of n.typedOnlyPrograms)
+        if (!/^[A-Za-z0-9._+-]+$/.test(prog))
+          err(`Human "${n.id}" typed-only-programs: "${prog}" must be a program name (letters, digits and . _ + -), with no path and no spaces.`);
+    }
   }
   return results;
 }
@@ -4542,6 +5157,26 @@ function v128InventoryRoots(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
+/** V147: an island has a path, and its owner is a person the topology declares. */
+function v147IslandOwners(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const people = new Set((ast.persons ?? []).map((p) => p.id));
+  for (const i of ast.islands ?? []) {
+    if (!i.path) results.push({ rule: "V147", level: "error", message: `Island "${i.id}" has no path: write path: "<glob>".` });
+    if (!i.owner) results.push({ rule: "V147", level: "error", message: `Island "${i.id}" has no owner: write owner: <person id>, a person the topology declares.` });
+    else if (!people.has(i.owner))
+      results.push({ rule: "V147", level: "error", message: `Island "${i.id}" is owned by "${i.owner}", who is not a declared person. Declare person ${i.owner} { } or name one of: ${[...people].join(", ") || "(none declared)"}.` });
+  }
+  return results;
+}
+
+/** V148: `meta { requires }` is a version range: comparators (>=, <=, >, <, =, ^) before x.y.z, separated by blanks. */
+function v148RequiresRange(ast: TopologyAST): ValidationResult[] {
+  const r = ast.topology.requires;
+  if (r === undefined || parseRange(r)) return [];
+  return [{ rule: "V148", level: "error", message: `meta requires: "${r}" is not a version range. Write comparators such as ">=0.13.0", "^0.13.0" or ">=0.13.0 <1.0.0".` }];
+}
+
 /** V129 (L-4): `needs` names things outside the repo: memory is a path under the home folder (`~/...`, no `..`), skills and connectors are bare names. */
 function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
@@ -4552,7 +5187,7 @@ function v129NeedsOutside(ast: TopologyAST): ValidationResult[] {
     if (!n.memory || hasDotDot(n.memory) || (isAbsolute(n.memory)) || (n.memory.startsWith("~") && !n.memory.startsWith("~/")))
       err(`needs memory: "${n.memory}" must be a path under the user's home, written ~/<path> (no "..", no other absolute path).`);
   }
-  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors]] as const) {
+  for (const [what, list] of [["user-skills", n.userSkills], ["connectors", n.connectors], ["plugins", n.plugins]] as const) {
     for (const name of list ?? [])
       if (!name || /[\\/]/.test(name) || name === "." || name === "..")
         err(`needs ${what} entry "${name}" must be a bare name, not a path.`);
@@ -4944,6 +5579,10 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
   for (const t of ast.toolDefs ?? []) {
     if (!runsThroughBash(t))
       warn(`tool "${t.id}" has neither script: nor command:, so it compiles to nothing on Claude Code: an agent or skill that names it gets no Bash and no allow rule. Give it command: "<shell command>" or script: "<path>".`, t.id);
+  }
+  // A gate's bypass: lands in the skill's gate section as text; no hook or check reads it.
+  for (const n of ast.nodes) {
+    if (n.type === "gate" && (n as GateNode).bypass) warn(`gate ${n.id} has bypass: it is written as text only; it is not enforced.`, n.id);
   }
   const s = ast.settings ?? {};
   if (s.sandbox != null && typeof s.sandbox !== "boolean")

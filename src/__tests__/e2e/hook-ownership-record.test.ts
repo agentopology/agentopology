@@ -280,6 +280,75 @@ describe("scaffold owns exactly the hook entries it recorded", () => {
   }
 });
 
+describe("the CHANGELOG says what scaffold does with an edited copy of a generated hook", () => {
+  it("the original is not written again beside the copy, and the kept line is quoted as printed", () => {
+    const log = fs.readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../CHANGELOG.md"), "utf8");
+    const section = log.slice(log.indexOf("## [0.13.0]"), log.indexOf("## [0.12.6]"));
+    expect(section).not.toContain("the original is written again beside it");
+    expect(section).toContain("the original is not written again beside it");
+    expect(section).toContain(
+      "`kept your edited copy of <event> <matcher>; the generated hook is not added again; delete your copy to get it back`",
+    );
+  });
+});
+
+/** The hook record scaffold keeps in the target's manifest for its hooks file. */
+function recordIn(dir: string, target: Target): Row[] | undefined {
+  const m = JSON.parse(fs.readFileSync(join(dir, target === "codex" ? ".codex" : ".claude", ".scaffold-manifest.json"), "utf-8")) as {
+    hooks?: Record<string, Row[]>;
+  };
+  return m.hooks?.[hooksFile(target)];
+}
+
+describe("a first scaffold with no manifest: no entry already in the file is recorded as scaffold's", () => {
+  // The first scaffold's merge is 0.12.6's, which can remove a hand-written
+  // entry on the same script (a known limit of 0.13.0).
+  it.todo("first scaffold never deletes a hand-written hook: design M, after 0.13.0");
+
+  for (const target of TARGETS) {
+    /** The user's entries that 0.12.6's first merge keeps: one equal to the .at's lint entry, one on another script. */
+    const surviving = (lint: Row): Row[] => [
+      { event: "PreToolUse", matcher: "Bash", command: lint.command },
+      { event: "PreToolUse", matcher: "Bash", command: "bash tools/guard.sh" },
+    ];
+
+    it(`${target}: dropping the matching hook from the .at later does not delete the user's entry`, () => {
+      const lint = generatedRow(target, LINT);
+      const p = project(target);
+      const mine = surviving(lint);
+      for (const r of mine) p.addUser(r);
+      const first = p.scaffold([LINT, AUDIT]);
+      for (const r of mine) expect(has(p.rows(), r), `${JSON.stringify(r)}\n${JSON.stringify(p.rows())}\n${first}`).toBe(true);
+      // Not written twice, and none of the user's entries is the topology's.
+      expect(p.rows().filter((r) => r.matcher === lint.matcher && r.command === lint.command)).toHaveLength(1);
+      expect((recordIn(p.dir, target) ?? []).filter((r) => r.command === lint.command || r.command.includes("guard.sh")), first).toEqual([]);
+      const dropped = p.scaffold([AUDIT]);
+      for (const r of mine) expect(has(p.rows(), r), `${JSON.stringify(r)}\n${JSON.stringify(p.rows())}\n${dropped}`).toBe(true);
+      expect(dropped).not.toContain(removedLine(lint));
+    });
+
+    it(`${target}: an old manifest with no hook record still merges as 0.12.6 did`, () => {
+      const p = project(target);
+      p.scaffold([AUDIT]);
+      // A manifest as 0.12.x left it: no hook record.
+      const mpath = join(p.dir, target === "codex" ? ".codex" : ".claude", ".scaffold-manifest.json");
+      const m = JSON.parse(fs.readFileSync(mpath, "utf-8")) as Record<string, unknown>;
+      delete m.hooks;
+      fs.writeFileSync(mpath, JSON.stringify(m, null, 2) + "\n");
+      const handBuilt: Row = { event: "PreToolUse", matcher: "Bash", command: "./tools/lint.sh" };
+      p.addUser(handBuilt);
+      const first = p.scaffold([{ ...LINT, run: "tools/lint.sh" }, AUDIT]);
+      expect(first).not.toContain("kept your hook");
+      const lints = () => p.rows().filter((r) => r.command.includes("lint.sh"));
+      // 0.12.6: the hand-built entry naming the topology's script is the topology's.
+      expect(lints(), JSON.stringify(p.rows())).toHaveLength(1);
+      const dropped = p.scaffold([AUDIT]);
+      expect(lints(), JSON.stringify(p.rows())).toHaveLength(0);
+      expect(dropped).toContain("- removed generated hook PreToolUse Bash");
+    });
+  }
+});
+
 describe("a run with no hook record merges as 0.12.6 did, then records what it wrote", () => {
   for (const target of TARGETS) {
     it(`${target}: a hand-built hook in another spelling, no manifest: one entry (0.12.6's), then the topology's`, () => {

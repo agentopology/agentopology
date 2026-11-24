@@ -176,24 +176,24 @@ describe("acme loaded", () => {
 });
 
 describe("uses-plugins", () => {
-  it("a block a declared, unloaded plugin would own is V138, not V102", () => {
+  it("a block a declared, unloaded plugin would own is V158, not V102", () => {
     const found = errors(topo("  uses-plugins: [acme]", WIDGETS));
     expect(found).toEqual([
-      { rule: "V138", level: "error", message: "block widget needs plugin acme; run with --plugin acme" },
-      { rule: "V138", level: "error", message: "block widget needs plugin acme; run with --plugin acme" },
+      { rule: "V158", level: "error", message: "block widget needs plugin acme; run with --plugin acme" },
+      { rule: "V158", level: "error", message: "block widget needs plugin acme; run with --plugin acme" },
     ]);
   });
 
-  it("a declared plugin that is not loaded is V138 with no block too", () => {
+  it("a declared plugin that is not loaded is V158 with no block too", () => {
     expect(errors(topo("  uses-plugins: [acme]"))).toEqual([
-      { rule: "V138", level: "error", message: "uses-plugins names plugin acme, which is not loaded; run with --plugin acme" },
+      { rule: "V158", level: "error", message: "uses-plugins names plugin acme, which is not loaded; run with --plugin acme" },
     ]);
   });
 
   it("with the plugin loaded, uses-plugins is satisfied", () => {
     const ast = parse(topo("  uses-plugins: [acme]", WIDGETS), { plugins: [acme] });
     expect(ast.usesPlugins).toEqual(["acme"]);
-    expect(validate(ast).filter((r) => r.rule === "V138" || r.rule === "V102")).toEqual([]);
+    expect(validate(ast).filter((r) => r.rule === "V158" || r.rule === "V102")).toEqual([]);
   });
 
   it("uses-plugins survives the serializer round trip", () => {

@@ -138,7 +138,7 @@ describe("plugin loading (CLI)", () => {
     const r = run(["validate", join(d, "w.at")], d);
     expect(existsSync(marker)).toBe(false);
     expect(`${r.out}${r.err}`).not.toContain("loaded plugin");
-    expect(r.out).toContain("ERROR [V138] block widget needs plugin ./evil.mjs or evil; run with --plugin ./evil.mjs or --plugin evil");
+    expect(r.out).toContain("ERROR [V158] block widget needs plugin ./evil.mjs or evil; run with --plugin ./evil.mjs or --plugin evil");
   });
 
   it("scaffold writes the plugin's file and hook, and guard --check sees the gate's plugin check", () => {

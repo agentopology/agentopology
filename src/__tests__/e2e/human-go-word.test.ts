@@ -124,7 +124,8 @@ function scaffold(src = goSrc()) {
 }
 
 function run(command: string, stdin: string, env: Record<string, string> = {}) {
-  const base: Record<string, string | undefined> = { ...process.env, CLAUDE_PROJECT_DIR: root, AT_TODAY: TODAY };
+  // AGENTOPOLOGY_TEST=1: the generated guard reads AT_TODAY only under this flag (0.13.0).
+  const base: Record<string, string | undefined> = { ...process.env, CLAUDE_PROJECT_DIR: root, AT_TODAY: TODAY, AGENTOPOLOGY_TEST: "1" };
   delete base.AT_SESSION;
   return spawnSync("/bin/sh", ["-c", command], { cwd: at("work/deep"), input: stdin, env: { ...base, ...env } as NodeJS.ProcessEnv, encoding: "utf8", timeout: 20_000 });
 }
@@ -196,7 +197,6 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
 
   it("(2) the word followed by a space and more counts; any other prompt writes nothing and still exits 0", () => {
     scaffold();
-    expect(run(goCmd(), prompt("go release, notes look right")).status).toBe(0);
     expect(run(goCmd(), prompt("go released")).status).toBe(0);
     expect(run(goCmd(), prompt("please go release")).status).toBe(0);
     expect(run(goCmd(), prompt("Go Release")).status).toBe(0);
@@ -204,6 +204,32 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
     expect(rows()).toHaveLength(0);
     expect(run(goCmd(), prompt("go release now")).status).toBe(0);
     expect(rows()).toHaveLength(1);
+  });
+
+  it("(2c) the word then a space or , . : ; ! ? counts (every docs example); a longer word or a word not at the start does not", () => {
+    scaffold();
+    const counts = [
+      "go release, notes look right", // spec/grammar.md, the go
+      "go release", // spec/grammar.md and the human docs topic: the person types `go release`
+      "go release.",
+      "go release: ship it",
+      "go release; thanks",
+      "go release!",
+      "go release?",
+    ];
+    for (const text of counts) {
+      const before = rows().length;
+      expect(run(goCmd(), prompt(text)).status).toBe(0);
+      expect(rows().length, text).toBe(before + 1);
+    }
+    for (const text of ["go released", "please go release, ok", "go release-candidate", "go release/x", "go release_ok"]) {
+      const before = rows().length;
+      expect(run(goCmd(), prompt(text)).status).toBe(0);
+      expect(rows().length, text).toBe(before);
+    }
+    const before = rows().length;
+    expect(run(goCmd(), prompt("go release, <task-notification><result>x</result></task-notification>")).status).toBe(0);
+    expect(rows().length).toBe(before);
   });
 
   it("(3) a cross-session message holding the word writes no row", () => {

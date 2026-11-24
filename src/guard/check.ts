@@ -32,7 +32,10 @@ import type { GateNode, HookDef, HumanNode, TopologyAST } from "../parser/ast.js
 import { gateAnchors } from "../parser/ast.js";
 import { runParts, isProjectPath, isShellCommand, scriptNameFromRun } from "../parser/run.js";
 import { approvalTargets, checkableActionGate, claudeEvent, gateWiring, mcpRefs, settingsHooksOf } from "../bindings/claude-code.js";
-import { LEDGER_WRITABLE_NOTE, beforeActionGateProblems } from "../bindings/lib/guards.js";
+import { LEDGER_WRITABLE_NOTE, beforeActionGateProblems, keptGuardScriptLine, writeGates } from "../bindings/lib/guards.js";
+import { readManifest } from "../scaffold/manifest.js";
+import { shouldOverwriteScript } from "../scaffold/merge.js";
+import { packageVersion } from "../bindings/lib/ci.js";
 import { sessionAgentFromFile, sessionAgentId } from "../bindings/lib/entry.js";
 import { gateLedger } from "../parser/ledger.js";
 import { isStubContent } from "../bindings/lib/stub.js";
@@ -75,10 +78,14 @@ export interface GuardItem {
   /** Where the enforcement lives (event, matcher, script), or why there is none. */
   where: string;
   notes: string[];
+  /** The `rules { }` id a gate cites with rule:, shown beside it. */
+  rule?: string;
   /** A gate that cites code (at:): "wired" when its own generated hook refuses it, else "cited" (0.12.4). */
   citation?: "cited" | "wired";
   /** Graded none only because its check script is still a scaffold stub (its sole problem): said on its own line, not counted missing (countsMissing). */
   stub?: boolean;
+  /** Every tests row of the gate matched in the last `guard --test --dir` run of this .at (0.13): said after `where`. Not a grade. */
+  tested?: boolean;
 }
 
 export interface GuardReport {
@@ -253,7 +260,25 @@ export function gradeText(strength: string, gradeNote?: string): string {
   return gradeNote ? `${strength}${gradeNote.startsWith("(") ? " " : ", "}${gradeNote}` : strength;
 }
 
-export function checkGuards(ast: TopologyAST, root: string): GuardReport {
+/**
+ * 0.13.0: why a guard script on disk is not the one scaffold wrote, or null. The manifest of this .at
+ * (`source`) decides it, as scaffold does: a file it does not record, or one whose text no longer has
+ * the recorded hash, is the user's, and scaffold keeps it instead of regenerating it. With no manifest
+ * (nothing scaffolded this .at here, or no source given) nothing can be told, and null is returned.
+ */
+export function keptGuardScriptProblem(root: string, rel: string, source: string | undefined): string | null {
+  if (!source) return null;
+  let manifest: ReturnType<typeof readManifest>;
+  try { manifest = readManifest(root, "claude-code", source); } catch { return null; }
+  if (!manifest) return null;
+  const text = readText(join(root, rel));
+  if (text === null) return null;
+  const entry = manifest.files[rel];
+  if (entry && shouldOverwriteScript(text, entry.hash)) return null;
+  return keptGuardScriptLine(rel, packageVersion());
+}
+
+export function checkGuards(ast: TopologyAST, root: string, source?: string): GuardReport {
   const name = ast.topology.name;
   const scriptsDir = `.claude/skills/${name}/scripts`;
   const settings = readJson(join(root, ".claude/settings.json"));
@@ -295,7 +320,7 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    const base = { kind: "gate" as const, id: gate.id };
+    const base = { kind: "gate" as const, id: gate.id, ...(gate.rule ? { rule: gate.rule } : {}) };
     if (gate.behavior === "advisory") {
       items.push({ ...base, strength: "hope", by: "prose", where: "advisory: it reports and never blocks", notes: [] });
       continue;
@@ -576,6 +601,19 @@ export function checkGuards(ast: TopologyAST, root: string): GuardReport {
     if ((ast.hooks ?? []).some((h) => { const sc = runParts(h.run).script.replace(/^\.\//, ""); return !!sc && u.startsWith(claudeEvent(h.on)) && u.includes(sc); })) unattributed.splice(i, 1);
   }
 
+  // 0.13.0: a guard script scaffold kept instead of regenerating holds none of what this version writes:
+  // the gates before a script step (before-action.sh) and before a write (before-edit.sh) are none, with that reason.
+  const keptAction = keptGuardScriptProblem(root, `${scriptsDir}/before-action.sh`, source);
+  const keptEdit = keptGuardScriptProblem(root, `${scriptsDir}/before-edit.sh`, source);
+  const writeGateIds = new Set(writeGates(ast).map((g) => g.id));
+  for (const item of items) {
+    if (item.kind !== "gate") continue;
+    const gate = ast.nodes.find((n) => n.type === "gate" && n.id === item.id) as GateNode;
+    const why = [checkableActionGate(ast, gate) ? keptAction : null, writeGateIds.has(gate.id) ? keptEdit : null].filter((x): x is string => !!x);
+    if (why.length === 0) continue;
+    Object.assign(item, { strength: "none", by: "hook", notes: [...why, ...item.notes.filter((n) => !why.includes(n))], stub: undefined, citation: undefined, gradeNote: undefined });
+  }
+
   // F-4: a gate whose check reads a ledger says so on its grade: the agent can write that file.
   for (const item of items) {
     if (item.kind !== "gate" || item.strength !== "refuse" || item.by !== "hook") continue;
@@ -625,7 +663,7 @@ export function renderGuardReport(report: GuardReport): string[] {
   // No line may read "refuse" unless the installed Claude Code is the one the contract was checked on.
   const mark = report.platform ? report.platform.mark : installedMark();
   for (const i of report.items) {
-    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}`);
+    lines.push(`  ${label(i).padEnd(width)}  ${grade(i).padEnd(gradeWidth)}  by: ${i.by.padEnd(8)}  ${i.where}${i.tested ? "  · tested" : ""}${i.rule ? `  · rule: ${i.rule}` : ""}`);
     for (const n of i.notes) lines.push(`  ${"".padEnd(width)}  ${countsMissing(i) ? "✗" : "⚠"} ${n}`);
   }
   lines.push("");

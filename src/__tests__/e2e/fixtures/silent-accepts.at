@@ -73,6 +73,6 @@ topology silent-accepts : [pipeline] {
     output: "metrics/usage.jsonl"
     format: jsonl
     pricing: anthropic-current
-    cap: 5
+    limit: 5
   }
 }

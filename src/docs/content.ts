@@ -61,7 +61,9 @@ topology my-system {
 | timeout | string | no | -- | Topology-level timeout (e.g. "30m", "2h") |
 | error-handler | identifier | no | -- | Node ID for catch-all error handler |
 | entry | identifier | no | -- | The agent every session starts as (Claude Code: settings.json \`agent\`; see V134) |
+| outpoints | name-list | no | -- | Nodes a run may end at; each must be declared, and a flow node with no outgoing edge that is not listed warns (V150) |
 | durable | boolean | no | false | Enable durable execution (requires checkpoint block) |
+| target | path | no | the project root | Directory the generated hooks resolve project paths against (ledgers, gate checks, \`before: write\` globs): absolute, or relative to the project. Claude Code only; V152 |
 
 ## Available Patterns
 
@@ -130,6 +132,9 @@ agent NAME {
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
 | max-turns | number | no | -- | Max agentic turns before stopping |
+| max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
+| max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
+| timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
 | sandbox | string or boolean | no | -- | "docker", "none", "network-only", true, false |
 | skip | string | no | -- | Skip condition: "not identifier" or "identifier.identifier op value" |
 | runs | string | no | "subagent" | \`subagent\`, \`session\`, \`inline\` or \`fork\`. A \`session\` agent is its own named Claude Code session (V113) |
@@ -154,6 +159,7 @@ agent NAME {
 |-------|------|----------|---------|-------------|
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
 | disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
+| never-reads | string[] | no | -- | Path globs this agent may not read; see the \`secrets\` topic |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
 | writes | string[] | no | -- | Memory keys this agent writes (V11) |
@@ -393,6 +399,8 @@ action NAME {
 - **V26**: \`kind\` must be one of: external, git, decision, inline, report
 - **V9**: Actions in the flow must be listed in the orchestrator's \`handles\`
 - **V136**: warning, a schedule job runs a decision, report or inline action, or one with no kind, with no \`commands:\`: the job does nothing
+- **V147**: error, an \`islands\` entry has no path or owner, or its owner is not a declared person
+- **V148**: error, \`meta { requires }\` is not a version range (\`>=0.13.0\`, \`^0.13.0\`)
 
 ## Example
 
@@ -455,6 +463,10 @@ gates {
 | match | string | no | -- | Text expected near \`at\`; needs \`at\` (V106) |
 | bypass | string | no | -- | The declared way around it (an env switch, a flag) |
 | ledger | record id | no | the only record | The record a gate before a script step reads (V112) |
+| tests | block | no | -- | \`tests { refuse: ["<command>", ..] allow: ["<command>", ..] }\`: rows \`guard --test\` feeds the gate's generated check (a Bash command; before a subagent, an agent name). Needs a check that holds the gate (V141) |
+| mode | shadow / refuse | no | refuse | \`shadow\`: the generated check logs what it would refuse to \`logs/shadow.jsonl\` and lets the step run (V142) |
+| let-go | once | no | -- | One override per step: a refusal is lifted for one run when the gate's human has an ok ledger row naming this gate with \`let-go: true\`, newer than the last refusal. Used up when the step runs (\`logs/let-go.jsonl\`) (V142) |
+| lift | human id | no | the human in \`after\` | The human whose ledger row lets the gate go (V142) |
 | checks | string[] | no | -- | List of check identifiers |
 | retry | number | no | -- | Max retries on failure |
 | on-fail | string | no | "halt" | "halt" or "bounce-back" |
@@ -468,6 +480,19 @@ gates {
 |-------|-------------|
 | halt | Stop the topology on gate failure |
 | bounce-back | Return work to the \`after\` agent for correction |
+
+## Gates before a write of a path
+
+\`before: write "<glob>"\` holds an edit of a matching path until the gate holds: its ledger (the LAST line for its \`after\` step must be ok) and its \`run\` check, as for a script step. The claude-code binding makes \`before-edit.sh\` (PreToolUse on \`Write|Edit|MultiEdit|NotebookEdit\`) refuse an edit whose path, relative to the project root (or \`meta { target }\`), matches the glob, and \`before-action.sh\` refuse a Bash command that names a matching path and does more than read it. \`*\` and \`**\` both match across folders. It is a path anchor, not a node id: a gate with one is written as its own gate. V151: an empty glob is an error; no ledger and no \`run\` is a warning. \`meta { target: "<dir>" }\` makes the generated hooks resolve project paths (ledgers, checks, these globs) against that directory, absolute or relative to the project (V152).
+
+\`\`\`at
+gate src-open {
+  after: review
+  before: write "src/**"
+  ledger: trace
+  on-fail: halt
+}
+\`\`\`
 
 ## Gates before a script step
 
@@ -493,6 +518,25 @@ gates {
 
 \`records { record ID { path: "..." } }\` declares ledgers; \`path\` is project-relative and may contain \`{unit}\`. With exactly one record, a gate needs no \`ledger:\`.
 
+A record may also declare what a row holds, one field per line:
+
+\`\`\`
+records {
+  record trace {
+    path: "logs/trace.jsonl"
+    fields: [step: string, ok: boolean, ts: ts]
+    schema: row
+    writer: render
+  }
+  record state {
+    path: "logs/state.jsonl"
+    kind: run-state
+  }
+}
+\`\`\`
+
+\`fields: [name: type, ..]\` has types \`string\`, \`number\`, \`boolean\` and \`ts\` (an ISO 8601 time). \`schema:\` names a schema declared in \`schemas { }\`. \`writer:\` names an action, an agent or a project-relative script path. \`kind: run-state\` is a record with the fixed fields \`target\` and \`step\` (it takes no \`fields:\`). V139 checks all of it. On claude-code, a record with any of these is written as \`record-<id>.sh '<json>'\`, which appends the row only when it holds every declared field with the declared type (exit 2 naming the field otherwise) and adds \`ts\` when missing. A ledger row \`{step, ok: "n/a", reason}\` goes through it, with \`reason\` required. When a gate's ledger is such a record and its \`after:\` step is an action with \`commands:\`, a PostToolUse hook on Bash (\`after-action.sh\`) appends \`{step, ok: true, ts, model}\` when the step's command succeeded. \`.claude/records.json\` lists every record, with the gates that read it. Codex and cursor write none of this (V140 warns).
+
 **Ledger line format.** JSON Lines, one object per line, appended by the step's own script (agentopology only reads it):
 
 \`\`\`json
@@ -501,14 +545,33 @@ gates {
 
 \`unit\` is omitted when the step has none. A hook covers Claude Code sessions only: a step run from a terminal or a scheduler should call \`agentopology step check FILE.at STEP [--unit U] [--dir D]\` at its start (\`by: code\`). It exits 0 when every gate before STEP is satisfied, 1 otherwise, naming each failing gate and why.
 
+**Run the same gates in CI.** A top-level \`ci\` block lists gates; scaffold writes \`.github/workflows/agentopology-gates.yml\`, which checks out the repo, sets up Node and runs \`npx agentopology@<version> step check FILE.at STEP\` for the step after each listed gate (its \`before:\`):
+
+\`\`\`at
+ci {
+  provider: github
+  on: [pull_request, push]
+  gates: [publish-ready]
+}
+\`\`\`
+
+\`provider\` must be \`github\`; \`on\` defaults to \`[pull_request, push]\`. The workflow is regenerated by scaffold while it is as scaffold wrote it; once you edit it, scaffold keeps your copy. Written for the claude-code target.
+
 ## Validation Rules
 
 - **V13**: \`after\` and \`before\` must reference declared nodes
 - **V25**: \`on-fail: bounce-back\` warning when \`after\` is not an agent/group (cannot be wired as a SubagentStop hook on claude-code). Not raised for a gate before an action with commands: that is compiled to before-action.sh
 - **V110**: warning, a gate before a script step has neither a ledger nor \`run\`: nothing to check
+- **V151**: error, a \`before: write ""\` anchor has an empty glob; warning, a gate before a write has neither a ledger nor \`run\`
+- **V152**: error, \`meta { target }\` is not a path
 - **V111**: error, \`unit-from\` is not a valid regex or has no capture group
 - **V112**: error, \`ledger\` names no declared record, a record path is unsafe, or the gate needs a ledger and several records exist
+- **V139**: error, a record's \`fields:\` has a type that is not string, number, boolean or ts, its \`schema:\` is not declared, its \`writer:\` names no action, agent or project script path, or \`kind: run-state\` has \`fields:\`
+- **V140**: warning, \`--target codex\` or \`cursor\` and a record declares fields, a schema, a writer or a kind: only claude-code writes them
+- **V141**: error, \`tests\` on a gate no generated check holds (no script step or subagent in \`before:\`), or an empty tests block or row
+- **V142**: error, \`mode\` is not shadow or refuse, \`let-go\` is not once, \`mode: shadow\` or \`let-go\` on a gate no generated check holds, \`let-go\` with no human (\`lift:\` or a human in \`after\`) or no ledger
 - **V135**: error, a gate meant to refuse (\`run:\` script, not advisory, \`strength\` refuse or unset) that no hook runs: no subagent in \`after:\` (every one must be) or \`before:\`, no script step in \`before:\`, or inline delegation without a script step. Fix the anchor, or write \`strength: hope\` when a playbook runs it
+- **V155**: error, a \`ci { }\` block with a provider other than github (only github is supported), a gate id that is not declared, or a gate with no step after it (no \`before:\`)
 
 ## Example
 
@@ -562,8 +625,9 @@ human NAME {
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
-| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it and a space, writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
+| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
+| typed-only-programs | list of program names | no | -- | Your own programs that type into the person's terminal or pane, beyond the built-in tmux, screen, xdotool, osascript, wtype and ydotool. On claude-code a Bash command that runs one and holds the go word is refused. Needs \`word\` (V127) |
 
 ## The go: a typed word
 
@@ -591,12 +655,39 @@ On claude-code this writes \`go-owner-go.sh\`, a UserPromptSubmit hook. When the
 to \`logs/go.jsonl\`. It never blocks a prompt. Claude Code also runs this hook for prompts nobody typed, such as a
 message from another session or a background subagent's report. A prompt that opens with \`<cross-session-message\`,
 or holds a \`<task-notification\` envelope anywhere, writes no row, and the word counts only at the start of the prompt.
-One gap remains: a session-scoped scheduled task or \`/loop\` prompt arrives as its text was written, with no envelope,
-so one that starts with the word counts as typed. That text is the person's own, written when they set up the task.
+A session-scoped scheduled task or \`/loop\` prompt arrives as its text was written, with no envelope, so one that
+starts with the word would count as typed. The model schedules those prompts with the CronCreate and ScheduleWakeup
+tools, and \`before-schedule.sh\`, a PreToolUse hook on \`CronCreate|ScheduleWakeup\`, refuses one that starts with
+the word (the same match as the go hook), whoever asked for it.
 
 \`before-action.sh\` then lets \`release\` run only while \`docs/release-notes.md\` is unchanged since the go (a changed
-file fails and is named) and inside the \`valid\` window. The agent cannot write the row: editing the ledger, writing it
-from Bash, running the go hook with its own input, or editing the hook is refused.
+file fails and is named) and inside the \`valid\` window.
+
+These forms are refused, each proven by a test that feeds the hook the call:
+- an edit of the ledger or of the go hook;
+- a Bash command that writes the ledger, or runs or changes the go hook, unless it only reads it;
+- a Bash command that runs \`claude\` (a new session, whose prompt the go hook would read as typed), named \`claude\`,
+  also behind \`npx\`, \`env\`, \`timeout\` or another program that runs its arguments, or as the package
+  \`@anthropic-ai/claude-code\` (\`npx\`, \`npx -y\`, \`pnpm dlx\`, \`bunx\`, \`yarn dlx\`): when it holds the go word
+  anywhere, or when it matches no runner step the topology declares (an action whose
+  \`commands:\` run \`claude\`, or a schedule job's agent run). A runner prompt that merely mentions the word is
+  refused too;
+- \`at\`, \`batch\` or \`systemd-run\` (also after \`sudo\`, \`nohup\`, \`timeout\` or a shell's \`-c\`) in a command that
+  holds a \`claude\` call, the go word or the name of a file the guards protect, its input from a pipe or a
+  here-string included (\`echo 'claude -p "go release"' | at now + 1 minute\`); \`crontab\` installing a crontab
+  that holds them, from a pipe, a here-string, \`-\` or a file argument the guard reads (a file it cannot read is
+  refused; \`crontab -l\` passes); \`nohup\`, \`setsid\` and \`disown\`
+  are held to the same rules as the command run directly;
+- a command that names a terminal device (\`/dev/pts/*\`, \`/dev/tty*\`, \`/dev/console\`, also as a glob, through
+  \`$(tty)\`, or as dd's \`of=\`), unless it only reads it with \`<\`;
+- a keystroke tool (tmux, screen, xdotool, osascript, wtype, ydotool, or a program the human lists in
+  \`typed-only-programs\`) in a command that holds the go word as a whole word; and keys that spell the go word one
+  by one or across chained calls (\`tmux send-keys g o Space r e l e a s e Enter\`, \`send-keys -l\`, several
+  \`send-keys\` joined by \`;\` or \`&&\`).
+
+With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. Enable it
+(\`settings { sandbox: true }\`). An interpreter can still reach the go and the guards: for example, a Python or
+Node script that edits .claude/settings.json or a guard script; only the sandbox (0.13.1) stops it.
 
 ## Example
 
@@ -717,6 +808,7 @@ Attributes appear in brackets after the target. Order matters (V12):
 |-----------|--------|-------------|
 | when | \`[when agent.field == value]\` | Conditional edge (V5, V15) |
 | max | \`[max N]\` | Loop bound for back-edges (V6) |
+| finish | \`[finish]\` | Closes the run and hands the line back to the entry agent: an end, not a loop, so no \`[max N]\`. Must point at \`meta { entry }\` (V149) |
 | per | \`[per agent-id]\` | Scoping per agent instance |
 | tolerance | \`[tolerance N]\` or \`[tolerance "33%"]\` | Fan-out failure tolerance |
 | race | \`[race]\` | First-to-finish wins |
@@ -1679,6 +1771,7 @@ agent my-agent {
 | run | string | yes | -- | Command or script to execute; \`exit 2\` runs as written, and only exit 2 blocks (V108) |
 | type | string | no | command | "command", "prompt" or "mod" (V94) |
 | flag | string | no | -- | mod only: the env switch that turns the Mod on |
+| tests | block | no | -- | \`tests { refuse: ["<command>"] allow: ["<command>"] }\`: Bash commands \`guard --test\` feeds this hook's \`run:\` as PreToolUse payloads; exit 2 is refused (V141). A command hook on PreToolUse only |
 | timeout | number | no | -- | Timeout in seconds (Claude Code reads seconds) |
 | strength | string | no | -- | refuse, detect, hope or none (V104); a refuse hook is checked against every tool of a server it guards (V109) |
 | extensions | Record | no | -- | Binding-specific fields |
@@ -1764,7 +1857,7 @@ hooks {
 ## Notes
 
 - \`type: command\` runs a shell command; \`type: prompt\` injects text into the agent's context; \`type: mod\` loads a module inside the engine.
-- Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90).
+- Fields are one per line: \`hook h { on: Stop run: "x" }\` makes \`on\` swallow the rest of the line (V90). A comma before a \`key:\` separates fields (\`checkpoint { backend: sqlite, ttl: 7d }\`); commas inside \`[..]\`, \`{..}\`, \`(..)\` and quotes stay in the value.
 - The \`matcher\` is tested against the tool name alone. Letters, digits, \`_\`, \`-\`, spaces, \`,\` and \`|\` mean exact names; any other character makes it an unanchored regex. MCP tools are \`mcp__<server>__<tool>\`, so match a whole server with \`mcp__chrome__.*\` (\`mcp__chrome\` alone matches nothing). Filter on arguments with \`if:\`.
 - Only exit 2 blocks. Exit 1 is a non-blocking error and the action goes ahead.
 - Global hooks fire for all agents; per-agent hooks fire only for that agent.
@@ -2067,6 +2160,7 @@ mcp-servers {
 - Agents reference MCP servers via the \`mcp-servers\` field: \`mcp-servers: [database]\`.
 - Tool names from MCP servers can be referenced with wildcards: \`tools: [mcp.database.*]\`.
 - Environment variables in \`env\` should use \`\${ENV_VAR}\` syntax for secrets.
+- \`trust: untrusted\` marks a server whose results are untrusted input: it is added to the \`threat-model\` untrusted list (see the **threat-model** topic). \`trust: trusted\` is the default.
 
 ## A plugin's server
 
@@ -2081,6 +2175,54 @@ mcp-servers {
 \`\`\`
 
 Claude Code names a plugin server's tools \`mcp__plugin_<plugin>_<server>__<tool>\` (any character outside \`A-Za-z0-9_-\` becomes \`_\`), so every reference compiles to that form: \`tools: [mcp.playwright.*]\` is \`mcp__plugin_playwright_playwright__*\`. The same holds in \`disallowed-tools\`, a skill's \`allowed-tools\`, \`settings { allow ask deny }\`, and a hook \`matcher\` written with the key (\`mcp__playwright__.*\`). An \`mcp_tool\` hook's \`server\` becomes the registered name \`plugin:playwright:playwright\`. An agent's \`mcp-servers: [playwright]\` entry is left out of the agent's \`mcpServers\` for now (validate notes it): that scoped name is not yet verified there, and the agent's \`tools\` already reach the server. Codex and Cursor have no Claude Code plugins and write no entry for such a server.
+`,
+  },
+
+  // -------------------------------------------------------------------------
+  // 15b. threat-model
+  // -------------------------------------------------------------------------
+  "threat-model": {
+    name: "threat-model",
+    description: "Untrusted inputs, and what is refused after reading one",
+    content: () => `# threat-model
+
+The top-level \`threat-model\` block names inputs the session cannot trust and the acts to hold back once one has been read.
+
+## Syntax
+
+\`\`\`at
+threat-model {
+  untrusted: [web, mcp:crm, "inbox/**"]
+  refuse-after-untrusted: ["Bash(git push *)", "SendMessage"]
+  outside-sandbox: ["npm"]
+  lift: owner
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| untrusted | list | no | \`web\` (WebFetch and WebSearch), \`mcp:<server id>\` (every tool of a declared MCP server), or a quoted path glob (reads by Read, Grep or Glob) |
+| refuse-after-untrusted | list | no | Permission rules, as in \`settings { deny }\`: \`Tool\` or \`Tool(specifier)\` |
+| outside-sandbox | list | no | Commands that run outside the sandbox (\`sandbox.excludedCommands\`), and paths the sandbox may write (\`sandbox.filesystem.allowWrite\`: starts with \`/\` or \`~\`, ends with \`/\`, or holds \`*\`) |
+| lift | human id | no | The human whose ok row for an act ends the hold for that act |
+
+An MCP server written \`trust: untrusted\` in \`mcp-servers { }\` is added to the untrusted list.
+
+## What claude-code writes
+
+- \`taint-mark.sh\`, a PostToolUse hook on the untrusted tools. It writes \`.claude/state/taint/<session_id>\` (\`{"source": ..., "ts": <epoch>}\`); the session id comes from the hook's stdin JSON.
+- \`taint-guard.sh\`, a PreToolUse hook on the tools the rules name. While the session has a mark, a call matching a rule exits 2 with a reason that names the source. A Bash rule is read per command segment (\`cd x && git push\` matches \`Bash(git push *)\`); a command run through \`sudo\`, \`sh -c\`, \`env\` and the like counts when it holds the rule's fixed start. A command reached through a variable or another script is not seen.
+- The hold ends in a new session (a new session id has no mark), or for one act when the \`lift:\` human has an ok row in \`.claude/state/approvals.jsonl\` with \`"act"\` equal to the rule string and \`"at"\` (ISO time) not older than the mark. A later untrusted read marks again, so an older row no longer lifts. Nothing clears the whole mark.
+- The agent cannot write the mark folder or the approvals file: the before-edit guard refuses edits of them, and the before-action guard refuses a Bash command that writes them.
+- \`outside-sandbox\` goes to the sandbox keys of settings.json; it takes effect only when \`settings { sandbox: true }\`.
+
+An agent's own \`sandbox\` field has no Claude Code key and is still not written (validate warns, V130).
+
+## Not written
+
+Codex and Cursor write nothing for the block: \`validate --target codex\` and \`--target cursor\` warn (V138). Only Read, Grep and Glob count for a path glob; a file read through Bash does not mark the session.
 `,
   },
 
@@ -2115,6 +2257,7 @@ metering {
 | output | string | yes | -- | Output file or directory path |
 | format | string | yes (V28) | -- | "json", "jsonl", or "csv" |
 | pricing | string | yes (V29) | -- | Pricing model identifier |
+| max-cost | number | no | -- | Spend cap in USD (\`cap:\` is accepted as an alias). Advisory, not enforced: written to the metering output for reporting (V156) |
 
 ## Track Metrics
 
@@ -2706,6 +2849,57 @@ schemas {
   },
 
   // -------------------------------------------------------------------------
+  // rules
+  // -------------------------------------------------------------------------
+  rules: {
+    name: "rules",
+    description: "Conduct rules traced to their ids, cited by gates and hooks",
+    content: () => `# rules
+
+The \`rules\` block holds conduct rules, each with an id a person can trace.
+
+## Syntax
+
+\`\`\`at
+rules {
+  rule "R-7.6" {
+    text: "Never publish a draft without a second read."
+    source: "editorial handbook, section 7"
+  }
+}
+\`\`\`
+
+- The id is a quoted string and may hold dots. Each id appears once (V143).
+- \`text:\` is required and never empty (V143). \`source:\` is optional.
+
+## What it compiles to
+
+- **claude-code**: a \`## Rules\` section, one entry per rule with its id, written between
+  \`<!-- agentopology:rules -->\` markers into the entry agent's file (\`meta { entry }\`), or the
+  topology skill when there is no entry agent. Text outside the markers is yours.
+- **codex**: the same section in AGENTS.md.
+- \`agentopology validate\` prints \`rules: N declared (<ids>)\`.
+
+## Citing a rule
+
+A gate or hook may name the rule it enforces with \`rule: "<id>"\`. An id the block does not
+declare is an error (V144). The citation is written into the gate's section of the playbook
+and listed beside the gate by \`agentopology guard <file> --check\`. It is a trace, not
+enforcement: the gate's own hook is what refuses.
+
+\`\`\`at
+gates {
+  gate second-read {
+    after: drafter
+    run: "scripts/second-read.sh"
+    rule: "R-7.6"
+  }
+}
+\`\`\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 25. defaults
   // -------------------------------------------------------------------------
   defaults: {
@@ -2757,6 +2951,46 @@ defaults {
   // -------------------------------------------------------------------------
   // 26. observability
   // -------------------------------------------------------------------------
+  context: {
+    name: "context",
+    description: "The context file (CLAUDE.md): one generated block, the rest yours",
+    content: () => `# context
+
+The \`context\` block makes the Claude Code binding write a context file. Without \`file:\`, no CLAUDE.md is written.
+
+## Syntax
+
+\`\`\`at
+context {
+  file: "CLAUDE.md"
+  includes: [docs/style.md]
+  max-lines: 200
+  glossary {
+    "ticket": "A unit of customer work"
+  }
+}
+\`\`\`
+
+## Fields
+
+| Field | Description |
+|-------|-------------|
+| \`file\` | The file to write the block into |
+| \`includes\` | Project files the block imports, one \`@<path>\` line each |
+| \`max-lines\` | Longest the file may be (V146 warns above it) |
+| \`glossary\` | \`"term": "definition"\` pairs, written as a list |
+
+## What is written
+
+One block between \`agentopology:context:begin\` and \`agentopology:context:end\` markers: the entry agent (\`meta { entry }\`) with an instruction to start as it and \`If no agent is named, start as <entry>.\`, the imports, and the glossary. A missing file is created; in an existing file only the text between the markers is replaced and every other line is kept; a file with no block gets it appended.
+
+## Validation Rules
+
+- **V145**: warning, an include that is not in the project (\`validate --dir\`)
+- **V146**: warning, the file is longer than \`max-lines\`
+`,
+  },
+
   observability: {
     name: "observability",
     description: "Tracing and observability configuration",
@@ -3129,6 +3363,46 @@ artifacts {
   },
 
   // -------------------------------------------------------------------------
+  // walls (never-reads and secrets)
+  // -------------------------------------------------------------------------
+  secrets: {
+    name: "secrets",
+    description: "Per-agent walls: never-reads on an agent and the top-level secrets block",
+    content: () => `# secrets
+
+Per-agent walls on what can be read. \`never-reads\` on an agent lists path globs that agent may not read. A \`secrets\` entry names a path glob and the readers that may read it.
+
+## Syntax
+
+\`\`\`at
+secrets {
+  secret prod-config { path: "config/prod/**", readers: [deployer, main] }
+}
+agent reviewer {
+  model: sonnet
+  never-reads: [".env", "private/**"]
+}
+\`\`\`
+
+- \`readers\` are agent ids, or \`main\` for the main session. Any other agent, and the main session unless \`main\` is listed, is refused.
+- A glob is project-relative. \`**\` and \`*\` match across folders; a pattern with no \`/\` also matches a file name anywhere.
+
+## What it compiles to (claude-code)
+
+One generated PreToolUse hook on \`Read|Grep|Glob|Bash\` (\`before-read.sh\`) that exits 2 on a match. The calling agent is \`agent_type\` in the hook input: Claude Code sets it when the call comes from a subagent or from a session started with \`--agent\`, and leaves it out in the plain main session.
+
+Checked: Read \`file_path\`, Grep \`path\` and \`glob\`, Glob \`path\` and \`pattern\`, and the words of a Bash command.
+
+Not seen in a Bash command: a path built in a variable or substitution, one reached after \`cd\`, one a script opens itself, a search from a folder above the protected one.
+
+## Validation Rules
+
+- **V153**: a reader must be a declared agent or \`main\`
+- **V154**: a secret needs a \`path\`
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 31. composition
   // -------------------------------------------------------------------------
   composition: {
@@ -3469,13 +3743,24 @@ Metering \`pricing\` should be a recognized model: anthropic-current, custom, or
 ### V135: Refusing Gate No Hook Runs (error)
 A gate meant to refuse (its \`run:\` names a script, not advisory, \`strength\` refuse or not written) must have a moment Claude Code or Codex can hook: every \`after:\` a subagent (SubagentStop), a subagent in \`before:\` (before-agent.sh), or a script step, an action with \`commands:\`, in \`before:\` (before-action.sh). Under \`delegation: inline\` only the script step wires. Anything else got a wrapper script nothing calls, a scaffold warning, and a passing validate. An edge between its anchors that cites (\`guard:\`) a declared blocking hook with \`strength: refuse\` credits it, and so does such a hook that runs the gate's own \`run:\` command (a V135 warning then names it with its matcher and \`if:\`, since guard --check grades that gate hope, or cited with \`at:\`); a cited \`at:\` does not. A blocking hook is a command hook, not async, on an event the platform blocks on (the list guard --check reads). On Claude Code an \`execution: workflow\` agent is not a subagent. Applies with no target, claude-code and codex, including in scaffold, guard --target and imported files; not cursor (a hook for every gate) or claude-workflow, and \`plan\` does not stop on it. On Codex a gate run only by SubagentStop passes V135 but cannot hold the next step (CX9-noblock warns).
 
-**Violation:** \`gate numbers { before: finish  run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
+**Violation:** \`gate numbers { before: finish, run: "bash tools/check.sh" }\`, where \`finish\` is a report step and there is no \`after:\`.
 **Fix:** Give it a subagent in \`after:\` or \`before:\`, or a script step in \`before:\`; if a playbook runs it by hand, write \`strength: hope\`; for a cited gate, drop \`run:\` and keep the citation as the claim. \`agentopology fix <file.at>\` lists every V135 error with the edit and, when the flow has one, an anchor that would make the gate refuse; \`--write\` adds \`strength: hope\` to those gates and changes nothing else.
+
+### V139: Record Fields (error)
+A record's \`fields:\`, \`schema:\`, \`writer:\` or \`kind:\` is wrong: a field type that is not string, number, boolean or ts, a \`schema:\` no \`schemas { }\` declares, a \`writer:\` that names no declared action or agent and is no safe project-relative script path, a \`kind:\` other than \`run-state\`, or \`kind: run-state\` with \`fields:\`.
+
+**Violation:** \`record trace { path: "t.jsonl", fields: [n: integer] }\`
+**Fix:** Use one of string, number, boolean, ts.
+
+### V140: Records Not Written (warning)
+With \`--target codex\` or \`--target cursor\`, a record that declares fields, a schema, a writer or a kind gets no record script, no step ledger row and no records list; only claude-code writes them.
+
+**Fix:** Use claude-code, or leave the record a path a gate reads.
 
 ### V136: Scheduled Routing Action (warning)
 A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an action with no \`kind:\`, that has no \`commands:\`. The orchestrator does such an action in conversation, so its script has nothing to run and the job, which runs with no orchestrator, does nothing. The warning names the job, the action and its kind (or "no kind"). Every target; an \`external\` or \`git\` action with no commands is a stub, not reported.
 
-**Violation:** \`job nightly { cron: "0 3 * * *"  action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
+**Violation:** \`job nightly { cron: "0 3 * * *", action: finish }\`, where \`finish\` is \`kind: report\` with no \`commands:\`.
 **Fix:** Give the action \`commands: [...]\`, or schedule the agent that does the work.
 
 ### V137: Observability Env Override (warning)
@@ -3484,7 +3769,109 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`observability { endpoint: "http://127.0.0.1:4318" }\` with \`env { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }\`.
 **Fix:** Drop one of the two, or make them agree.
 
-### V138: Plugin Not Loaded (error)
+### V138: Threat Model (error/warning)
+The \`threat-model { }\` block must name what it can compile. Errors: an \`untrusted\` entry that is not \`web\`, \`mcp:<id>\` of a declared server, or a path glob; a \`lift:\` that names no declared human; a \`refuse-after-untrusted\` string that is not a permission rule; a server with \`trust:\` other than \`untrusted\` or \`trusted\`. Warnings: rules with nothing untrusted (or the reverse), \`outside-sandbox\` with the sandbox off, and on codex and cursor that the block is not written. See the **threat-model** topic.
+
+### V141: Gate and Hook Tests (error)
+\`tests { refuse: [...] allow: [...] }\` on a gate or a hook is run by \`agentopology guard <file> --test\`. A gate's tests need a generated check that holds it: before-action.sh (a script step, an action with \`commands:\`, in \`before:\`) or before-agent.sh (a subagent in \`before:\` with a \`run:\` script). A hook's tests are Bash commands fed to its own script as a PreToolUse payload, so the hook must be a command hook on PreToolUse with a \`run:\`. A tests block with no rows, or an empty row, is an error too.
+
+**Violation:** \`gate g { after: a  before: b  run: "scripts/g.sh"  tests { refuse: ["b"] } }\` where \`a\` and \`b\` are subagents: a SubagentStop hook runs it, and no check runs before something.
+**Fix:** Give the gate a script step or a subagent in \`before:\`, or drop \`tests\`.
+
+### V142: Gate Mode and Let-Go (error)
+\`mode\` on a gate is \`shadow\` or \`refuse\`; \`let-go\` is \`once\`. Both change what the generated check does, so an unread value is an error, and so is \`mode: shadow\` or \`let-go\` on a gate no generated check holds (they would do nothing). \`let-go: once\` needs a human to give it (\`lift: <human id>\`, or a human in \`after:\`) and a ledger to read the human's row from; a gate that holds a subagent launch needs a ledger path with no \`{unit}\`. \`lift:\` without \`let-go\` and \`mode\` or \`let-go\` on a hook are errors: a hook runs your own script.
+
+**Violation:** \`gate g { after: render, before: publish, let-go: once }\` with no human anywhere.
+**Fix:** Add \`lift: <human id>\`, or drop \`let-go\`.
+
+### V143: Rules Block (error)
+A \`rules { }\` block holds rules with unique ids and non-empty text. A repeated id, an empty id, or a rule with no \`text:\` is an error.
+
+**Violation:** \`rules { rule "R-1" { text: "a" }  rule "R-1" { text: "b" } }\`
+**Fix:** Give each rule its own id and write its text.
+
+### V144: Rule Citation (error)
+A gate or hook that cites \`rule: "<id>"\` must name a rule the \`rules { }\` block declares.
+
+**Violation:** \`gate g { after: a, run: "scripts/g.sh", rule: "R-9" }\` with no rule "R-9".
+**Fix:** Declare the rule, or cite one that exists.
+
+### V145: Context Include Missing (warning)
+A \`context { includes }\` path does not exist in the project. Checked only with \`validate --dir <project>\`. The generated \`@<path>\` import in the context file would point at nothing.
+
+**Fix:** Create the file or correct the path.
+
+### V146: Context File Too Long (warning)
+The context file (the generated block plus your own lines) is longer than \`context { max-lines }\`.
+
+**Fix:** Shorten the file or raise \`max-lines\`.
+
+### V147: Island Owner (error)
+An island in the top-level \`islands { }\` block has no \`path:\`, no \`owner:\`, or an owner that is not a declared \`person\`. An island covers the project files its glob matches: \`validate --inventory\` counts them as accounted for and lists the island with its owner; \`guard --check\` lists its \`test:\` command (it is never run). With \`inventory { strict: true }\`, \`validate --inventory\` exits 1 when a live file is in neither the .at nor an island.
+
+**Violation:** \`islands { island core { path: "harness/**", owner: bob } }\` with no \`person bob\`.
+**Fix:** Declare \`person bob { }\`, or name a declared person.
+
+### V148: Requires Range (error)
+\`meta { requires: "<range>" }\` is not a version range. A range is one or more comparators separated by blanks; a comparator is \`>=\`, \`<=\`, \`>\`, \`<\`, \`=\` or \`^\` before \`x.y.z\`. Every command that reads the file exits 1 when the running agentopology is outside the range.
+
+**Violation:** \`meta { requires: "newer" }\`.
+**Fix:** \`requires: ">=0.13.0"\`, \`"^0.13.0"\` or \`">=0.13.0 <1.0.0"\`.
+
+### V149: Finish Edge Target (error)
+A \`[finish]\` edge closes the run and hands the line back to the entry agent, so it must point at \`meta { entry }\`, and the topology must declare one. A finish edge is an end, not a loop: V6 does not apply, so it needs no \`[max N]\`.
+
+**Violation:** \`builder -> checker [finish]\` where the entry is \`lead\`.
+**Fix:** \`builder -> lead [finish]\`.
+
+### V150: Outpoints (error/warning)
+\`meta { outpoints: [..] }\` lists the nodes a run may end at. An outpoint that is not a declared node is an error. Once the list is written, a flow node with no outgoing edge that is not listed warns.
+
+**Fix:** Declare the node or remove it from the list; add a dead-end node to \`outpoints\` or give it an edge.
+
+### V151: Write Anchor (error/warning)
+A gate's \`before: write "<glob>"\` names a non-empty path glob (error), and the gate has a ledger or a \`run:\` to check (warning when it has neither: the edit is never refused).
+
+**Violation:** \`gate src-open { before: write "", ledger: trace }\`.
+**Fix:** \`before: write "src/**"\`.
+
+### V152: Meta Target (error)
+\`meta { target }\` is a directory path, absolute or relative to the project, with letters, digits and \`. _ @ + - /\` and spaces only.
+
+**Violation:** \`target: "a;b"\` or \`target: ""\`.
+**Fix:** \`target: "app"\`.
+
+### V153: Secret Readers (error)
+A \`secrets\` reader must be a declared agent, or \`main\` for the main session.
+
+**Violation:** \`secret s { path: "x/**", readers: [ghost] }\` with no agent \`ghost\`.
+**Fix:** Name a declared agent, or \`main\`.
+
+### V154: Secret Path (error)
+A \`secrets\` entry needs a \`path\` glob; with none it guards nothing.
+
+**Violation:** \`secret s { readers: [deployer] }\`.
+**Fix:** Add \`path: "<glob>"\`.
+
+### V155: CI Block (error)
+The top-level \`ci { provider: github, on: [...], gates: [...] }\` block names a provider other than \`github\`, a gate id that is not declared, or a gate with no step after it (no \`before:\`), so the workflow has no step to check.
+
+**Violation:** \`ci { provider: gitlab, gates: [publish-ready] }\`.
+**Fix:** Write \`provider: github\`, list only declared gates, and give each a \`before:\`.
+
+### V156: Caps (error/warning)
+\`max-subagents\` on an agent must be a positive whole number, and \`max-cost\` (on an agent, or in \`metering\`, where \`cap:\` is its alias) a positive number of US dollars; anything else is an error. A \`max-cost\` that is set is a warning: \`max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting\`. \`max-subagents\` and \`timeout\` are enforced on claude-code by generated hooks.
+
+**Violation:** \`agent lead { max-subagents: 0 }\`.
+**Fix:** \`max-subagents: 3\`.
+
+### V157: Field Swallowed Into A Value (error)
+In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`metering\` block, a value still holds \`, <field>:\` where \`<field>\` is a field of the same block. A comma between fields on one line separates them, but not inside quotes, \`[..]\`, \`{..}\` or \`(..)\`; an unclosed one hides the next field, which was then lost. The message names the block and the field.
+
+**Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
+**Fix:** Close the bracket or quote, or put the field on its own line.
+
+### V158: Plugin Not Loaded (error)
 EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not load (plugins load only by \`--plugin <module>\` or the project package.json, never from the .at). Each top-level block no core section and no loaded plugin owns is reported as needing it, instead of V102; with no such block, the unloaded plugin is. Without \`uses-plugins\` an unknown block stays V102. See the plugins topic.
 
 **Violation:** \`uses-plugins: [acme]\` and \`widget w1 { a: 1 }\`, run without the plugin: \`block widget needs plugin acme; run with --plugin acme\`.
@@ -3528,7 +3915,27 @@ EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
 | V137 | warning | Observability Env Override |
-| V138 | error | Plugin Not Loaded |
+| V138 | error/warning | Threat Model |
+| V139 | error | Record Fields |
+| V140 | warning | Records Not Written |
+| V141 | error | Gate and Hook Tests |
+| V142 | error | Gate Mode and Let-Go |
+| V143 | error | Rules Block |
+| V144 | error | Rule Citation |
+| V145 | warning | Context Include Missing |
+| V146 | warning | Context File Too Long |
+| V147 | error | Island Owner |
+| V148 | error | Requires Range |
+| V149 | error | Finish Edge Target |
+| V150 | error/warning | Outpoints |
+| V151 | error/warning | Write Anchor |
+| V152 | error | Meta Target |
+| V153 | error | Secret Readers |
+| V154 | error | Secret Path |
+| V155 | error | CI Block |
+| V156 | error/warning | Caps |
+| V157 | error | Field Swallowed Into A Value |
+| V158 | error | Plugin Not Loaded |
 `,
   },
 
@@ -3715,7 +4122,7 @@ topology code-review : [pipeline, fan-out, human-gate] {
 
 Reserved keywords cannot be used as agent, action, or gate identifiers. They are organized into block keywords, field keywords, and wave keywords.
 
-## Block Keywords (40)
+## Block Keywords (41)
 
 These introduce grammar constructs:
 
@@ -3728,7 +4135,7 @@ level       hooks       hook        settings    mcp-servers
 metering    tools       tool        scale       skill
 context     env         extensions  providers   schedule
 job         interfaces  defaults    schemas     schema
-observability fragment  interface   params
+observability fragment  interface   params      threat-model
 \`\`\`
 
 ## Field Keywords (100+)
@@ -3742,7 +4149,8 @@ outputs     skip        retry             isolation phase
 kind        role        version           description
 permissions prompt      generates         handles   argument
 behavior    invocation  background        skills    sandbox
-fallback-chain max-turns
+fallback-chain max-turns   max-lines   glossary
+max-subagents max-cost
 \`\`\`
 
 ### Flow & Edge Fields
@@ -4458,7 +4866,7 @@ topology t : [pipeline] {
 \`\`\`
 
 \`uses-plugins\` is a check only; it never loads code. When a plugin it names
-is not loaded, V138 is an error: \`block widget needs plugin acme; run with
+is not loaded, V158 is an error: \`block widget needs plugin acme; run with
 --plugin acme\` for each block no loaded plugin owns, or \`uses-plugins names
 plugin acme, which is not loaded\` when there is none. Without
 \`uses-plugins\`, an unknown block is V102, as always.

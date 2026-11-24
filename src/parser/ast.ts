@@ -103,6 +103,13 @@ export interface HookDef {
   strength?: string;
   /** The declared way around it (an env switch, a flag). */
   bypass?: string;
+  /** Bash commands `guard --test` feeds the hook's script as PreToolUse payloads (V141). */
+  tests?: GateTests;
+  /** Written on a hook, reported by V142: mode and let-go belong to gates. */
+  mode?: string;
+  letGo?: string;
+  /** Id of a declared `rules { }` entry this hook enforces (V144 checks it exists). */
+  rule?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
 }
@@ -207,6 +214,15 @@ export interface MachineDef {
   os?: string;
 }
 
+/** A secret from the top-level `secrets` block: a path glob only the listed readers may read. */
+export interface SecretDef {
+  id: string;
+  /** Project-relative path glob. */
+  path?: string;
+  /** Agent ids, or "main" for the main session. */
+  readers: string[];
+}
+
 /** An external interface definition (webhook, HTTP, etc.). */
 export interface InterfaceDef {
   /** Interface identifier. */
@@ -229,6 +245,10 @@ export interface MeteringDef {
   format: string;
   /** Pricing model identifier. */
   pricing: string;
+  /** Spend cap in USD (`max-cost:`, or its alias `cap:`). Advisory: written to the metering output, never enforced. */
+  maxCost?: number;
+  /** The value as written, kept when it is not a positive number so V156 can name it. */
+  maxCostRaw?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +477,48 @@ export interface RecordDef {
   id: string;
   /** Project-relative path; may contain `{unit}`. */
   path: string;
+  /** Fields a row must hold: `fields: [name: type, ..]` (types: string, number, boolean, ts). */
+  fields?: RecordFieldDef[];
+  /** A schema declared in `schemas { }`. */
+  schema?: string;
+  /** What writes the record: an action id, an agent id or a project script path. */
+  writer?: string;
+  /** `run-state`: the fixed fields target and step. Any other value is reported by V139. */
+  kind?: string;
+}
+
+/** One field of a record, as written: the type is kept as written so V139 can name a wrong one. */
+export interface RecordFieldDef {
+  name: string;
+  type: string;
+}
+
+/** The field types a record field may have. */
+export const RECORD_FIELD_TYPES = ["string", "number", "boolean", "ts"] as const;
+
+/** The fields of a `kind: run-state` record. */
+export const RUN_STATE_FIELDS: RecordFieldDef[] = [
+  { name: "target", type: "string" },
+  { name: "step", type: "string" },
+];
+
+/** The fields a record's rows must hold: its run-state fixed fields, or the ones it declares. */
+export function recordFields(r: RecordDef): RecordFieldDef[] {
+  return r.kind === "run-state" ? RUN_STATE_FIELDS : r.fields ?? [];
+}
+
+/**
+ * The top-level `ci { provider: github, on: [...], gates: [...] }` block.
+ * Scaffold writes a workflow that runs `agentopology step check` for the step
+ * after each listed gate. Only `github` is supported (V155).
+ */
+export interface CiDef {
+  /** CI provider as written; only "github" is accepted. */
+  provider: string;
+  /** Events that start the workflow. Default: pull_request and push. */
+  on: string[];
+  /** Ids of declared gates whose following step the workflow checks. */
+  gates: string[];
 }
 
 /** An artifact definition in the top-level `artifacts` block. */
@@ -617,8 +679,10 @@ export interface AgentNode extends BaseNode {
   reads?: string[];
   /** Memory keys this agent can write. */
   writes?: string[];
-  /** Disallowed tool names (mutually exclusive with `tools`). */
+  /** Disallowed tool names. May be set together with `tools`: Claude Code removes them first, then resolves `tools`. */
   disallowedTools?: string[];
+  /** Path globs this agent may not read (Read, Grep, Glob, and Bash commands naming them). */
+  neverReads?: string[];
   /** Skip condition expression. */
   skip?: string;
   /** Behavior mode (e.g. "advisory", "blocking"). */
@@ -695,6 +759,14 @@ export interface AgentNode extends BaseNode {
   description?: string;
   /** Maximum number of agentic turns before stopping. */
   maxTurns?: number;
+  /** Most subagents this agent may have open at once (`max-subagents:`). */
+  maxSubagents?: number;
+  /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
+  maxSubagentsRaw?: string;
+  /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */
+  maxCost?: number;
+  /** The `max-cost:` value as written, kept when it is not a positive number (V156). */
+  maxCostRaw?: string;
   /** Sandbox mode override (e.g. "docker", "none", "network-only", true, false). */
   sandbox?: string | boolean;
   /** Model fallback chain (ordered list of model ids to try). */
@@ -784,6 +856,11 @@ export interface GateNode extends BaseNode {
   after?: string | string[];
   /** Node id(s) this gate runs before. See {@link after}. */
   before?: string | string[];
+  /**
+   * Path globs from `before: write "<glob>"`: an edit of a matching path is refused until the
+   * gate holds. Kept apart from {@link before} (node ids); an empty glob is kept so V151 can say so.
+   */
+  beforeWrite?: string[];
   /** Script to execute for the gate check. */
   run?: string;
   /** List of check identifiers. */
@@ -814,8 +891,26 @@ export interface GateNode extends BaseNode {
    * record uses that record.
    */
   ledger?: string;
+  /** Commands (or, before a subagent, agent names) the generated check must refuse and allow; `guard --test` runs them (V141). */
+  tests?: GateTests;
+  /** `shadow`: the generated check logs what it would refuse to logs/shadow.jsonl and lets the step run. `refuse` (default) refuses (V142). */
+  mode?: string;
+  /** `once`: a human's ledger row lifts one refusal for one run (V142). */
+  letGo?: string;
+  /** The human id whose ledger row lets this gate go (default: the human in `after:`). */
+  lift?: string;
+  /** Id of a declared `rules { }` entry this gate enforces (V144 checks it exists). */
+  rule?: string;
   /** Platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
+}
+
+/** The `tests { refuse: [..] allow: [..] }` rows of a gate or a hook. */
+export interface GateTests {
+  /** Each is fed to the guard and must be refused. */
+  refuse: string[];
+  /** Each is fed to the guard and must be allowed. */
+  allow: string[];
 }
 
 /** An MCP server a Claude Code plugin provides: `from: plugin "<plugin>"`, with `server:` (default: the block key). */
@@ -895,6 +990,8 @@ export interface HumanNode extends BaseNode {
   word?: string;
   /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
   binds?: string[];
+  /** Programs that type into the person's terminal (beyond the built-in keystroke tools): a Bash command running one that holds the go word is refused. */
+  typedOnlyPrograms?: string[];
 }
 
 /** A person from a top-level `person <id> { away: "YYYY-MM-DD..YYYY-MM-DD" }` block. */
@@ -902,6 +999,18 @@ export interface PersonDef {
   id: string;
   /** Window the person is away, as written. */
   away?: string;
+}
+
+/** The top-level `threat-model { untrusted, outside-sandbox, refuse-after-untrusted, lift }` block. */
+export interface ThreatModelDef {
+  /** `web`, `mcp:<server id>`, or a path glob. A server written `trust: untrusted` is added where the list is used. */
+  untrusted: string[];
+  /** Commands and paths that run outside the sandbox. */
+  outsideSandbox: string[];
+  /** Permission-rule strings refused while the session holds a taint mark. */
+  refuseAfterUntrusted: string[];
+  /** The human whose ok row for an act ends the taint for that act. */
+  lift?: string;
 }
 
 /** The top-level `needs { memory: "<path under home>" connectors: [..] user-skills: [..] }` block (L-4). */
@@ -912,6 +1021,8 @@ export interface NeedsDef {
   connectors?: string[];
   /** Skills expected at `~/.claude/skills/<name>`. */
   userSkills?: string[];
+  /** Plugins expected under `~/.claude/plugins`. */
+  plugins?: string[];
 }
 
 /** Topology-level defaults for sampling params and shared agent config. */
@@ -985,6 +1096,11 @@ export interface EdgeDef {
   maxIterations: number | null;
   /** Optional per-agent scoping identifier (from `[per <id>]`). */
   per?: string | null;
+  /**
+   * True for a `[finish]` edge: it closes the run and hands the line back to
+   * the entry agent. An end, not a loop, so it needs no `[max N]` (V149).
+   */
+  finish?: boolean;
   /** True for `-x->` error edges. */
   isError?: boolean;
   /** Optional error type filter from `-x[type]->`. */
@@ -1039,8 +1155,17 @@ export interface TopologyMeta {
    * start as the main thread (V134).
    */
   entry?: string;
+  /** Node ids a run may end at (`meta { outpoints: [..] }`, V150). */
+  outpoints?: string[];
   /** Whether durable execution is enabled. */
   durable?: boolean;
+  /** Version range of the agentopology package this file needs (`meta { requires: ">=0.13.0" }`). */
+  requires?: string;
+  /**
+   * The directory the generated hooks resolve project paths against (ledgers, gate checks,
+   * `before: write` globs): absolute, or relative to the project. Default: the project root.
+   */
+  target?: string;
 }
 
 /** Authentication configuration for a provider (OIDC, OAuth2, etc.). */
@@ -1130,6 +1255,16 @@ export interface IncludeDef {
 // ---------------------------------------------------------------------------
 
 /** The complete abstract syntax tree for an AgenTopology file. */
+/** One `rule "<id>" { text: ..., source: ... }` of the `rules` block. */
+export interface RuleDef {
+  /** The quoted id; may hold dots ("R-7.6"). */
+  id: string;
+  /** What the rule says. Required, never empty (V143). */
+  text: string;
+  /** Where the rule comes from. */
+  source?: string;
+}
+
 export interface TopologyAST {
   /** Topology metadata (header + meta block). */
   topology: TopologyMeta;
@@ -1171,6 +1306,10 @@ export interface TopologyAST {
     file?: string;
     /** Additional files to include in context. */
     includes?: string[];
+    /** Longest the context file may be, in lines (V146 warns above it). */
+    maxLines?: number;
+    /** Terms the context file defines, in the order written. */
+    glossary?: { term: string; definition: string }[];
   };
   /** Environment variables for the topology (plain strings or sensitive values). */
   env: Record<string, string | SensitiveValue>;
@@ -1184,6 +1323,8 @@ export interface TopologyAST {
   defaults: DefaultsDef | null;
   /** Named schema definitions from the top-level `schemas` block. */
   schemas: SchemaDef[];
+  /** Conduct rules from the top-level `rules` block, traced to their ids. */
+  rules?: RuleDef[];
   /** Top-level platform-specific extension fields, keyed by binding name. */
   extensions?: Record<string, Record<string, unknown>>;
   /** Observability / tracing configuration (null if not configured). */
@@ -1204,11 +1345,13 @@ export interface TopologyAST {
   artifacts: ArtifactDef[];
   /** Records from the top-level `records` block (ledgers gates read). */
   records?: RecordDef[];
+  /** The top-level `ci { }` block: the gates a CI workflow runs (see {@link CiDef}). */
+  ci?: CiDef;
   /** Decision names the topology says must have a seat (`decisions: [...]`). */
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
-  /** `uses-plugins: [...]` at the top level: the plugins this topology needs loaded (a check only, V138; it never loads code). */
+  /** `uses-plugins: [...]` at the top level: the plugins this topology needs loaded (a check only, V158; it never loads code). */
   usesPlugins?: string[];
   /**
    * Absolute path of the file the CLI parsed this from. Set (non-enumerable, so
@@ -1218,12 +1361,31 @@ export interface TopologyAST {
   sourcePath?: string;
   /** Machines from the top-level `machines` block (T-07). */
   machines?: MachineDef[];
+  /** Secrets from the top-level `secrets` block. */
+  secrets?: SecretDef[];
   /** People from the top-level `person` blocks (T-09). */
   persons?: PersonDef[];
   /** Extra project folders whose files count as live things, from `inventory { roots: [...] }` (T-08). */
   inventoryRoots?: string[];
   /** What the topology needs from outside the repo, from the top-level `needs` block (L-4). */
   needs?: NeedsDef;
+  /** Untrusted inputs and what is refused after reading one, from the top-level `threat-model` block. */
+  threatModel?: ThreatModelDef;
+  /** `inventory { strict: true }`: validate --inventory exits 1 when a live file is unmapped. */
+  inventoryStrict?: boolean;
+  /** Code regions from the top-level `islands` block: files they match count as accounted for. */
+  islands?: IslandDef[];
+}
+
+/** One `island <id> { path, owner, test }` from the top-level `islands` block. */
+export interface IslandDef {
+  id: string;
+  /** Glob of project files the island covers (`*`, `**`, `?`). */
+  path: string;
+  /** A declared person id. */
+  owner: string;
+  /** Command that tests the island; listed by guard --check, never run. */
+  test?: string;
 }
 
 // ---------------------------------------------------------------------------
