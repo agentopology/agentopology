@@ -283,7 +283,6 @@ const SCAFFOLD_PASSED = [
  */
 const KNOWN_FALSE_REFUSALS = [
   "echo agentopology scaffold",
-  "grep agentopology docs/scaffold.md",
   "echo agentopology@0.13.1 scaffold",
   "bunx agentopology-extras@1.0.0 scaffold probe.txt",
   "npx @scope/agentopology-tools@1.0.0 scaffold probe.txt",
@@ -397,9 +396,94 @@ const NEAR_PASSED = [
   "cat <<<'hello world'",
 ];
 
+/** Text handed to a program that runs text as code: quoted or not, it is the step, and refused. */
+const CODE_FORMS = [
+  "bash -c '{c}'",
+  "sh -c '{c}'",
+  "eval '{c}'",
+  "npx --call='{c}'",
+  "npm exec -c '{c}'",
+  "node -e '{c}'",
+  "python3 -c '{c}'",
+  "bash <<< '{c}'",
+  "bash <<'EOF'\n{c}\nEOF",
+  "perl -e '{c}'",
+  "ruby -e '{c}'",
+  "php -r '{c}'",
+  "lua -e '{c}'",
+  "deno eval '{c}'",
+  "bun -e '{c}'",
+  "awk 'BEGIN{system(\"{c}\")}'",
+  "echo '{c}' | tclsh",
+  "tclsh <<< '{c}'",
+  "echo x | xargs sh -c '{c}'",
+  "find . -exec sh -c '{c}' \\;",
+  "git -c alias.x='!{c}' x",
+  "env -S '{c}'",
+  "script -c '{c}'",
+  "watch '{c}'",
+  "nohup sh -c '{c}'",
+  "ssh host '{c}'",
+  "docker run img sh -c '{c}'",
+  "make -E '{c}'",
+  "make --eval='{c}'",
+];
+
+/** Quoted text with a space, handed to no program that runs it: text, so it passes. */
+const TEXT_PASSED = [
+  "git commit -m \"agentopology {w} notes\"",
+  "gh pr create --body \"fix the agentopology {w} step\"",
+];
+
+/** A read-only program in the program's place, the words its arguments only: no step, so it passes. */
+const READ_ONLY_PASSED = [
+  "grep -rn agentopology import docs/",
+  "rg agentopology guard",
+  "grep -rn \"agentopology import\" docs/",
+  "cat docs/agentopology-{w}.md",
+  "head -5 agentopology.at",
+  "wc -l docs/{w}.md agentopology.at",
+  "grep agentopology docs/{w}.md",
+  "tail -n 3 docs/agentopology-{w}.md",
+  "sed -n 1,5p docs/agentopology-{w}.md",
+  "awk '/agentopology/' docs/{w}.md",
+];
+
+/** The read-only rule never covers a substitution, a code runner or a second segment: refused. */
+const READ_ONLY_REFUSED = [
+  "grep x $({c})",
+  "cat <({c})",
+  "grep `{c}` f",
+  "sed -n '1e {c}' f",
+  "awk 'BEGIN{system(\"{c}\")}'",
+  "grep x f | sh -c '{c}'",
+  "env grep x; {c}",
+  "rg --pre agentopology x docs/{w}.md",
+];
+
+/** --help, -h, --version or -v straight after the CLI word: the CLI prints and exits, no step. */
+const HELP_PASSED = [
+  "agentopology --help",
+  "agentopology --version",
+  "agentopology -h {w}",
+  "npx agentopology@0.13.1 --help {w}",
+  "node node_modules/agentopology/dist/cli/index.js --help",
+];
+
+/** The flag not first, a second segment, or anything that may run code before the CLI: refused. */
+const HELP_REFUSED = [
+  "{c} --help",
+  "agentopology --help; {c}",
+  "NODE_OPTIONS=--require=./x.js agentopology --help {w}",
+  "node --require=./x.js node_modules/agentopology/dist/cli/index.js --help {w}",
+  "npx --call=$f agentopology --help {w}",
+  "npx -c '{c}' agentopology --help",
+];
+
 /** A form with the step filled in: `{s}` is the step and its file, `{s1}` and `{s2}` the two words alone. */
 const fill = (form: string, step: string, file: string) =>
-  form.replace("{s}", `${step} ${file}`).replace("{s1}", step).replace("{s2}", file);
+  form.replaceAll("{c}", `agentopology ${step} ${file}`).replaceAll("{s}", `${step} ${file}`)
+    .replace("{s1}", step).replace("{s2}", file).replaceAll("{w}", step);
 
 describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate", () => {
   for (const [label, , name] of TOPOLOGIES) {
@@ -429,6 +513,37 @@ describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate"
         expect(off("two-gates", [cmd], 2)).toEqual([]);
       });
     }
+  }
+});
+
+describe.skipIf(!hasJq)("quoted text, read-only programs and the CLI's own help", () => {
+  const refused = [...CODE_FORMS, ...READ_ONLY_REFUSED, ...HELP_REFUSED];
+  const passed = [...TEXT_PASSED, ...READ_ONLY_PASSED, ...HELP_PASSED];
+  for (const [label, , name] of TOPOLOGIES) {
+    for (const form of refused) {
+      const cmd = fill(form, "scaffold", "probe.at");
+      it(`${label}: refused: ${cmd}`, () => {
+        expect(off(name, [cmd], 2)).toEqual([]);
+      });
+    }
+    for (const form of passed) {
+      const cmd = fill(form, "scaffold", "probe.at");
+      it(`${label}: passes: ${cmd}`, () => {
+        expect(off(name, [cmd], 0)).toEqual([]);
+      });
+    }
+  }
+  for (const form of refused) {
+    const cmd = fill(form, "validate", "gated.at");
+    it(`two step gates: the validate step is refused before the sign: ${cmd}`, () => {
+      expect(off("two-gates", [cmd], 2)).toEqual([]);
+    });
+  }
+  for (const form of passed) {
+    const cmd = fill(form, "validate", "gated.at");
+    it(`two step gates: passes: ${cmd}`, () => {
+      expect(off("two-gates", [cmd], 0)).toEqual([]);
+    });
   }
 });
 
