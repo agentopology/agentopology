@@ -868,13 +868,22 @@ const AT_NAMES_FUNCTIONS: string[] = [
  */
 const AT_PKG_FUNCTIONS: string[] = [
   "# at_pkgname SPEC: AT_PKG, SPEC as a bare package name: @version or @tag dropped, an npm: alias resolved.",
+  "# A tarball, git, URL or path spec is its last part (./name-1.2.3.tgz, git+https://host/o/name.git: name).",
   "# Never empty: a spec that reads as no name (npm:, x@npm:) stays as written.",
   "at_pkgname() {",
   "  local s=$1 pre r",
   "  AT_PKG=$1",
   "  while :; do",
   "    while [[ $s == npm:* ]]; do s=${s#npm:}; done",
-  "    pre=''; if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
+  "    pre=''",
+  "    # a tarball, a git or URL spec, or a path: its last part, without .git, .tgz and a version before .tgz",
+  "    case $s in",
+  "      *://*|git+*|git:*|github:*|gitlab:*|bitbucket:*|file:*|.*|/*|'~'*|*.tgz|*.tgz#*|*.tar.gz|*.tar|*.git|*.git#*)",
+  "        s=${s%%#*}; s=${s%/}; s=${s##*/}; s=${s##*:}; s=${s%.git}",
+  "        case $s in *.tgz|*.tar.gz|*.tar) s=${s%.tgz}; s=${s%.tar.gz}; s=${s%.tar}; s=${s%%-[0-9]*} ;; esac",
+  "        break ;;",
+  "    esac",
+  "    if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
   "    if [[ $s == *@* ]]; then",
   "      r=${s#*@}",
   "      if [[ $r == npm:* ]]; then s=${r#npm:}; continue; fi",
@@ -888,7 +897,7 @@ const AT_PKG_FUNCTIONS: string[] = [
   "# bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
   "at_pkg_seg() {",
   "  AT_PW=(\"$@\")",
-  "  [[ \" $* \" == *@* ]] || return 0",
+  "  case \" $* \" in *@*|*.tgz*|*.tar*|*.git*|*://*|*git+*|*github:*|*gitlab:*|*bitbucket:*|*file:*) ;; *) return 0 ;; esac",
   "  local j k n=$# x b o",
   "  for ((j=0; j<n; j++)); do",
   "    b=${AT_PW[j]##*/}",
@@ -2829,6 +2838,8 @@ const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|k
 /**
  * A package spec as its bare name: a trailing `@version` or `@tag` dropped and an `npm:` alias resolved
  * (`alias@npm:name@1.2.3` is `name`). A leading scope is kept (`@scope/name@1` is `@scope/name`).
+ * A tarball, git, URL or path spec is its last part, without `.git`, `.tgz` and a version before `.tgz`
+ * (`./name-1.2.3.tgz` and `git+https://host/o/name.git` are `name`).
  * Never empty: a spec that reads as no name (`npm:`, `x@npm:`) is returned as written.
  * The shell functions at_pkgname and at_pkg_seg do the same to a command.
  */
@@ -2837,6 +2848,14 @@ export function pkgName(spec: string): string {
   let scope = "";
   for (;;) {
     while (s.startsWith("npm:")) s = s.slice(4);
+    scope = "";
+    if (/:\/\/|^(git\+|git:|github:|gitlab:|bitbucket:|file:|\.|\/|~)|\.(tgz|git)(#.*)?$|\.tar(\.gz)?$/.test(s)) {
+      s = s.replace(/#.*$/, "").replace(/\/$/, "");
+      s = s.slice(s.lastIndexOf("/") + 1);
+      s = s.slice(s.lastIndexOf(":") + 1).replace(/\.git$/, "");
+      if (/\.(tgz|tar\.gz|tar)$/.test(s)) s = s.replace(/\.(tgz|tar\.gz|tar)$/, "").replace(/-[0-9].*$/, "");
+      break;
+    }
     scope = s.startsWith("@") ? "@" : "";
     if (scope) s = s.slice(1);
     const at = s.indexOf("@");
