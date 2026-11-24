@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AgentNode, TopologyAST } from "../../parser/ast.js";
+import type { AgentNode, HumanNode, TopologyAST } from "../../parser/ast.js";
 import { goLedgers } from "../../parser/ledger.js";
 import type { GeneratedFile } from "../types.js";
 import { durationSeconds, goHumans, projectRootLines, shellQuote, type GuardPlatform } from "./guards.js";
@@ -97,6 +97,268 @@ export function generateWallScripts(ast: TopologyAST, p: GuardPlatform): Generat
     { path: `${d}/${WALL_START_SCRIPT}`, content: start.join("\n"), category: "script", executable: true },
     { path: `${d}/${WALL_TIME_SCRIPT}`, content: guard.join("\n"), category: "script", executable: true },
   ];
+}
+
+export const EGRESS_GUARD_SCRIPT = "egress-guard.sh";
+export const EGRESS_OBS_SCRIPT = "egress-observability.sh";
+
+const BT = "`";
+
+/**
+ * The shell that reads a Bash command for a network program by its first word (`at_net_cmd CMD`, status 0 when
+ * one is found). Text only: the command is split at ; & | ( ) a backtick and a newline outside single quotes
+ * (and at $( and a backtick inside double quotes), a heredoc body is skipped unless it is fed to a shell, quotes
+ * and backslashes are dropped from each word, and the first word after assignments, shell keywords, and the
+ * wrappers sudo doas env nohup nice command exec builtin setsid stdbuf timeout xargs unbuffer ionice chrt taskset
+ * (with their options) is the program. Network programs: curl wget nc ncat netcat ssh scp sftp telnet ftp;
+ * rsync with a host (a word `host:path` or rsync://); git push, fetch, pull, clone; npm publish, install, i, ci,
+ * add. sh, bash, zsh, dash, ksh with -c, and eval, are read through. Nothing else is: pnpm, yarn, pip, an
+ * interpreter opening a socket, a script that runs curl.
+ */
+export const NET_FUNCTIONS: string[] = [
+  "# at_nobody CMD: CMD without the bodies of its heredocs (a heredoc fed to a shell keeps its body: it runs).",
+  "at_nobody() {",
+  "  local line delim='' keep=0 d t",
+  String.raw`  local re=$'(^|[^<])<<-?[[:space:]]*[\'"]?([A-Za-z_][A-Za-z0-9_]*)'`,
+  String.raw`  local sre='(^|[[:space:];&|(])(ba|z|da|k)?sh([[:space:]]|$)'`,
+  "  while IFS= read -r line || [ -n \"$line\" ]; do",
+  '    if [ -n "$delim" ]; then',
+  '      t=${line#"${line%%[![:space:]]*}"}',
+  '      [ "$t" = "$delim" ] && delim=\'\'',
+  '      [ "$keep" = 1 ] && printf \'%s\\n\' "$line"',
+  "      continue",
+  "    fi",
+  "    printf '%s\\n' \"$line\"",
+  "    if [[ $line =~ $re ]]; then",
+  "      d=${BASH_REMATCH[2]}; keep=0",
+  "      [[ $line =~ $sre ]] && keep=1",
+  '      delim=$d',
+  "    fi",
+  "  done <<< \"$1\"",
+  "}",
+  "# at_segs CMD: the segments of CMD, one a line.",
+  "at_segs() {",
+  "  local s=$1 i c q='' cur='' n=${#1}",
+  "  for ((i=0; i<n; i++)); do",
+  "    c=${s:i:1}",
+  `    if [ "$q" = "'" ]; then cur+=$c; [ "$c" = "'" ] && q=''; continue; fi`,
+  `    if [ "$q" = '"' ]; then`,
+  `      if [ "$c" = '"' ]; then q=''; cur+=$c`,
+  String.raw`      elif [ "$c" = '\' ]; then cur+=${"$"}{s:i:2}; i=$((i+1))`,
+  `      elif [ "$c" = '${BT}' ]; then printf '%s\\n' "$cur"; cur=''`,
+  `      elif [ "$c" = '$' ] && [ "\${s:i+1:1}" = '(' ]; then printf '%s\\n' "$cur"; cur=''; i=$((i+1))`,
+  "      else cur+=$c; fi",
+  "      continue",
+  "    fi",
+  "    case $c in",
+  String.raw`      '\') cur+=${"$"}{s:i:2}; i=$((i+1)) ;;`,
+  `      "'"|'"') q=$c; cur+=$c ;;`,
+  `      ';'|'&'|'|'|'('|')'|'${BT}'|$'\\n') printf '%s\\n' "$cur"; cur='' ;;`,
+  "      *) cur+=$c ;;",
+  "    esac",
+  "  done",
+  "  printf '%s\\n' \"$cur\"",
+  "}",
+  "# at_net_seg SEG: status 0 when the segment's program opens a network connection.",
+  "at_net_seg() {",
+  "  local s=$1 i=0 n j b x sub",
+  "  local -a w",
+  `  s=\${s//\\'/}; s=\${s//\\"/}; s=\${s//\\\\/}`,
+  "  # a sentinel word keeps the array from being empty (bash 3.2 reads an empty array as unset under set -u)",
+  '  read -ra w <<< "$s ."',
+  "  n=${#w[@]}",
+  '  while [ "$i" -lt "$n" ]; do',
+  "    x=${w[i]}",
+  "    case $x in",
+  '      command|builtin) [[ ${w[i+1]:-} == -[vV] ]] && return 1; i=$((i+1)); continue ;;',
+  "      [A-Za-z_]*=*|do|then|else|elif|if|while|until|'!'|'{'|'}'|time|sudo|doas|env|nohup|nice|exec|setsid|stdbuf|timeout|xargs|unbuffer|ionice|chrt|taskset) i=$((i+1)); continue ;;",
+  "      -[ugsklhpnCDRTUILPeE]) i=$((i+2)); continue ;;",
+  "      -*) i=$((i+1)); continue ;;",
+  "    esac",
+  "    [[ $x =~ ^[0-9.]+[smhd]?$ ]] && { i=$((i+1)); continue; }",
+  "    break",
+  "  done",
+  '  [ "$i" -lt "$n" ] || return 1',
+  "  b=${w[i]##*/}",
+  "  case $b in",
+  "    curl|wget|nc|ncat|netcat|ssh|scp|sftp|telnet|ftp) return 0 ;;",
+  "    eval) at_net_cmd \"${w[*]:i+1}\"; return ;;",
+  "    sh|bash|zsh|dash|ksh)",
+  '      for ((j=i+1; j<n; j++)); do',
+  "        if [[ ${w[j]} == -*c* ]]; then at_net_cmd \"${w[*]:j+1}\"; return; fi",
+  "      done",
+  "      return 1 ;;",
+  "    rsync)",
+  '      for ((j=i+1; j<n; j++)); do',
+  "        x=${w[j]}",
+  "        [[ $x == -* ]] && continue",
+  "        [[ $x == rsync://* || $x =~ ^[^/:=]+: ]] && return 0",
+  "      done",
+  "      return 1 ;;",
+  "    git)",
+  '      for ((j=i+1; j<n; j++)); do',
+  "        x=${w[j]}",
+  "        case $x in",
+  "          -C|-c|--git-dir|--work-tree|--namespace|--exec-path) j=$((j+1)); continue ;;",
+  "          -*) continue ;;",
+  "        esac",
+  "        case $x in push|fetch|pull|clone) return 0 ;; esac",
+  "        return 1",
+  "      done",
+  "      return 1 ;;",
+  "    npm)",
+  '      for ((j=i+1; j<n; j++)); do',
+  "        x=${w[j]}",
+  "        [[ $x == -* ]] && continue",
+  "        case $x in publish|install|i|ci|add|install-test|it) return 0 ;; esac",
+  "        return 1",
+  "      done",
+  "      return 1 ;;",
+  "  esac",
+  "  return 1",
+  "}",
+  "at_net_cmd() {",
+  "  local seg",
+  '  while IFS= read -r seg; do at_net_seg "$seg" && return 0; done <<< "$(at_segs "$(at_nobody "$1")")"',
+  "  return 1",
+  "}",
+];
+
+/** The gate an egress block names, resolved: a human with a word (its go ledgers) or a record. */
+function egressGate(ast: TopologyAST): { kind: "human"; id: string; word: string; ledgers: string[] } | { kind: "record"; id: string; path: string } | null {
+  const e = ast.egress;
+  if (!e || e.gate === "") return null;
+  const h = ast.nodes.find((n) => n.type === "human" && n.id === e.gate) as HumanNode | undefined;
+  if (h && h.word !== undefined && h.word.trim() !== "") {
+    const ledgers = goLedgers(ast, h.id).map((r) => r.path.replace(/^\.\//, ""));
+    return { kind: "human", id: h.id, word: h.word.trim(), ledgers };
+  }
+  const r = (ast.records ?? []).find((x) => x.id === e.gate);
+  return r ? { kind: "record", id: r.id, path: r.path.replace(/^\.\//, "") } : null;
+}
+
+/** What the egress block holds: the tools a guard sees (web, network, mcp), whether telemetry is held. */
+export function egressCovers(ast: TopologyAST): { web: boolean; network: boolean; mcp: boolean; observability: boolean; guarded: boolean } {
+  const c = ast.egress && egressGate(ast) ? ast.egress.covers : [];
+  const web = c.includes("web"), network = c.includes("network"), mcp = c.includes("mcp"), observability = c.includes("observability");
+  return { web, network, mcp, observability, guarded: web || network || mcp };
+}
+
+/** The PreToolUse matcher of egress-guard.sh. */
+export function egressMatcher(ast: TopologyAST): string {
+  const c = egressCovers(ast);
+  return [c.web ? "WebFetch|WebSearch" : "", c.network ? "Bash" : "", c.mcp ? "mcp__.*" : ""].filter(Boolean).join("|");
+}
+
+/** The shell function egress_cleared (status 0 when the gate has cleared), and the words naming the gate in a reason. */
+function clearedLines(gate: NonNullable<ReturnType<typeof egressGate>>): { lines: string[]; what: string } {
+  const sq = shellQuote;
+  if (gate.kind === "human") {
+    return {
+      what: `the go word "${gate.word}" typed for ${gate.id}`,
+      lines: [
+        "egress_cleared() { # every go ledger of the human: its last row for the step is ok (a halt row is not)",
+        "  local f ok",
+        `  for f in ${gate.ledgers.map(sq).join(" ")}; do`,
+        '    [ -f "$f" ] || return 1',
+        `    ok=$(jq -rs --arg s ${sq(gate.id)} '[.[] | select(type == "object" and .step == $s)] | last | if . != null and .ok == true and .halt != true then "yes" else "no" end' "$f" 2>/dev/null) || return 1`,
+        '    [ "$ok" = yes ] || return 1',
+        "  done",
+        gate.ledgers.length === 0 ? "  return 1" : "  return 0",
+        "}",
+      ],
+    };
+  }
+  return {
+    what: `a row in the record ${gate.id} (${gate.path})`,
+    lines: [
+      "egress_cleared() { # a row (a JSON object) in the record",
+      `  local f=${sq(gate.path)} n`,
+      '  [ -f "$f" ] || return 1',
+      `  n=$(jq -rs 'map(select(type == "object")) | length' "$f" 2>/dev/null) || return 1`,
+      '  [ "$n" -gt 0 ]',
+      "}",
+    ],
+  };
+}
+
+/** egress-guard.sh (PreToolUse) when the block covers web, network or mcp. */
+export function generateEgressGuard(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
+  const gate = egressGate(ast);
+  const c = egressCovers(ast);
+  if (!gate || !c.guarded) return null;
+  const name = ast.topology.name;
+  const cleared = clearedLines(gate);
+  const held = [c.web ? "WebFetch and WebSearch" : "", c.network ? "Bash commands that open a network connection" : "", c.mcp ? "mcp__* tools" : ""].filter(Boolean).join(", ");
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Egress for topology "${name}": refuses ${held} until ${cleared.what} clears the gate "${gate.id}".`,
+    "# Auto-generated by agentopology scaffold. PreToolUse hook; exit 2 blocks.",
+    "# Local commands and the tools that stay on the machine are never refused here. A call this guard",
+    "# does not read as covered passes: network is a text check of a command's first word (git push,",
+    "# curl, ssh ... see the egress docs), not a firewall.",
+    "set -euo pipefail",
+    ...FAIL_CLOSED,
+    ...projectRootLines(p, name, "fallback"),
+    NEED_JQ("to check the egress gate"),
+    "INPUT=$(cat)",
+    `TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name | strings') || { echo "agentopology: egress: the hook input is not valid JSON, so the call is blocked" >&2; exit 2; }`,
+    ...(c.network ? NET_FUNCTIONS : []),
+    "WHAT=''",
+    'case "$TOOL" in',
+    ...(c.web ? ['  WebFetch|WebSearch) WHAT="the web tool $TOOL" ;;'] : []),
+    ...(c.mcp ? ['  mcp__*) WHAT="the MCP tool $TOOL" ;;'] : []),
+    ...(c.network ? [
+      "  Bash)",
+      `    CMD=$(printf '%s' "$INPUT" | jq -er '.tool_input.command | strings') || { echo "agentopology: egress: the Bash call has no command to read, so it is blocked" >&2; exit 2; }`,
+      '    if at_net_cmd "$CMD"; then WHAT="a Bash command that opens a network connection"; fi ;;',
+    ] : []),
+    "esac",
+    'if [ -z "$WHAT" ]; then AT_DONE=1; exit 0; fi',
+    ...cleared.lines,
+    "if egress_cleared; then AT_DONE=1; exit 0; fi",
+    `echo "agentopology: egress: $WHAT is held until ${cleared.what} (egress gate ${gate.id}). Local commands are not held; ask the person." >&2`,
+    "exit 2",
+    "",
+  ];
+  return { path: `${p.scriptsDir(name)}/${EGRESS_GUARD_SCRIPT}`, content: lines.join("\n"), category: "script", executable: true };
+}
+
+/**
+ * egress-observability.sh (SessionStart) when the block covers observability and the topology has telemetry env to
+ * hold back. When the gate has cleared it merges the telemetry env into .claude/settings.local.json; before, it writes
+ * nothing. Claude Code reads that file when it starts, so the export begins with the next session.
+ */
+export function generateEgressObservability(ast: TopologyAST, p: GuardPlatform, env: Record<string, string>): GeneratedFile | null {
+  const gate = egressGate(ast);
+  if (!gate || !egressCovers(ast).observability || Object.keys(env).length === 0) return null;
+  const name = ast.topology.name;
+  const cleared = clearedLines(gate);
+  const sq = shellQuote;
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Egress for topology "${name}": the telemetry env (observability { }) is not in settings.json. Once ${cleared.what}`,
+    `# clears the gate "${gate.id}", this script merges it into ${p.hooksFile.replace(/\/[^/]*$/, "")}/settings.local.json under env,`,
+    "# keeping what is there; before, it writes nothing. Auto-generated by agentopology scaffold. SessionStart hook;",
+    "# it never blocks (exit 0). Claude Code reads settings when it starts, so the export begins with the next session.",
+    "set -u",
+    '[ -n "${CLAUDE_PROJECT_DIR:-}" ] && cd "$CLAUDE_PROJECT_DIR" 2>/dev/null',
+    "cat >/dev/null",
+    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is not installed, so the telemetry env is not written" >&2; exit 0; }',
+    ...cleared.lines,
+    "egress_cleared || exit 0",
+    `ENVJSON=${sq(JSON.stringify(env))}`,
+    `F=${sq(`${p.hooksFile.replace(/\/[^/]*$/, "")}/settings.local.json`)}`,
+    'if [ -L "$F" ] || [ -L "$(dirname "$F")" ]; then echo "agentopology: $F or its folder is a symlink; the telemetry env is not written" >&2; exit 0; fi',
+    'mkdir -p "$(dirname "$F")" || exit 0',
+    'if [ -f "$F" ]; then CUR=$(cat "$F"); else CUR=\'{}\'; fi',
+    `NEW=$(printf '%s' "$CUR" | jq --argjson e "$ENVJSON" '.env = ((.env // {}) + $e)' 2>/dev/null) || { echo "agentopology: $F is not JSON, so the telemetry env is not written" >&2; exit 0; }`,
+    '[ "$NEW" = "$(printf \'%s\' "$CUR" | jq .)" ] && exit 0',
+    'printf \'%s\\n\' "$NEW" > "$F"',
+    "exit 0",
+    "",
+  ];
+  return { path: `${p.scriptsDir(name)}/${EGRESS_OBS_SCRIPT}`, content: lines.join("\n"), category: "script", executable: true };
 }
 
 /** Humans whose go hook is written and that have a stop word. */

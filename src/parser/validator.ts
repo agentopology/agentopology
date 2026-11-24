@@ -23,7 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { contextBlock, contextFilePath, mergeContextBlock } from "../bindings/lib/context-block.js";
 import { MISSING } from "./index.js";
-import { gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
+import { EGRESS_COVERS, gateAnchors, pluginMcpServer, pluginMcpServers, RECORD_FIELD_TYPES } from "./ast.js";
 import { CLAUDE_CODE_PERMISSION_MODES, mapPermissionMode, mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
 import { repoTool, runsThroughBash } from "../bindings/lib/repo-tools.js";
 import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, scriptNameFromRun } from "./run.js";
@@ -104,7 +104,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "agent", "action", "orchestrator", "meta", "roles", "memory", "flow",
   "gates", "gate", "depth", "batch", "environments", "triggers", "command",
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
-  "tools", "tool", "scale", "skill", "threat-model", "rules", "rule", "secrets", "secret",
+  "tools", "tool", "scale", "skill", "threat-model", "egress", "rules", "rule", "secrets", "secret",
   // Field keywords
   "model", "disallowed-tools", "never-reads", "readers", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
@@ -4245,6 +4245,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v157SwallowedFields(ast),
     ...v158StopWord(ast),
     ...v159WallTime(ast),
+    ...v160Egress(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4949,6 +4950,30 @@ function v159WallTime(ast: TopologyAST): ValidationResult[] {
     else if (entry !== n.id) err(`Agent "${n.id}" has wall-time: ${n.wallTime}, but the entry agent is "${entry}". wall-time caps the whole session and sits on the entry agent only; use timeout: for a subagent's own limit.`);
     if (!/^[1-9]\d*[smhd]$/.test(n.wallTime)) err(`Agent "${n.id}" wall-time: "${n.wallTime}" is not a duration. Write a positive whole number and s, m, h or d, such as 4h or 90m.`);
   }
+  return results;
+}
+
+/**
+ * V160: the `egress { gate, covers }` block. The gate names a human with a `word:` (cleared by its go row)
+ * or a record whose path has no `{unit}` (cleared by a row in it); covers is a non-empty list of
+ * observability, web, network, mcp.
+ */
+function v160Egress(ast: TopologyAST): ValidationResult[] {
+  const e = ast.egress;
+  if (!e) return [];
+  const results: ValidationResult[] = [];
+  const err = (message: string) => results.push({ rule: "V160", level: "error", node: "egress", message });
+  const human = ast.nodes.find((n) => n.id === e.gate && n.type === "human");
+  const record = (ast.records ?? []).find((r) => r.id === e.gate);
+  if (e.gate === "") err("egress has no gate:. Name a human with a word: (cleared by its go row) or a record (cleared by a row in it).");
+  else if (human && human.type === "human" && !(human.word !== undefined && human.word.trim() !== "")) {
+    if (!record) err(`egress gate: "${e.gate}" is a human with no word:, so nothing the person types can clear it. Add word: "<the go word>" to the human, or name a record.`);
+  } else if (!human && !record) err(`egress gate: "${e.gate}" names no human with a word: and no record. Name one declared in this topology.`);
+  if (!(human && human.type === "human" && human.word !== undefined && human.word.trim() !== "") && record && record.path.includes("{unit}"))
+    err(`egress gate: record "${record.id}" has the path "${record.path}", with {unit}; the gate reads one file. Name a record whose path has no {unit}.`);
+  if (e.covers.length === 0) err(`egress covers: is empty. Name what is held: ${EGRESS_COVERS.join(", ")}.`);
+  for (const c of e.covers)
+    if (!(EGRESS_COVERS as readonly string[]).includes(c)) err(`egress covers: "${c}" is not one of ${EGRESS_COVERS.join(", ")}.`);
   return results;
 }
 

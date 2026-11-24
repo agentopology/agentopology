@@ -18,6 +18,7 @@ hooks, hook, settings, mcp-servers, metering, tools, tool, scale, skill,
 context, env, extensions, providers, schedule, job, interfaces,
 defaults, schemas, schema, observability, fragment, interface, params,
 threat-model
+egress
 rules, rule
 secrets, secret
 ```

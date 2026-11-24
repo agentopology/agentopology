@@ -192,7 +192,7 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
-                 | schedule | interfaces | inventory | needs | threat-model | islands
+                 | schedule | interfaces | inventory | needs | threat-model | egress | islands
 ```
 
 **Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, `needs`, `threat-model`, and `islands` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
@@ -2143,6 +2143,24 @@ Inputs the session cannot trust, and what is held back once one has been read. `
 claude-code writes two hooks. `taint-mark.sh` (PostToolUse, on the untrusted tools) writes `.claude/state/taint/<session_id>` with the source and time, reading the session id from the hook's stdin JSON. `taint-guard.sh` (PreToolUse, on the tools the rules name) refuses with exit 2, naming the source, a call that matches a rule while the session's mark exists. The mark ends only in a new session (a new session id has no mark), or for one act when the human named in `lift:` has an ok row in `.claude/state/approvals.jsonl` whose `act` equals the rule string and whose `at` is not older than the mark; a later untrusted read marks again. There is no blanket clear. The mark folder and the approvals file are refused to the agent by the before-edit and before-action guards. `outside-sandbox` entries that are commands go to `sandbox.excludedCommands`, and entries that are paths (a leading `/` or `~`, a trailing `/`, or a `*`) to `sandbox.filesystem.allowWrite`; Claude Code reads them only with `settings { sandbox: true }`. An agent's `sandbox:` field is still not written (V130).
 
 Validate (V138) errors on an `untrusted` entry that is none of the three forms, an `mcp:<id>` naming no declared server, a `lift` naming no declared human, and a refuse rule that is not a permission rule. Codex and Cursor write nothing for it; `validate --target codex|cursor` warns.
+
+### 4.32a `egress`
+
+```ebnf
+egress          = 'egress' '{' gate-field covers-field '}'
+gate-field      = 'gate' ':' identifier                       (* a human with word:, or a record *)
+covers-field    = 'covers' ':' '[' cover (',' cover)* ']'
+cover           = 'observability' | 'web' | 'network' | 'mcp'
+```
+
+```agenttopology
+egress {
+  gate: owner-go
+  covers: [observability, web, network, mcp]
+}
+```
+
+What leaves the machine is held until the gate clears; local work is not. The gate is a human with a `word:` (cleared when the last row for its step in every go ledger is ok and not a halt) or a record (cleared by any row in its file; V160 refuses a record path with `{unit}`). claude-code writes `egress-guard.sh`, a PreToolUse hook, which refuses until then: `web`: WebFetch and WebSearch; `mcp`: every `mcp__*` tool; `network`: a Bash command whose program, by its first word, is `curl`, `wget`, `nc`, `ncat`, `netcat`, `ssh`, `scp`, `sftp`, `telnet`, `ftp`, `rsync` with a host (`host:path`, `rsync://`), `git push|fetch|pull|clone`, or `npm publish|install|i|ci|add`, after assignments, shell keywords and wrappers (sudo, env, timeout, xargs, ...), read through `sh -c`, `bash -c` and `eval`, with quotes honored and heredoc bodies skipped unless fed to a shell. `observability`: the telemetry env of `observability { }` is left out of `.claude/settings.json`; `egress-observability.sh` (SessionStart) merges it into `.claude/settings.local.json` once the gate has cleared, so the export begins with the next session. `git status`, `git commit`, `npm test`, `ls` and the like are never held. This is a text check of a tool name and a first word, not a firewall: it does not see pnpm, yarn, pip, a script that runs curl, an interpreter opening a socket, or a program an expansion hides; those are the sandbox's class. V160 refuses a missing or unknown gate and an empty or unknown `covers`.
 
 ### 4.33 `rules`
 

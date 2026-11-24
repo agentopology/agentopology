@@ -677,7 +677,7 @@ agent researcher {
 
 ## Summary Table
 
-All 159 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 160 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -845,6 +845,7 @@ through the validator like any other rule.
 | V157 | error | In a `checkpoint`, `interface`, `defaults`, `observability` or `metering` block, a value still holds `, <field>:` where `<field>` is a field of the same block: a comma between fields on one line separates them, but not inside quotes, `[..]`, `{..}` or `(..)`, and an unclosed one hid the next field. Also, in any block (secrets and tools included), a value that holds `" <word>:` or `] <word>:`, or `<value> <field>:` for a known field of that block, is a second field run into the first with no comma or newline (`secret prod { path: "config/prod/**" readers: [worker] }`). The error names the block, the key and the field; add the comma, close the bracket or quote, or put the field on its own line |
 | V158 | error | A human's `stop-word:` is empty or on more than one line, is set with no `word:`, equals the `word:` (compared as the go hook reads it: lower case, runs of other characters as one space), or opens with the `word:` (or the reverse) followed by a space: one typed prompt would read as both |
 | V159 | error | An agent's `wall-time:` is not a duration (a positive whole number and `s`, `m`, `h` or `d`), or sits on an agent that is not the entry (`meta { entry }`), or the topology names no entry: it caps the whole session; a subagent's own limit is `timeout` |
+| V160 | error | The top-level `egress { gate, covers }` block: `gate` is missing, names no human with a `word:` and no record, or names a record whose path has `{unit}`; `covers` is empty or names something other than `observability`, `web`, `network`, `mcp` |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

@@ -2229,6 +2229,47 @@ Codex and Cursor write nothing for the block: \`validate --target codex\` and \`
   },
 
   // -------------------------------------------------------------------------
+  // 15c. egress
+  // -------------------------------------------------------------------------
+  egress: {
+    name: "egress",
+    description: "Hold web, network, MCP and telemetry until a gate clears",
+    content: () => `# egress
+
+The top-level \`egress\` block holds what leaves the machine until a gate clears. Local work is never held.
+
+## Syntax
+
+\`\`\`at
+egress {
+  gate: owner-go
+  covers: [observability, web, network, mcp]
+}
+\`\`\`
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| gate | id | yes | A human with a \`word:\` (cleared by the human's go row: the last row for its step, in every go ledger, is ok and not a halt) or a record id (cleared by any row in the record's file; a record path with \`{unit}\` is refused) |
+| covers | list | yes | Any of \`observability\`, \`web\`, \`network\`, \`mcp\` (V160) |
+
+## What claude-code writes
+
+- \`web\`: WebFetch and WebSearch are refused until the gate clears.
+- \`mcp\`: every \`mcp__*\` tool is refused until the gate clears.
+- \`network\`: a Bash command is refused until the gate clears when its program, read by its first word, is one of these: \`curl\`, \`wget\`, \`nc\`, \`ncat\`, \`netcat\`, \`ssh\`, \`scp\`, \`sftp\`, \`telnet\`, \`ftp\`; \`rsync\` with a host (a word like \`host:path\` or \`rsync://...\`); \`git push\`, \`git fetch\`, \`git pull\`, \`git clone\`; \`npm publish\`, \`npm install\`, \`npm i\`, \`npm ci\`, \`npm add\`. The command is read the way a person reads it: split at \`;\`, \`&\`, \`|\`, parentheses, backticks and newlines outside single quotes (and at \`$(\` and backticks inside double quotes); a heredoc body is skipped unless it is fed to a shell; quotes and backslashes are dropped from a word; assignments, shell keywords and the wrappers sudo, doas, env, nohup, nice, command, exec, builtin, setsid, stdbuf, timeout, xargs, unbuffer, ionice, chrt, taskset (with their options) are passed over; \`sh -c\`, \`bash -c\` and \`eval\` are read through. \`git status\`, \`git commit\`, \`git log\`, \`npm test\`, \`npm run\`, \`ls\`, \`rsync\` between local folders and the like pass.
+- \`observability\`: the telemetry env of an \`observability { }\` block (\`CLAUDE_CODE_ENABLE_TELEMETRY\`, \`OTEL_*\`) is left out of \`.claude/settings.json\`. A SessionStart hook, \`egress-observability.sh\`, merges it into \`.claude/settings.local.json\` under \`env\` once the gate has cleared, keeping what is there; before the clear it writes nothing. Claude Code reads settings when it starts, so the export begins with the next session.
+
+The guard is \`egress-guard.sh\`, a PreToolUse hook on the covered tools, failing closed (a ledger it cannot read does not clear the gate).
+
+## What it does not stop
+
+This is a text check of a tool name and of a command's first word, not a firewall. It does not see: pnpm, yarn, pip, gem or any program not listed; a script, Makefile or npm script that runs curl (the command it sees is \`npm run\`, \`make\` or \`./deploy.sh\`); an interpreter that opens a socket (python, node, perl); a program an expansion hides. Those are the sandbox's class: turn on \`settings { sandbox: true }\` and its network rules. A human's go row is read as written: its \`binds:\` and \`valid:\` are not checked here.
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 16. metering
   // -------------------------------------------------------------------------
   metering: {
@@ -3867,6 +3908,10 @@ The top-level \`ci { provider: github, on: [...], gates: [...] }\` block names a
 **Violation:** \`agent lead { max-subagents: 0 }\`.
 **Fix:** \`max-subagents: 3\`.
 
+### V160: Egress (error)
+
+The \`egress { gate, covers }\` block needs a \`gate\` naming a human with a \`word:\` or a record whose path has no \`{unit}\`, and a non-empty \`covers\` of \`observability\`, \`web\`, \`network\`, \`mcp\`.
+
 ### V159: Wall Time (error)
 
 \`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`.
@@ -3941,6 +3986,7 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V157 | error | Field Swallowed Into A Value |
 | V158 | error | Stop Word |
 | V159 | error | Wall Time |
+| V160 | error | Egress |
 `,
   },
 
@@ -4141,6 +4187,7 @@ metering    tools       tool        scale       skill
 context     env         extensions  providers   schedule
 job         interfaces  defaults    schemas     schema
 observability fragment  interface   params      threat-model
+egress
 \`\`\`
 
 ## Field Keywords (100+)

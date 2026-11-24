@@ -114,6 +114,7 @@ const TOPOLOGY: BlockSchema = {
     inventory: { fields: ["roots", "strict"] },
     needs: { fields: ["memory", "connectors", "user-skills", "plugins"] },
     "threat-model": { fields: ["untrusted", "outside-sandbox", "refuse-after-untrusted", "lift"] },
+    egress: { fields: ["gate", "covers"] },
     islands: { fields: [], blocks: { island: { fields: ["path", "owner", "test"] } } },
     ci: { fields: ["provider", "on", "gates"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },

@@ -1017,6 +1017,17 @@ export interface ThreatModelDef {
   lift?: string;
 }
 
+/** What an `egress { covers }` list may name. */
+export const EGRESS_COVERS = ["observability", "web", "network", "mcp"] as const;
+
+/** The top-level `egress { gate: <human id | record id>, covers: [observability, web, network, mcp] }` block: the covered tools are held until the gate clears. */
+export interface EgressDef {
+  /** A human with a `word:` (cleared by its go row) or a record id (cleared by a row in it); empty when not written (V160). */
+  gate: string;
+  /** What is held, as written. */
+  covers: string[];
+}
+
 /** The top-level `needs { memory: "<path under home>" connectors: [..] user-skills: [..] }` block (L-4). */
 export interface NeedsDef {
   /** A path under the user's home (`~/...`). */
@@ -1373,6 +1384,8 @@ export interface TopologyAST {
   needs?: NeedsDef;
   /** Untrusted inputs and what is refused after reading one, from the top-level `threat-model` block. */
   threatModel?: ThreatModelDef;
+  /** Tools held until a gate clears, from the top-level `egress` block. */
+  egress?: EgressDef;
   /** `inventory { strict: true }`: validate --inventory exits 1 when a live file is unmapped. */
   inventoryStrict?: boolean;
   /** Code regions from the top-level `islands` block: files they match count as accounted for. */

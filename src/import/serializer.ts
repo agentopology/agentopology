@@ -949,6 +949,14 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push("  }");
   }
 
+  if (ast.egress) {
+    sections.push("");
+    sections.push("  egress {");
+    if (ast.egress.gate) sections.push(`    gate: ${ast.egress.gate}`);
+    sections.push(`    covers: ${inlineList(ast.egress.covers)}`);
+    sections.push("  }");
+  }
+
   if (ast.machines) {
     sections.push("");
     sections.push("  machines {");

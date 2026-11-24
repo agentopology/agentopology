@@ -65,6 +65,7 @@ import type {
   IslandDef,
   NeedsDef,
   ThreatModelDef,
+  EgressDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -2929,6 +2930,20 @@ export function parse(source: string): TopologyAST {
       })()
     : undefined;
 
+  // --- Egress (top-level `egress { gate: <human or record id>, covers: [..] }`) ---
+  const egressBlock = extractBlock(topBody, "egress");
+  const egress: EgressDef | undefined = egressBlock
+    ? (() => {
+        // The fields may share a line: `egress { gate: boss covers: [web] }`.
+        const body = egressBlock.body.replace(/(?<=[\]\w"])[ \t]+(?=(?:gate|covers)[ \t]*:)/g, "\n");
+        const f = parseFields(body);
+        return {
+          gate: f.gate ? unquote(f.gate.trim()) : "",
+          covers: parseMultilineList(body, "covers").map(unquote),
+        };
+      })()
+    : undefined;
+
   // --- Depth ---
   const depthBlock = extractBlock(topBody, "depth");
   const depth = depthBlock
@@ -3217,6 +3232,7 @@ export function parse(source: string): TopologyAST {
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),
     ...(threatModel ? { threatModel } : {}),
+    ...(egress ? { egress } : {}),
     ...(inventoryStrict ? { inventoryStrict } : {}),
     ...(islandList.length ? { islands: islandList } : {}),
     ...(isFragment ? { isFragment: true } : {}),

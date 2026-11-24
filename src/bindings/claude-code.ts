@@ -67,7 +67,7 @@ import { isSandboxPath } from "./lib/threat.js";
 import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
 import { generateBeforeReadScript as buildBeforeReadScript } from "./lib/walls.js";
 import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
-import { generateHaltScript, generateWallScripts, HALT_SCRIPT, WALL_START_SCRIPT, WALL_TIME_SCRIPT } from "./lib/controls.js";
+import { egressCovers, egressMatcher, EGRESS_GUARD_SCRIPT, EGRESS_OBS_SCRIPT, generateEgressGuard, generateEgressObservability, generateHaltScript, generateWallScripts, HALT_SCRIPT, WALL_START_SCRIPT, WALL_TIME_SCRIPT } from "./lib/controls.js";
 
 /** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
 const CAPS_TIMEOUT_HOOK = "agentopology-timeout";
@@ -2873,6 +2873,19 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // egress { }: web, network and mcp are refused until the gate clears; the telemetry env is written after it.
+  if (generateEgressGuard(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: egressMatcher(ast),
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, EGRESS_GUARD_SCRIPT)}`, onFailure: "block" }],
+    });
+  }
+  if (generateEgressObservability(ast, CLAUDE_CODE_GUARDS, telemetryPlan(ast).env)) {
+    if (!hooksByEvent.SessionStart) hooksByEvent.SessionStart = [];
+    hooksByEvent.SessionStart.push({ hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, EGRESS_OBS_SCRIPT)}` }] });
+  }
+
   // A scheduled or /loop prompt the model creates is submitted as written: one starting with a go word is refused.
   if (generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
@@ -3844,7 +3857,8 @@ function generateEnvToSettings(ast: TopologyAST): Record<string, string> | null 
   // observability { }: the telemetry keys Claude Code reads. A key env { }
   // sets is the user's (even a reference left to the shell), so the plan
   // leaves it out.
-  Object.assign(env, telemetryPlan(ast).env);
+  // egress { covers: [observability] } holds them back: egress-observability.sh writes them after the gate clears.
+  if (!egressCovers(ast).observability) Object.assign(env, telemetryPlan(ast).env);
 
   if (Object.keys(env).length === 0) return null;
   return env;
@@ -4142,6 +4156,10 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     const haltScript = generateHaltScript(ast, CLAUDE_CODE_GUARDS);
     if (haltScript) files.push(haltScript);
     files.push(...generateWallScripts(ast, CLAUDE_CODE_GUARDS));
+    const egressGuard = generateEgressGuard(ast, CLAUDE_CODE_GUARDS);
+    if (egressGuard) files.push(egressGuard);
+    const egressObs = generateEgressObservability(ast, CLAUDE_CODE_GUARDS, telemetryPlan(ast).env);
+    if (egressObs) files.push(egressObs);
     const beforeSchedule = generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeSchedule) files.push(beforeSchedule);
 

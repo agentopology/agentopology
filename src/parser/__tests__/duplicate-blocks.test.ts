@@ -132,6 +132,7 @@ const SINGLE: Record<string, (m: string) => string> = {
   needs: (m) => `needs { memory: "~/${m}" }`,
   islands: (m) => `islands {\n island ${m} { path: "${m}/**"\n owner: a }\n }`,
   "threat-model": (m) => `threat-model { untrusted: ["${m}/**"] }`,
+  egress: (m) => `egress { gate: ${m}\n covers: [web] }`,
   rules: (m) => `rules { rule "${m}" { text: "t" } }`,
   ci: (m) => `ci {\n provider: github\n gates: [${m}]\n }`,
 };
