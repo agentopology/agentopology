@@ -1556,6 +1556,12 @@ function generateTopologySkill(ast: TopologyAST): GeneratedFile[] {
   if (ast.triggers.length > 0) {
     fm.entry = `commands/${ast.triggers[0].name}.md`;
   }
+  // meta { entry } naming a declared agent: the agent id, so a tool can
+  // recognise the generated flow map. It replaces the trigger command path
+  // above, since the frontmatter holds one `entry`. Claude Code ignores keys
+  // it does not know (https://code.claude.com/docs/en/skills).
+  const entryNode = ast.topology.entry === undefined ? undefined : ast.nodes.find((n) => n.id === ast.topology.entry);
+  if (entryNode && entryNode.type === "agent") fm.entry = entryNode.id;
 
   // Add skill-level fields from the first matching skill (if skills exist)
   // For the main topology skill, look for a skill with the same name as the topology

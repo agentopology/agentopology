@@ -8,6 +8,10 @@ All notable changes to agentopology are documented here.
 
 - `observability { protocol: http/json | http/protobuf | grpc }` sets `OTEL_EXPORTER_OTLP_PROTOCOL`. Claude Code's monitoring docs (https://code.claude.com/docs/en/monitoring-usage) list exactly `grpc`, `http/json` and `http/protobuf` for it, and also per-signal `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` / `_LOGS_PROTOCOL` / `_TRACES_PROTOCOL` that override it; the binding writes only the general key. Without the field the value is unchanged (`http/protobuf`, or `grpc` for a `:4317` endpoint), so existing output is byte-identical. A value outside the documented set is a V158 error.
 
+### Changed behaviour
+
+- The generated flow-map skill (`.claude/skills/<topology>/SKILL.md`) gains `entry: <agent id>` in its frontmatter when `meta { entry }` names a declared agent, so a tool can recognise the generated flow map. Claude Code's skills docs say it "ignores a field it doesn't recognize without reporting an error". The frontmatter holds one `entry` key: a topology that has triggers already wrote `entry: commands/<trigger>.md` there, and with an agent entry the agent id replaces that path. A topology with no agent entry is byte-identical.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour
