@@ -674,7 +674,9 @@ These forms are refused, each proven by a test that feeds the hook the call:
   refused too;
 - \`at\`, \`batch\` or \`systemd-run\` (also after \`sudo\`, \`nohup\`, \`timeout\` or a shell's \`-c\`) in a command that
   holds a \`claude\` call, the go word or the name of a file the guards protect, its input from a pipe or a
-  here-string included (\`echo 'claude -p "go release"' | at now + 1 minute\`); \`nohup\`, \`setsid\` and \`disown\`
+  here-string included (\`echo 'claude -p "go release"' | at now + 1 minute\`); \`crontab\` installing a crontab
+  that holds them, from a pipe, a here-string, \`-\` or a file argument the guard reads (a file it cannot read is
+  refused; \`crontab -l\` passes); \`nohup\`, \`setsid\` and \`disown\`
   are held to the same rules as the command run directly;
 - a command that names a terminal device (\`/dev/pts/*\`, \`/dev/tty*\`, \`/dev/console\`, also as a glob, through
   \`$(tty)\`, or as dd's \`of=\`), unless it only reads it with \`<\`;

@@ -302,6 +302,33 @@ describe.skipIf(!hasJq)("[go] 0.13.0 rc re-check: a deferred run is held to the 
   });
 });
 
+describe.skipIf(!hasJq)("[go] 0.13.0 rc re-check: a crontab is a deferred run too", () => {
+  it("MUST-REFUSE: a crontab installed from stdin, a here-string or a file that holds a claude call, a go word or a protected path", () => {
+    scaffold();
+    refuses([
+      `echo '* * * * * claude -p "go release"' | crontab -`,
+      "(crontab -l; echo '*/5 * * * * echo go release >> logs/go.jsonl') | crontab -",
+      "echo '0 3 * * * claude -p x' | crontab",
+      "crontab - <<< '0 3 * * * cat .claude/settings.json'",
+      "echo '0 3 * * * echo go release' | sudo crontab -u root -",
+    ], "crontab");
+    const file = at("x.cron");
+    fs.writeFileSync(file, "* * * * * echo go release\n");
+    refuses([`crontab ${file}`], "crontab");
+    fs.writeFileSync(file, "0 3 * * * npm run backup\n");
+    passes([`crontab ${file}`]);
+    fs.writeFileSync(at("work/jobs.cron"), "0 3 * * * claude -p x\n");
+    refuses(["crontab jobs.cron"], "crontab");
+    // a file the guard cannot read is refused outright
+    refuses(["crontab /nonexistent/at-go-entry.cron", "crontab $F"], "crontab");
+  });
+
+  it("MUST-PASS: listing the crontab, and installing one that holds none of them (its schedule is not a glob)", () => {
+    scaffold();
+    passes(["crontab -l", "echo '0 3 * * * npm run backup' | crontab -", "crontab -l | grep backup", "echo '*/5 * * * * ./tool draft' | crontab -"]);
+  });
+});
+
 describe.skipIf(!hasJq)("[go] 0.13.0 rc re-check: writes to a terminal device", () => {
   it("MUST-REFUSE: a redirect, tee, dd of= or printf to /dev/pts, /dev/tty or /dev/console", () => {
     scaffold();
