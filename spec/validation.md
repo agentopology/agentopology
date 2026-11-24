@@ -677,7 +677,7 @@ agent researcher {
 
 ## Summary Table
 
-All 157 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 159 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
