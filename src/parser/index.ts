@@ -959,6 +959,7 @@ export function parseHuman(
   if (fields.who) node.who = unquote(fields.who);
   if (fields.valid) node.valid = unquote(fields.valid);
   if (fields.word !== undefined) node.word = unquote(fields.word);
+  if (fields["stop-word"] !== undefined) node.stopWord = unquote(fields["stop-word"]);
   if (fields.binds) node.binds = parseList(fields.binds);
   if (fields["typed-only-programs"]) node.typedOnlyPrograms = parseList(fields["typed-only-programs"]);
 

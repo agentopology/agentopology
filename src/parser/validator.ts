@@ -4243,6 +4243,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
+    ...v158StopWord(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4933,7 +4934,31 @@ function v152MetaTarget(ast: TopologyAST): ValidationResult[] {
   }];
 }
 
-const MAX_COST_ADVISORY = "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
+/** A go or stop word as the go hook reads it: lower case, runs of other characters one space. */
+const wordWords = (w: string) => w.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * V158: a human's `stop-word:`. It needs `word:` (the stop ends at the go word), must be one non-empty line,
+ * must differ from the word, and neither may open with the other: the go hook reads a prompt that opens with
+ * a word and then a space or one of , . : ; ! ? as that word, so "go" and "go stop" would give both from one prompt.
+ */
+function v158StopWord(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || n.stopWord === undefined) continue;
+    const err = (message: string) => results.push({ rule: "V158", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    if (n.stopWord.trim() === "" || /[\r\n]/.test(n.stopWord)) { err(`Human "${n.id}" stop-word: must be a non-empty word on one line, the text the person types to halt the run.`); continue; }
+    if (n.word === undefined || n.word.trim() === "") { err(`Human "${n.id}" has stop-word: but no word:. The stop is lifted by the go word, so add word: "<the go word>".`); continue; }
+    const go = wordWords(n.word) || n.word.trim().toLowerCase();
+    const stop = wordWords(n.stopWord) || n.stopWord.trim().toLowerCase();
+    if (go === stop) { err(`Human "${n.id}" stop-word: "${n.stopWord}" must differ from word: "${n.word}"; typed, they would be the same prompt.`); continue; }
+    if (stop.startsWith(go + " ") || go.startsWith(stop + " "))
+      err(`Human "${n.id}" stop-word: "${n.stopWord}" and word: "${n.word}" overlap: one opens with the other, so a prompt that holds the longer would also read as the shorter. Choose words that do not open with each other.`);
+  }
+  return results;
+}
+
+const MAX_COST_ADVISORY ="max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
 
 /**
  * V156: caps. `max-subagents` must be a positive integer (error). `max-cost`,

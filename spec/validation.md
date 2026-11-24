@@ -677,7 +677,7 @@ agent researcher {
 
 ## Summary Table
 
-All 157 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 158 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98 and V102 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -843,6 +843,7 @@ through the validator like any other rule.
 | V155 | error | The top-level `ci { }` block names a provider other than `github` ("only github is supported"), a gate id that is not declared, or a gate with no step after it (no `before:`), so the workflow has no step to check |
 | V156 | error/warning | Caps. `max-subagents` on an agent must be a positive whole number, and `max-cost` (on an agent, or in `metering` where `cap:` is its alias) a positive number of US dollars: anything else is an error. A `max-cost` that is set is a warning on every target: "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting". `max-subagents` and `timeout` are enforced on claude-code by generated hooks (`caps-log.sh`, `max-subagents.sh`, `<agent>-timeout.sh`); a `timeout` that is not a duration is V30 |
 | V157 | error | In a `checkpoint`, `interface`, `defaults`, `observability` or `metering` block, a value still holds `, <field>:` where `<field>` is a field of the same block: a comma between fields on one line separates them, but not inside quotes, `[..]`, `{..}` or `(..)`, and an unclosed one hid the next field. Also, in any block (secrets and tools included), a value that holds `" <word>:` or `] <word>:`, or `<value> <field>:` for a known field of that block, is a second field run into the first with no comma or newline (`secret prod { path: "config/prod/**" readers: [worker] }`). The error names the block, the key and the field; add the comma, close the bracket or quote, or put the field on its own line |
+| V158 | error | A human's `stop-word:` is empty or on more than one line, is set with no `word:`, equals the `word:` (compared as the go hook reads it: lower case, runs of other characters as one space), or opens with the `word:` (or the reverse) followed by a space: one typed prompt would read as both |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

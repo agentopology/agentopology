@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Added
+
+- `human <id> { word: "..."; stop-word: "..." }` (claude-code). When the person types the stop word, the human's go hook (the same `UserPromptSubmit` reading as the go word: typed text only, never a message another session or an agent sends) appends a halt row `{"step": "<human id>", "ok": false, "halt": true, "word": "<stop word>", "ts": "<UTC time>"}` to the same go ledger. A generated `go-halt.sh` (PreToolUse, every tool) then refuses every tool call, with a reason naming the stop word and the go word, while the last row of that human in the ledger is a halt. The person types the go word to continue: the go hook is a prompt hook, so a halt never blocks the next go, and the go row ends the halt. A gate after that human also refuses, since its last row is `ok: false`. V158 refuses a `stop-word:` on a human with no `word:`, one equal to the word, one that is empty or on two lines, and a pair where one opens with the other (the go hook reads a prompt that opens with a word as that word). This is a text check of the ledger: a halt does not stop a process already running or a tool call the host does not route through hooks, and a ledger the hook could not write to (a symlink, a second hard link) records no halt.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour

@@ -626,6 +626,7 @@ human NAME {
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
 | word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
+| stop-word | string | no | -- | The stop word the person types. On claude-code the go hook, on a typed prompt that is the stop word (read as the go word is), appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V158). A text check of the ledger: it does not stop a process already running |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
 | typed-only-programs | list of program names | no | -- | Your own programs that type into the person's terminal or pane, beyond the built-in tmux, screen, xdotool, osascript, wtype and ydotool. On claude-code a Bash command that runs one and holds the go word is refused. Needs \`word\` (V127) |
 
@@ -3865,6 +3866,10 @@ The top-level \`ci { provider: github, on: [...], gates: [...] }\` block names a
 **Violation:** \`agent lead { max-subagents: 0 }\`.
 **Fix:** \`max-subagents: 3\`.
 
+### V158: Stop Word (error)
+
+A human's \`stop-word:\` needs \`word:\`, must be one non-empty line, must differ from the word, and neither may open with the other (the go hook reads a prompt that opens with a word as that word, so one prompt would give the go and the stop).
+
 ### V157: Field Swallowed Into A Value (error)
 In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`metering\` block, a value still holds \`, <field>:\` where \`<field>\` is a field of the same block. A comma between fields on one line separates them, but not inside quotes, \`[..]\`, \`{..}\` or \`(..)\`; an unclosed one hides the next field, which was then lost. The message names the block and the field.
 
@@ -3929,6 +3934,7 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V155 | error | CI Block |
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
+| V158 | error | Stop Word |
 `,
   },
 

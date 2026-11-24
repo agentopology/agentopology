@@ -2015,6 +2015,8 @@ function guardScriptNames(ast: TopologyAST): string[] {
     ...(ast.records ?? []).map((r) => `record-${r.id}.sh`),
     ...ids("human").map(goHookScript),
     ...ids("agent").flatMap((id) => [promptLogScript(id), `output-schema-${id}.sh`]),
+    // 0.13.1: the run controls' scripts, named only when the topology uses their field (other topologies are unchanged)
+    ...(ast.nodes.some((n) => n.type === "human" && (n as HumanNode).stopWord !== undefined) ? ["go-halt.sh"] : []),
   ];
 }
 
@@ -3350,6 +3352,15 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
   const topology = ast.topology.name;
   const sq = shellQuote;
   const binds = human.binds ?? [];
+  const stop = human.stopWord !== undefined && human.stopWord.trim() !== "" ? human.stopWord.trim() : undefined;
+  const goAppend = [
+    "go_append() { # LEDGER: one JSON line on stdin; never writes through a symlink or a hard link",
+    '  local d; d=$(dirname "$1")',
+    '  if [ -L "$1" ] || [ -L "$d" ]; then echo "go: $1 or its folder is a symlink; the go is not written" >&2; return 1; fi',
+    '  if [ -n "$(find "$1" -type f -links +1 2>/dev/null)" ]; then echo "go: $1 has more than one hard link; the go is not written" >&2; return 1; fi',
+    '  mkdir -p "$d" && cat >> "$1"',
+    "}",
+  ];
   const lines = [
     "#!/usr/bin/env bash",
     `# The go for human "${human.id}" of topology "${topology}".`,
@@ -3368,9 +3379,31 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
     '[ "$KIND" = typed ] || exit 0',
     `W=${sq(human.word.trim())}`,
     'P="${PROMPT%"${PROMPT##*[![:space:]]}"}"',
-    "# The word counts alone, or followed by a space or one of , . : ; ! ? (then anything): never a longer word.",
-    'case "$P" in "$W"|"$W"[\\ ,.:\\;!?]*) ;; *) exit 0 ;; esac',
+    ...(stop === undefined
+      ? [
+        "# The word counts alone, or followed by a space or one of , . : ; ! ? (then anything): never a longer word.",
+        'case "$P" in "$W"|"$W"[\\ ,.:\\;!?]*) ;; *) exit 0 ;; esac',
+      ]
+      : [
+        `S=${sq(stop)}`,
+        "# The stop word is read the way the go word is: alone, or followed by a space or one of , . : ; ! ? (then anything).",
+        'STOP=0',
+        'case "$P" in "$S"|"$S"[\\ ,.:\\;!?]*) STOP=1 ;; esac',
+        'if [ "$STOP" = 0 ]; then',
+        '  case "$P" in "$W"|"$W"[\\ ,.:\\;!?]*) ;; *) exit 0 ;; esac',
+        "fi",
+      ]),
     ...projectRootLines(p, topology, "fallback").map((l, i) => (i === 2 ? 'cd "$ROOT" 2>/dev/null || exit 0' : l)),
+    ...(stop === undefined ? [] : [
+      ...goAppend,
+      "# The stop word: a halt row, {step, ok: false, halt: true, word, ts}, in each ledger. go-halt.sh refuses every",
+      "# tool while the last row of this step is a halt; the go word, typed, writes the row that ends it.",
+      'if [ "$STOP" = 1 ]; then',
+      `  ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$S" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{step: $step, ok: false, halt: true, word: $word, ts: $ts}') || exit 0`,
+      ...ledgers.map((l) => `  printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the halt for ${human.id} was not written to ${l}`)} >&2`),
+      "  exit 0",
+      "fi",
+    ]),
     SHA_FUNCTION,
     "BINDS='{}'",
     ...binds.map((b) => [
@@ -3379,12 +3412,7 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
       `BINDS=$(printf '%s' "$BINDS" | jq -c --arg p "$F" --arg h "$H" '. + {($p): (if $h == "" then null else $h end)}') || exit 0`,
     ].join("\n")),
     `ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$W" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson binds "$BINDS" '{step: $step, ok: true, word: $word, ts: $ts}${binds.length ? " + {binds: $binds}" : ""}') || exit 0`,
-    "go_append() { # LEDGER: one JSON line on stdin; never writes through a symlink or a hard link",
-    '  local d; d=$(dirname "$1")',
-    '  if [ -L "$1" ] || [ -L "$d" ]; then echo "go: $1 or its folder is a symlink; the go is not written" >&2; return 1; fi',
-    '  if [ -n "$(find "$1" -type f -links +1 2>/dev/null)" ]; then echo "go: $1 has more than one hard link; the go is not written" >&2; return 1; fi',
-    '  mkdir -p "$d" && cat >> "$1"',
-    "}",
+    ...(stop === undefined ? goAppend : []),
     ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2`),
     "exit 0",
     "",
