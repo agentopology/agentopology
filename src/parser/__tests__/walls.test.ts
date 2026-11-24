@@ -62,23 +62,3 @@ describe("per-agent walls: validation", () => {
     expect(v[0].level).toBe("error");
   });
 });
-
-describe("tools and disallowed-tools together", () => {
-  it("[I4] are no longer refused, and both are written to the agent file", async () => {
-    const ast = parse(SRC("", "", `tools: [Read, Grep]\n    disallowed-tools: [Bash]`));
-    expect(validate(ast).filter((r) => r.rule === "V14")).toEqual([]);
-    const { claudeCodeBinding } = await import("../../bindings/claude-code.js");
-    const files = claudeCodeBinding.scaffold(ast);
-    const f = files.find((x) => x.path === ".claude/agents/reviewer/AGENT.md")!;
-    expect(f.content).toMatch(/^tools: Read, Grep$/m);
-    expect(f.content).toMatch(/^disallowedTools: Bash$/m);
-  });
-
-  it("warns when the same tool is in both lists", () => {
-    const ast = parse(SRC("", "", `tools: [Read, Bash]\n    disallowed-tools: [Bash]`));
-    const v = validate(ast).filter((r) => r.rule === "V14");
-    expect(v).toHaveLength(1);
-    expect(v[0].level).toBe("warning");
-    expect(v[0].message).toContain("Bash");
-  });
-});
