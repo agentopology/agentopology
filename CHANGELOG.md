@@ -8,6 +8,7 @@ All notable changes to agentopology are documented here.
 
 - `never-reads` and `secrets` paths may start with `~/` (the home folder) or `//` (an absolute path), the forms Claude Code's Read and Edit rules use (https://code.claude.com/docs/en/permissions). A single leading `/` stays the project root. `before-read.sh` reads a Bash word starting `~`, `$HOME` or `${HOME}` as the home folder. A secret nobody may read (`readers: []`) at a `~/` or `//` path also writes a `Read(...)` deny rule.
 - `ask-reads: [paths]` on an agent: a Read of those paths asks instead of refusing. It compiles to `permissions.ask` `Read(...)` rules. That is a permission rule (Claude Code applies it) and it is session-wide, not per agent. The same path in `never-reads` and `ask-reads` is V158.
+- `boundary <id> { path, in, out, outbound, branch }`: what crosses the edge of a path. `in: read-only` writes `Edit(<path>)` deny rules (a permission rule, Claude Code applies it) and a text check on edits and on Bash writes. `out: none` refuses every `git push`; `out: pr` refuses a push to main, master or the named branch, so changes go through a branch and `gh pr create` (text checks: they read the words of the command and miss a branch built in a variable). `outbound` hosts are written to `boundaries.md`, and to `sandbox.network.allowedDomains` once the sandbox block is generated (V161 warns until then). New rules V159 (path), V160 (values), V161 (outbound without sandbox).
 
 ## [0.13.0] - 2026-11-24
 

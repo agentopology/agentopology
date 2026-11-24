@@ -3408,6 +3408,47 @@ Not seen in a Bash command: a path built in a variable or substitution, one reac
   },
 
   // -------------------------------------------------------------------------
+  // boundary
+  // -------------------------------------------------------------------------
+  boundary: {
+    name: "boundary",
+    description: "boundary blocks: a read-only path, no direct push, outbound hosts",
+    content: () => `# boundary
+
+\`boundary <id> { path, in, out, outbound }\` says what may cross the edge of a path.
+
+## Syntax
+
+\`\`\`at
+boundary vendor {
+  path: "vendor/**"
+  in: read-only
+  out: pr
+  outbound: [api.example.com]
+}
+\`\`\`
+
+- \`path\` (required): a project path, \`~/...\` (home) or \`//...\` (absolute); the same forms as \`never-reads\`.
+- \`in: read-only | read-write\`: read-only refuses edits of the path.
+- \`out: none | pr | direct\`: \`none\` refuses every \`git push\`; \`pr\` refuses a push to main or master (and to the optional \`branch: <name>\`), so changes go through a branch and \`gh pr create\`; \`direct\` restricts nothing.
+- \`outbound: [hosts]\`: hosts the work may reach. They belong in \`sandbox.network.allowedDomains\`; this build writes no sandbox block, so they are listed in \`boundaries.md\` and V161 says so.
+
+## What it compiles to (claude-code)
+
+- A **permission rule** (strong, Claude Code applies it): \`in: read-only\` writes \`Edit(<path>)\` deny rules in \`.claude/settings.json\`. Edit rules cover Edit, Write, MultiEdit and NotebookEdit (https://code.claude.com/docs/en/permissions, "Read and Edit").
+- A **text check** (weaker): \`before-boundary.sh\`, a PreToolUse hook on \`Edit|Write|MultiEdit|NotebookEdit|Bash\`. It refuses an edit tool's path under a read-only path, a Bash command that writes one (a redirect, tee, cp, mv, rm, touch, sed -i ...), and a \`git push\` the boundary forbids. There is no permission rule for pushing to a branch, so the push checks are text checks only.
+- Not seen by the text check: a path or branch built in a variable or substitution, a path reached after \`cd\`, a write a script or program does itself, a push under a git alias. Ordinary work passes: git commit, a push to a feature branch, \`gh pr create\`, git status, npm test.
+- \`boundaries.md\` records each boundary, how it is enforced, and the outbound hosts.
+
+## Validation Rules
+
+- **V159**: a boundary needs a \`path\`
+- **V160**: an unknown \`in\` or \`out\` value, an outbound entry that is not a host name, a bad \`branch\`, a repeated id
+- **V161** (warning): outbound hosts are listed but no sandbox block is generated
+`,
+  },
+
+  // -------------------------------------------------------------------------
   // 31. composition
   // -------------------------------------------------------------------------
   composition: {
@@ -3882,6 +3923,21 @@ The same path is in \`never-reads\` and in \`ask-reads\`. One refuses and the ot
 **Violation:** \`never-reads: ["private/**"]\` and \`ask-reads: ["private/**"]\`.
 **Fix:** Keep one.
 
+### V159: Boundary Path (error)
+A \`boundary\` needs a \`path\`; with none it is about nothing.
+
+**Violation:** \`boundary b { in: read-only }\`.
+**Fix:** Add \`path: "<path>"\`.
+
+### V160: Boundary Values (error)
+\`in\` is \`read-only\` or \`read-write\`; \`out\` is \`none\`, \`pr\` or \`direct\`; an \`outbound\` entry is a host name (not a URL); \`branch\` is a branch name and needs \`out: pr\`; a boundary id is declared once.
+
+**Violation:** \`boundary b { path: "x", out: push }\`.
+**Fix:** Use one of the listed values.
+
+### V161: Boundary Outbound Without Sandbox (warning)
+\`outbound\` hosts are listed, but this build generates no sandbox block, so they are not written to \`sandbox.network.allowedDomains\`. They are in \`boundaries.md\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3941,6 +3997,9 @@ The same path is in \`never-reads\` and in \`ask-reads\`. One refuses and the ot
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
 | V158 | error | Never-reads And Ask-reads Overlap |
+| V159 | error | Boundary Path |
+| V160 | error | Boundary Values |
+| V161 | warning | Boundary Outbound Without Sandbox |
 `,
   },
 

@@ -250,6 +250,16 @@
   ".claude/settings.json": "aba2e768158cc0ed1663d1034fa77d931cd08a527e825960ba1a279d5d520856",
   ".claude/rules/p10-router.md": "a32729c12c0aebdb2f088223eaa7f0feae7f16fbc1c1a5d22a364537faf0db81"
  },
+ "src/__tests__/e2e/fixtures/path-controls.at": {
+  ".claude/skills/path-controls/scripts/action-a.sh": "ba0e20e1b3f26e039c3dfbfa5fe79f5f8fdf669049560e53da837f60cdd1a385",
+  ".claude/agents/reviewer/AGENT.md": "fd1701708e224f5b252f674eb9fd6c2d3da8bd6e2fd0827d224408c1ecf48da6",
+  ".claude/skills/path-controls/SKILL.md": "2918c35e93d3a6769002a0673eb5c2192d800886ce99b2239ca1500005c3b2e0",
+  ".claude/skills/path-controls/scripts/before-read.sh": "06e7dd7a76ee4ee9cb7bb2cd74750ecdd807124b45310f631032cbd2c1def12b",
+  ".claude/skills/path-controls/scripts/before-boundary.sh": "c2345ecf897538b1341546bfb9d08b7feac334a5bfe0331ce983b314d6eb5d9e",
+  ".claude/skills/path-controls/boundaries.md": "4b0bf5dbdb3864d5caeff461c5dc1264221f9e2c76dcd91e17968c194018111f",
+  ".claude/settings.json": "ca1471f77a74c65147fa75d99dd804a8d03ba6149a043daed8c09a6f52b42b6b",
+  ".claude/rules/path-controls.md": "aab03a044967058cbeb7097ea7d74ef8e3484781d4fbaad1c622e22b174066c6"
+ },
  "src/__tests__/e2e/fixtures/session-ops.at": {
   ".claude/agents/lane-manager/AGENT.md": "187d5a78b5821404749602957d49ceadb3d4e9733c44ab95a0b33325cc4ae41a",
   ".claude/agents/lane-build/AGENT.md": "499e78b67d3842f1dee951583e4889e4b4605311b0ca23ea22bec125f6113b28",

@@ -66,6 +66,7 @@ import { generateTaintGuardScript, generateTaintMarkScript, taintGuardMatcher, t
 import { isSandboxPath } from "./lib/threat.js";
 import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
 import { generateBeforeReadScript as buildBeforeReadScript, wallPermissionRules } from "./lib/walls.js";
+import { BOUNDARY_MATCHER, boundaryDenyRules, generateBeforeBoundaryScript, generateBoundariesDoc } from "./lib/boundaries.js";
 import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
 
 /** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
@@ -2886,6 +2887,15 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     });
   }
 
+  // boundary { }: the text check on edits and on git push (the Edit deny rules are written with the permissions below).
+  if (generateBeforeBoundaryScript(ast, CLAUDE_CODE_GUARDS)) {
+    if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
+    hooksByEvent.PreToolUse.push({
+      matcher: BOUNDARY_MATCHER,
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(ast.topology.name, "before-boundary.sh")}`, onFailure: "block" }],
+    });
+  }
+
   // Caps: the subagent log, and the max-subagents guard on Agent|Task.
   for (const [event, entries] of Object.entries(capsSettingsHooks(ast, (file) => `bash ${skillScriptPath(topologyName, file)}`))) {
     if (!hooksByEvent[event]) hooksByEvent[event] = [];
@@ -2922,6 +2932,8 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   const toolRules = toolAllowRules(ast);
   // ask-reads and a secret nobody may read: permission rules (lib/walls.ts).
   const wallRules = wallPermissionRules(ast);
+  // boundary { in: read-only }: Edit deny rules (permission rules; the text check is before-boundary.sh).
+  wallRules.deny.push(...boundaryDenyRules(ast).filter((r) => !wallRules.deny.includes(r)));
   if (perms || toolRules.length > 0 || wallRules.ask.length > 0 || wallRules.deny.length > 0) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
@@ -2941,6 +2953,8 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     // settings { sandbox: true | false } is Claude Code's sandbox switch. Any
     // other value (a Codex sandbox mode) has no Claude Code key: V130 says so.
     if (typeof perms.sandbox === "boolean") setSettingsPath(settings, "sandbox.enabled", perms.sandbox);
+    // TODO(integrator): BOUNDARY_OUTBOUND_HOOK_POINT. When the generated sandbox block lands, write
+    // boundaryAllowedDomains(ast) (lib/boundaries.ts) to sandbox.network.allowedDomains here, and remove V161.
 
     // settings { fallback-chain } is Claude Code's fallbackModel, when every
     // entry is a Claude Code model (else V130 says it is not written).
@@ -4115,6 +4129,10 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (recordsJson) files.push(recordsJson);
     const beforeRead = buildBeforeReadScript(ast, CLAUDE_CODE_GUARDS);
     if (beforeRead) files.push(beforeRead);
+    const beforeBoundary = generateBeforeBoundaryScript(ast, CLAUDE_CODE_GUARDS);
+    if (beforeBoundary) files.push(beforeBoundary);
+    const boundariesDoc = generateBoundariesDoc(ast, CLAUDE_CODE_GUARDS);
+    if (boundariesDoc) files.push(boundariesDoc);
 
     // Caps: subagent log, max-subagents guard, per-agent timeout guards
     files.push(...generateCapsScripts(ast));

@@ -1,0 +1,343 @@
+/**
+ * `boundary <id> { path, in, out, outbound, branch }`: what crosses the edge of a path.
+ *
+ * Two kinds of enforcement, and they are not equally strong:
+ *
+ * - A PERMISSION RULE (strong: Claude Code applies it, in the forms of
+ *   https://code.claude.com/docs/en/permissions, "Read and Edit"): `in: read-only` writes
+ *   `Edit(<path>)` deny rules. "Edit rules apply to all built-in tools that edit files", Write,
+ *   NotebookEdit and MultiEdit included.
+ * - A TEXT CHECK (weaker): `before-boundary.sh`, a PreToolUse hook on `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+ *   It refuses an edit tool's file path that is under a read-only path, a Bash command that writes one
+ *   (a redirect, tee, cp, mv, rm, touch, sed -i ...), and a `git push` the boundary forbids
+ *   (`out: none`: any push; `out: pr`: a push to main, master or the named branch). It reads the words of
+ *   the command, so it does not see a path or branch built in a variable or substitution, a path reached
+ *   after `cd`, a write a script or program does itself, or a push under a git alias. A rule in settings
+ *   is what holds against those for edits; there is no permission rule for "git push to main", so the
+ *   push check is a text check only.
+ *
+ * `outbound` hosts belong in `sandbox.network.allowedDomains`. The sandbox block is another lane's; here
+ * they are written to boundaries.md and V161 says so. INTEGRATOR: call {@link boundaryAllowedDomains}
+ * where the sandbox settings are generated, and drop V161.
+ *
+ * @module
+ */
+
+import type { BoundaryDef, TopologyAST } from "../../parser/ast.js";
+import { pathForm, permissionRulePath, type PathAnchor } from "../../parser/path-forms.js";
+import type { GeneratedFile } from "../types.js";
+import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
+import { CANON_FUNCTION, MATCH_FUNCTIONS, noJqLines, shellQuote, type GuardPlatform } from "./guards.js";
+import { wallPattern } from "./walls.js";
+
+/** Branches `out: pr` always protects. */
+export const PROTECTED_BRANCHES = ["main", "master"];
+
+const usable = (b: BoundaryDef): boolean => !!b.path && b.path.trim() !== "";
+const readOnly = (ast: TopologyAST): BoundaryDef[] => (ast.boundaries ?? []).filter((b) => usable(b) && b.in === "read-only");
+const outBoundaries = (ast: TopologyAST, out: "none" | "pr"): BoundaryDef[] => (ast.boundaries ?? []).filter((b) => b.out === out);
+
+/** True when a before-boundary.sh is written: a read-only path, or `out: none` or `out: pr`. */
+export function boundaryGuardWanted(ast: TopologyAST): boolean {
+  return readOnly(ast).length > 0 || outBoundaries(ast, "none").length > 0 || outBoundaries(ast, "pr").length > 0;
+}
+
+/** The permission rules (strong): an `Edit(<path>)` deny rule per read-only path. */
+export function boundaryDenyRules(ast: TopologyAST): string[] {
+  return [...new Set(readOnly(ast).map((b) => `Edit(${permissionRulePath(b.path as string)})`))];
+}
+
+/**
+ * Every outbound host of every boundary, once. INTEGRATOR HOOK POINT: add these to
+ * `sandbox.network.allowedDomains` where the sandbox settings are generated.
+ */
+export function boundaryAllowedDomains(ast: TopologyAST): string[] {
+  return [...new Set((ast.boundaries ?? []).flatMap((b) => b.outbound))];
+}
+
+/** The branches `out: pr` refuses a direct push to: main, master and every named `branch`. */
+export function protectedBranches(ast: TopologyAST): string[] {
+  const named = outBoundaries(ast, "pr").map((b) => b.branch).filter((x): x is string => !!x);
+  return [...new Set([...PROTECTED_BRANCHES, ...named])];
+}
+
+/** The longest run of plain characters in a path: what the no-jq reading looks for. */
+function literalOf(path: string): string {
+  const runs = path.split(/[*?[\]{}]+/).map((r) => r.replace(/[^A-Za-z0-9]/g, "")).filter(Boolean);
+  return runs.sort((a, b) => b.length - a.length)[0] ?? "";
+}
+
+interface Prot { id: string; path: string; anchor: PathAnchor; pattern: string }
+
+function protsOf(ast: TopologyAST): Prot[] {
+  return readOnly(ast).map((b) => {
+    const f = pathForm(b.path as string);
+    return { id: b.id, path: b.path as string, anchor: f.anchor, pattern: wallPattern(f.anchor === "project" ? (b.path as string) : f.rest) };
+  });
+}
+
+/** before-boundary.sh (null when no boundary needs a guard). Exit 2 refuses the call; the reason is on stderr. */
+export function generateBeforeBoundaryScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
+  if (!boundaryGuardWanted(ast)) return null;
+  const prots = protsOf(ast);
+  const outside = prots.some((x) => x.anchor !== "project");
+  const none = outBoundaries(ast, "none");
+  const pr = outBoundaries(ast, "pr");
+  const branches = protectedBranches(ast);
+  const name = ast.topology.name;
+  const v = p.projectDirVar;
+  const sq = shellQuote;
+
+  const lines: string[] = [
+    "#!/usr/bin/env bash",
+    `# Before ${p.label} edits a file or runs a command in a project of topology "${name}": boundary text checks.`,
+    `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on`,
+    "# Edit|Write|MultiEdit|NotebookEdit|Bash. This is a TEXT CHECK, weaker than the Edit permission rule written beside it:",
+    "# it reads the paths a call names and the words of a Bash command (exit 2 refuses, the reason on stderr).",
+    "# Not seen in a Bash command: a path or branch built in a variable or substitution, a path reached after cd,",
+    "# a write a script or program does itself, a push under a git alias. Input it cannot read blocks too.",
+    "set -euo pipefail",
+    ...FAIL_CLOSED,
+    ...(v === null
+      ? [`ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/${p.scriptsDir(name).split("/").map(() => "..").join("/")}" && pwd)"`]
+      : [
+          `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this call cannot be checked and is blocked" >&2; exit 2; fi`,
+          `ROOT="$(cd "$${v}" && pwd)"`,
+        ]),
+    ...noJqLines({
+      refuse: "agentopology: jq is required to check this call against a boundary, so it is blocked",
+      pass: "agentopology: jq is not installed; this call names no bounded path or push, so it runs. Install jq to check boundaries.",
+      inOrder: [
+        ...(none.length || pr.length ? [["git", "push"]] : []),
+        ...prots.map((x) => [literalOf(x.path)]).filter((l) => l[0]),
+      ],
+    }),
+    "INPUT=$(cat)",
+    '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the call is blocked" >&2; exit 2; }',
+    "TOOL=$(printf '%s' \"$INPUT\" | jq -er '.tool_name | strings') || { echo \"agentopology: the hook input is not valid JSON, so the call is blocked\" >&2; exit 2; }",
+    ...MATCH_FUNCTIONS,
+    "set -f",
+    ...CANON_FUNCTION,
+    ...(outside
+      ? ['HOMED="${HOME:-/nonexistent-agentopology-home}"; HOMEL="$(lower "${HOMED%/}")"; ROOTL="$(lower "$CROOT")"']
+      : []),
+    "HIT=''",
+    "# hit PATTERN: a candidate equals it, is the folder above it, or, for a pattern with no slash, has that file name.",
+    "hit() {",
+    "  local c",
+    "  while IFS= read -r c || [ -n \"$c\" ]; do",
+    '    [ -n "$c" ] || continue',
+    '    if [[ $c == $1 || "$c/" == $1 ]] || { [[ $1 != */* ]] && [[ ${c##*/} == $1 ]]; }; then HIT=$c; return 0; fi',
+    "  done <<< \"$CANDS\"",
+    "  return 1",
+    "}",
+    ...(outside
+      ? [
+          "# habs PATTERN: as hit, for an absolute pattern (~/ and // paths); a candidate inside the project is made absolute first.",
+          "habs() {",
+          "  local c",
+          "  while IFS= read -r c || [ -n \"$c\" ]; do",
+          '    [ -n "$c" ] || continue',
+          '    case "$c" in /*) ;; .) c=$ROOTL ;; *) c="$ROOTL/$c" ;; esac',
+          '    if [[ $c == $1 || "$c/" == $1 ]]; then HIT=$c; return 0; fi',
+          "  done <<< \"$CANDS\"",
+          "  return 1",
+          "}",
+          "# expand WORD: a leading ~ or $HOME as bash reads it.",
+          "expand() {",
+          '  case "$1" in',
+          "    '~'|'$HOME'|'${HOME}') W=$HOMED ;;",
+          "    '~/'*) W=\"$HOMED/${1#'~/'}\" ;;",
+          "    '$HOME/'*) W=\"$HOMED/${1#'$HOME/'}\" ;;",
+          "    '${HOME}/'*) W=\"$HOMED/${1#'${HOME}/'}\" ;;",
+          "    *) W=$1 ;;",
+          "  esac",
+          "}",
+        ]
+      : ["expand() { W=$1; }"]),
+  ];
+
+  // prot WORD: sets BND and BPATH and returns 0 when the word is under a read-only path.
+  lines.push("# prot WORD: 0 when WORD is a path under a read-only boundary (BND, BPATH name it).", "prot() {", "  expand \"$1\"", '  CANDS="$(lower "$(canon "$W")")"');
+  for (const x of prots) {
+    const test = x.anchor === "project" ? `hit ${sq(x.pattern)}` : `habs ${x.anchor === "home" ? '"$HOMEL"' : '""'}${sq(`/${x.pattern}`)}`;
+    lines.push(`  if ${test}; then BND=${sq(x.id)}; BPATH=${sq(x.path)}; return 0; fi`);
+  }
+  lines.push("  return 1", "}");
+
+  lines.push(
+    "refuse_write() {",
+    '  echo "agentopology: boundary $BND (in: read-only) refuses a write to $BPATH; refused: $1" >&2',
+    "  exit 2",
+    "}",
+    "check_write() { if prot \"$1\"; then refuse_write \"$1\"; fi; }",
+  );
+
+  if (none.length || pr.length) {
+    lines.push(
+      `PROTECTED=${sq(` ${branches.join(" ")} `)}`,
+      "protected_branch() { local b; b=$(lower \"$1\"); [[ $PROTECTED == *\" $b \"* ]]; }",
+      "refuse_push() { echo \"agentopology: boundary $1: $2; refused\" >&2; exit 2; }",
+      "# git_push ARG...: the words after `git push`.",
+      "git_push() {",
+      ...(none.length
+        ? [`  refuse_push ${sq(none[0].id + " (out: none)")} "git push is not allowed"`]
+        : [
+            "  local a skip=0 pos=0 any=0 dst cur",
+            '  for a in "$@"; do',
+            '    if [ "$skip" = 1 ]; then skip=0; continue; fi',
+            '    case "$a" in',
+            `      --all|--mirror) refuse_push ${sq(pr[0].id + " (out: pr)")} "$a would push the protected branches; push a branch and run gh pr create" ;;`,
+            "      -o|--push-option|--receive-pack|--exec|--repo) skip=1; continue ;;",
+            "      -*) continue ;;",
+            "    esac",
+            "    pos=$((pos+1))",
+            "    [ \"$pos\" -ge 2 ] || continue # the first word is the remote",
+            "    dst=${a#+}; case \"$dst\" in *:*) dst=${dst##*:} ;; esac; dst=${dst#refs/heads/}",
+            '    if [ "$dst" = HEAD ] || [ -z "$dst" ]; then continue; fi',
+            "    any=1",
+            `    if protected_branch "$dst"; then refuse_push ${sq(pr[0].id + " (out: pr)")} "a push to $dst goes through a branch and gh pr create"; fi`,
+            "  done",
+            "  # a push with no branch named, or HEAD: the branch that is checked out",
+            '  cur=$(git -C "$ROOT" symbolic-ref -q --short HEAD 2>/dev/null || true)',
+            `  if [ -n "$cur" ] && protected_branch "$cur"; then refuse_push ${sq(pr[0].id + " (out: pr)")} "this push would update $cur; switch to a branch, push it, and run gh pr create"; fi`,
+            "  return 0",
+          ]),
+      "}",
+    );
+  }
+
+  // The tool's own path fields.
+  lines.push(
+    'case "$TOOL" in',
+    "  Edit|Write|MultiEdit|NotebookEdit)",
+    ...(prots.length
+      ? [
+          "    FILES=$(printf '%s' \"$INPUT\" | jq -r '.tool_input | objects | [.file_path, .notebook_path] | .[] | strings') || { echo \"agentopology: no path could be read, so the call is blocked\" >&2; exit 2; }",
+          '    while IFS= read -r F || [ -n "$F" ]; do',
+          '      [ -n "$F" ] || continue',
+          '      check_write "$F"',
+          '    done <<< "$FILES"',
+        ]
+      : ["    :"]),
+    "    ;;",
+    "  Bash|Monitor|PowerShell)",
+    "    CMD=$(printf '%s' \"$INPUT\" | jq -er '.tool_input | objects | (.command // \"\") | strings') || { echo \"agentopology: no command could be read, so it is blocked\" >&2; exit 2; }",
+    "    CMD=${CMD//$'\\\\\\n'/}",
+    "    # Text given as a message (--body, --title, -m ...) is not a command or a path: `gh pr create --body \"git push origin main\"` passes.",
+    "    # A message holding $ or a backtick stays, since it can run a command.",
+    "    MSGRE='(--body|--title|--message|--notes|-m|-b|-t)([= ]+)(\"[^\"$`]*\"|'\"'\"'[^'\"'\"'$`]*'\"'\"')'",
+    '    while [[ $CMD =~ $MSGRE ]]; do CMD=${CMD/"${BASH_REMATCH[0]}"/ ${BASH_REMATCH[1]} }; done',
+    "    SEGS=$(printf '%s\\n' \"$(norm \"$CMD\")\" | tr ';&|()`' '\\n')",
+    '    while IFS= read -r S || [ -n "$S" ]; do',
+    "      S=${S//>/ > }",
+    '      read -ra w <<< "$S" || true',
+    '      n=${#w[@]}; [ "$n" -gt 0 ] || continue',
+    ...(prots.length
+      ? [
+          "      # a redirect target",
+          "      for ((i=0; i<n; i++)); do",
+          '        if [ "${w[i]}" = ">" ]; then',
+          "          j=$((i+1)); while [ \"$j\" -lt \"$n\" ] && [ \"${w[j]}\" = \">\" ]; do j=$((j+1)); done",
+          '          [ "$j" -lt "$n" ] && check_write "${w[j]}"',
+          "        fi",
+          "      done",
+        ]
+      : []),
+    "      # the program: after assignments and wrappers",
+    "      p=0",
+    '      while [ "$p" -lt "$n" ]; do',
+    '        if [[ ${w[p]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then p=$((p+1)); continue; fi',
+    '        case " env command sudo time nohup exec do then else if while until ! { } " in *" ${w[p]} "*) p=$((p+1)); continue ;; esac',
+    "        break",
+    "      done",
+    '      [ "$p" -lt "$n" ] || continue',
+    '      prog=$(lower "${w[p]##*/}")',
+    '      case "$prog" in',
+  );
+  if (none.length || pr.length) {
+    lines.push(
+      "        git)",
+      "          i=$((p+1))",
+      '          while [ "$i" -lt "$n" ]; do',
+      '            case "${w[i]}" in',
+      "              -C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix) i=$((i+2)) ;;",
+      "              -*) i=$((i+1)) ;;",
+      "              *) break ;;",
+      "            esac",
+      "          done",
+      '          if [ "$i" -lt "$n" ] && [ "${w[i]}" = push ]; then git_push "${w[@]:i+1}"; fi',
+      "          ;;",
+    );
+  }
+  if (prots.length) {
+    lines.push(
+      "        tee|rm|touch|truncate|shred|unlink|chmod|chown|chgrp|mv|rmdir|mkdir)",
+      '          for ((i=p+1; i<n; i++)); do case "${w[i]}" in -*) ;; *) check_write "${w[i]}" ;; esac; done',
+      "          ;;",
+      "        cp|install|ln|rsync|scp)",
+      '          [ "$n" -gt $((p+1)) ] && check_write "${w[n-1]}"',
+      "          ;;",
+      "        dd)",
+      '          for ((i=p+1; i<n; i++)); do case "${w[i]}" in of=*) check_write "${w[i]#of=}" ;; esac; done',
+      "          ;;",
+      "        sed|gsed|perl)",
+      "          ED=0",
+      '          for ((i=p+1; i<n; i++)); do case "${w[i]}" in --in-place*|-i*|-[!-]*i*) ED=1 ;; esac; done',
+      '          if [ "$ED" = 1 ]; then for ((i=p+1; i<n; i++)); do case "${w[i]}" in -*) ;; *) check_write "${w[i]}" ;; esac; done; fi',
+      "          ;;",
+    );
+  }
+  lines.push(
+    "      esac",
+    '    done <<< "$SEGS"',
+    "    ;;",
+    "esac",
+    FAIL_CLOSED_DONE,
+    "exit 0",
+    "",
+  );
+  return { path: `${p.scriptsDir(name)}/before-boundary.sh`, content: lines.join("\n"), category: "script", executable: true };
+}
+
+/** The hook matcher for before-boundary.sh. */
+export const BOUNDARY_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+
+/** boundaries.md: what each boundary compiles to, what is a permission rule and what a text check, and the outbound hosts. */
+export function generateBoundariesDoc(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
+  const bs = ast.boundaries ?? [];
+  if (bs.length === 0) return null;
+  const name = ast.topology.name;
+  const dir = p.scriptsDir(name).replace(/\/scripts$/, "");
+  const out: string[] = [
+    `# Boundaries of ${name}`,
+    "",
+    "Written by agentopology scaffold from the `boundary` blocks.",
+    "",
+    "- A **permission rule** (strong): Claude Code itself applies it. `in: read-only` writes an `Edit(<path>)` deny rule in `.claude/settings.json`, which covers Edit, Write, MultiEdit and NotebookEdit.",
+    "- A **text check** (weaker): `scripts/before-boundary.sh` reads the paths a call names and the words of a Bash command. It does not see a path or branch built in a variable or substitution, a path reached after `cd`, a write a script or program does itself, or a push under a git alias. There is no permission rule for `git push` to a branch, so the push checks (`out: none`, `out: pr`) are text checks only.",
+    "",
+    "| boundary | path | in | out | enforced as |",
+    "| --- | --- | --- | --- | --- |",
+  ];
+  for (const b of bs) {
+    const how = [
+      b.in === "read-only" && usable(b) ? `permission rule \`Edit(${permissionRulePath(b.path as string)})\` and text check` : "",
+      b.out === "none" ? "text check: every `git push` refused" : "",
+      b.out === "pr" ? `text check: a push to ${protectedBranches(ast).join(", ")} refused; push a branch, then \`gh pr create\`` : "",
+    ].filter(Boolean).join("; ");
+    out.push(`| ${b.id} | \`${b.path ?? ""}\` | ${b.in ?? "read-write"} | ${b.out ?? "direct"} | ${how || "nothing (no restriction)"} |`);
+  }
+  const hosts = boundaryAllowedDomains(ast);
+  out.push("", "## Outbound hosts", "");
+  if (hosts.length === 0) out.push("None listed.");
+  else {
+    out.push(
+      "The hosts below are named by `outbound:`. They belong in `sandbox.network.allowedDomains` once the sandbox is generated; this build does not write a sandbox block (V161), so add them there yourself:",
+      "",
+      ...hosts.map((h) => `- ${h}`),
+    );
+  }
+  out.push("");
+  return { path: `${dir}/boundaries.md`, content: out.join("\n") };
+}

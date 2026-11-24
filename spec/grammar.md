@@ -2236,6 +2236,35 @@ ci {
 
 `ci { provider: github, on: [<event>, ...], gates: [<gate id>, ...] }` runs the gates in CI. Fields sit one per line or, on one line, apart by commas. `provider` is required and must be `github`. `on` lists the events that start the workflow; it defaults to `[pull_request, push]`. `gates` lists declared gates, each with a `before:` step. For the claude-code target, scaffold writes `.github/workflows/agentopology-gates.yml`: it checks out the repo, sets up Node and runs `npx agentopology@<the running version> step check <file.at> <step>` for the step after each listed gate (each step once). Scaffold regenerates the file while it is as scaffold wrote it and keeps it once you edit it. A provider other than `github`, an undeclared gate id, or a gate with no step after it is an error (V155).
 
+### 4.38 `boundary`
+
+```ebnf
+boundary        = 'boundary' id '{' ( 'path' ':' string
+                                    | 'in' ':' ( 'read-only' | 'read-write' )
+                                    | 'out' ':' ( 'none' | 'pr' | 'direct' )
+                                    | 'outbound' ':' name-list
+                                    | 'branch' ':' name )* '}'
+```
+
+```agenttopology
+boundary vendor {
+  path: "vendor/**"
+  in: read-only
+  out: pr
+  outbound: [api.example.com]
+}
+```
+
+What may cross the edge of a path. (Not `interface` or `interfaces`, which are for other things.) Fields sit one per line or, on one line, apart by commas.
+
+- `path` is required (V159): a project path, `~/...` (home) or `//...` (absolute), the forms of 4.36.
+- `in: read-only` refuses edits of the path; `read-write` (the default) restricts nothing.
+- `out: none` refuses every `git push`. `out: pr` refuses a `git push` to `main` or `master`, or to the branch `branch:` names (a bare `git push`, `git push origin HEAD` or `--all` that would update one of them is refused too), so changes go through a branch and `gh pr create`. `out: direct` (the default) restricts nothing.
+- `outbound: [hosts]` are the hosts the work may reach. They belong in `sandbox.network.allowedDomains`; where no sandbox block is generated they are listed in `boundaries.md` and V161 (a warning) says so.
+- An unknown `in` or `out` value, an `outbound` entry that is not a host name, a `branch` that is not a branch name or is set without `out: pr`, and a repeated id are errors (V160).
+
+What is a permission rule and what is a text check. On claude-code, `in: read-only` writes `Edit(<path>)` deny rules in `.claude/settings.json` (path forms as in 4.36; https://code.claude.com/docs/en/permissions says Edit rules apply to all built-in tools that edit files). That is a permission rule: Claude Code applies it, and it is the strong part. `before-boundary.sh`, a PreToolUse hook on `Edit|Write|MultiEdit|NotebookEdit|Bash`, is a text check: it reads the file path of an edit tool, the words of a Bash command that writes the path (a redirect, `tee`, `cp`, `mv`, `rm`, `touch`, `sed -i` and the like) and the words of a `git push`. It is weaker. It does not see a path or branch built in a variable or substitution, a path reached after `cd`, a write a script or program does itself, or a push under a git alias. There is no permission rule for "git push to main", so `out` is a text check only. A message given as `--body`, `--title` or `-m` is not read as a command. Ordinary work passes: `git commit`, a push to a feature branch, `gh pr create`, `git status`, `npm test`. A topology with no `boundary` writes none of this.
+
 ---
 
 ## 5. Validation Rules

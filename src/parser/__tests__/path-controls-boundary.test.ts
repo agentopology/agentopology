@@ -37,7 +37,8 @@ describe("S-203: boundary parsing", () => {
   });
   it("is not reported as an unknown block", () => {
     const res = validate(parse(SRC(`boundary b { path: "x/**", in: read-only }`)));
-    expect(res.filter((r) => r.level === "error")).toEqual([]);
+    // V91 is the test topology's own missing meta fields, not the block.
+    expect(res.filter((r) => r.level === "error" && r.rule !== "V91")).toEqual([]);
   });
 });
 
@@ -106,7 +107,8 @@ describe("S-203: what is generated", () => {
   it("a boundary that restricts nothing (read-write, direct) writes no guard and no rule", () => {
     const fs = files(SRC(`boundary a { path: "docs/**", in: read-write, out: direct }`));
     expect(fs.some((f) => f.path.endsWith("before-boundary.sh"))).toBe(false);
-    expect(JSON.parse(fs.find((f) => f.path === ".claude/settings.json")!.content).permissions?.deny).toBeUndefined();
+    const settings = fs.find((f) => f.path === ".claude/settings.json");
+    expect(settings ? JSON.parse(settings.content).permissions?.deny : undefined).toBeUndefined();
   });
   it("a topology with no boundary writes no boundary file", () => {
     const fs = files(SRC());
@@ -120,7 +122,7 @@ describe("S-203: what is generated", () => {
     expect(md.content).toMatch(/text check/i);
   });
   it("outbound hosts are not written to sandbox settings here", () => {
-    const s = settingsOf(SRC(`boundary a { path: "x", outbound: [api.example.com] }`));
-    expect(s.sandbox?.network).toBeUndefined();
+    const f = files(SRC(`boundary a { path: "x", outbound: [api.example.com] }`)).find((x) => x.path === ".claude/settings.json");
+    expect(f ? JSON.parse(f.content).sandbox?.network : undefined).toBeUndefined();
   });
 });

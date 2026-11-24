@@ -1122,6 +1122,38 @@
       "grade": "check"
     },
     {
+      "id": "cc.hooks.payload.glob",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.glob"
+      ],
+      "usedBy": [
+        "src/bindings/lib/walls.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/walls.test.ts",
+      "ifBroken": "NOT DOCUMENTED in hooks.md (PreToolUse input) for Grep; if the name differs, before-read.sh does not see a Grep glob that names a walled path (the call's other path fields are still read)",
+      "grade": "check"
+    },
+    {
+      "id": "cc.hooks.payload.pattern",
+      "area": "hooks.payload",
+      "tokens": [
+        "tool_input.pattern"
+      ],
+      "usedBy": [
+        "src/bindings/lib/walls.ts"
+      ],
+      "language": [
+        "guard"
+      ],
+      "proof": "src/__tests__/e2e/walls.test.ts",
+      "ifBroken": "NOT DOCUMENTED in hooks.md (PreToolUse input) for Glob; if the name differs, before-read.sh does not see a Glob pattern that names a walled path (the call's other path fields are still read)",
+      "grade": "check"
+    },
+    {
       "id": "cc.hooks.payload.notebook_path",
       "area": "hooks.payload",
       "tokens": [
@@ -2196,6 +2228,25 @@
       ],
       "proof": "src/__tests__/e2e/compile.test.ts",
       "ifBroken": "a skill is not discovered",
+      "grade": "check"
+    },
+    {
+      "id": "cc.skills.path:.claude/skills/*/*",
+      "area": "skills",
+      "tokens": [
+        "path:.claude/skills/*/*"
+      ],
+      "contract": {
+        "doc": "https://code.claude.com/docs/en/skills.md"
+      },
+      "usedBy": [
+        "src/bindings/lib/boundaries.ts"
+      ],
+      "language": [
+        "boundary"
+      ],
+      "proof": "src/parser/__tests__/path-controls-boundary.test.ts",
+      "ifBroken": "boundaries.md, the plain-words record of each boundary and its outbound hosts, is not written; nothing Claude Code reads",
       "grade": "check"
     },
     {

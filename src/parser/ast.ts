@@ -223,6 +223,24 @@ export interface SecretDef {
   readers: string[];
 }
 
+/**
+ * A `boundary <id> { path, in, out, outbound }` block: what crosses the edge of a path.
+ * Values are kept as written so V159/V160 can name a wrong one.
+ */
+export interface BoundaryDef {
+  id: string;
+  /** The path the boundary is about (`~/`, `//` and project paths, see parser/path-forms.ts). */
+  path?: string;
+  /** `read-only` (no edits of the path) or `read-write`. Absent: read-write. */
+  in?: string;
+  /** `none` (no git push), `pr` (no push to a protected branch; changes go through a PR) or `direct`. Absent: direct. */
+  out?: string;
+  /** Hosts the work may reach; written to sandbox.network.allowedDomains when a sandbox is generated. */
+  outbound: string[];
+  /** `out: pr` only: one more branch that may not be pushed to directly (main and master always are). */
+  branch?: string;
+}
+
 /** An external interface definition (webhook, HTTP, etc.). */
 export interface InterfaceDef {
   /** Interface identifier. */
@@ -1366,6 +1384,8 @@ export interface TopologyAST {
   machines?: MachineDef[];
   /** Secrets from the top-level `secrets` block. */
   secrets?: SecretDef[];
+  /** `boundary` blocks. */
+  boundaries?: BoundaryDef[];
   /** People from the top-level `person` blocks (T-09). */
   persons?: PersonDef[];
   /** Extra project folders whose files count as live things, from `inventory { roots: [...] }` (T-08). */

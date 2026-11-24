@@ -111,6 +111,7 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     person: { fields: ["away"] },
+    boundary: { fields: ["path", "in", "out", "outbound", "branch"] },
     inventory: { fields: ["roots", "strict"] },
     needs: { fields: ["memory", "connectors", "user-skills", "plugins"] },
     "threat-model": { fields: ["untrusted", "outside-sandbox", "refuse-after-untrusted", "lift"] },

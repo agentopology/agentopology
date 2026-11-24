@@ -61,6 +61,7 @@ import type {
   StoreNode,
   MachineDef,
   SecretDef,
+  BoundaryDef,
   PersonDef,
   IslandDef,
   NeedsDef,
@@ -2866,6 +2867,23 @@ export function parse(source: string): TopologyAST {
       })
     : undefined;
 
+  // --- Boundaries (top-level `boundary <id> { path, in, out, outbound, branch }`) ---
+  const boundaryBlocks = extractAllBlocks(topBody, "boundary").filter((b) => b.id);
+  const boundaries: BoundaryDef[] | undefined = boundaryBlocks.length
+    ? boundaryBlocks.map((b) => {
+        const body = commaLines(b.body);
+        const f = parseFields(body);
+        return {
+          id: b.id as string,
+          ...(f.path !== undefined ? { path: unquote(f.path) } : {}),
+          ...(f.in !== undefined ? { in: unquote(f.in) } : {}),
+          ...(f.out !== undefined ? { out: unquote(f.out) } : {}),
+          outbound: parseMultilineList(body, "outbound"),
+          ...(f.branch !== undefined ? { branch: unquote(f.branch) } : {}),
+        };
+      })
+    : undefined;
+
   // --- People (top-level `person <id> { away: "..." }`) ---
   const personBlocks = extractAllBlocks(topBody, "person").filter((b) => b.id);
   const persons: PersonDef[] | undefined = personBlocks.length
@@ -3213,6 +3231,7 @@ export function parse(source: string): TopologyAST {
     ...(pinModels !== undefined ? { pinModels } : {}),
     ...(machines ? { machines } : {}),
     ...(secrets ? { secrets } : {}),
+    ...(boundaries ? { boundaries } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),

@@ -4242,6 +4242,9 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v153SecretReaders(ast),
     ...v154SecretPath(ast),
     ...v158AskNeverOverlap(ast),
+    ...v159BoundaryPath(ast),
+    ...v160BoundaryValues(ast),
+    ...v161BoundaryOutbound(ast),
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
@@ -4434,7 +4437,75 @@ function v158AskNeverOverlap(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-const HOME_PATH =/(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
+export const BOUNDARY_IN = ["read-only", "read-write"] as const;
+export const BOUNDARY_OUT = ["none", "pr", "direct"] as const;
+/** A host name (a.b, *.b) or an IPv4 address, with an optional :port. */
+const HOST_NAME = /^(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:\d{1,5})?$/;
+/** A git branch name the guard can compare as one word. */
+const BRANCH_NAME = /^[A-Za-z0-9._\/-]+$/;
+
+/** V159: a `boundary` needs a `path`; with none it is about nothing. */
+function v159BoundaryPath(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const b of ast.boundaries ?? []) {
+    if (b.path !== undefined && b.path.trim()) continue;
+    results.push({
+      rule: "V159", level: "error", node: b.id, line: lookupLine(ast, b.id),
+      message: `Boundary "${b.id}" has no path: add path: "<path>" so the guard knows what the boundary is about`,
+    });
+  }
+  return results;
+}
+
+/**
+ * V160: an `in` or `out` value that is not one of the known ones, an `outbound` entry that is not a host
+ * name, a `branch` that is not a branch name or is set without `out: pr`, or two boundaries with one id.
+ */
+function v160BoundaryValues(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const seen = new Set<string>();
+  for (const b of ast.boundaries ?? []) {
+    const line = lookupLine(ast, b.id);
+    const err = (message: string) => results.push({ rule: "V160", level: "error", node: b.id, line, message });
+    if (seen.has(b.id)) err(`Boundary "${b.id}" is declared more than once`);
+    seen.add(b.id);
+    if (b.in !== undefined && !(BOUNDARY_IN as readonly string[]).includes(b.in)) {
+      err(`Boundary "${b.id}" has in: "${b.in}", which is not one of ${BOUNDARY_IN.join(", ")}`);
+    }
+    if (b.out !== undefined && !(BOUNDARY_OUT as readonly string[]).includes(b.out)) {
+      err(`Boundary "${b.id}" has out: "${b.out}", which is not one of ${BOUNDARY_OUT.join(", ")}`);
+    }
+    for (const h of b.outbound) {
+      if (!HOST_NAME.test(h)) err(`Boundary "${b.id}" lists outbound "${h}", which is not a host name (write api.example.com, not a URL)`);
+    }
+    if (b.branch !== undefined) {
+      if (!BRANCH_NAME.test(b.branch)) err(`Boundary "${b.id}" has branch "${b.branch}", which is not a branch name`);
+      else if (b.out !== "pr") err(`Boundary "${b.id}" has branch "${b.branch}" but out is not pr: branch names one more protected branch for out: pr`);
+    }
+  }
+  return results;
+}
+
+/**
+ * V161 (warning): `outbound` hosts are listed, and this build generates no sandbox block, so they are
+ * written to boundaries.md only. INTEGRATOR: when the sandbox block lands, write
+ * boundaryAllowedDomains (bindings/lib/boundaries.ts) to sandbox.network.allowedDomains and drop this.
+ */
+function v161BoundaryOutbound(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const b of ast.boundaries ?? []) {
+    const line = lookupLine(ast, b.id);
+    if (b.outbound.length > 0) {
+      results.push({
+        rule: "V161", level: "warning", node: b.id, line,
+        message: `Boundary "${b.id}" lists outbound hosts (${b.outbound.join(", ")}), but this build generates no sandbox block, so they are not written to sandbox.network.allowedDomains; they are listed in boundaries.md for you to add`,
+      });
+    }
+  }
+  return results;
+}
+
+const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
 
 /**
  * V123 (T-07): an absolute path into one person's home folder

@@ -19,7 +19,7 @@
  * exactly one of these lists, so a new section cannot fall between them.
  */
 
-export const REPEATED_SECTIONS = ["agent", "action", "human", "group", "skill", "person", "skills"] as const;
+export const REPEATED_SECTIONS = ["agent", "action", "human", "group", "skill", "person", "skills", "boundary"] as const;
 
 export const MERGED_SECTIONS = ["hooks"] as const;
 

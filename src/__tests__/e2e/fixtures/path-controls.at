@@ -1,0 +1,22 @@
+topology path-controls : [pipeline] {
+  meta {
+    version: "1.0.0"
+    description: "Path controls: ask-reads, home and absolute paths, boundary"
+  }
+  orchestrator {
+    model: opus
+    handles: [a]
+  }
+  action a { kind: inline }
+  agent reviewer {
+    model: opus
+    never-reads: ["~/.ssh/**", "//etc/shadow", "private/**"]
+    ask-reads: ["~/Documents/**", "notes/**"]
+  }
+  flow { a -> reviewer }
+  secrets {
+    secret vault { path: "~/.aws/**", readers: [] }
+  }
+  boundary vendor { path: "vendor/**", in: read-only, out: pr, outbound: [api.example.com] }
+  boundary shared { path: "~/shared/**", in: read-only, out: none }
+}
