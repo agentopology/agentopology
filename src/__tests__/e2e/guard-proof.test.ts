@@ -287,11 +287,11 @@ afterAll(() => { for (const root of roots.values()) fs.rmSync(root, { recursive:
 
 describe.skipIf(!hasJq)("proof: ordinary commands run on every topology", () => {
   for (const [label, , name] of TOPOLOGIES) {
-    it(`${label}: the second read's ${ROUND2_PASS.length} rows pass`, () => {
-      expect(off(name, ROUND2_PASS, 0)).toEqual([]);
+    it.each(ROUND2_PASS)(`${label}, second read, passes: %s`, (cmd) => {
+      expect(off(name, [cmd], 0)).toEqual([]);
     });
-    it(`${label}: the third read's ${ROUND3_PASS.length} rows pass`, () => {
-      expect(off(name, ROUND3_PASS, 0)).toEqual([]);
+    it.each(ROUND3_PASS)(`${label}, third read, passes: %s`, (cmd) => {
+      expect(off(name, [cmd], 0)).toEqual([]);
     });
   }
   // A ledger read by a program other than cat (grep, jq, a copy) is still refused, as before 0.13.0.
@@ -304,10 +304,10 @@ describe.skipIf(!hasJq)("proof: ordinary commands run on every topology", () => 
 });
 
 describe.skipIf(!hasJq)("proof: the first read's forms stay refused", () => {
-  it(`a go word: the ${ROUND1_REFUSE.length} rows are refused`, () => {
-    expect(off("p09-human", ROUND1_REFUSE, 2)).toEqual([]);
+  it.each(ROUND1_REFUSE)("a go word, first read, refused: %s", (cmd) => {
+    expect(off("p09-human", [cmd], 2)).toEqual([]);
   });
-  it(`a go word: the ${EDGES_REFUSE.length} edges of the text reading are refused`, () => {
-    expect(off("p09-human", EDGES_REFUSE, 2)).toEqual([]);
+  it.each(EDGES_REFUSE)("a go word, an edge of the text reading, refused: %s", (cmd) => {
+    expect(off("p09-human", [cmd], 2)).toEqual([]);
   });
 });
