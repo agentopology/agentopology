@@ -901,6 +901,11 @@ export function serializeAST(ast: TopologyAST): string {
     sections.push(`  pin-models: ${ast.pinModels}`);
   }
 
+  if (ast.usesPlugins?.length) {
+    sections.push("");
+    sections.push(`  uses-plugins: ${inlineList(ast.usesPlugins)}`);
+  }
+
   for (const p of ast.persons ?? []) {
     sections.push("");
     sections.push(`  person ${p.id} {${p.away ? ` away: ${q(p.away)} ` : ""}}`);

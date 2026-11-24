@@ -107,6 +107,17 @@ function namedSubBlocks(body: string, skipNested = false): Array<{ name: string;
 import { findUnknownNames } from "./known-fields.js";
 import { findLostStructure } from "./lost-structure.js";
 import { SINGLE_SECTIONS } from "./sections.js";
+import { activePlugins, checkPluginSet, parsePluginBlocks, setHidden } from "../plugins/runtime.js";
+import type { AtPlugin } from "../plugins/types.js";
+
+/** Options for {@link parse}. */
+export interface ParseOptions {
+  /**
+   * Plugins whose blocks this parse reads (EXPERIMENTAL: may change before 1.0).
+   * Omitted: the set the CLI loaded with `--plugin`, which is empty unless it did.
+   */
+  plugins?: readonly AtPlugin[];
+}
 
 // Re-export AST types for convenience
 export type * from "./ast.js";
@@ -2535,7 +2546,8 @@ function topBodyLineFinder(source: string, rawBody: string, topBody: string): (a
   return (at) => first + (topBody.slice(0, at).match(/\n/g)?.length ?? 0);
 }
 
-export function parse(source: string): TopologyAST {
+export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
+  const plugins = opts.plugins ? checkPluginSet(opts.plugins) : activePlugins();
   const src = stripComments(source);
 
   // --- Source map (line numbers for nodes) ---
@@ -2671,6 +2683,11 @@ export function parse(source: string): TopologyAST {
 
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
+
+  // `uses-plugins: [a, b]`: a check only (V138). It never loads code.
+  const usesList = parseMultilineList(topText, "uses-plugins");
+  const usesField = usesList.length ? null : topText.match(/(?:^|\n)[ \t]*uses-plugins[ \t]*:[ \t]*([^\n]*)/);
+  const usesPlugins = usesList.length ? usesList.map(unquote) : usesField ? parseList(usesField[1]).map(unquote) : undefined;
 
   // --- Machines (top-level `machines { machine <id> { os: ... } }`) ---
   const machinesBlock = extractBlock(topBody, "machines");
@@ -2922,7 +2939,32 @@ export function parse(source: string): TopologyAST {
   // --- Names the parser does not read ---
   // A field or block the grammar does not have was dropped with no message,
   // and validate passed (N23). V102 names each one with its block.
-  const unknownNameErrors = findUnknownNames(topBody);
+  // Plugins (EXPERIMENTAL): a loaded plugin's keywords are known; their
+  // blocks parse to data kept off the enumerable AST. With `uses-plugins`
+  // naming a plugin that is not loaded, an unknown top-level block is V138
+  // (it needs that plugin) instead of V102. Without either, nothing changes.
+  const pluginParse = plugins.length > 0 ? parsePluginBlocks(topBody, plugins, lineInTopBody) : undefined;
+  if (pluginParse) duplicateSectionWarnings.push(...pluginParse.warnings);
+  const loadedIds = new Set(plugins.map((p) => p.id));
+  const unloaded = (usesPlugins ?? []).filter((id) => !loadedIds.has(id));
+  const pluginNeedErrors: Array<{ rule: string; level: "error"; message: string }> = [];
+  const runWith = unloaded.map((id) => `--plugin ${id}`).join(" or ");
+  const unknownNameErrors = findUnknownNames(topBody, {
+    ...(pluginParse ? { blocks: pluginParse.schemas } : {}),
+    ...(unloaded.length > 0
+      ? {
+          claim: (keyword: string) => {
+            pluginNeedErrors.push({ rule: "V138", level: "error", message: `block ${keyword} needs plugin ${unloaded.join(" or ")}; run with ${runWith}` });
+            return true;
+          },
+        }
+      : {}),
+  });
+  if (unloaded.length > 0 && pluginNeedErrors.length === 0) {
+    for (const id of unloaded) {
+      pluginNeedErrors.push({ rule: "V138", level: "error", message: `uses-plugins names plugin ${id}, which is not loaded; run with --plugin ${id}` });
+    }
+  }
   // F5: since S-13 only a top-level `env { }` is the topology env; the keys of
   // one inside `settings { }` are not written to settings.json.
   const settingsEnv = settingsBlock ? extractTopLevelBlocks(settingsBlock.body, "env")[0] : undefined;
@@ -2982,6 +3024,7 @@ export function parse(source: string): TopologyAST {
     records,
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
+    ...(usesPlugins ? { usesPlugins } : {}),
     ...(machines ? { machines } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
@@ -3031,6 +3074,10 @@ export function parse(source: string): TopologyAST {
   if (Object.keys(sourceMap).length > 0) {
     ast._sourceMap = sourceMap;
   }
+
+  // Plugins: non-enumerable, so JSON export and goldens never see them.
+  if (pluginParse) setHidden(ast, "_plugins", pluginParse.state);
+  if (pluginNeedErrors.length > 0) setHidden(ast, "_pluginNeedErrors", pluginNeedErrors);
 
   return ast;
 }

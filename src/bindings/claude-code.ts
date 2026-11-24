@@ -71,6 +71,8 @@ import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
+import { PluginError, pluginScaffoldOf, preparePluginTarget } from "../plugins/runtime.js";
+import { checkHooks } from "../conformance/claude-code.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2724,6 +2726,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     hooksByEvent[observeHook.event].push(observeHook.entry);
   }
 
+  // Plugins (EXPERIMENTAL): their hook entries; none without plugins.
+  mergePluginSettingsHooks(ast, hooksByEvent);
+
   // Write hooksByEvent to settings if any hooks or gates were registered
   if (Object.keys(hooksByEvent).length > 0) {
     settings.hooks = hooksByEvent;
@@ -3949,7 +3954,8 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     // Context file (.claude/CONTEXT.md or custom — never root CLAUDE.md)
     files.push(generateContextFile(ast));
 
-    return deduplicateFiles(files);
+    // Plugins (EXPERIMENTAL): their files, before dedupe; none without plugins.
+    return deduplicateFiles(mergePluginFiles(ast, files));
 }
 
 export const claudeCodeBinding: BindingTarget = {
@@ -3958,11 +3964,61 @@ export const claudeCodeBinding: BindingTarget = {
     "Anthropic Claude Code CLI — generates .claude/ directory structure, .mcp.json, and scripts.",
 
   scaffold(ast: TopologyAST): GeneratedFile[] {
-    return withoutAuthored(ast, generateAll(ast));
+    const prepared = preparePluginTarget(ast, "claude-code");
+    return withoutAuthored(prepared, generateAll(prepared));
   },
 
   scaffoldStructured(ast: TopologyAST) {
-    const all = generateAll(ast);
-    return { files: withoutAuthored(ast, all), structure: structureOf(ast, all) };
+    const prepared = preparePluginTarget(ast, "claude-code");
+    const all = generateAll(prepared);
+    return { files: withoutAuthored(prepared, all), structure: structureOf(prepared, all) };
   },
 };
+
+/**
+ * Add the plugins' files to the core files. A path a core generator writes is
+ * an error naming the plugin, except a gate's stub at the run script a plugin
+ * set for that gate (gateRuns): the plugin's file is that script.
+ */
+function mergePluginFiles(ast: TopologyAST, files: GeneratedFile[]): GeneratedFile[] {
+  const plug = pluginScaffoldOf(ast);
+  if (!plug || plug.files.length === 0) return files;
+  const out = [...files];
+  for (const f of plug.files) {
+    const core = out.findIndex((c) => c.path === f.path);
+    if (core >= 0) {
+      if (out[core].stub === "gate" && plug.gateScripts.has(f.path)) out.splice(core, 1);
+      else throw new PluginError(`plugin ${f.plugin}: file "${f.path}" is a file the core claude-code scaffold writes; a plugin cannot write it.`);
+    }
+    out.push({ path: f.path, content: f.content, category: "machine", ...(f.executable ? { executable: true } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Add the plugins' settings.json hook entries. Each is checked against the
+ * hook contract (spec/claude-code/hooks-contract.json); an entry that runs a
+ * command the core already wires on that event is an error naming the plugin.
+ */
+function mergePluginSettingsHooks(ast: TopologyAST, hooksByEvent: Record<string, unknown[]>): void {
+  const plug = pluginScaffoldOf(ast);
+  if (!plug || plug.settingsHooks.length === 0) return;
+  const commandsOf = (entry: unknown): string[] =>
+    (((entry as { hooks?: unknown[] })?.hooks ?? []) as Array<{ command?: unknown }>).map((h) => h?.command).filter((c): c is string => typeof c === "string");
+  for (const { plugin, event, entry } of plug.settingsHooks) {
+    const violations = checkHooks({ [event]: [entry] });
+    if (!entry || typeof entry !== "object" || !Array.isArray((entry as { hooks?: unknown }).hooks)) {
+      violations.unshift({ event, rule: "shape", detail: "an entry is { matcher?, hooks: [...] }" });
+    }
+    if (violations.length > 0) {
+      throw new PluginError(`plugin ${plugin}: its ${event} hook breaks the Claude Code hook contract: ${violations.map((v) => v.detail).join("; ")}.`);
+    }
+    const core = (hooksByEvent[event] ?? []).flatMap(commandsOf);
+    const clash = commandsOf(entry).find((c) => core.includes(c));
+    if (clash) throw new PluginError(`plugin ${plugin}: its ${event} hook runs "${clash}", a hook the core claude-code scaffold writes; a plugin cannot write it.`);
+  }
+  for (const { event, entry } of plug.settingsHooks) {
+    if (!hooksByEvent[event]) hooksByEvent[event] = [];
+    hooksByEvent[event].push(entry);
+  }
+}

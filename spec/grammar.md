@@ -187,7 +187,13 @@ topology-section = meta | orchestrator | roles | action | agent | skill-decl | u
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
                  | schedule | interfaces | inventory | needs
+                 | uses-plugins | plugin_block
+uses-plugins    = 'uses-plugins' ':' '[' identifier (',' identifier)* ']'
+plugin_block    = plugin-keyword identifier? '{' block-body '}'
+plugin-keyword  = identifier   (* a block keyword a LOADED plugin owns *)
 ```
+
+**Plugins (EXPERIMENTAL: may change before 1.0):** `plugin_block` is valid only for a keyword owned by a plugin loaded for this run (`--plugin <module>`, or `"agentopology": { "plugins": [...] }` in the project package.json; an `.at` never loads code). Its body is read by the plugin; a plugin that lists `fields` gets V102 for any other name inside. No plugin may own a core section's keyword. Any other unknown keyword is V102, or V138 when `uses-plugins` names a plugin that is not loaded. `uses-plugins` is a check only. See `agentopology docs plugins`.
 
 **Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, and `needs` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 

@@ -3484,6 +3484,12 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 **Violation:** \`observability { endpoint: "http://127.0.0.1:4318" }\` with \`env { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }\`.
 **Fix:** Drop one of the two, or make them agree.
 
+### V138: Plugin Not Loaded (error)
+EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not load (plugins load only by \`--plugin <module>\` or the project package.json, never from the .at). Each top-level block no core section and no loaded plugin owns is reported as needing it, instead of V102; with no such block, the unloaded plugin is. Without \`uses-plugins\` an unknown block stays V102. See the plugins topic.
+
+**Violation:** \`uses-plugins: [acme]\` and \`widget w1 { a: 1 }\`, run without the plugin: \`block widget needs plugin acme; run with --plugin acme\`.
+**Fix:** Run with \`--plugin <module>\`, or list it in package.json \`agentopology.plugins\`.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3522,6 +3528,7 @@ A schedule job runs a \`decision\`, \`report\` or \`inline\` action, or an actio
 | V135 | error | Refusing Gate No Hook Runs |
 | V136 | warning | Scheduled Routing Action |
 | V137 | warning | Observability Env Override |
+| V138 | error | Plugin Not Loaded |
 `,
   },
 
@@ -4401,6 +4408,103 @@ agentopology plan examples/code-review.at          # try it
 agentopology docs flow                             # the control graph
 agentopology docs gate                             # gates and enforcement
 \`\`\`
+`,
+  },
+  // -------------------------------------------------------------------------
+  // plugins
+  // -------------------------------------------------------------------------
+  plugins: {
+    name: "plugins",
+    description: "Compile-time plugins: extra blocks, rules and scaffold output (EXPERIMENTAL)",
+    content: () => `# plugins
+
+**EXPERIMENTAL: may change before 1.0.**
+
+A plugin is a JavaScript module that adds top-level blocks to the language,
+checks them, and adds files and hooks to a target's scaffold.
+
+## Security
+
+A plugin is code that runs with your rights at compile time. Load only plugins
+you trust. Every load is printed, on stderr:
+
+\`\`\`
+loaded plugin <id>@<version> from <path>
+\`\`\`
+
+## Loading
+
+Only two things load a plugin, and an \`.at\` file is neither:
+
+- the repeatable CLI flag \`--plugin <module>\`, on validate, fix, scaffold,
+  sync, visualize, export, plan, info and guard;
+- \`"agentopology": { "plugins": ["<module>", ...] }\` in the package.json of
+  the project folder (\`--dir\`, else the folder of the \`.at\`).
+
+\`<module>\` is an explicit path (\`./x.mjs\`, \`../x.mjs\` or an absolute path;
+a single bundled file needs no package.json), loaded from where it is, or a
+package name, resolved from the project folder. A package name that resolves
+outside node_modules and the project is refused. A plugin written for an
+\`apiVersion\` other than 1 is an error.
+
+## uses-plugins
+
+\`\`\`at
+topology t : [pipeline] {
+  uses-plugins: [acme]
+  widget w1 { a: "one" }
+  ...
+}
+\`\`\`
+
+\`uses-plugins\` is a check only; it never loads code. When a plugin it names
+is not loaded, V138 is an error: \`block widget needs plugin acme; run with
+--plugin acme\` for each block no loaded plugin owns, or \`uses-plugins names
+plugin acme, which is not loaded\` when there is none. Without
+\`uses-plugins\`, an unknown block is V102, as always.
+
+## Rules
+
+A plugin's findings carry namespaced rule ids, \`<id>/<name>\` (letters, digits
+and \`-\`), such as \`acme/widget-needs-a\`. Any other rule id is an error that
+names the plugin.
+
+## The API (\`agentopology/plugins\`)
+
+\`\`\`ts
+import type { AtPlugin } from "agentopology/plugins";
+
+const plugin: AtPlugin = {
+  id: "acme",
+  version: "1.0.0",            // optional; printed when it loads
+  apiVersion: 1,
+  blocks: {
+    // keyword -> { multiplicity: "single" | "repeated", fields?, parse?(body, ctx) }
+    widget: { multiplicity: "repeated", fields: ["a", "b"] },
+  },
+  // data: Record<block, unknown[]>; view: the topology's name and frozen nodes
+  validate(data, view, ctx) { return []; },
+  scaffold: {
+    "claude-code": (data, view) => ({
+      files: [],          // { path, content, executable? }
+      settingsHooks: {},  // event -> settings.json hook entries
+      gateRuns: {},       // gate id -> check command
+    }),
+  },
+};
+export default plugin;
+\`\`\`
+
+- A block with \`fields\` reports any other name inside it as V102. Without
+  \`parse\`, a block's data is \`{ id?, ...fields }\`.
+- \`gateRuns\` sets the check of a gate that carries \`extensions { <id> { } }\`
+  and has no \`run:\`. It is wired through the gate wiring a \`run:\` gets, so
+  V135 and \`guard --check\` see it.
+- \`settingsHooks\` entries are checked against the Claude Code hook contract.
+
+These are errors that name the plugin: a block keyword that is a core section;
+a file path or a hook the core scaffold writes; a rule id outside the plugin's
+namespace.
 `,
   },
 };

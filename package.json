@@ -46,6 +46,10 @@
     "./resolve": {
       "import": "./dist/resolve/order.js",
       "types": "./dist/resolve/order.d.ts"
+    },
+    "./plugins": {
+      "import": "./dist/plugins/types.js",
+      "types": "./dist/plugins/types.d.ts"
     }
   },
   "scripts": {

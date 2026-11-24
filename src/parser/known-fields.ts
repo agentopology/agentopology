@@ -97,7 +97,7 @@ const NODE_SCHEMAS = {
 
 /** The topology body: the sections it takes. Fields are not allowed there. */
 const TOPOLOGY: BlockSchema = {
-  fields: ["decisions", "pin-models"],
+  fields: ["decisions", "pin-models", "uses-plugins"],
   blocks: {
     meta: NODE_SCHEMAS.meta,
     orchestrator: NODE_SCHEMAS.orchestrator,
@@ -235,7 +235,14 @@ function describeBlock(kind: string, id: string | undefined): string {
   return id ? `${kind} "${id}"` : kind === "topology" ? "the topology" : `"${kind}"`;
 }
 
-function check(body: string, schema: BlockSchema, kind: string, id: string | undefined, out: UnknownNameResult[]): void {
+function check(
+  body: string,
+  schema: BlockSchema,
+  kind: string,
+  id: string | undefined,
+  out: UnknownNameResult[],
+  claim?: (keyword: string, label: string) => boolean,
+): void {
   const where = describeBlock(kind, id);
   const node = id ?? (kind === "topology" ? undefined : kind);
   const blocks = schema.blocks ?? {};
@@ -264,6 +271,7 @@ function check(body: string, schema: BlockSchema, kind: string, id: string | und
       continue;
     }
     const label = item.id ? `${item.name} ${item.id}` : item.name;
+    if (claim?.(item.name, label)) continue;
     const guess = closest(item.name, Object.keys(blocks));
     out.push({
       rule: "V102",
@@ -279,9 +287,20 @@ function check(body: string, schema: BlockSchema, kind: string, id: string | und
  * Report every field and block name in a topology body that the parser does
  * not read. `topBody` is the comment-stripped body of `topology { }`.
  */
-export function findUnknownNames(topBody: string): UnknownNameResult[] {
+export function findUnknownNames(
+  topBody: string,
+  plugins?: {
+    /** Loaded plugins' top-level keywords: known, checked against their fields (null: not looked inside). */
+    blocks?: Readonly<Record<string, { fields: readonly string[] } | null>>;
+    /** An unknown top-level block a declared, unloaded plugin may own: true when it was reported elsewhere (V138). */
+    claim?: (keyword: string, label: string) => boolean;
+  },
+): UnknownNameResult[] {
   const out: UnknownNameResult[] = [];
-  check(topBody, TOPOLOGY, "topology", undefined, out);
+  const schema = plugins?.blocks && Object.keys(plugins.blocks).length > 0
+    ? { ...TOPOLOGY, blocks: { ...TOPOLOGY.blocks, ...plugins.blocks } }
+    : TOPOLOGY;
+  check(topBody, schema, "topology", undefined, out, plugins?.claim);
   return out;
 }
 

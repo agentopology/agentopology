@@ -42,6 +42,7 @@ import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/n
 import { overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
+import { pluginDiagnostics } from "../plugins/runtime.js";
 import type {
   HookDef,
   TopologyAST,
@@ -4202,6 +4203,8 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v135HooklessRefuseGate(ast, opts),
     ...v136ScheduledRoutingAction(ast),
     ...v137ObservabilityEnv(ast, opts),
+    ...v138PluginsLoaded(ast),
+    ...pluginDiagnostics(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4435,6 +4438,17 @@ function v137ObservabilityEnv(ast: TopologyAST, opts: ValidateOptions): Validati
     });
   }
   return results;
+}
+
+/**
+ * V138: `uses-plugins: [...]` names a plugin that is not loaded (EXPERIMENTAL).
+ * Collected at parse time, which knows the loaded set: each top-level block
+ * no core section and no loaded plugin owns is an error naming the plugin it
+ * needs (instead of V102); with no such block, the unloaded plugin itself is.
+ * Without `uses-plugins` an unknown block stays V102.
+ */
+function v138PluginsLoaded(ast: TopologyAST): ValidationResult[] {
+  return (ast as TopologyAST & { _pluginNeedErrors?: ValidationResult[] })._pluginNeedErrors ?? [];
 }
 
 /** V125 (L-2): a job carried by a session cannot outlive it. */

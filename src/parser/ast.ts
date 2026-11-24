@@ -1208,6 +1208,8 @@ export interface TopologyAST {
   decisions?: string[];
   /** `pin-models: true` at the top level: a bare model alias warns (V119). */
   pinModels?: boolean;
+  /** `uses-plugins: [...]` at the top level: the plugins this topology needs loaded (a check only, V138; it never loads code). */
+  usesPlugins?: string[];
   /**
    * Absolute path of the file the CLI parsed this from. Set (non-enumerable, so
    * it never reaches `export --format json`) by the CLI; `validate` uses it to

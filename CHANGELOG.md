@@ -2,6 +2,18 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Added
+
+- Compile-time plugins (EXPERIMENTAL: may change before 1.0). A plugin is a JavaScript module that adds top-level blocks to the language, checks them with its own rules, and adds files, `settings.json` hooks and gate checks to the claude-code scaffold. It is loaded only by the repeatable flag `--plugin <module>` or by `"agentopology": { "plugins": [...] }` in the project's package.json; an `.at` file never loads code. A module is an explicit path (`./`, `../` or absolute, a single bundled file is enough) or a package name resolved from the project folder; a package name that resolves outside node_modules and the project is refused. Every load prints `loaded plugin <id>@<version> from <path>` on stderr. A plugin is code that runs with your rights at compile time: load only plugins you trust.
+- The plugin API types, exported as `agentopology/plugins`: `AtPlugin`, `PluginData`, `Diagnostic`, `GeneratedFile`, `ReadonlyTopology`. Only `apiVersion: 1` exists.
+- A top-level `uses-plugins: [<id>, ...]` field, a check only, and the new rule V138: when a named plugin is not loaded, each block no loaded plugin owns is an error, `block <kw> needs plugin <id>; run with --plugin <id>` (instead of V102). Without `uses-plugins`, an unknown block is V102 as before.
+- A plugin's rule ids are namespaced, `<id>/<name>`. A rule id outside that form, a block keyword that is a core section, and a file path or hook the core scaffold writes are errors that name the plugin.
+- A gate that carries `extensions { <id> { } }` can get its check from that plugin; it is wired as a `run:` gate is, so V135 and `guard --check` see it.
+- A new docs topic, `agentopology docs plugins`.
+- Without a plugin, parse, validate and scaffold output are unchanged.
+
 ## [0.13.0] - unreleased
 
 ### Changed behaviour
