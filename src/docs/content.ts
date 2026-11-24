@@ -666,10 +666,10 @@ file fails and is named) and inside the \`valid\` window.
 These forms are refused, each proven by a test that feeds the hook the call:
 - an edit of the ledger or of the go hook;
 - a Bash command that writes the ledger, or runs or changes the go hook, unless it only reads it;
-- a Bash command that runs \`claude\` (a new session, whose prompt the go hook would read as typed), by any path, or
-  through \`npx\`, \`env\`, \`timeout\` or another program that runs its arguments, or as the package
+- a Bash command that runs \`claude\` (a new session, whose prompt the go hook would read as typed), named \`claude\`,
+  also behind \`npx\`, \`env\`, \`timeout\` or another program that runs its arguments, or as the package
   \`@anthropic-ai/claude-code\` (\`npx\`, \`npx -y\`, \`pnpm dlx\`, \`bunx\`, \`yarn dlx\`): when it holds the go word
-  anywhere, when its words cannot be read, or when it matches no runner step the topology declares (an action whose
+  anywhere, or when it matches no runner step the topology declares (an action whose
   \`commands:\` run \`claude\`, or a schedule job's agent run). A runner prompt that merely mentions the word is
   refused too;
 - \`at\`, \`batch\` or \`systemd-run\` (also after \`sudo\`, \`nohup\`, \`timeout\` or a shell's \`-c\`) in a command that
@@ -686,7 +686,8 @@ These forms are refused, each proven by a test that feeds the hook the call:
   \`send-keys\` joined by \`;\` or \`&&\`).
 
 With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. Enable it
-(\`settings { sandbox: true }\`).
+(\`settings { sandbox: true }\`). An interpreter can still reach the go and the guards: for example, a Python or
+Node script that edits .claude/settings.json or a guard script; only the sandbox (0.13.1) stops it.
 
 ## Example
 
