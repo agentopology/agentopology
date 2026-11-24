@@ -4503,7 +4503,10 @@ export default plugin;
   \`extensions\`, so a plugin reads \`extensions { <id> { … } }\` on either.
 - \`gateRuns\` sets the check of a gate that carries \`extensions { <id> { } }\`
   and has no \`run:\`. It is wired through the gate wiring a \`run:\` gets, so
-  V135 and \`guard --check\` see it.
+  V135 and \`guard --check\` see it. The check runs with \`AT_TOOL\` set to the
+  matcher of the hook that runs the gate, the tools the guarded call is one
+  of: \`Bash|Monitor|PowerShell\` before a script step, \`Agent|Task\` before a
+  subagent launch, empty after a subagent stops (a stop, not a tool call).
 - \`settingsHooks\` entries are checked against the Claude Code hook contract.
 
 These are errors that name the plugin: a block keyword that is a core section;

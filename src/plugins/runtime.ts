@@ -191,6 +191,8 @@ export interface PluginScaffold {
   settingsHooks: Array<{ plugin: string; event: string; entry: unknown }>;
   /** Gate run scripts a plugin set; a core stub at the same path gives way to the plugin's file. */
   gateScripts: Set<string>;
+  /** The gates whose check a plugin set (their wrappers export AT_TOOL). */
+  gateIds: Set<string>;
 }
 
 type Prepared = TopologyAST & { _pluginScaffold?: PluginScaffold };
@@ -211,7 +213,7 @@ export function preparePluginTarget(ast: TopologyAST, target: string): TopologyA
   const makers = state?.plugins.filter((p) => p.scaffold?.[target]) ?? [];
   if (!state || makers.length === 0) return ast;
 
-  const out: PluginScaffold = { target, files: [], settingsHooks: [], gateScripts: new Set() };
+  const out: PluginScaffold = { target, files: [], settingsHooks: [], gateScripts: new Set(), gateIds: new Set() };
   const runs = new Map<string, string>();
   for (const plugin of makers) {
     const made = plugin.scaffold![target](state.data[plugin.id] ?? {}, viewOf(ast)) ?? {};
@@ -234,6 +236,7 @@ export function preparePluginTarget(ast: TopologyAST, target: string): TopologyA
       if (typeof command !== "string" || command.trim() === "") throw new PluginError(`plugin ${plugin.id}: gateRuns.${gateId} is not a command.`);
       if (runs.has(gateId)) throw new PluginError(`plugin ${plugin.id}: gate "${gateId}" already gets its check from another plugin.`);
       runs.set(gateId, command);
+      out.gateIds.add(gateId);
       const script = command.trim().split(/\s+/).find((w) => /\.(sh|py|js|mjs|ts|rb)$/.test(w));
       if (script) out.gateScripts.add(script.replace(/^\.\//, ""));
     }

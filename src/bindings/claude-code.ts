@@ -3982,17 +3982,41 @@ export const claudeCodeBinding: BindingTarget = {
  */
 function mergePluginFiles(ast: TopologyAST, files: GeneratedFile[]): GeneratedFile[] {
   const plug = pluginScaffoldOf(ast);
-  if (!plug || plug.files.length === 0) return files;
-  const out = [...files];
+  if (!plug || (plug.files.length === 0 && plug.gateIds.size === 0)) return files;
+  const out = files.map((f) => withPluginToolEnv(ast, plug.gateIds, f));
+  let merged = out;
   for (const f of plug.files) {
-    const core = out.findIndex((c) => c.path === f.path);
-    if (core >= 0) {
-      if (out[core].stub === "gate" && plug.gateScripts.has(f.path)) out.splice(core, 1);
-      else throw new PluginError(`plugin ${f.plugin}: file "${f.path}" is a file the core claude-code scaffold writes; a plugin cannot write it.`);
+    const core = merged.filter((c) => c.path === f.path);
+    // Every gate that runs the plugin's script got its own stub there: all give way.
+    if (core.some((c) => !(c.stub === "gate" && plug.gateScripts.has(f.path)))) {
+      throw new PluginError(`plugin ${f.plugin}: file "${f.path}" is a file the core claude-code scaffold writes; a plugin cannot write it.`);
     }
-    out.push({ path: f.path, content: f.content, category: "machine", ...(f.executable ? { executable: true } : {}) });
+    merged = merged.filter((c) => c.path !== f.path);
+    merged.push({ path: f.path, content: f.content, category: "machine", ...(f.executable ? { executable: true } : {}) });
   }
-  return out;
+  return merged;
+}
+
+/**
+ * The wrapper of a gate whose check a plugin set exports AT_TOOL before it
+ * runs the check: the matcher of the hook that runs the gate, i.e. the tools
+ * the guarded call is one of. `Bash|Monitor|PowerShell` before a script step
+ * (before-action.sh, which runs the check with no input, so the exact tool is
+ * not passed), `Agent|Task` before a subagent launch (before-agent.sh), and ''
+ * for a SubagentStop hook, which guards a stop, not a tool call. Every other
+ * file, and every wrapper without a plugin, is left as it is.
+ */
+function withPluginToolEnv(ast: TopologyAST, gateIds: ReadonlySet<string>, file: GeneratedFile): GeneratedFile {
+  const m = /^\.claude\/skills\/[^/]+\/scripts\/gate-(.+)\.sh$/.exec(file.path);
+  if (!m || !gateIds.has(m[1]) || !file.path.startsWith(`.claude/skills/${ast.topology.name}/scripts/`)) return file;
+  const gate = ast.nodes.find((n) => n.type === "gate" && n.id === m[1]) as GateNode | undefined;
+  if (!gate) return file;
+  const tool = checkableActionGate(ast, gate) ? "Bash|Monitor|PowerShell"
+    : gateWiring(ast, gate).kind === "before-agent" ? "Agent|Task" : "";
+  const at = file.content.indexOf("set -euo pipefail\n");
+  if (at < 0) return file;
+  const end = at + "set -euo pipefail\n".length;
+  return { ...file, content: `${file.content.slice(0, end)}export AT_TOOL='${tool}'\n${file.content.slice(end)}` };
 }
 
 /**

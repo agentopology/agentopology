@@ -108,7 +108,12 @@ interface PluginScaffoldOutput {
   files?: GeneratedFile[];
   /** settings.json hook entries by event (Claude Code). Each is checked against the hook contract; one the core already writes is an error. */
   settingsHooks?: Record<string, unknown[]>;
-  /** A check command for a gate that carries `extensions { <id> { } }` and has no `run:`. It is wired as if the gate had `run:` (V135 and guard --check see it). */
+  /**
+   * A check command for a gate that carries `extensions { <id> { } }` and has no `run:`. It is wired as if the gate
+   * had `run:` (V135 and guard --check see it). On claude-code the check runs with the env var `AT_TOOL` set to the
+   * matcher of the hook that runs the gate: `Bash|Monitor|PowerShell` before a script step, `Agent|Task` before a
+   * subagent launch, '' after a subagent stops.
+   */
   gateRuns?: Record<string, string>;
 }
 
