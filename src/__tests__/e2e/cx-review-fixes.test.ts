@@ -1124,8 +1124,30 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
     }
     return bin;
   };
-  const alive = (pid: number) => spawnSync("sh", ["-c", `kill -0 ${pid} 2>/dev/null`]).status === 0;
+  // A process that was killed but not yet reaped is a zombie: it still answers `kill -0`, yet it runs nothing and
+  // holds nothing. When the group KILL also takes `timeout` itself, the zombie is left to init, which a
+  // container's PID 1 may not reap for a long time, so a `kill -0` probe called a dead check alive.
+  const alive = (pid: number) =>
+    spawnSync("sh", ["-c", `s=$(ps -o stat= -p ${pid} 2>/dev/null); case "$s" in ""|Z*) exit 1;; esac; exit 0`]).status === 0;
   for (const mode of ["POSIX watchdog", "GNU timeout"]) {
+    it(`[F-17] ${mode}: no member of the check's tree (a TERM-ignoring check and its grandchild) survives the hook`, () => {
+      scaffoldInto(AGENT_GATE("writer"));
+      const pidFile = at("tree.pid");
+      fs.writeFileSync(at(".codex/scripts/check.sh"), `#!/usr/bin/env bash\ntrap "" TERM\nsleep 31 &\necho "$$ $!" > "${pidFile}"\nwait\nexit 0\n`, { mode: 0o755 });
+      const cmd = spawnEntry().command.replace(/-s KILL \d+ /, "-s KILL 8 ").replace(/AT_D=\d+/, "AT_D=8");
+      const env = { ...process.env } as Record<string, string>;
+      delete env.CLAUDE_PROJECT_DIR;
+      if (mode === "POSIX watchdog") env.PATH = pathWithout("timeout", "gtimeout");
+      const r = spawnSync("/bin/sh", ["-c", cmd], { cwd: root, input: spawnPayload("reviewer"), env, encoding: "utf8", timeout: 40_000 });
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stderr).toMatch(/ran past its \d+s deadline, so this call is blocked/);
+      const pids = fs.readFileSync(pidFile, "utf8").trim().split(/\s+/).map(Number);
+      expect(pids).toHaveLength(2);
+      for (const pid of pids) {
+        expect(pid).toBeGreaterThan(0);
+        expect(alive(pid), `member ${pid} of the check's tree still running after the hook returned`).toBe(false);
+      }
+    }, 45_000);
     it(`[F-17] ${mode}: a check that ignores TERM is dead when the hook exits 2`, () => {
       scaffoldInto(AGENT_GATE("writer"));
       const pidFile = at("check.pid");

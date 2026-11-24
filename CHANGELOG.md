@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Fixed
+
+- Tests: the deadline test for a check that ignores TERM counted a killed check that init had not yet reaped (a zombie) as still running, so it failed on stock Linux and in containers. It now ignores zombies, and a new row proves that no member of the check's process tree (the check and a grandchild) survives the hook, for both GNU `timeout` and the POSIX watchdog.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour
