@@ -206,9 +206,14 @@ describe.skipIf(!hasJq)("a gate check is bounded by its budget inside before-act
 
   it("the same with no timeout program on PATH (stock macOS)", () => {
     const bin = fs.mkdtempSync(join(os.tmpdir(), "at-budget-path-"));
+    // A PATH can name a plain file (seen on a Mac: /opt/homebrew/bin/python3); the copy must skip it.
+    const junk = join(fs.mkdtempSync(join(os.tmpdir(), "at-budget-junk-")), "not-a-dir");
+    fs.writeFileSync(junk, "");
     try {
-      for (const d of (process.env.PATH ?? "").split(":").filter(Boolean)) {
-        for (const f of fs.existsSync(d) ? fs.readdirSync(d) : []) {
+      for (const d of [junk, ...(process.env.PATH ?? "").split(":")].filter(Boolean)) {
+        let isDir = false;
+        try { isDir = fs.statSync(d).isDirectory(); } catch { /* a missing entry */ }
+        for (const f of isDir ? fs.readdirSync(d) : []) {
           if (f === "timeout" || f === "gtimeout" || fs.existsSync(join(bin, f))) continue;
           try { fs.symlinkSync(join(d, f), join(bin, f)); } catch { /* skip */ }
         }
