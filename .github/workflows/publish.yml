@@ -106,8 +106,14 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
+      # A pull request checks the code on main, whose version is already on
+      # npm, so it only packs; a manual dry run of a tag asks the registry too.
+      - name: Pack (pull request)
+        if: env.EVENT == 'pull_request'
+        run: npm pack --dry-run
+
       - name: Publish (dry run)
-        if: steps.mode.outputs.dry == 'true'
+        if: steps.mode.outputs.dry == 'true' && env.EVENT != 'pull_request'
         run: npm publish --dry-run
 
       - name: Publish
