@@ -3446,6 +3446,34 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "  done <<< \"$t\"",
     "  if [ \"$AT_XD\" = 1 ]; then AT_EXPN=1; fi",
     "  AT_WHOLE=$(lower \"$(norm \"$1\")\")",
+    "  # the subcommand rule (at_rule): the command with every quoted text left out, and whether it holds an unquoted",
+    "  # expansion, an alias definition, xargs, eval or a shell given -c",
+    "  local u=$1 sh=0 cf=0 w re2 re3 re4",
+    "  while [[ $u =~ $re ]]; do u=${u/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  u=$(lower \"$(norm \"$u\")\")",
+    "  AT_RB=0",
+    "  re2='[$][a-z0-9_{(]|'$'\\x60'",
+    "  re3='alias +[^ ]+='",
+    "  re4='^-[a-z]*c[a-z]*$'",
+    "  if [[ $u =~ $re2 || $u =~ $re3 ]]; then AT_RB=1; fi",
+    "  for x in '&' '|' ';' '(' ')' '<' '>' $'\\n'; do u=${u//\"$x\"/ }; done",
+    "  AT_UQ=\" $u \"",
+    "  local -a uw; read -ra uw <<< \"$u\"",
+    "  for w in ${uw[@]+\"${uw[@]}\"}; do",
+    "    case ${w##*/} in xargs|eval) AT_RB=1 ;; bash|sh|zsh|dash|ksh) sh=1 ;; esac",
+    "    if [[ $w =~ $re4 ]]; then cf=1; fi",
+    "  done",
+    "  if [ \"$sh$cf\" = 11 ]; then AT_RB=1; fi",
+    "}",
+    "# at_rule REST: the step's subcommand word (REST's first word) stands as a bare, unquoted word in a command that",
+    "# holds an unquoted expansion, an alias definition, xargs, eval or a shell given -c: the command may build the",
+    "# CLI's name at run time, so it is read as the step. No position analysis. Known to refuse text too.",
+    "at_rule() {",
+    "  local -a rs",
+    "  [ \"$AT_RB\" = 1 ] || return 1",
+    "  read -ra rs <<< \"$1\"",
+    "  [ \"${#rs[@]}\" -gt 0 ] || return 1",
+    "  [[ $AT_UQ == *\" ${rs[0]} \"* ]]",
     "}",
     "# at_whole KEY REST: with AT_EXPN=1 (or xargs running KEY itself), the step's program KEY and each word of REST",
     "# stand as a substring of the whole command text (AT_WHOLE), quoted text included: the step, as far as this guard",
@@ -3581,7 +3609,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     const isCoarse = (k: { key: string; rest: string }) => ck.some((c) => c.key === k.key && c.rest === k.rest);
     // An unquoted expansion or xargs anywhere in the command: its quoted text may be split into arguments later,
     // so for the whole command the step's program and words are looked for in all of its text (at_whole).
-    if (ck.length) lines.push(`if ${ck.map((k) => `at_whole ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ")}; then`, ...unreadable("an expansion or xargs hands quoted text to the step's program", "  "), "fi");
+    if (ck.length) lines.push(`if ${ck.map((k) => `at_whole ${sq(k.key.toLowerCase())} ${sq(k.rest)} || at_rule ${sq(k.rest.toLowerCase())}`).join(" || ")}; then`, ...unreadable("an expansion or xargs hands quoted text to the step's program", "  "), "fi");
     lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", ...(ck.length ? ["  RC=$C"] : []), '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
     if (ck.length) lines.push('  at_text_seg "$RC" "$L"');
     lines.push(ck.length ? "  SEG_DOUBT=0; T=0; TC=0" : "  SEG_DOUBT=0; T=0");
