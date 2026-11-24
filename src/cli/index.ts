@@ -22,6 +22,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { parse } from "../parser/index.js";
 import { resolveIncludes } from "../parser/includes.js";
 import type { TopologyAST } from "../parser/ast.js";
@@ -162,6 +163,8 @@ ${c.bold("Usage:")}
   agentopology docs --all
   agentopology docs --agent
   agentopology docs --search <term>
+  agentopology --version | -v
+                       Print the agentopology version (package.json) and exit 0.
 
 ${c.bold("Commands:")}
   plan       Resolve a topology for interpreted execution: validate, apply spec
@@ -2032,7 +2035,19 @@ function cmdStubs(dirPath: string): void {
 // Main
 // ---------------------------------------------------------------------------
 
+/** The package's own version, from the package.json two folders above dist/cli (or src/cli). */
+function packageVersion(): string {
+  const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+  return (JSON.parse(fs.readFileSync(file, "utf-8")) as { version: string }).version;
+}
+
 function main(): void {
+  // --version / -v as the first word: print the version, nothing else.
+  const first = process.argv[2];
+  if (first === "--version" || first === "-v") {
+    console.log(packageVersion());
+    process.exit(0);
+  }
   const args = parseArgs(process.argv);
 
   if (args.help || !args.command) {

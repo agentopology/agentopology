@@ -659,6 +659,7 @@ agentopology validate --inventory <dir> a.at b.at  Per-file coverage, then one u
 agentopology validate <file> --inventory <dir> --user  Also counts ~/.claude apart, and checks the `needs` block (user skills, memory path) against the home folder
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
+agentopology --version                    Print the agentopology version (also -v)
 ```
 
 ---
