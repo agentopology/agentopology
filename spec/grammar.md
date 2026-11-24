@@ -1524,8 +1524,6 @@ metering {
 
 Any other key in `metering` is a V102 error: it would be written nowhere.
 
-Any other key in `metering` is a V102 error: it would be written nowhere.
-
 **Track options:**
 - `tokens-in` -- input tokens consumed
 - `tokens-out` -- output tokens produced
