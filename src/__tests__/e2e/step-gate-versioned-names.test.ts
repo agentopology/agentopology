@@ -261,6 +261,7 @@ const VALIDATE_PASSED = [
   "npx agentopology validate probe.at --no-plugins",
   "npx agentopology@0.13.1 validate probe.at --no-plugins",
   "npx agentopology@0.13.1 validate x.at",
+  "agentopology validate x.at",
   "pnpm dlx agentopology@0.13.1 validate probe.at --no-plugins",
 ];
 
@@ -268,10 +269,25 @@ const SCAFFOLD_PASSED = [
   "npx -y prettier@3.0.0 --check .",
   "npx cowsay@1.5.0 scaffold",
   "pnpm dlx create-vite@5.0.0 scaffold",
+  "ls build",
+  "git status",
+  "npm test",
+  "ls docs",
+  "npx agentopology@0.13.1 info x.at --no-plugins",
+];
+
+/**
+ * Known false refusals of the coarse step gate (it fails closed): a segment that names the step's program
+ * inside any word, or an expansion after a runner, and holds the step's word is read as the step. Run the
+ * step after its gate, or reword the command.
+ */
+const KNOWN_FALSE_REFUSALS = [
+  "echo agentopology scaffold",
+  "grep agentopology docs/scaffold.md",
+  "echo agentopology@0.13.1 scaffold",
   "bunx agentopology-extras@1.0.0 scaffold probe.txt",
   "npx @scope/agentopology-tools@1.0.0 scaffold probe.txt",
-  "echo agentopology@0.13.1 scaffold",
-  "ls build",
+  "x=other@1; npx $x scaffold",
 ];
 
 /** The validate step of the two-gate fixture: refused before the sign, in every spelling. */
@@ -379,7 +395,6 @@ const NEAR_PASSED = [
   "npx --call='echo hi'",
   "node node_modules/other/dist/cli/index.js scaffold",
   "cat <<<'hello world'",
-  "x=other@1; npx $x scaffold",
 ];
 
 /** A form with the step filled in: `{s}` is the step and its file, `{s1}` and `{s2}` the two words alone. */
@@ -399,6 +414,11 @@ describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate"
     for (const cmd of NEAR_PASSED) {
       it(`${label}: passes: ${cmd}`, () => {
         expect(off(name, [cmd], 0)).toEqual([]);
+      });
+    }
+    for (const cmd of KNOWN_FALSE_REFUSALS) {
+      it(`${label}: a known false refusal, documented: ${cmd}`, () => {
+        expect(off(name, [cmd], 2)).toEqual([]);
       });
     }
   }

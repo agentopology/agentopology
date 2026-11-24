@@ -2837,6 +2837,13 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
+/**
+ * Step programs that are package CLIs a runner can fetch (npx, pnpm dlx, bunx, ...), spelled in more ways than
+ * a reader can list: their step gates also read each segment coarsely and fail closed (at_coarse). Path
+ * programs and system programs keep the plain reading alone.
+ */
+export const COARSE_PROGRAMS: ReadonlySet<string> = new Set(["agentopology"]);
+
 /** Programs that run a script: for these the step's tool is the script, not the program (F-21). */
 const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpx|bunx|pnpm|yarn)$/;
 
@@ -3250,14 +3257,23 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
   // A here-string's text, read by the step gates on its own lines, as a here-doc's body already is: a shell
   // fed `<<<'tool step'` runs it. Added after the checks above, which read the command as written.
   lines.push(
-    "# at_herestr CMD: the text of each here-string (<<<) in CMD, one per line: a quoted word up to its closing",
-    "# quote, any other up to a blank or an operator.",
+    "# at_herestr CMD: the text of each here-string (<<<) in CMD, one per line: the one shell word after it, its",
+    "# quotes (any mix) and backslashes read as bash reads them, up to an unquoted blank or operator.",
     "at_herestr() {",
-    "  local t=$1 x q",
+    "  local t=$1 x q c i n",
     "  while [[ $t == *'<<<'* ]]; do",
     "    t=${t#*'<<<'}; t=${t#\"${t%%[![:space:]]*}\"}",
-    "    q=${t:0:1}",
-    "    if [ \"$q\" = \"'\" ] || [ \"$q\" = '\"' ]; then x=${t:1}; x=${x%%\"$q\"*}; else x=${t%%[[:space:];&|()<>]*}; fi",
+    "    x=''; q=''; n=${#t}",
+    "    for ((i=0; i<n; i++)); do",
+    "      c=${t:i:1}",
+    "      if [ -n \"$q\" ]; then if [ \"$c\" = \"$q\" ]; then q=''; else x+=$c; fi; continue; fi",
+    "      case $c in",
+    "        \"'\"|'\"') q=$c ;;",
+    "        '\\') i=$((i+1)); x+=${t:i:1} ;;",
+    "        ' '|$'\\t'|';'|'&'|'|'|'('|')'|'<'|'>') break ;;",
+    "        *) x+=$c ;;",
+    "      esac",
+    "    done",
     "    printf '%s\\n' \"$x\"",
     "  done",
     "}",
@@ -3266,6 +3282,30 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "  for sep in '&' '|' ';' '(' ')' '`'; do AT_HS=${AT_HS//\"$sep\"/$'\\n'}; done",
     "  SEGS+=$'\\n'$AT_HS",
     "fi",
+  );
+  // The coarse reading, only for a step whose program is a package CLI a runner can fetch (COARSE_PROGRAMS).
+  const coarseKeys = (action: ActionNode) => [...new Map((action.commands ?? []).map((c) => stepKey(c))
+    .filter((k) => COARSE_PROGRAMS.has(k.key.toLowerCase())).map((k) => [`${k.key} ${k.rest}`, k])).values()];
+  if (guards.some(({ action }) => coarseKeys(action).length > 0)) lines.push(
+    "# at_coarse SEG KEY REST: the step gates fail closed. SEG (quotes and backslashes dropped, lower case) is",
+    "# read as the step KEY REST, whatever the plain reading found, when every REST word stands in it (inside any",
+    "# word) and KEY stands inside any word, or an expansion stands where a program is named: the segment's",
+    "# program, or after a runner (npx pnpx bunx pnpm yarn npm bun node). Known to refuse text too, such as",
+    "# `echo KEY REST` or `grep KEY docs/REST.md`, when the step's gate is not met.",
+    "at_coarse() {",
+    "  local s=$1 key=$2 x p=1 run=0; local -a ws rs",
+    "  read -ra rs <<< \"$3\"",
+    "  for x in ${rs[@]+\"${rs[@]}\"}; do [[ $s == *\"$x\"* ]] || return 1; done",
+    "  [[ $s == *\"$key\"* ]] && return 0",
+    "  read -ra ws <<< \"$s\"",
+    "  for x in ${ws[@]+\"${ws[@]}\"}; do",
+    "    if [ \"$p\" = 1 ] && [[ $x =~ ^[a-z_][a-z0-9_]*= ]]; then continue; fi",
+    String.raw`    if [[ $x == *[\$\`]* ]] && { [ "$p" = 1 ] || [ "$run" = 1 ]; }; then return 0; fi`,
+    "    case ${x##*/} in npx|pnpx|bunx|pnpm|yarn|npm|bun|node) run=1 ;; esac",
+    "    [[ \"$AT_LEAD\" == *\" $x \"* ]] || p=0",
+    "  done",
+    "  return 1",
+    "}",
   );
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
   guards.forEach(({ action }, a) => {
@@ -3332,6 +3372,11 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     lines.push("  SEG_DOUBT=0; T=0");
     for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
+    // Fail closed: a segment the plain reading found no step in, but which names the step's program (or an
+    // expansion where a program stands) and holds the step's words, is the step too (at_coarse).
+    const ck = coarseKeys(action);
+    const coarse = ck.map((k) => `at_coarse "$L" ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ");
+    if (ck.length) lines.push(`  if [ "$T" -eq 0 ] && [ "$SEG_DOUBT" = 0 ] && { ${coarse}; }; then`, ...unreadable("it names the step's program and words in a form this guard does not read as plain", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
     if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
