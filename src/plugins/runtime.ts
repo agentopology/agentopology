@@ -54,7 +54,21 @@ export function checkPlugin(p: unknown, where = "plugin"): AtPlugin {
       throw new PluginError(`${name}: block "${kw}" needs multiplicity "single" or "repeated".`);
     }
   }
+  if (plugin.reads !== undefined) {
+    if (!Array.isArray(plugin.reads) || plugin.reads.some((r) => r !== "refusals")) {
+      throw new PluginError(`${name}: \`reads\` is a list of what the plugin reads; only "refusals" exists.`);
+    }
+  }
   return plugin as AtPlugin;
+}
+
+/**
+ * True when the refusal event is on for this topology: `meta { refusal-events: true }`,
+ * or a loaded plugin that declares `reads: ["refusals"]`. Off without either.
+ */
+export function refusalEventsOn(ast: TopologyAST): boolean {
+  if (ast.topology.refusalEvents) return true;
+  return (pluginStateOf(ast)?.plugins ?? []).some((p) => p.reads?.includes("refusals"));
 }
 
 /** Check a set of plugins: each one, and no id or keyword taken twice. */

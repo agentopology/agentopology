@@ -93,6 +93,7 @@ function serializeMeta(ast: TopologyAST): string {
   if (meta.entry) lines.push(`    entry: ${meta.entry}`);
   if (meta.outpoints) lines.push(`    outpoints: ${inlineList(meta.outpoints)}`);
   if (meta.durable) lines.push("    durable: true");
+  if (meta.refusalEvents) lines.push("    refusal-events: true");
   lines.push("  }");
   return lines.join("\n");
 }

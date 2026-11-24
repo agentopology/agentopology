@@ -17,7 +17,11 @@ import type { AtPlugin } from "../types.js";
 const hasJq = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 
 const topo = (metaExtra: string) => `topology plain : [pipeline] {
-  meta { version: "1.0.0" description: "Open then accept" ${metaExtra} }
+  meta {
+    version: "1.0.0"
+    description: "Open then accept"
+    ${metaExtra}
+  }
   orchestrator { model: sonnet handles: [open, accept] }
   action open {
     kind: external
@@ -111,6 +115,20 @@ describe.skipIf(!hasJq)("refusal events", () => {
     const guards = files.filter((f) => f.path.endsWith(".sh") && /\bexit 2\b/.test(f.content) && !f.stub);
     expect(guards.length).toBeGreaterThan(0);
     for (const f of guards) expect(f.content, f.path).toContain(EVENTS);
+  });
+
+  it("every script of every example still parses as bash with the event on", () => {
+    const dir = join(__dirname, "../../../examples");
+    const sources = fs.readdirSync(dir).filter((n) => n.endsWith(".at"));
+    expect(sources.length).toBeGreaterThan(0);
+    for (const name of sources) {
+      const ast = parse(fs.readFileSync(join(dir, name), "utf8"));
+      ast.topology.refusalEvents = true;
+      for (const f of claudeCodeBinding.scaffold(ast).filter((x) => x.path.endsWith(".sh"))) {
+        const r = spawnSync("bash", ["-n"], { input: f.content, encoding: "utf8" });
+        expect(r.status, `${name} ${f.path}: ${r.stderr}`).toBe(0);
+      }
+    }
   });
 
   it("a loaded plugin that reads refusals opts in too", () => {

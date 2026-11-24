@@ -23,6 +23,8 @@ import { threatModelActive } from "./threat.js";
 import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
+import { refusalEventsOn } from "../../plugins/runtime.js";
+import { REFUSAL_EVENT_FILE } from "./refusal-event.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
 import { isWorkflowSeamAgent } from "./seam.js";
@@ -2472,7 +2474,9 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   const ledgers = protectedLedgers(ast, p);
   const route = protectedRouteRecord(ast, p);
   const wgates = writeGates(ast);
-  if (ledgers.length === 0 && !route && wgates.length === 0) return null;
+  // The refusal event file (EXPERIMENTAL) is the core's alone to write: with the opt-in, the edit tools may not touch it.
+  const eventFile = p.id === "claude-code" && refusalEventsOn(ast);
+  if (ledgers.length === 0 && !route && wgates.length === 0 && !eventFile) return null;
   const goScripts = goScriptPaths(ast, p);
   const name = ast.topology.name;
   const v = p.projectDirVar;
@@ -2534,6 +2538,9 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     // D-7: a case-insensitive disk (macOS) opens logs/ep1/TRACE.JSONL as the ledger, so path and pattern are compared lower-cased.
     "  RL=$(printf '%s' \"$R\" | tr '[:upper:]' '[:lower:]')",
   ];
+  if (eventFile) {
+    lines.push(`  if [[ $RL == ${REFUSAL_EVENT_FILE} || $RL == */${REFUSAL_EVENT_FILE} ]]; then echo "agentopology: the edit touches the refusal event file $R; only the guards write it" >&2; exit 2; fi`);
+  }
   for (const l of ledgers) {
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);

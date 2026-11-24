@@ -12,7 +12,8 @@ All notable changes to agentopology are documented here.
 - A plugin's rule ids are namespaced, `<id>/<name>`. A rule id outside that form, a block keyword that is a core section, and a file path or hook the core scaffold writes are errors that name the plugin.
 - A gate that carries `extensions { <id> { } }` can get its check from that plugin; it is wired as a `run:` gate is, so V135 and `guard --check` see it.
 - A new docs topic, `agentopology docs plugins`.
-- Without a plugin, parse, validate and scaffold output are unchanged.
+- A refusal event a plugin may read (EXPERIMENTAL): with `meta { refusal-events: true }`, or a loaded plugin that declares `reads: ["refusals"]`, every generated claude-code guard that refuses appends one JSON line `{v, ts, guard, gate, rule, tool, reason}` to `.claude/agentopology/events/refusals.jsonl` just before its exit 2. Only the core writes it; `RefusalEvent` is a read-only type in `agentopology/plugins`. The line holds no command text and no tool input. A failed append never turns a refusal into a pass. The before-edit guard refuses the Edit and Write tools on the file. A guard another guard runs writes nothing, so a refusal is one line.
+- Without a plugin, and without the opt-in, parse, validate and scaffold output are unchanged.
 
 ## [0.13.0] - 2026-11-24
 

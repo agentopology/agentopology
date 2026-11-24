@@ -1159,6 +1159,11 @@ export interface TopologyMeta {
   outpoints?: string[];
   /** Whether durable execution is enabled. */
   durable?: boolean;
+  /**
+   * `meta { refusal-events: true }` (EXPERIMENTAL): every generated claude-code guard that refuses appends one
+   * JSON line to `.claude/agentopology/events/refusals.jsonl`. A loaded plugin that reads refusals turns it on too.
+   */
+  refusalEvents?: boolean;
   /** Version range of the agentopology package this file needs (`meta { requires: ">=0.13.0" }`). */
   requires?: string;
   /**

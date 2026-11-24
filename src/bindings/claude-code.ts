@@ -85,7 +85,8 @@ import { phaseOf as sharedPhaseOf } from "../resolve/phase.js";
 import { gateAnchors, pluginMcpServers, type PluginMcpServer } from "../parser/ast.js";
 import { gateLedger, guardedActions } from "../parser/ledger.js";
 import { interpreterFor, isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "../parser/run.js";
-import { PluginError, pluginScaffoldOf, preparePluginTarget } from "../plugins/runtime.js";
+import { PluginError, pluginScaffoldOf, preparePluginTarget, refusalEventsOn } from "../plugins/runtime.js";
+import { withRefusalEvent } from "./lib/refusal-event.js";
 import { checkHooks } from "../conformance/claude-code.js";
 
 // ---------------------------------------------------------------------------
@@ -4178,7 +4179,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
     if (contextPath) files.push({ path: contextPath, content: contextBlock(ast), category: "agent" });
 
     // Plugins (EXPERIMENTAL): their files, before dedupe; none without plugins.
-    return deduplicateFiles(mergePluginFiles(ast, files));
+    // The refusal event (EXPERIMENTAL), only for a topology that opts in; the plugins' own files are not touched.
+    const evented = refusalEventsOn(ast) ? files.map(withRefusalEvent) : files;
+    return deduplicateFiles(mergePluginFiles(ast, evented));
 }
 
 export const claudeCodeBinding: BindingTarget = {

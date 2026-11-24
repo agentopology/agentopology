@@ -341,10 +341,13 @@ meta {
 | `entry` | agent-id | no | -- |
 | `outpoints` | node-id list | no | -- |
 | `target` | path | no | the project root |
+| `refusal-events` | boolean | no | `false` |
 
 **`outpoints`** -- `outpoints: [builder, checker]` lists the nodes a run may end at. Each must be a declared node (V150 error). Once the list is written, a flow node with no outgoing edge that is not on it warns (V150). With no `outpoints`, nothing is checked. claude-code compiles a `[finish]` edge into the generated flow text (`[finish]` on the edge, plus a line saying the edge closes the run and hands back to the entry agent); when the topology declares a `records` entry, that line also tells the step before the edge to append `{"run": "closed", "ts": "<ISO time>"}` to the run ledger when it closes ok. No generated script writes step rows (a step's own script does), so the closed row is an instruction in the text, not a hook.
 
 **`target`** -- The directory the generated hooks resolve project paths against, absolute or relative to the project: a gate's ledger, its `run:` check, a project-relative `run:` script of a hook, and the globs of `before: write "<glob>"`. Claude Code only (Codex finds its scripts from their own place and ignores it). The hooks still live in the project's `.claude/`; only the work is found in the target. A target that does not exist blocks the check (exit 2). V152: a value that is empty or holds characters a directory path does not is an error.
+
+**`refusal-events`** -- `refusal-events: true` (EXPERIMENTAL) makes every generated claude-code guard that refuses append one JSON line, `{v, ts, guard, gate, rule, tool, reason}`, to `.claude/agentopology/events/refusals.jsonl` just before its exit 2. The line holds no command text. A failed append never turns a refusal into a pass, and the before-edit guard refuses the Edit and Write tools on the file. A loaded plugin that declares `reads: ["refusals"]` turns it on too. Off, every generated file is what it was. See `agentopology docs plugins`.
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
 

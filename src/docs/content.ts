@@ -4920,6 +4920,33 @@ export default plugin;
 These are errors that name the plugin: a block keyword that is a core section;
 a file path or a hook the core scaffold writes; a rule id outside the plugin's
 namespace.
+
+## The refusal event (read-only)
+
+A plugin may read what the guards refused. Only the core writes it. It is on
+when the topology says \`meta { refusal-events: true }\`, or when a loaded
+plugin declares \`reads: ["refusals"]\`. Then every generated claude-code guard
+script that refuses adds one JSON line to
+\`.claude/agentopology/events/refusals.jsonl\`, just before its exit 2:
+
+\`\`\`
+{"v":1,"ts":"2026-01-01T00:00:00Z","guard":"before-action.sh","gate":"accept-ready","rule":null,"tool":"Bash","reason":"a gate refused the call"}
+\`\`\`
+
+\`\`\`ts
+import type { RefusalEvent } from "agentopology/plugins";   // read-only, EXPERIMENTAL
+\`\`\`
+
+- \`gate\` and \`rule\` are null when the guard does not know them. \`reason\` is a
+  short fixed label. It never holds the refused command's text, and never the
+  tool's input.
+- A guard that another guard runs (a gate's wrapper) writes nothing: the guard
+  that ran it writes the one line.
+- A failed append (the folder cannot be made, the disk is full) changes
+  nothing: the script still exits 2. The refusal is never turned into a pass.
+- The before-edit guard refuses the Edit, Write, MultiEdit and NotebookEdit
+  tools on the file.
+- Without the opt-in, every generated file is byte for byte what it was.
 `,
   },
 };

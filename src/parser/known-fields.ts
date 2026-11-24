@@ -92,7 +92,7 @@ const NODE_SCHEMAS = {
     blocks: { prompt: OPAQUE, extensions: OPAQUE },
   },
   meta: {
-    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "outpoints", "durable", "requires", "target"],
+    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "outpoints", "durable", "requires", "target", "refusal-events"],
   },
 } satisfies Record<string, BlockSchema>;
 

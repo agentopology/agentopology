@@ -441,6 +441,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.outpoints !== undefined) result.outpoints = parseList(fields.outpoints);
   if (fields.durable) result.durable = fields.durable === "true";
+  if (fields["refusal-events"] !== undefined) result.refusalEvents = fields["refusal-events"].trim() === "true";
   if (fields.requires !== undefined) result.requires = unquote(fields.requires.trim());
   // Kept as written, an empty value included: V152 reports one that is not a path.
   if (fields.target !== undefined) result.target = unquote(fields.target.trim());
@@ -2755,6 +2756,7 @@ export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
     ...(metaFields.outpoints !== undefined ? { outpoints: metaFields.outpoints } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
+    ...(metaFields.refusalEvents ? { refusalEvents: true } : {}),
     ...(metaFields.requires !== undefined ? { requires: metaFields.requires } : {}),
     ...(metaFields.target !== undefined ? { target: metaFields.target } : {}),
   };
