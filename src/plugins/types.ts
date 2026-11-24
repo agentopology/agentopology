@@ -118,6 +118,32 @@ interface PluginScaffoldOutput {
 }
 
 /**
+ * One line of `.claude/agentopology/events/refusals.jsonl`, the refusal event. READ-ONLY and
+ * generic: only the core writes it (a plugin reads it, and the before-edit guard refuses the
+ * Edit and Write tools on it). Written only when the topology opts in, by `meta { refusal-events: true }`
+ * or by a loaded plugin that declares `reads: ["refusals"]`. `reason` is a short fixed label,
+ * never the refused command's text and never the tool's input.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface RefusalEvent {
+  /** The event format: 1. */
+  v: 1;
+  /** UTC time, `YYYY-MM-DDTHH:MM:SSZ`. */
+  ts: string;
+  /** The generated guard script that refused, e.g. `before-action.sh`. */
+  guard: string;
+  /** The gate that refused, or null when no gate is known. */
+  gate: string | null;
+  /** The rule id that refused, or null when none is known. */
+  rule: string | null;
+  /** The tool of the refused call (`Bash`, `Write`, …), or "" when not known. */
+  tool: string;
+  /** A short label for why the guard refused. */
+  reason: string;
+}
+
+/**
  * A compile-time plugin.
  *
  * EXPERIMENTAL: may change before 1.0.
@@ -133,6 +159,12 @@ export interface AtPlugin {
   blocks: Record<string, PluginBlock>;
   /** Check the plugin's data against the topology. `ctx.target` is the target being compiled for, if any. */
   validate?(data: PluginData, view: ReadonlyTopology, ctx: { target?: string }): Diagnostic[];
+  /**
+   * What this plugin reads that only the core writes. `"refusals"`: the refusal event file
+   * `.claude/agentopology/events/refusals.jsonl` (see {@link RefusalEvent}); loading a plugin
+   * that lists it makes every generated guard that refuses append one line there.
+   */
+  reads?: Array<"refusals">;
   /** Per target name (e.g. "claude-code"): what the plugin adds to that target's scaffold. */
   scaffold?: Record<string, (data: PluginData, view: ReadonlyTopology) => PluginScaffoldOutput>;
 }
