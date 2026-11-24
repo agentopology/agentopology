@@ -327,6 +327,38 @@ const STEP_FORMS: ReadonlyArray<readonly [string, readonly string[]]> = [
     "npx --call='agentopology {s}'",
     "npm exec --call='agentopology {s}'",
   ]],
+  ["runner options the package reading does not know", [
+    "npx --loglevel silent agentopology@1 {s}",
+    "npm exec --loglevel silent agentopology@1 {s}",
+    "pnpm dlx --reporter silent agentopology@1 {s}",
+    "npx --foo bar agentopology@1 {s}",
+    "npm --tag x exec agentopology@1 {s}",
+  ]],
+  ["a version that is itself a URL or git spec", [
+    "npx agentopology@https://example.com/fork.tgz {s}",
+    "npx agentopology@git+https://example.com/fork.git {s}",
+  ]],
+  ["a name set by any builtin or expansion and run through a runner", [
+    "export f=agentopology@1; npx $f {s}",
+    "local f=agentopology@1; npx $f {s}",
+    "declare f=agentopology@1; npx $f {s}",
+    "readonly f=agentopology@1; npx $f {s}",
+    "typeset f=agentopology@1; npx $f {s}",
+    "a=(agentopology@1); npx ${a[0]} {s}",
+    "read f <<< agentopology@1; npx $f {s}",
+    "printf -v f agentopology@1; npx $f {s}",
+    "f=xagentopology@1; npx ${f#x} {s}",
+  ]],
+  ["other paths to the CLI's own file", [
+    "node node_modules/agentopology/dist/cli/./index.js {s}",
+    "node node_modules/agentopology/dist/cli/index {s}",
+    "node node_modules/agentopology/dist/cli {s}",
+  ]],
+  ["here-strings with mixed quotes or escaped blanks, and an ANSI-C quoted --call", [
+    "bash <<< \"agentopology\"' {s}'",
+    "bash <<< agentopology\\ {s1}\\ {s2}",
+    "npx --call=$'agentopology {s}'",
+  ]],
   ["wrappers, letter case and spaces around a versioned name", [
     "env npx agentopology@1 {s}",
     "nice npx agentopology@1 {s}",
@@ -350,11 +382,15 @@ const NEAR_PASSED = [
   "x=other@1; npx $x scaffold",
 ];
 
+/** A form with the step filled in: `{s}` is the step and its file, `{s1}` and `{s2}` the two words alone. */
+const fill = (form: string, step: string, file: string) =>
+  form.replace("{s}", `${step} ${file}`).replace("{s1}", step).replace("{s2}", file);
+
 describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate", () => {
   for (const [label, , name] of TOPOLOGIES) {
     for (const [group, forms] of STEP_FORMS) {
       for (const form of forms) {
-        const cmd = form.replace("{s}", "scaffold probe.at");
+        const cmd = fill(form, "scaffold", "probe.at");
         it(`${label}: ${group}: refused: ${cmd}`, () => {
           expect(off(name, [cmd], 2)).toEqual([]);
         });
@@ -368,7 +404,7 @@ describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate"
   }
   for (const [group, forms] of STEP_FORMS) {
     for (const form of forms) {
-      const cmd = form.replace("{s}", "validate gated.at");
+      const cmd = fill(form, "validate", "gated.at");
       it(`two step gates: ${group}: the validate step is refused before the sign: ${cmd}`, () => {
         expect(off("two-gates", [cmd], 2)).toEqual([]);
       });
