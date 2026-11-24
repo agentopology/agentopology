@@ -431,6 +431,7 @@ agent-field     = 'role' ':' identifier
                 | 'max-turns' ':' number
                 | 'max-subagents' ':' number
                 | 'max-cost' ':' number
+                | 'output-into' ':' record-id
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
                 | agent-extensions
@@ -485,6 +486,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
 | `max-subagents` | number | no | -- | Most subagents this agent may have open at once; a positive whole number (V156). On claude-code a PreToolUse hook on `Agent\|Task` refuses a launch at the cap, counted per session from a log the SubagentStart and SubagentStop hooks write |
 | `max-cost` | number | no | -- | Spend cap in US dollars (V156). Advisory, not enforced: Claude Code hooks do not see spend; the value is written to the metering output for reporting |
+| `output-into` | record id | no | -- | Append the agent's `output-schema` fields to this record when it stops (0.13.1, V159). See below |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime). May be written more than once: the first block's hooks belong to the agent; a second and later block's hooks are project hooks (settings.json), as in 0.11.4. A hook name in two of its blocks is a V23 error |
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
@@ -1200,6 +1202,25 @@ records {
 How a row's day is read: a row counts for the UTC day its `ts` (or `at`) value starts with (`2026-11-24T...`). The writer adds `ts` to every row it writes, whether or not the record declares a `ts` field, so a record with no `ts` field is counted the same way. A row with no `ts` or `at` (written by hand) counts for no day. A row the writer is given with an earlier `ts` is still checked against today's count, since it is appended today.
 
 This is a text check, not a lock. The guard reads the command and the rows already in the file; it cannot know how many rows one command appends (a loop can add more than one), two writers racing at the cap can both pass, and a script that appends to the file itself is not seen. The path must not hold `{unit}` (V158): the count is of the rows of one file. `codex` and `cursor` write no check (V140 warns).
+
+**`output-into: <record-id>`** (0.13.1), a field of an `agent`, which must also have an `output-schema { }`:
+
+```agenttopology
+agent reviewer {
+  model: sonnet
+  output-schema {
+    verdict: ok | fail
+    score: number
+  }
+  output-into: results
+}
+```
+
+On `claude-code` a generated `SubagentStop` hook for that agent (`.claude/skills/<topology>/scripts/output-into-<agent>.sh`, matcher: the agent's id) reads the agent's final output and appends ONE JSON row to the record's file: `{"ts": "<UTC ISO time>", "agent": "<id>", ...the declared output-schema fields}`. A gate can then read the agent's result from a record that the agent never wrote: the agent needs no shell and no write access, and `before-action.sh` and `before-edit.sh` refuse a command or an Edit that writes the record (as they do a gate ledger), so neither the agent nor the session forges a row. When the output does not match the schema the row is `{"ts", "agent", "error": "schema"}`, never the raw output. Fields the schema does not declare are not copied, and a `ts` or `agent` in the output is dropped.
+
+The hook reads these `SubagentStop` input fields (hooks reference, https://code.claude.com/docs/en/hooks): `last_assistant_message`, the text of the subagent's final response, which is parsed as JSON or as the first ```` ```json ```` block in it (the same reading the output-schema check uses); `agent_type`, the subagent's name, which the settings matcher filters on, so the hook runs only for this agent. `agent_id` and `agent_transcript_path` are not used. The hook always exits 0: it records and does not hold the subagent; the output-schema check is what sends a subagent back to fix its output, so one run can leave an error row and then a good row (one row for each stop).
+
+What this does not do (text-level limits): the hook writes the file directly, not through `record-<id>.sh`, so the record's `fields:` and `max-per-day` do not apply to these rows. Where a subagent reports through the `SubagentHandback` tool (Claude Code 2.1.271 or later), `last_assistant_message` holds the closing text and not the report, so its rows read as `error: "schema"`. Under `delegation: inline` no subagent runs and no row is written. A record is protected by a text check on commands and edits, as a ledger is. V159 (error): the record must be declared, the agent must have an `output-schema`, and the record's path must have no `{unit}` (the hook knows no unit); `codex` and `cursor` write no hook (V159 warns).
 
 On `claude-code` a record that declares any of these compiles to: (1) `.claude/skills/<topology>/scripts/record-<id>.sh '<json>'`, which appends a row only when it holds every declared field with the declared type, otherwise exits 2 naming the missing or mistyped field and writes nothing, and adds `ts` when missing; a row `{step, ok: "n/a", reason}` goes through it and `reason` is required; (2) when a gate reads the record and its `after:` step is an action with `commands:`, `after-action.sh`, a `PostToolUse` hook on `Bash` that appends `{step, ok: true, ts, model}` (and the unit, when the step has one) when the step's command succeeded. It reads the command with the same step matcher `before-action.sh` uses. `PostToolUse` fires only for a call that succeeded (a failed `Bash` call fires `PostToolUseFailure`, whose `error` starts `Exit code N`), and the hook also skips a payload that says it failed; it writes nothing for a command joined with `;`, `|`, `||` or a single `&`, since the exit status is then not the step's. (3) `.claude/records.json` lists every record, with its id, path, fields, writer and the gates that read it (`readBy`), so a record no gate reads is still written down. Codex and cursor write none of this; `validate --target codex` and `--target cursor` warn (V140).
 

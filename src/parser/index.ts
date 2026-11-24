@@ -828,6 +828,7 @@ export function parseAgent(
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
   if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
+  if (fields["output-into"] !== undefined) node.outputInto = unquote(fields["output-into"].trim());
   // Caps: kept as written when not valid, so V156 can name the value.
   if (fields["max-subagents"] !== undefined) {
     const raw = unquote(fields["max-subagents"].trim());

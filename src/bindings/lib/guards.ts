@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
+import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, RecordDef, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
 import { gateLedger, goLedgers, guardedActions } from "../../parser/ledger.js";
 import { parseWindow } from "../../parser/window.js";
@@ -1444,6 +1444,8 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     const rec = gateLedger(ast, node as GateNode);
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
+  // 0.13.1: the record an `output-into:` hook appends to is the hook's alone: not the agent's, not the session's.
+  for (const { record } of outputIntoTargets(ast, p)) paths.push(record.path.replace(/^\.\//, ""));
   if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
   // The threat model's session marks, and the ledger its lift person approves in (Claude Code only).
   if (p.id === "claude-code" && threatModelActive(ast)) {
@@ -1463,6 +1465,28 @@ function protectedFile(path: string): ProtectedLedger {
   // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
   const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
   return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
+}
+
+/**
+ * The agents whose output a SubagentStop hook appends to a record (`output-into:`, 0.13.1), each with its
+ * record: a subagent (the session agent never fires SubagentStop) with an output-schema, and a declared
+ * record whose path has no `{unit}`. Claude Code only. Empty for a topology that uses no `output-into`.
+ */
+export function outputIntoTargets(ast: TopologyAST, p: GuardPlatform): Array<{ agent: AgentNode; record: RecordDef }> {
+  if (p.id !== "claude-code") return [];
+  const session = sessionAgentId(ast);
+  return ast.nodes.flatMap((n) => {
+    if (n.type !== "agent") return [];
+    const agent = n as AgentNode;
+    if (agent.outputInto === undefined || agent.id === session || !agent.outputSchema || agent.outputSchema.length === 0) return [];
+    const record = (ast.records ?? []).find((r) => r.id === agent.outputInto);
+    return record && record.path !== "" && !record.path.includes("{unit}") ? [{ agent, record }] : [];
+  });
+}
+
+/** The script an `output-into:` agent's SubagentStop hook runs. */
+export function outputIntoScript(agentId: string): string {
+  return `output-into-${agentId}.sh`;
 }
 
 /** A record with a `max-per-day` cap, as a protected file with its cap (0.13.1). */
@@ -2063,6 +2087,7 @@ function guardScriptNames(ast: TopologyAST): string[] {
     ...(ast.records ?? []).map((r) => `record-${r.id}.sh`),
     ...ids("human").map(goHookScript),
     ...ids("agent").flatMap((id) => [promptLogScript(id), `output-schema-${id}.sh`]),
+    ...outputIntoTargets(ast, CLAUDE_CODE_GUARDS).map(({ agent }) => outputIntoScript(agent.id)),
   ];
 }
 

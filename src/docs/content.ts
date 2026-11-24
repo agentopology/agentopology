@@ -132,6 +132,7 @@ agent NAME {
 | background | boolean | no | false | Run in background |
 | isolation | string | no | -- | Isolation mode: "worktree" |
 | max-turns | number | no | -- | Max agentic turns before stopping |
+| output-into | record id | no | -- | Append the agent's output-schema fields to this record when it stops: a SubagentStop hook writes \`{ts, agent, ...fields}\`, or \`{ts, agent, error: "schema"}\` when the output does not match (never the raw output). Needs an output-schema (V159). It reads \`last_assistant_message\` and matches on \`agent_type\`; a text-level check, claude-code only |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -3879,6 +3880,12 @@ A record's \`max-per-day\` must be a positive whole number, and the record's pat
 **Violation:** \`record events { path: "logs/events.jsonl", max-per-day: 0 }\`
 **Fix:** \`max-per-day: 20\`
 
+### V159: Output Into A Record (error/warning)
+An agent's \`output-into: <record-id>\` must name a declared record whose path has no \`{unit}\`, and the agent must have an \`output-schema\` (the SubagentStop hook copies the fields the schema declares). With \`--target codex\` or \`cursor\` it is a warning: only claude-code writes the hook.
+
+**Violation:** \`agent reviewer { output-into: results }\` with no \`output-schema\`.
+**Fix:** Add an \`output-schema { verdict: ok | fail }\` block to the agent.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3938,6 +3945,7 @@ A record's \`max-per-day\` must be a positive whole number, and the record's pat
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
 | V158 | error | Record Daily Cap |
+| V159 | error/warning | Output Into A Record |
 `,
   },
 
@@ -4152,7 +4160,7 @@ kind        role        version           description
 permissions prompt      generates         handles   argument
 behavior    invocation  background        skills    sandbox
 fallback-chain max-turns   max-lines   glossary
-max-subagents max-cost
+max-subagents max-cost output-into
 \`\`\`
 
 ### Flow & Edge Fields

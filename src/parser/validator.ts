@@ -4244,6 +4244,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
     ...v158RecordMaxPerDay(ast),
+    ...v159OutputInto(ast, opts),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4722,6 +4723,34 @@ function v158RecordMaxPerDay(ast: TopologyAST): ValidationResult[] {
       results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day "${r.maxPerDayRaw}" — must be a positive whole number such as 20` });
     } else if (r.maxPerDay !== undefined && r.path.includes("{unit}")) {
       results.push({ rule: "V158", level: "error", node: r.id, message: `Record "${r.id}" has max-per-day and a path with {unit} (${r.path}): the cap counts the rows of one file, so give the record one path with no {unit}` });
+    }
+  }
+  return results;
+}
+
+/**
+ * V159: `output-into: <record-id>` on an agent. The record must be declared, the agent must have an
+ * `output-schema` (the hook copies the schema's fields), and the record's path must have no `{unit}`
+ * (a SubagentStop hook knows no unit). On codex and cursor nothing is written: a warning.
+ */
+function v159OutputInto(ast: TopologyAST, opts: ValidateOptions): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const records = ast.records ?? [];
+  for (const node of ast.nodes) {
+    if (node.type !== "agent" || node.outputInto === undefined) continue;
+    const line = lookupLine(ast, node.id);
+    const err = (message: string) => results.push({ rule: "V159", level: "error", node: node.id, line, message });
+    const rec = records.find((r) => r.id === node.outputInto);
+    if (!rec) {
+      err(`Agent "${node.id}" has output-into "${node.outputInto}", but no record of that name is declared in records { } (records: ${records.map((r) => r.id).join(", ") || "none"})`);
+    } else if (rec.path.includes("{unit}")) {
+      err(`Agent "${node.id}" has output-into "${rec.id}", whose path has {unit} (${rec.path}): the SubagentStop hook knows no unit, so give the record one path with no {unit}`);
+    }
+    if (!node.outputSchema || node.outputSchema.length === 0) {
+      err(`Agent "${node.id}" has output-into but no output-schema: the hook copies the fields the schema declares, so write an output-schema { } block on the agent`);
+    }
+    if (opts.target === "codex" || opts.target === "cursor") {
+      results.push({ rule: "V159", level: "warning", node: node.id, line, message: `${opts.target} writes no SubagentStop hook, so output-into on agent "${node.id}" appends nothing here; only claude-code writes it` });
     }
   }
   return results;

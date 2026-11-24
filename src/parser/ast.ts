@@ -763,6 +763,8 @@ export interface AgentNode extends BaseNode {
   description?: string;
   /** Maximum number of agentic turns before stopping. */
   maxTurns?: number;
+  /** `output-into: <record-id>`: a SubagentStop hook appends the agent's output-schema fields to that record (0.13.1, V159). */
+  outputInto?: string;
   /** Most subagents this agent may have open at once (`max-subagents:`). */
   maxSubagents?: number;
   /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
