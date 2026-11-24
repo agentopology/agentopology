@@ -558,7 +558,7 @@ human NAME {
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
-| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it and a space, writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
+| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
 
 ## The go: a typed word
