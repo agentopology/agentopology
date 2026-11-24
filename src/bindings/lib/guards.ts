@@ -729,8 +729,8 @@ export const STDIN_JQ_FUNCTIONS: string[] = [
   "at_stdin_fed() {",
   "  local q o s",
   "  local -a u",
-  "  read -ra u <<< \"$(norm \"${C:-}\")\"",
-  "  [ \"$(lower \"${u[*]}\")\" = \"${w[*]}\" ] || return 0",
+  "  at_pkg_seg \"$(lower \"$(norm \"${C:-}\")\")\"; read -ra u <<< \"$AT_PS\"",
+  "  [ \"${u[*]}\" = \"${w[*]}\" ] || return 0",
   "  for ((q=p; q<$1; q++)); do",
   "    at_stdin_runner \"${u[q]}\" || continue",
   "    at_stdin_prog \"${u[q]}\" \"${u[@]:q+1}\"",
@@ -850,6 +850,61 @@ const AT_NAMES_FUNCTIONS: string[] = [
   "  fi",
   "  while [[ $w =~ $in ]]; do w=${w/\"${BASH_REMATCH[0]}\"/*}; done",
   "  at_names \"$w\" \"$2\"",
+  "}",
+];
+
+/**
+ * at_pkgname SPEC, at_pkg_seg SEGMENT (MATCH_FUNCTIONS): a package spec is read as its bare name. A trailing
+ * `@version` or `@tag` is dropped, and an `npm:` alias is resolved (`alias@npm:name@1.2.3` is `name`), so
+ * `agentopology@0.13.1` and `agentopology@latest` run the program `agentopology`. A leading scope is kept
+ * (`@scope/name@1` is `@scope/name`), and at_names reads its basename, as it reads any path. at_pkg_seg
+ * does this to the package a runner is told to fetch or run: npx, pnpx, bunx, `pnpm|yarn|npm|bun` then
+ * dlx, exec or x (options may stand before the subcommand), after `-p`/`--package`/`--package=`, and the
+ * word after `--`. It sets AT_PS to the segment with those words rewritten; every other word, such as
+ * `git@github.com`, stays as written. Mirrors pkgName in TypeScript.
+ */
+const AT_PKG_FUNCTIONS: string[] = [
+  "# at_pkgname SPEC: AT_PKG, SPEC as a bare package name: @version or @tag dropped, an npm: alias resolved.",
+  "at_pkgname() {",
+  "  local s=$1 pre='' r",
+  "  while [[ $s == npm:* ]]; do s=${s#npm:}; done",
+  "  if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
+  "  if [[ $s == *@* ]]; then",
+  "    r=${s#*@}",
+  "    if [[ $r == npm:* ]]; then at_pkgname \"${r#npm:}\"; return 0; fi",
+  "    s=${s%%@*}",
+  "  fi",
+  "  AT_PKG=$pre$s",
+  "}",
+  "# at_pkg_seg SEGMENT: AT_PS, SEGMENT with the package a runner runs (npx, pnpx, bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
+  "at_pkg_seg() {",
+  "  AT_PS=$1",
+  "  [[ $1 == *@* ]] || return 0",
+  "  local j k n x b; local -a v",
+  "  read -ra v <<< \"$1\"; n=${#v[@]}",
+  "  for ((j=0; j<n; j++)); do",
+  "    b=${v[j]##*/}",
+  "    case $b in",
+  "      npx|pnpx|bunx) k=$((j+1)) ;;",
+  "      pnpm|yarn|npm|bun)",
+  "        k=$((j+1))",
+  "        while [ \"$k\" -lt \"$n\" ] && [[ ${v[k]} == -* ]]; do k=$((k+1)); done",
+  "        case ${v[k]:-} in dlx|exec|x) k=$((k+1)) ;; *) continue ;; esac ;;",
+  "      *) continue ;;",
+  "    esac",
+  "    while [ \"$k\" -lt \"$n\" ]; do",
+  "      x=${v[k]}",
+  "      case $x in",
+  "        --) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${v[k]}\"; v[k]=$AT_PKG; fi; break ;;",
+  "        -p|--package) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${v[k]}\"; v[k]=$AT_PKG; fi; k=$((k+1)) ;;",
+  "        --package=*) at_pkgname \"${x#--package=}\"; v[k]=--package=$AT_PKG; k=$((k+1)) ;;",
+  "        -c|--call|--registry|--cache|--userconfig|--prefix|--node-arg|-w|--workspace|--filter|-C|--cwd) k=$((k+2)) ;;",
+  "        -*) k=$((k+1)) ;;",
+  "        *) at_pkgname \"$x\"; v[k]=$AT_PKG; break ;;",
+  "      esac",
+  "    done",
+  "  done",
+  "  AT_PS=''; for x in \"${v[@]}\"; do AT_PS+=\"$x \"; done",
   "}",
 ];
 
@@ -1130,6 +1185,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "  [[ $1 =~ $re ]]",
   "}",
   ...AT_NAMES_FUNCTIONS,
+  ...AT_PKG_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
   ...STDIN_JQ_FUNCTIONS,
   // 0.11.4: `git log "$BR"` is no commit and no push, whatever $BR holds.
@@ -1176,7 +1232,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "_seg_steps() {",
   "  local key=$2 kl n p i j k base",
   "  local -a w r cand",
-  "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
+  "  at_pkg_seg \"$1\"; read -ra w <<< \"$AT_PS\"; read -ra r <<< \"$3\"",
   "  # the tool's letters, kept for the next call with the same tool (AT_KLS: \" KEY=LETTERS ...\"), since",
   "  # one command reads every segment for every tool",
   "  kl=${AT_KLS-}",
@@ -2526,7 +2582,7 @@ function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
     "AT_KEYS=''",
     "at_keys_seg() {",
     "  local n m='' lit=0 w t; local -a ws",
-    "  read -ra ws <<< \"$1\"; n=${#ws[@]}",
+    "  at_pkg_seg \"$1\"; read -ra ws <<< \"$AT_PS\"; n=${#ws[@]}",
     "  at_prog_at \"${ws[@]}\"",
     "  [ \"$AT_PX\" -lt \"$n\" ] || return 0",
     "  w=${ws[AT_PX]}",
@@ -2744,12 +2800,29 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
 }
 
 /** Programs that run a script: for these the step's tool is the script, not the program (F-21). */
-const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpm|yarn)$/;
+const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpx|bunx|pnpm|yarn)$/;
+
+/**
+ * A package spec as its bare name: a trailing `@version` or `@tag` dropped and an `npm:` alias resolved
+ * (`alias@npm:name@1.2.3` is `name`). A leading scope is kept (`@scope/name@1` is `@scope/name`).
+ * The shell functions at_pkgname and at_pkg_seg do the same to a command.
+ */
+export function pkgName(spec: string): string {
+  let s = spec;
+  while (s.startsWith("npm:")) s = s.slice(4);
+  const scope = s.startsWith("@") ? "@" : "";
+  if (scope) s = s.slice(1);
+  const at = s.indexOf("@");
+  if (at < 0) return scope + s;
+  const rest = s.slice(at + 1);
+  return rest.startsWith("npm:") ? pkgName(rest.slice(4)) : scope + s.slice(0, at);
+}
 
 /**
  * The tool a step runs and the words that must follow it (F-batch): the program's
  * name with its path dropped, or for an interpreter (`python3 -u x.py`, `uv run x.py`)
- * the script's name. Lower case; the words are cut before the first placeholder (E-3).
+ * the script's name; for a package runner (`npx agentopology@1.2.3 scaffold`) the package's
+ * bare name (pkgName). Lower case; the words are cut before the first placeholder (E-3).
  */
 export function stepKey(command: string): { key: string; rest: string } {
   const words = stepMatchWords(command).words.split(" ").filter(Boolean);
@@ -2757,7 +2830,8 @@ export function stepKey(command: string): { key: string; rest: string } {
   let i = 0;
   if (words.length > 1 && INTERPRETERS.test(base(words[0]))) {
     i = 1;
-    while (i < words.length - 1 && (words[i].startsWith("-") || ["run", "exec", "x"].includes(words[i]))) i++;
+    while (i < words.length - 1 && (words[i].startsWith("-") || ["run", "exec", "x", "dlx"].includes(words[i]))) i++;
+    return { key: base(pkgName(words[i] ?? "")), rest: words.slice(i + 1).join(" ").toLowerCase() };
   }
   return { key: base(words[i] ?? ""), rest: words.slice(i + 1).join(" ").toLowerCase() };
 }
