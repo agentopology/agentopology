@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.2] - unreleased
+
+### Fixed
+
+- A step gate now recognises the CLI named with a version, a tag or through a package runner (npx, pnpm dlx, yarn dlx, bunx, npm exec). `npx -y agentopology@0.13.1 scaffold x.at`, `npx agentopology@latest scaffold x.at` and `pnpm dlx agentopology@0.13.1 scaffold x.at` are now read as the `agentopology scaffold` step, so a go word or a signed record that gates that step is checked first. The package a runner runs is read as its bare name: a trailing `@version` or `@tag` is dropped and an `npm:` alias is resolved. The write gate's list of reads is unchanged: a pinned `npx agentopology@X.Y.Z ... --no-plugins` still reads a `.at` file there, and a step gate on that same call still refuses it before its go.
+
 ## [0.13.1] - 2026-11-24
 
 ### Added
