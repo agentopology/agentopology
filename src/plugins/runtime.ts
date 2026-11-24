@@ -132,7 +132,7 @@ export function parsePluginBlocks(
       const used = spec.multiplicity === "single" ? found.slice(0, 1) : found;
       own[kw] = used.map((b) => {
         const bodyAt = topBody.indexOf(b.body, b.at ?? 0);
-        if (spec.parse) return spec.parse(b.body, { line: (at: number) => lineAt(Math.max(0, bodyAt) + at) });
+        if (spec.parse) return spec.parse(b.body, { line: (at: number) => lineAt(Math.max(0, bodyAt) + at), ...(b.id ? { id: b.id } : {}) });
         const fields = Object.fromEntries(Object.entries(parseFields(b.body)).map(([k, v]) => [k, unquote(v)]));
         return { ...(b.id ? { id: b.id } : {}), ...fields };
       });
@@ -151,7 +151,13 @@ export function viewOf(ast: TopologyAST): ReadonlyTopology {
     }
     return v;
   };
-  return freeze({ name: ast.topology.name, nodes: structuredClone(ast.nodes) }) as unknown as ReadonlyTopology;
+  return freeze({
+    name: ast.topology.name,
+    nodes: structuredClone(ast.nodes),
+    records: structuredClone(ast.records ?? []),
+    persons: structuredClone(ast.persons ?? []),
+    skills: structuredClone(ast.skills ?? []),
+  }) as unknown as ReadonlyTopology;
 }
 
 const RULE_NAME = /^[A-Za-z0-9-]+$/;

@@ -4496,7 +4496,11 @@ export default plugin;
 \`\`\`
 
 - A block with \`fields\` reports any other name inside it as V102. Without
-  \`parse\`, a block's data is \`{ id?, ...fields }\`.
+  \`parse\`, a block's data is \`{ id?, ...fields }\`. \`parse(body, ctx)\` gets
+  \`ctx.line(at)\` and \`ctx.id\`, the name after the keyword (absent when none).
+- \`view\` is a frozen copy: \`name\`, \`nodes\` (each with \`type\`), \`records\`
+  (id, path), \`persons\` and \`skills\`; nodes and skills carry their
+  \`extensions\`, so a plugin reads \`extensions { <id> { … } }\` on either.
 - \`gateRuns\` sets the check of a gate that carries \`extensions { <id> { } }\`
   and has no \`run:\`. It is wired through the gate wiring a \`run:\` gets, so
   V135 and \`guard --check\` see it.

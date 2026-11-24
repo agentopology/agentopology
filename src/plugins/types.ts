@@ -28,19 +28,29 @@ export interface GeneratedFile {
   executable?: boolean;
 }
 
+/** An item of the view: its id, the fields the parser read, and `extensions` where the language has them. */
+type ViewItem<T extends object = object> = Readonly<
+  T & { id: string; extensions?: Readonly<Record<string, Readonly<Record<string, unknown>>>> } & Record<string, unknown>
+>;
+
 /**
- * The read-only view of the topology a plugin's `validate` and `scaffold` get:
- * the topology's name and a frozen copy of its nodes (agents, actions, gates,
- * humans, groups), each with its id, its type and the fields the parser read,
- * `extensions` included. Changing it changes nothing.
+ * The read-only view of the topology a plugin's `validate` and `scaffold` get,
+ * a frozen copy: changing it changes nothing.
+ *
+ * - `nodes`: agents, actions, gates, humans, groups, each with its `type`.
+ * - `records`: the `records { record <id> { path } }` ledgers.
+ * - `persons`: the `person <id> { }` blocks.
+ * - `skills`: the skills, with their `extensions` (read `extensions { <id> { … } }`
+ *   on a skill as on an agent or a gate).
  *
  * EXPERIMENTAL: may change before 1.0.
  */
 export interface ReadonlyTopology {
   readonly name: string;
-  readonly nodes: ReadonlyArray<
-    Readonly<{ id: string; type: string; extensions?: Readonly<Record<string, Readonly<Record<string, unknown>>>> } & Record<string, unknown>>
-  >;
+  readonly nodes: ReadonlyArray<ViewItem<{ type: string }>>;
+  readonly records: ReadonlyArray<ViewItem<{ path: string }>>;
+  readonly persons: ReadonlyArray<ViewItem>;
+  readonly skills: ReadonlyArray<ViewItem>;
 }
 
 /**
@@ -80,10 +90,12 @@ interface PluginBlock {
   fields?: string[];
   /**
    * Turn the block's body (the text between its braces) into data. `ctx.line(at)`
-   * gives the 1-based source line of an offset in `body`. Without `parse`, the
-   * data is `{ id?, ...fields }` with each field's value as written (quotes removed).
+   * gives the 1-based source line of an offset in `body`; `ctx.id` is the block's
+   * id, the name after the keyword (`widget w1 { }`), absent when none is written.
+   * Without `parse`, the data is `{ id?, ...fields }` with each field's value as
+   * written (quotes removed).
    */
-  parse?(body: string, ctx: { line(at: number): number }): unknown;
+  parse?(body: string, ctx: { line(at: number): number; id?: string }): unknown;
 }
 
 /**

@@ -108,7 +108,7 @@ describe("no plugin: byte-identical", () => {
 describe("acme loaded", () => {
   it("the widget blocks parse to the plugin's data, with no V102", () => {
     const ast = parse(topo(WIDGETS), { plugins: [acme] });
-    expect(pluginStateOf(ast)?.data).toEqual({ acme: { widget: [{ id: "w1", a: "one", b: "2" }, { id: "w2", b: "3" }] } });
+    expect(pluginStateOf(ast)?.data).toEqual({ acme: { widget: [{ id: "w1", a: "one", b: "2" }, { id: "w2", b: "3" }], gadget: [] } });
     expect(validate(ast).filter((r) => r.rule === "V102")).toEqual([]);
   });
 
