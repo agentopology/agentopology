@@ -50,6 +50,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
+import { otherRecordLines, sameTopologyLines } from "../scaffold/other-records.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
@@ -553,6 +554,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const drifted = !!drift && drift.rows.length > 0;
   printStubPlan(ast, target, dir);
+  if (dir) printOtherRecords(path.resolve(dir), target ?? "claude-code", filePath, ast.topology.name, true);
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -577,6 +579,21 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
  * target given (claude-code when none is): the binding's own output, so
  * validate and scaffold cannot disagree. Changes no exit code.
  */
+/**
+ * Other .at files in the project: the hooks their manifests record that the
+ * hooks file still holds (scaffold of this .at keeps them), and, with
+ * `copies`, two .at files that declare one topology.
+ */
+function printOtherRecords(root: string, target: string, filePath: string, name: string, copies: boolean): void {
+  const lines = [
+    ...otherRecordLines(root, target, path.basename(filePath)),
+    ...(copies ? sameTopologyLines(root, target, path.resolve(filePath), name) : []),
+  ];
+  if (lines.length === 0) return;
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+  console.log("");
+}
+
 function printStubPlan(ast: TopologyAST, target: string | undefined, dir: string | undefined): void {
   const t = target ?? "claude-code";
   const plan = plannedStubs(ast, t, dir ? path.resolve(dir) : undefined);
@@ -1786,6 +1803,7 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
+  for (const line of otherRecordLines(root, target, path.basename(filePath))) console.log(line);
   process.exit(report.missing > 0 ? 1 : 0);
 }
 

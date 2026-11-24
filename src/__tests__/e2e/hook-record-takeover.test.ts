@@ -112,9 +112,10 @@ describe("another .at's recorded hooks are kept, and validate --dir and guard --
     expect(v.out).toContain(KEPT_A);
     const g = cli(["guard", b, "--check", "--dir", project]);
     expect(g.out).toContain(KEPT_A);
-    // a.at's own record is not another's.
-    expect(cli(["validate", a, "--dir", project]).out).not.toContain("recorded by a.at");
-    expect(cli(["validate", a, "--dir", project]).out).not.toContain("kept:");
+    // From a.at, its own record is not another's; b.at's is.
+    const fromA = cli(["validate", a, "--dir", project]).out;
+    expect(fromA).not.toContain("recorded by a.at");
+    expect(fromA).toContain("kept: 1 hook(s) in settings.json are recorded by b.at's manifest; scaffold that .at to change them");
   });
 
   it("nothing is said when the other .at's hooks are no longer in the file", () => {
