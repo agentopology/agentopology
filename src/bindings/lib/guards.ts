@@ -859,7 +859,8 @@ const AT_NAMES_FUNCTIONS: string[] = [
  * `agentopology@0.13.1` and `agentopology@latest` run the program `agentopology`. A leading scope is kept
  * (`@scope/name@1` is `@scope/name`), and at_names reads its basename, as it reads any path. at_pkg_seg
  * does this to the package a runner is told to fetch or run: npx, pnpx, bunx, `pnpm|yarn|npm|bun` then
- * dlx, exec or x (options may stand before the subcommand), after `-p`/`--package`/`--package=`, and the
+ * dlx, exec or x (options may stand before the subcommand, with their values: `pnpm -C . dlx`, `npm
+ * --prefix . exec`; after an option not known, one more word is read as its value), after `-p`/`--package`/`--package=`, and the
  * word after `--`. It takes the segment's words and sets AT_PW to them, one for each, with those words
  * rewritten; every other word, such as `git@github.com`, stays as written. at_pkgname never gives an empty
  * name: a spec that reads as none (`npm:`, `x@npm:`) stays as written, so no word is ever lost.
@@ -888,14 +889,24 @@ const AT_PKG_FUNCTIONS: string[] = [
   "at_pkg_seg() {",
   "  AT_PW=(\"$@\")",
   "  [[ \" $* \" == *@* ]] || return 0",
-  "  local j k n=$# x b",
+  "  local j k n=$# x b o",
   "  for ((j=0; j<n; j++)); do",
   "    b=${AT_PW[j]##*/}",
   "    case $b in",
   "      npx|pnpx|bunx) k=$((j+1)) ;;",
   "      pnpm|yarn|npm|bun)",
-  "        k=$((j+1))",
-  "        while [ \"$k\" -lt \"$n\" ] && [[ ${AT_PW[k]} == -* ]]; do k=$((k+1)); done",
+  "        # the runner's own options before dlx, exec or x: a known one that takes a value skips that value;",
+  "        # after any other option the next word may be its value, so one such word is skipped too",
+  "        k=$((j+1)); o=0",
+  "        while [ \"$k\" -lt \"$n\" ]; do",
+  "          case ${AT_PW[k]} in",
+  "            dlx|exec|x) break ;;",
+  "            -C|--dir|--prefix|-w|--workspace|--filter|--cwd|--registry|--cache|--userconfig) k=$((k+2)); o=0 ;;",
+  "            -*=*) k=$((k+1)); o=0 ;;",
+  "            -*) k=$((k+1)); o=1 ;;",
+  "            *) [ \"$o\" = 1 ] || break; k=$((k+1)); o=0 ;;",
+  "          esac",
+  "        done",
   "        case ${AT_PW[k]:-} in dlx|exec|x) k=$((k+1)) ;; *) continue ;; esac ;;",
   "      *) continue ;;",
   "    esac",
