@@ -1129,6 +1129,8 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
   // container's PID 1 may not reap for a long time, so a `kill -0` probe called a dead check alive.
   const alive = (pid: number) =>
     spawnSync("sh", ["-c", `s=$(ps -o stat= -p ${pid} 2>/dev/null); case "$s" in ""|Z*) exit 1;; esac; exit 0`]).status === 0;
+  const stateOf = (pid: number) =>
+    spawnSync("sh", ["-c", `ps -o stat= -p ${pid} 2>/dev/null`], { encoding: "utf8" }).stdout.trim() || "gone";
   for (const mode of ["POSIX watchdog", "GNU timeout"]) {
     it(`[F-17] ${mode}: no member of the check's tree (a TERM-ignoring check and its grandchild) survives the hook`, () => {
       scaffoldInto(AGENT_GATE("writer"));
@@ -1145,7 +1147,7 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
       expect(pids).toHaveLength(2);
       for (const pid of pids) {
         expect(pid).toBeGreaterThan(0);
-        expect(alive(pid), `member ${pid} of the check's tree still running after the hook returned`).toBe(false);
+        expect(alive(pid), `member ${pid} of the check's tree still running after the hook returned (state ${stateOf(pid)})`).toBe(false);
       }
     }, 45_000);
     it(`[F-17] ${mode}: a check that ignores TERM is dead when the hook exits 2`, () => {
@@ -1165,7 +1167,7 @@ describe.skipIf(!hasJq)("[F-17] F9d: at the deadline the hook returns only after
       expect(fs.existsSync(pidFile), "the check was cut before it wrote its pid").toBe(true);
       const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
       expect(pid).toBeGreaterThan(0);
-      expect(alive(pid), `check ${pid} still running after the hook returned`).toBe(false);
+      expect(alive(pid), `check ${pid} still running after the hook returned (state ${stateOf(pid)})`).toBe(false);
     }, 45_000);
   }
 });
