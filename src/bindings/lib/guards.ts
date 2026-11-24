@@ -854,6 +854,92 @@ const AT_NAMES_FUNCTIONS: string[] = [
 ];
 
 /**
+ * at_pkgname SPEC, at_pkg_seg SEGMENT (MATCH_FUNCTIONS): a package spec is read as its bare name. A trailing
+ * `@version` or `@tag` is dropped, and an `npm:` alias is resolved (`alias@npm:name@1.2.3` is `name`), so
+ * `agentopology@0.13.1` and `agentopology@latest` run the program `agentopology`. A leading scope is kept
+ * (`@scope/name@1` is `@scope/name`), and at_names reads its basename, as it reads any path. at_pkg_seg
+ * does this to the package a runner is told to fetch or run: npx, pnpx, bunx, `pnpm|yarn|npm|bun` then
+ * dlx, exec or x (options may stand before the subcommand, with their values: `pnpm -C . dlx`, `npm
+ * --prefix . exec`; after an option not known, one more word is read as its value), after `-p`/`--package`/`--package=`, and the
+ * word after `--`. It takes the segment's words and sets AT_PW to them, one for each, with those words
+ * rewritten; every other word, such as `git@github.com`, stays as written. at_pkgname never gives an empty
+ * name: a spec that reads as none (`npm:`, `x@npm:`) stays as written, so no word is ever lost.
+ * Mirrors pkgName in TypeScript.
+ */
+const AT_PKG_FUNCTIONS: string[] = [
+  "# at_pkgname SPEC: AT_PKG, SPEC as a bare package name: @version or @tag dropped, an npm: alias resolved.",
+  "# A tarball, git, URL or path spec is its last part (./name-1.2.3.tgz, git+https://host/o/name.git: name).",
+  "# Never empty: a spec that reads as no name (npm:, x@npm:) stays as written.",
+  "at_pkgname() {",
+  "  local s=$1 pre r",
+  "  AT_PKG=$1",
+  "  case $s in */agentopology/dist/cli/index.js|agentopology/dist/cli/index.js) AT_PKG=agentopology; return 0 ;; esac",
+  "  while :; do",
+  "    while [[ $s == npm:* ]]; do s=${s#npm:}; done",
+  "    pre=''",
+  "    # a tarball, a git or URL spec, or a path: its last part, without .git, .tgz and a version before .tgz",
+  "    case $s in",
+  "      *://*|git+*|git:*|github:*|gitlab:*|bitbucket:*|file:*|.*|/*|'~'*|*.tgz|*.tgz#*|*.tar.gz|*.tar|*.git|*.git#*)",
+  "        s=${s%%#*}; s=${s%/}; s=${s##*/}; s=${s##*:}; s=${s%.git}",
+  "        case $s in *.tgz|*.tar.gz|*.tar) s=${s%.tgz}; s=${s%.tar.gz}; s=${s%.tar}; s=${s%%-[0-9]*} ;; esac",
+  "        break ;;",
+  "    esac",
+  "    if [[ $s == @* ]]; then pre=@; s=${s#@}; fi",
+  "    if [[ $s == *@* ]]; then",
+  "      r=${s#*@}",
+  "      if [[ $r == npm:* ]]; then s=${r#npm:}; continue; fi",
+  "      s=${s%%@*}",
+  "    fi",
+  "    break",
+  "  done",
+  "  [ -z \"$s\" ] || AT_PKG=$pre$s",
+  "}",
+  "# at_pkg_seg WORD...: AT_PW, the words, one for each (never fewer), with the package a runner runs (npx, pnpx,",
+  "# bunx, pnpm|yarn|npm|bun dlx|exec|x) as a bare name.",
+  "at_pkg_seg() {",
+  "  AT_PW=(\"$@\")",
+  "  case \" $* \" in *@*|*.tgz*|*.tar*|*.git*|*://*|*git+*|*github:*|*gitlab:*|*bitbucket:*|*file:*|*/dist/cli/index.js*|*--call=*) ;; *) return 0 ;; esac",
+  "  local j k n=$# x b o",
+  "  for ((j=0; j<n; j++)); do",
+  "    # the CLI's own file, run by node or any program, is the CLI",
+  "    case ${AT_PW[j]} in */agentopology/dist/cli/index.js|agentopology/dist/cli/index.js) AT_PW[j]=agentopology; continue ;; esac",
+  "    b=${AT_PW[j]##*/}",
+  "    case $b in",
+  "      npx|pnpx|bunx) k=$((j+1)) ;;",
+  "      pnpm|yarn|npm|bun)",
+  "        # the runner's own options before dlx, exec or x: a known one that takes a value skips that value;",
+  "        # after any other option the next word may be its value, so one such word is skipped too",
+  "        k=$((j+1)); o=0",
+  "        while [ \"$k\" -lt \"$n\" ]; do",
+  "          case ${AT_PW[k]} in",
+  "            dlx|exec|x) break ;;",
+  "            -C|--dir|--prefix|-w|--workspace|--filter|--cwd|--registry|--cache|--userconfig) k=$((k+2)); o=0 ;;",
+  "            -*=*) k=$((k+1)); o=0 ;;",
+  "            -*) k=$((k+1)); o=1 ;;",
+  "            *) [ \"$o\" = 1 ] || break; k=$((k+1)); o=0 ;;",
+  "          esac",
+  "        done",
+  "        case ${AT_PW[k]:-} in dlx|exec|x) k=$((k+1)) ;; *) continue ;; esac ;;",
+  "      *) continue ;;",
+  "    esac",
+  "    while [ \"$k\" -lt \"$n\" ]; do",
+  "      x=${AT_PW[k]}",
+  "      case $x in",
+  "        --) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; break ;;",
+  "        -p|--package) k=$((k+1)); if [ \"$k\" -lt \"$n\" ]; then at_pkgname \"${AT_PW[k]}\"; AT_PW[k]=$AT_PKG; fi; k=$((k+1)) ;;",
+  "        --package=*) at_pkgname \"${x#--package=}\"; AT_PW[k]=--package=$AT_PKG; k=$((k+1)) ;;",
+  "        # --call runs its value as a shell's -c does: its first word is a program, read as one",
+  "        --call=?*) AT_PW[k]=${x#--call=}; k=$((k+1)) ;;",
+  "        -c|--call|--registry|--cache|--userconfig|--prefix|--node-arg|-w|--workspace|--filter|-C|--cwd) k=$((k+2)) ;;",
+  "        -*) k=$((k+1)) ;;",
+  "        *) at_pkgname \"$x\"; AT_PW[k]=$AT_PKG; break ;;",
+  "      esac",
+  "    done",
+  "  done",
+  "}",
+];
+
+/**
  * The variables bash sets or reads itself (bash(1), Shell Variables), and `_`: never read as the literal a
  * command assigns, since bash may change them between the assignment and the use ($_ is the last word of
  * the command before, REPLY is select's answer, PWD changes with cd). at_resolve reads lower-case names
@@ -1130,6 +1216,7 @@ export const MATCH_FUNCTIONS: string[] = [
   "  [[ $1 =~ $re ]]",
   "}",
   ...AT_NAMES_FUNCTIONS,
+  ...AT_PKG_FUNCTIONS,
   ...READS_ONLY_FUNCTION,
   ...STDIN_JQ_FUNCTIONS,
   // 0.11.4: `git log "$BR"` is no commit and no push, whatever $BR holds.
@@ -1174,9 +1261,14 @@ export const MATCH_FUNCTIONS: string[] = [
   "# order), and SEG_DOUBT=1 when a run of the tool cannot be read (an expansion or glob among its words).",
   "seg_steps() { set +u; _seg_steps \"$@\"; set -u; }",
   "_seg_steps() {",
-  "  local key=$2 kl n p i j k base",
-  "  local -a w r cand",
+  "  local key=$2 kl n p i j k base x",
+  "  local -a w pw r cand",
+  "  # w: the segment's words as written (the stdin, git and expansion checks read these); pw: the same",
+  "  # words with a runner's package as its bare name (at_pkg_seg), for the name matching",
   "  read -ra w <<< \"$1\"; read -ra r <<< \"$3\"",
+  "  at_pkg_seg \"${w[@]}\"; pw=(\"${AT_PW[@]}\")",
+  "  # one word for each word; were the two ever to differ, the segment cannot be read: doubt",
+  "  [ \"${#pw[@]}\" -eq \"${#w[@]}\" ] || { SEG_DOUBT=1; pw=(\"${w[@]}\"); }",
   "  # the tool's letters, kept for the next call with the same tool (AT_KLS: \" KEY=LETTERS ...\"), since",
   "  # one command reads every segment for every tool",
   "  kl=${AT_KLS-}",
@@ -1184,41 +1276,43 @@ export const MATCH_FUNCTIONS: string[] = [
   "  n=${#w[@]}; SEG_N=0; cand=()",
   "  p=0",
   "  while [ \"$p\" -lt \"$n\" ]; do",
-  "    if [[ ${w[p]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then",
-  "      # a variable set to the tool: its later use cannot be read",
-  "      at_names \"${w[p]#*=}\" \"$key\" && SEG_DOUBT=1",
-  "    elif [[ \"$AT_LEAD\" != *\" ${w[p]} \"* ]]; then",
+  "    if [[ ${pw[p]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then",
+  "      # a variable set to the tool: its later use cannot be read. A value with no / or : is read as a",
+  "      # package spec too (f=name@1; npx $f), so a version or a tag does not hide the name",
+  "      x=${pw[p]#*=}; [[ $x == *[/:]* ]] || { at_pkgname \"$x\"; x=$AT_PKG; }",
+  "      at_names \"$x\" \"$key\" && SEG_DOUBT=1",
+  "    elif [[ \"$AT_LEAD\" != *\" ${pw[p]} \"* ]]; then",
   "      break",
   "    fi",
   "    p=$((p+1))",
   "  done",
   "  [ \"$p\" -lt \"$n\" ] || return 0",
-  "  base=${w[p]##*/}",
-  "  if at_names \"${w[p]}\" \"$key\"; then",
+  "  base=${pw[p]##*/}",
+  "  if at_names \"${pw[p]}\" \"$key\"; then",
   "    cand=(\"$p\")",
-  "  elif at_special \"${w[p]}\"; then",
+  "  elif at_special \"${pw[p]}\"; then",
   "    # the program itself is an expansion: it may be the tool",
-  "    if [[ $(letters \"${w[p]}\") == *\"$kl\"* ]] || { [[ ${w[p]} == '$'* || ${w[p]} == '`'* ]] && [[ $CMD_L == *\"$kl\"* ]]; }; then SEG_DOUBT=1; fi",
+  "    if [[ $(letters \"${pw[p]}\") == *\"$kl\"* ]] || { [[ ${pw[p]} == '$'* || ${pw[p]} == '`'* ]] && [[ $CMD_L == *\"$kl\"* ]]; }; then SEG_DOUBT=1; fi",
   "    return 0",
-  "  elif at_reads_only \"$base\" \"${w[@]:p+1}\"; then",
+  "  elif at_reads_only \"$base\" \"${pw[@]:p+1}\"; then",
   "    return 0",
   "  elif [ \"$base\" = find ]; then",
   "    # find runs a command only after -exec/-execdir/-ok/-okdir: everything after the first one is scanned",
   "    k=0",
   "    for ((j=p+1; j<n; j++)); do",
-  "      case ${w[j]} in -exec|-execdir|-ok|-okdir) k=1; continue ;; esac",
-  "      [ \"$k\" = 1 ] && at_names \"${w[j]}\" \"$key\" && cand+=(\"$j\")",
+  "      case ${pw[j]} in -exec|-execdir|-ok|-okdir) k=1; continue ;; esac",
+  "      [ \"$k\" = 1 ] && at_names \"${pw[j]}\" \"$key\" && cand+=(\"$j\")",
   "    done",
   "  else",
   "    # an interpreter, a program that can run its arguments, or one not known: the tool anywhere after it",
-  "    for ((j=p+1; j<n; j++)); do at_names \"${w[j]}\" \"$key\" && cand+=(\"$j\"); done",
+  "    for ((j=p+1; j<n; j++)); do at_names \"${pw[j]}\" \"$key\" && cand+=(\"$j\"); done",
   "  fi",
   "  for i in \"${cand[@]}\"; do",
   "    [ \"$key\" = git ] && at_git_alias \"$i\" && SEG_DOUBT=1",
   "    at_git_read \"$i\" || for ((j=i; j<n; j++)); do at_special \"${w[j]}\" && SEG_DOUBT=1; done",
   "    j=$((i+1)); k=0",
   "    while [ \"$k\" -lt \"${#r[@]}\" ] && [ \"$j\" -lt \"$n\" ]; do",
-  "      [ \"${w[j]}\" = \"${r[k]}\" ] && k=$((k+1))",
+  "      [ \"${pw[j]}\" = \"${r[k]}\" ] && k=$((k+1))",
   "      j=$((j+1))",
   "    done",
   ...STDIN_JQ_CHECK,
@@ -2526,7 +2620,7 @@ function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
     "AT_KEYS=''",
     "at_keys_seg() {",
     "  local n m='' lit=0 w t; local -a ws",
-    "  read -ra ws <<< \"$1\"; n=${#ws[@]}",
+    "  read -ra ws <<< \"$1\"; at_pkg_seg ${ws[@]+\"${ws[@]}\"}; ws=(${AT_PW[@]+\"${AT_PW[@]}\"}); n=${#ws[@]}",
     "  at_prog_at \"${ws[@]}\"",
     "  [ \"$AT_PX\" -lt \"$n\" ] || return 0",
     "  w=${ws[AT_PX]}",
@@ -2743,13 +2837,57 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
+/**
+ * Step programs that are package CLIs a runner can fetch (npx, pnpm dlx, bunx, ...), spelled in more ways than
+ * a reader can list: their step gates also read each segment coarsely and fail closed (at_coarse). Path
+ * programs and system programs keep the plain reading alone.
+ */
+export const COARSE_PROGRAMS: ReadonlySet<string> = new Set(["agentopology"]);
+
 /** Programs that run a script: for these the step's tool is the script, not the program (F-21). */
-const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpm|yarn)$/;
+const INTERPRETERS = /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bash|sh|zsh|dash|ksh|ruby|perl|php|deno|bun|tsx|ts-node|uv|poetry|pipx|npx|pnpx|bunx|pnpm|yarn)$/;
+
+/**
+ * A package spec as its bare name: a trailing `@version` or `@tag` dropped and an `npm:` alias resolved
+ * (`alias@npm:name@1.2.3` is `name`). A leading scope is kept (`@scope/name@1` is `@scope/name`).
+ * A tarball, git, URL or path spec is its last part, without `.git`, `.tgz` and a version before `.tgz`
+ * (`./name-1.2.3.tgz` and `git+https://host/o/name.git` are `name`).
+ * Never empty: a spec that reads as no name (`npm:`, `x@npm:`) is returned as written.
+ * The shell functions at_pkgname and at_pkg_seg do the same to a command.
+ */
+export function pkgName(spec: string): string {
+  // the CLI's own file is the CLI
+  if (/(^|\/)agentopology\/dist\/cli\/index\.js$/.test(spec)) return "agentopology";
+  let s = spec;
+  let scope = "";
+  for (;;) {
+    while (s.startsWith("npm:")) s = s.slice(4);
+    scope = "";
+    if (/:\/\/|^(git\+|git:|github:|gitlab:|bitbucket:|file:|\.|\/|~)|\.(tgz|git)(#.*)?$|\.tar(\.gz)?$/.test(s)) {
+      s = s.replace(/#.*$/, "").replace(/\/$/, "");
+      s = s.slice(s.lastIndexOf("/") + 1);
+      s = s.slice(s.lastIndexOf(":") + 1).replace(/\.git$/, "");
+      if (/\.(tgz|tar\.gz|tar)$/.test(s)) s = s.replace(/\.(tgz|tar\.gz|tar)$/, "").replace(/-[0-9].*$/, "");
+      break;
+    }
+    scope = s.startsWith("@") ? "@" : "";
+    if (scope) s = s.slice(1);
+    const at = s.indexOf("@");
+    if (at >= 0) {
+      const rest = s.slice(at + 1);
+      if (rest.startsWith("npm:")) { s = rest.slice(4); continue; }
+      s = s.slice(0, at);
+    }
+    break;
+  }
+  return s ? scope + s : spec;
+}
 
 /**
  * The tool a step runs and the words that must follow it (F-batch): the program's
  * name with its path dropped, or for an interpreter (`python3 -u x.py`, `uv run x.py`)
- * the script's name. Lower case; the words are cut before the first placeholder (E-3).
+ * the script's name; for a package runner (`npx agentopology@1.2.3 scaffold`) the package's
+ * bare name (pkgName). Lower case; the words are cut before the first placeholder (E-3).
  */
 export function stepKey(command: string): { key: string; rest: string } {
   const words = stepMatchWords(command).words.split(" ").filter(Boolean);
@@ -2757,7 +2895,8 @@ export function stepKey(command: string): { key: string; rest: string } {
   let i = 0;
   if (words.length > 1 && INTERPRETERS.test(base(words[0]))) {
     i = 1;
-    while (i < words.length - 1 && (words[i].startsWith("-") || ["run", "exec", "x"].includes(words[i]))) i++;
+    while (i < words.length - 1 && (words[i].startsWith("-") || ["run", "exec", "x", "dlx"].includes(words[i]))) i++;
+    return { key: base(pkgName(words[i] ?? "")), rest: words.slice(i + 1).join(" ").toLowerCase() };
   }
   return { key: base(words[i] ?? ""), rest: words.slice(i + 1).join(" ").toLowerCase() };
 }
@@ -3115,6 +3254,294 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       : []),
   ];
   const sq = shellQuote;
+  // A here-string's text, read by the step gates on its own lines, as a here-doc's body already is: a shell
+  // fed `<<<'tool step'` runs it. Added after the checks above, which read the command as written.
+  lines.push(
+    "# at_herestr CMD: the text of each here-string (<<<) in CMD, one per line: the one shell word after it, its",
+    "# quotes (any mix) and backslashes read as bash reads them, up to an unquoted blank or operator.",
+    "at_herestr() {",
+    "  local t=$1 x q c i n",
+    "  while [[ $t == *'<<<'* ]]; do",
+    "    t=${t#*'<<<'}; t=${t#\"${t%%[![:space:]]*}\"}",
+    "    x=''; q=''; n=${#t}",
+    "    for ((i=0; i<n; i++)); do",
+    "      c=${t:i:1}",
+    "      if [ -n \"$q\" ]; then if [ \"$c\" = \"$q\" ]; then q=''; else x+=$c; fi; continue; fi",
+    "      case $c in",
+    "        \"'\"|'\"') q=$c ;;",
+    "        '\\') i=$((i+1)); x+=${t:i:1} ;;",
+    "        ' '|$'\\t'|';'|'&'|'|'|'('|')'|'<'|'>') break ;;",
+    "        *) x+=$c ;;",
+    "      esac",
+    "    done",
+    "    printf '%s\\n' \"$x\"",
+    "  done",
+    "}",
+    "if [[ $CMD == *'<<<'* ]]; then",
+    "  AT_HS=$(at_herestr \"$CMD\")",
+    "  for sep in '&' '|' ';' '(' ')' '`'; do AT_HS=${AT_HS//\"$sep\"/$'\\n'}; done",
+    "  SEGS+=$'\\n'$AT_HS",
+    "fi",
+  );
+  // The coarse reading, only for a step whose program is a package CLI a runner can fetch (COARSE_PROGRAMS).
+  const coarseKeys = (action: ActionNode) => [...new Map((action.commands ?? []).map((c) => stepKey(c))
+    .filter((k) => COARSE_PROGRAMS.has(k.key.toLowerCase())).map((k) => [`${k.key} ${k.rest}`, k])).values()];
+  if (guards.some(({ action }) => coarseKeys(action).length > 0)) lines.push(
+    "# at_is_code WORD: WORD (by any path) is a program that runs text it is given as code, or an alias, whose value",
+    "# is code: a shell, an interpreter, a remote or container run, a build tool, a wrapper. (xargs: at_xargs.)",
+    "at_is_code() {",
+    "  case ${1##*/} in",
+    "    bash|sh|zsh|dash|ksh|mksh|yash|fish|csh|tcsh|tclsh|wish|expect|eval|source|exec|perl|ruby|php|lua|luajit|deno|bun|node|nodejs|python*|pypy*|busybox|env|script|watch|ssh|docker|podman|kubectl|make|gmake|alias|find|parallel|nohup|setsid|sudo|doas|su|timeout|osascript|pwsh|powershell|at|batch|crontab|tmux|screen|vi|vim|nvim|emacs|less|more|man) return 0 ;;",
+    "  esac",
+    "  return 1",
+    "}",
+    "# at_xargs SEG: SEG (quotes and backslashes dropped, case kept) may run xargs. Sets AT_XD=1 when xargs runs a",
+    "# runner, a shell or another code program, uses an -I template (-I, -i, -J, --replace), or names no command; adds",
+    "# the command it runs to AT_XC. xargs running an ordinary program (wc, echo, grep) sets neither.",
+    "at_xargs() {",
+    "  local i j x c; local -a ws",
+    "  read -ra ws <<< \"$1\"",
+    "  for ((i=0; i<${#ws[@]}; i++)); do",
+    "    [ \"$(lower \"${ws[i]##*/}\")\" = xargs ] || continue",
+    "    j=$((i+1))",
+    "    while [ \"$j\" -lt \"${#ws[@]}\" ]; do",
+    "      x=${ws[j]}",
+    "      case $x in",
+    "        --replace*) AT_XD=1 ;;",
+    "        --*) ;;",
+    "        -[!-]*)",
+    "          if [[ $x == *[IiJ]* ]]; then AT_XD=1; fi",
+    "          case $x in -a|-d|-E|-I|-J|-L|-n|-P|-R|-s|-S) j=$((j+1)) ;; esac ;;",
+    "        *) break ;;",
+    "      esac",
+    "      j=$((j+1))",
+    "    done",
+    "    if [ \"$j\" -ge \"${#ws[@]}\" ]; then",
+    "      AT_XD=1",
+    "    else",
+    "      c=$(lower \"${ws[j]##*/}\"); AT_XC+=\" $c\"",
+    "      if at_is_code \"$c\"; then AT_XD=1; fi",
+    "      case $c in npx|pnpx|bunx|pnpm|yarn|npm|xargs) AT_XD=1 ;; esac",
+    "    fi",
+    "  done",
+    "}",
+    "# at_posexp SEG: an expansion ($, a backtick, or the {} an xargs template stands for) stands where a program is",
+    "# named: SEG's program (after assignments, keywords and wrappers such as command, env, sudo, xargs and its",
+    "# options), the package after a runner (npx pnpx bunx node, pnpm|yarn|npm|bun then dlx|exec|x, and their",
+    "# options), or the program of a code string: what follows eval, source or a dot, or a shell's -c. An expansion in",
+    "# an ordinary argument (`echo $HOME`) is not.",
+    "at_posexp() {",
+    "  local x p=1 run=0 sh=0 wr=0; local -a ws",
+    "  read -ra ws <<< \"$1\"",
+    "  for x in ${ws[@]+\"${ws[@]}\"}; do",
+    "    if [ \"$p\" = 1 ] && [[ $x =~ ^[a-z_][a-z0-9_]*= ]]; then continue; fi",
+    "    if [ \"$p\" = 1 ] && [ \"$wr\" = 1 ] && [[ $x == -* || $x == [0-9]* ]]; then continue; fi",
+    String.raw`    if [[ $x == *[\$\`]* || $x == *'{}'* ]] && { [ "$p" = 1 ] || [ "$run" = 1 ]; }; then return 0; fi`,
+    "    if [ \"$run\" = 1 ]; then [[ $x == -* ]] || run=0; continue; fi",
+    "    if [ \"$run\" = 2 ]; then case $x in dlx|exec|x) run=1 ;; esac; continue; fi",
+    "    if [ \"$sh\" = 1 ]; then",
+    "      case $x in --*) ;; -*c*) p=1; wr=0; sh=0 ;; -*) ;; *) sh=0; p=0 ;; esac",
+    "      continue",
+    "    fi",
+    "    [ \"$p\" = 1 ] || continue",
+    "    if [[ \"$AT_LEAD\" == *\" $x \"* ]]; then continue; fi",
+    "    case ${x##*/} in",
+    "      command|builtin|exec|env|nice|nohup|sudo|doas|time|timeout|setsid|stdbuf|ionice|xargs) wr=1; continue ;;",
+    "      eval|source|.) wr=0; continue ;;",
+    "      npx|pnpx|bunx|node) run=1 ;;",
+    "      pnpm|yarn|npm|bun) run=2 ;;",
+    "      bash|sh|zsh|dash|ksh|mksh|yash|fish|csh|tcsh) sh=1 ;;",
+    "    esac",
+    "    p=0",
+    "  done",
+    "  return 1",
+    "}",
+    "# at_coarse SEG KEY REST: the step gates fail closed. SEG (quotes and backslashes dropped, lower case) is",
+    "# read as the step KEY REST, whatever the plain reading found, when every REST word stands in it (inside any",
+    "# word) and KEY stands inside any word, or an expansion stands where a program is named (at_posexp): the",
+    "# segment's program, the package after a runner, or the program of a code string (eval, sh -c, an xargs",
+    "# template). Known to refuse text too, such as `echo KEY REST` or `grep KEY docs/REST.md`, when the step's gate",
+    "# is not met.",
+    "at_coarse() {",
+    "  local s=$1 key=$2 x p=1 run=0; local -a ws rs",
+    "  read -ra rs <<< \"$3\"",
+    "  for x in ${rs[@]+\"${rs[@]}\"}; do [[ $s == *\"$x\"* ]] || return 1; done",
+    "  # a read-only program in the program's place reads the words as its arguments (at_read_only)",
+    "  if [ \"$AT_RO\" = 1 ] && at_read_only \"$s\"; then return 1; fi",
+    "  [[ $s == *\"$key\"* ]] && return 0",
+    "  at_posexp \"$s\" && return 0",
+    "  return 1",
+    "}",
+    "# at_code_cmd CMD: AT_CODE=1 when the command may hand text to a program that runs text as code (a shell, an",
+    "# interpreter, a remote or container run, a build tool, a wrapper, a git alias, -c, --call, --eval), AT_SA=1",
+    "# when it runs sed or awk. Quoted text with a space is left out first, so the words of a message name no",
+    "# program. A program not on this list that runs text it is given is not seen: its quoted text reads as text.",
+    "at_code_cmd() {",
+    "  local t=$1 x re; local -a ws",
+    "  AT_CODE=0; AT_SA=0",
+    "  # xargs runs its text as code only when it runs a runner, a shell, a template or no command (at_xargs)",
+    "  if [ \"$AT_XD\" = 1 ]; then AT_CODE=1; fi",
+    String.raw`  re="\"[^\"]* [^\"]*\"|'[^']* [^']*'"`,
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  t=$(lower \"$(norm \"$t\")\")",
+    "  # a segment led by a dot (`. file`) reads the file as code, as source does (after assignments and keywords)",
+    "  local u=$t first lw",
+    "  for x in '&' '|' ';' '(' ')' '`' '{' '}'; do u=${u//\"$x\"/$'\\n'}; done",
+    "  while IFS= read -r first; do",
+    "    read -ra lw <<< \"$first\"",
+    "    for x in ${lw[@]+\"${lw[@]}\"}; do",
+    "      case $x in [a-z_]*=*|then|do|else|if|while|until|time|'!') continue ;; esac",
+    "      if [ \"$x\" = . ]; then AT_CODE=1; fi",
+    "      break",
+    "    done",
+    "  done <<< \"$u\"",
+    "  local rb=0 pk=0",
+    "  for x in '&' '|' ';' '(' ')' '`' '<' '>' '{' '}' $'\\n'; do t=${t//\"$x\"/ }; done",
+    "  read -ra ws <<< \"$t\"",
+    "  for x in ${ws[@]+\"${ws[@]}\"}; do",
+    "    # git rebase runs the text of -x or --exec; npm keeps text as a script (set-script, pkg set)",
+    "    if [ \"$x\" = rebase ]; then rb=1; fi",
+    "    if [ \"$x\" = pkg ]; then pk=1; fi",
+    "    if [ \"$rb\" = 1 ]; then case $x in -x*|-[!-]*x*|--ex|--exe|--exec*) AT_CODE=1 ;; esac; fi",
+    "    if [ \"$pk\" = 1 ] && [ \"$x\" = set ]; then AT_CODE=1; fi",
+    "    if [ \"$x\" = set-script ]; then AT_CODE=1; fi",
+    "    if at_is_code \"$x\"; then AT_CODE=1; fi",
+    "    case ${x##*/} in awk|gawk|mawk|nawk|sed) AT_SA=1 ;; esac",
+    "    case $x in -c|--call*|--eval*|'!'*|*alias.*) AT_CODE=1 ;; esac",
+    "  done",
+    "}",
+    "# at_text_seg RAW L: LT, the segment as the coarse reading reads it: L, or, when the command hands no text to",
+    "# a program that runs it (AT_CODE and AT_SA both 0), L with each quoted text that holds a space left out.",
+    "at_text_seg() {",
+    "  LT=$2",
+    "  [ \"$AT_CODE$AT_SA\" = 00 ] || return 0",
+    String.raw`  [[ $1 == *[\"\']* ]] || return 0`,
+    "  local t=$1 re",
+    String.raw`  re="\"[^\"]* [^\"]*\"|'[^']* [^']*'"`,
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  LT=$(lower \"$(norm \"$t\")\")",
+    "}",
+    "# at_expand_cmd CMD: AT_EXPN=1 when a segment holds an expansion where a program is named (at_posexp: the",
+    "# program, the package after a runner, the program of a code string), or xargs runs a runner, a shell, a template",
+    "# or no command (at_xargs): the shell (or xargs) later builds that program from text, so the quoted-text rule does",
+    "# not hold. An expansion in an ordinary argument, and xargs running an ordinary program, set nothing. A",
+    "# double-quoted text holding an expansion stays one (`$q`); a single-quoted text is dropped. AT_WHOLE is then",
+    "# the whole command, quoted text included, quotes and case dropped (at_whole).",
+    "at_expand_cmd() {",
+    "  local t=$1 x re m r",
+    "  AT_EXPN=0; AT_XD=0; AT_XC=''",
+    String.raw`  re="\"[^\"]*\"|'[^']*'"`,
+    "  while [[ $t =~ $re ]]; do",
+    "    m=${BASH_REMATCH[0]}; r=' '",
+    "    if [[ ${m:0:1} == '\"' && $m == *[\\$\\`]* ]]; then r=' $q '; fi",
+    "    t=${t/\"$m\"/\"$r\"}",
+    "  done",
+    "  t=$(norm \"$t\")",
+    "  t=${t//'`'/' $ '}",
+    "  for x in '&' '|' ';' '(' ')' $'\\n'; do t=${t//\"$x\"/$'\\n'}; done",
+    "  for x in '<' '>'; do t=${t//\"$x\"/ }; done",
+    "  while IFS= read -r x; do",
+    "    at_xargs \"$x\"",
+    "    if at_posexp \"$(lower \"$x\")\"; then AT_EXPN=1; fi",
+    "  done <<< \"$t\"",
+    "  if [ \"$AT_XD\" = 1 ]; then AT_EXPN=1; fi",
+    "  AT_WHOLE=$(lower \"$(norm \"$1\")\")",
+    "  # the subcommand rule (at_rule): the command with every quoted text left out, and whether it holds an unquoted",
+    "  # expansion, an alias definition, xargs, eval or a shell given -c",
+    "  local u=$1 sh=0 cf=0 w re2 re3 re4",
+    "  while [[ $u =~ $re ]]; do u=${u/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  u=$(lower \"$(norm \"$u\")\")",
+    "  AT_RB=0",
+    "  re2='[$][a-z0-9_{(]|'$'\\x60'",
+    "  re3='alias +[^ ]+='",
+    "  re4='^-[a-z]*c[a-z]*$'",
+    "  if [[ $u =~ $re2 || $u =~ $re3 ]]; then AT_RB=1; fi",
+    "  for x in '&' '|' ';' '(' ')' '<' '>' $'\\n'; do u=${u//\"$x\"/ }; done",
+    "  AT_UQ=\" $u \"",
+    "  local -a uw; read -ra uw <<< \"$u\"",
+    "  for w in ${uw[@]+\"${uw[@]}\"}; do",
+    "    case ${w##*/} in xargs|eval) AT_RB=1 ;; bash|sh|zsh|dash|ksh) sh=1 ;; esac",
+    "    if [[ $w =~ $re4 ]]; then cf=1; fi",
+    "  done",
+    "  if [ \"$sh$cf\" = 11 ]; then AT_RB=1; fi",
+    "}",
+    "# at_rule REST: the step's subcommand word (REST's first word) stands as a bare, unquoted word in a command that",
+    "# holds an unquoted expansion, an alias definition, xargs, eval or a shell given -c: the command may build the",
+    "# CLI's name at run time, so it is read as the step. No position analysis. Known to refuse text too.",
+    "at_rule() {",
+    "  local -a rs",
+    "  [ \"$AT_RB\" = 1 ] || return 1",
+    "  read -ra rs <<< \"$1\"",
+    "  [ \"${#rs[@]}\" -gt 0 ] || return 1",
+    "  [[ $AT_UQ == *\" ${rs[0]} \"* ]]",
+    "}",
+    "# at_whole KEY REST: with AT_EXPN=1 (or xargs running KEY itself), the step's program KEY and each word of REST",
+    "# stand as a substring of the whole command text (AT_WHOLE), quoted text included: the step, as far as this guard",
+    "# can tell. Known to refuse text too.",
+    "at_whole() {",
+    "  local x; local -a rs",
+    "  [ \"$AT_EXPN\" = 1 ] || [[ \"$AT_XC\" == *\"$1\"* ]] || return 1",
+    "  read -ra rs <<< \"$2\"",
+    "  [[ $AT_WHOLE == *\"$1\"* ]] || return 1",
+    "  for x in ${rs[@]+\"${rs[@]}\"}; do [[ $AT_WHOLE == *\"$x\"* ]] || return 1; done",
+    "  return 0",
+    "}",
+    "at_expand_cmd \"$CMD\"",
+    "at_code_cmd \"$CMD\"",
+    "# at_read_only SEG: SEG's first word, its program, only reads, whatever its arguments: grep, egrep, fgrep,",
+    "# cat, head, tail, wc; rg with no --pre; sed with -n, no other option than -E or -r, and a script that only",
+    "# prints a line or a range (N, $, /re/, then p); awk with no -f, -e, -i, -l or -E, in a command holding no",
+    "# system, getline, | or >. Not less or more (a shell escape), not a program after a wrapper. Used only when",
+    "# AT_RO=1: no code runner (AT_CODE) and no command or process substitution or backtick in the command.",
+    "at_read_only() {",
+    "  local x i n q=0 sc='' re; local -a ws",
+    "  read -ra ws <<< \"$1\"; n=${#ws[@]}",
+    "  [ \"$n\" -gt 0 ] || return 1",
+    "  case ${ws[0]} in",
+    "    grep|egrep|fgrep|cat|head|tail|wc) return 0 ;;",
+    "    rg) for x in \"${ws[@]}\"; do [[ $x != --pre* ]] || return 1; done; return 0 ;;",
+    "    sed)",
+    "      for ((i=1; i<n; i++)); do",
+    "        case ${ws[i]} in -n|--quiet|--silent) q=1 ;; -E|-r) ;; -*) return 1 ;; *) sc=${ws[i]}; break ;; esac",
+    "      done",
+    "      [ \"$q\" = 1 ] || return 1",
+    "      for ((i=i+1; i<n; i++)); do [[ ${ws[i]} != -* ]] || return 1; done",
+    String.raw`      re='^([0-9]+|\$|/[^/]*/)(,([0-9]+|\$|/[^/]*/))?p$'`,
+    "      [[ $sc =~ $re ]] ;;",
+    "    awk|gawk|mawk|nawk)",
+    "      [[ $CMD != *system* && $CMD != *getline* && $CMD != *'|'* && $CMD != *'>'* ]] || return 1",
+    "      for ((i=1; i<n; i++)); do case ${ws[i]} in -f*|--file*|-e*|--source*|-i*|--include*|-l*|--load*|-E*|--exec*) return 1 ;; esac; done",
+    "      return 0 ;;",
+    "    *) return 1 ;;",
+    "  esac",
+    "}",
+    "AT_RO=0",
+    "if [ \"$AT_CODE\" = 0 ] && [[ $CMD != *'$('* && $CMD != *'<('* && $CMD != *'>('* && $CMD != *'`'* ]]; then AT_RO=1; fi",
+    "# at_cli_help SEG KEY: SEG runs the CLI KEY with --help, -h, --version or -v as its first argument, which the CLI",
+    "# answers and exits before it loads anything: KEY is the program (by any path), or the package of a runner",
+    "# with nothing before it but dlx, exec, x, -y, --yes or --; KEY stands in one word only; no expansion, no",
+    "# assignment, no other option.",
+    "at_cli_help() {",
+    "  local key=$2 j=1 n c=0 x; local -a w",
+    "  read -ra w <<< \"$1\"; n=${#w[@]}",
+    "  [ \"$n\" -ge 2 ] || return 1",
+    "  for x in \"${w[@]}\"; do",
+    "    [[ $x != *\"$key\"* ]] || c=$((c+1))",
+    String.raw`    [[ $x != *[\$\`]* ]] || return 1`,
+    "  done",
+    "  [ \"$c\" = 1 ] || return 1",
+    "  at_pkg_seg \"${w[@]}\"",
+    "  if [ \"${AT_PW[0]##*/}\" = \"$key\" ]; then",
+    "    j=0",
+    "  else",
+    "    case ${w[0]##*/} in npx|pnpx|bunx|pnpm|yarn|npm|bun|node) ;; *) return 1 ;; esac",
+    "    while [ \"$j\" -lt \"$n\" ]; do case ${w[j]} in dlx|exec|x|-y|--yes|--) j=$((j+1)) ;; *) break ;; esac; done",
+    "    [ \"$j\" -lt \"$n\" ] && [ \"${AT_PW[j]##*/}\" = \"$key\" ] || return 1",
+    "  fi",
+    "  case ${w[j+1]:-} in --help|-h|--version|-v) return 0 ;; esac",
+    "  return 1",
+    "}",
+  );
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
   guards.forEach(({ action }, a) => {
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
@@ -3176,10 +3603,25 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       const pwshDoubt = names.map((n) => `[ "$(key_count ${sq(n.replace(/[^a-z0-9]/g, ""))})" -gt "$K${pwshKeys.indexOf(n)}" ]`).join(" || ");
       lines.push(`if [ "$PWSH" = 1 ] && { ${pwshDoubt}; }; then`, ...unreadable("a PowerShell form", "  "), "fi");
     }
-    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
-    lines.push("  SEG_DOUBT=0; T=0");
-    for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
+    // A step read coarsely (COARSE_PROGRAMS) reads LT: the segment with quoted text left out when nothing in the
+    // command runs text as code (at_text_seg); both its plain and its coarse reading read LT.
+    const ck = coarseKeys(action);
+    const isCoarse = (k: { key: string; rest: string }) => ck.some((c) => c.key === k.key && c.rest === k.rest);
+    // An unquoted expansion or xargs anywhere in the command: its quoted text may be split into arguments later,
+    // so for the whole command the step's program and words are looked for in all of its text (at_whole).
+    if (ck.length) lines.push(`if ${ck.map((k) => `at_whole ${sq(k.key.toLowerCase())} ${sq(k.rest)} || at_rule ${sq(k.rest.toLowerCase())}`).join(" || ")}; then`, ...unreadable("an expansion or xargs hands quoted text to the step's program", "  "), "fi");
+    lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", ...(ck.length ? ["  RC=$C"] : []), '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
+    if (ck.length) lines.push('  at_text_seg "$RC" "$L"');
+    lines.push(ck.length ? "  SEG_DOUBT=0; T=0; TC=0" : "  SEG_DOUBT=0; T=0");
+    for (const k of keys) lines.push(`  seg_steps "${isCoarse(k) ? "$LT" : "$L"}" ${sq(k.key)} ${sq(k.rest)}; ${isCoarse(k) ? "TC=$((TC + SEG_N))" : "T=$((T + SEG_N))"}`);
+    // The CLI given --help, -h, --version or -v first answers and exits: no run of its steps (at_cli_help).
+    const helpKeys = [...new Set(ck.map((k) => k.key.toLowerCase()))];
+    if (ck.length) lines.push(`  if ${helpKeys.map((k) => `at_cli_help "$LT" ${sq(k)}`).join(" || ")}; then TC=0; fi`, "  T=$((T + TC))");
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
+    // Fail closed: a segment the plain reading found no step in, but which names the step's program (or an
+    // expansion where a program stands) and holds the step's words, is the step too (at_coarse).
+    const coarse = ck.map((k) => `at_coarse "$LT" ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ");
+    if (ck.length) lines.push(`  if [ "$T" -eq 0 ] && [ "$SEG_DOUBT" = 0 ] && ! { ${helpKeys.map((k) => `at_cli_help "$LT" ${sq(k)}`).join(" || ")}; } && { ${coarse}; }; then`, ...unreadable("it names the step's program and words in a form this guard does not read as plain", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
     if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.

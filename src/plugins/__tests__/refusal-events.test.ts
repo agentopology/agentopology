@@ -95,6 +95,21 @@ describe.skipIf(!hasJq)("refusal events", () => {
     expect(lines[0]).not.toContain("tool_input");
   });
 
+  it("the row carries the rule the refusing gate states, and null when the gate states none", () => {
+    const withRule = topo("refusal-events: true")
+      .replace("on-fail: halt", "on-fail: halt\n      rule: no-unchecked-accept")
+      .replace("  gates {", "  rules {\n    rule \"no-unchecked-accept\" { text: \"accept needs a passing check\" }\n  }\n  gates {");
+    scaffold(withRule);
+    expect(bash(REFUSED).status).toBe(2);
+    expect(JSON.parse(fs.readFileSync(at(EVENTS), "utf8").trimEnd().split("\n")[0]).rule).toBe("no-unchecked-accept");
+    fs.rmSync(at(EVENTS));
+    fs.rmSync(root, { recursive: true, force: true });
+    root = fs.mkdtempSync(join(os.tmpdir(), "at-refusal-"));
+    scaffold(topo("refusal-events: true"));
+    expect(bash(REFUSED).status).toBe(2);
+    expect(JSON.parse(fs.readFileSync(at(EVENTS), "utf8").trimEnd().split("\n")[0]).rule).toBeNull();
+  });
+
   it("a command that passes writes nothing", () => {
     scaffold(topo("refusal-events: true"));
     expect(bash("ls").status).toBe(0);
