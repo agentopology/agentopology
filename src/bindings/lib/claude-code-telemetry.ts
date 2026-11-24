@@ -38,6 +38,17 @@ export interface TelemetryPlan {
   notes: string[];
 }
 
+/**
+ * The values https://code.claude.com/docs/en/monitoring-usage documents for
+ * OTEL_EXPORTER_OTLP_PROTOCOL ("Protocol for OTLP exporter, applies to all
+ * signals"): `grpc`, `http/json`, `http/protobuf`. The page also documents
+ * per-signal OTEL_EXPORTER_OTLP_METRICS_PROTOCOL / _LOGS_PROTOCOL (and _TRACES_)
+ * with the same three values, "overrides general setting". The binding writes
+ * only the general key, which covers every signal; a per-signal key is set in
+ * env { } by hand. observability { protocol: } is judged by V158.
+ */
+export const OTLP_PROTOCOLS: readonly string[] = ["http/json", "http/protobuf", "grpc"];
+
 /** Percent-encode what OTEL_RESOURCE_ATTRIBUTES does not allow in a key or value. */
 export function encodeResourceValue(text: string): string {
   let out = "";
@@ -75,7 +86,9 @@ export function telemetryPlan(ast: TopologyAST): TelemetryPlan {
   if (o.exporter === "otlp") {
     mapped.OTEL_METRICS_EXPORTER = "otlp";
     mapped.OTEL_LOGS_EXPORTER = "otlp";
-    mapped.OTEL_EXPORTER_OTLP_PROTOCOL = o.endpoint && portOf(o.endpoint) === "4317" ? "grpc" : "http/protobuf";
+    mapped.OTEL_EXPORTER_OTLP_PROTOCOL = o.protocol && OTLP_PROTOCOLS.includes(o.protocol)
+      ? o.protocol
+      : o.endpoint && portOf(o.endpoint) === "4317" ? "grpc" : "http/protobuf";
   } else {
     plan.notes.push(`observability exporter "${o.exporter}" has no Claude Code exporter (it exports otlp, console or prometheus): only CLAUDE_CODE_ENABLE_TELEMETRY is written; set OTEL_METRICS_EXPORTER in env { } by hand.`);
   }

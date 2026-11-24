@@ -2250,6 +2250,7 @@ export function parseObservability(body: string): ObservabilityDef {
 
   if (endpoint !== undefined) def.endpoint = endpoint;
   if (service !== undefined) def.service = service;
+  if (fields.protocol) def.protocol = unquote(fields.protocol);
   if (spansBlock) def.spansWritten = true;
 
   // attributes { key: "value" }: resource attributes. A key may hold dots

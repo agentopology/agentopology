@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.1] - unreleased
+
+### Added
+
+- `observability { protocol: http/json | http/protobuf | grpc }` sets `OTEL_EXPORTER_OTLP_PROTOCOL`. Claude Code's monitoring docs (https://code.claude.com/docs/en/monitoring-usage) list exactly `grpc`, `http/json` and `http/protobuf` for it, and also per-signal `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` / `_LOGS_PROTOCOL` / `_TRACES_PROTOCOL` that override it; the binding writes only the general key. Without the field the value is unchanged (`http/protobuf`, or `grpc` for a `:4317` endpoint), so existing output is byte-identical. A value outside the documented set is a V158 error.
+
 ## [0.13.0] - 2026-11-24
 
 ### Changed behaviour

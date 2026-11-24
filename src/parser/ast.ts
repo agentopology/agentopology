@@ -1426,6 +1426,8 @@ export interface ObservabilityDef {
   endpoint?: string;
   /** Service name for trace attribution. */
   service?: string;
+  /** OTLP protocol as written (`http/json`, `http/protobuf`, `grpc`); V158 judges it. */
+  protocol?: string;
   /**
    * Resource attributes (`attributes { key: "value" }`), in file order. Claude
    * Code gets them in OTEL_RESOURCE_ATTRIBUTES after service.name. Absent when

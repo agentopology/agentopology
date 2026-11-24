@@ -44,7 +44,7 @@ import { describeHook, hookCanRefuse, sameCommandHook } from "../bindings/lib/ho
 import { agentFileName, agentProblem, entryProblem, extensionAgent, nodeForAgentName, sessionAgentId, settingsAgent, toolsCanStartAgents } from "../bindings/lib/entry.js";
 import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, gateWiring, getDelegationMode, isRegisteredSubagentType, type GuardPlatform } from "../bindings/lib/guards.js";
 import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/not-expressible.js";
-import { overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
+import { OTLP_PROTOCOLS, overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
 import type {
@@ -4243,6 +4243,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
+    ...v158OtlpProtocol(ast),
     ...stepPlaceholderWarnings(ast),
     ...v25BounceBackAdvisory(ast),
     ...v26ActionKindEnum(ast),
@@ -4965,6 +4966,19 @@ function v156Caps(ast: TopologyAST): ValidationResult[] {
 }
 
 /**
+ * V158: `observability { protocol }` must be a value Claude Code documents for
+ * OTEL_EXPORTER_OTLP_PROTOCOL: http/json, http/protobuf or grpc.
+ */
+function v158OtlpProtocol(ast: TopologyAST): ValidationResult[] {
+  const p = ast.observability?.protocol;
+  if (p === undefined || OTLP_PROTOCOLS.includes(p)) return [];
+  return [{
+    rule: "V158", level: "error", node: "observability",
+    message: `observability protocol "${p}" is not one of ${OTLP_PROTOCOLS.join(", ")}`,
+  }];
+}
+
+/**
  * V157: a value in a one-line block that still holds `, <field>:`, where
  * <field> is a field of that same block. A comma at the top level of a block
  * separates fields; this one stayed in the value (an unclosed ( or [ or quote
@@ -4974,7 +4988,7 @@ const V157_BLOCK_FIELDS: Record<string, readonly string[]> = {
   checkpoint: ["backend", "strategy", "connection", "ttl", "replay"],
   interface: ["entry", "exit"],
   defaults: ["temperature", "max-tokens", "top-p", "model"],
-  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level"],
+  observability: ["enabled", "exporter", "endpoint", "sample-rate", "level", "protocol"],
   metering: ["track", "per", "output", "format", "pricing"],
   secrets: ["path", "readers"],
   toolDefs: ["command", "script", "description", "lang", "args"],

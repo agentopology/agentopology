@@ -3038,6 +3038,7 @@ observability {
 | level | string | no | -- | Log level for output |
 | exporter | string | yes | -- | Backend exporter |
 | endpoint | string | no | -- | Exporter endpoint URL |
+| protocol | string | no | http/protobuf (grpc for a :4317 endpoint) | OTLP protocol, written as OTEL_EXPORTER_OTLP_PROTOCOL: \`http/json\`, \`http/protobuf\` or \`grpc\`; anything else is a V158 error |
 | service | string | no | -- | Service name for trace attribution |
 | sample-rate | number | no | 1.0 | Sampling rate (0-1) |
 | attributes | block of key: "value" | no | -- | Resource attributes (keys may hold dots: \`team.id\`) |
@@ -3870,6 +3871,12 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 
 **Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
 **Fix:** Close the bracket or quote, or put the field on its own line.
+
+### V158: OTLP Protocol (error)
+\`observability { protocol }\` must be one of the values Claude Code documents for \`OTEL_EXPORTER_OTLP_PROTOCOL\`: \`http/json\`, \`http/protobuf\` or \`grpc\`.
+
+**Violation:** \`observability { protocol: http/xml }\`
+**Fix:** \`protocol: http/json\`
 
 ## Summary
 

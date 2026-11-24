@@ -1560,6 +1560,7 @@ observability-field = 'enabled' ':' ('true' | 'false')
                     | 'level' ':' ('debug' | 'info' | 'warn' | 'error')
                     | 'exporter' ':' ('otlp' | 'langsmith' | 'datadog' | 'stdout' | 'none')
                     | 'endpoint' ':' string
+                    | 'protocol' ':' ('http/json' | 'http/protobuf' | 'grpc')
                     | 'service' ':' string
                     | 'sample-rate' ':' number
                     | 'attributes' '{' attribute-pair* '}'
@@ -1591,6 +1592,7 @@ observability {
 | `enabled` | boolean | no | `true` | `false` writes no telemetry key |
 | `exporter` | enum | no | `otlp` | Backend exporter (V49) |
 | `endpoint` | string | no | -- | Collector endpoint URL |
+| `protocol` | enum | no | `http/protobuf` (`grpc` for a `:4317` endpoint) | OTLP protocol, written as `OTEL_EXPORTER_OTLP_PROTOCOL`: `http/json`, `http/protobuf` or `grpc`; any other value is a V158 error. Added in 0.13.1 |
 | `service` | string | no | -- | Written as the `service.name` resource attribute |
 | `attributes` | block of `key: value` | no | -- | Resource attributes, in file order after `service.name`; a key may hold dots (`team.id`). Added in 0.13.0 |
 | `capture` | block | no | all `false` | What content is logged; a switch left out is off |
