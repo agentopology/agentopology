@@ -3369,6 +3369,30 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "}",
     "AT_RO=0",
     "if [ \"$AT_CODE\" = 0 ] && [[ $CMD != *'$('* && $CMD != *'<('* && $CMD != *'>('* && $CMD != *'`'* ]]; then AT_RO=1; fi",
+    "# at_cli_help SEG KEY: SEG runs the CLI KEY with --help, -h, --version or -v as its first argument, which the CLI",
+    "# answers and exits before it loads anything: KEY is the program (by any path), or the package of a runner",
+    "# with nothing before it but dlx, exec, x, -y, --yes or --; KEY stands in one word only; no expansion, no",
+    "# assignment, no other option.",
+    "at_cli_help() {",
+    "  local key=$2 j=1 n c=0 x; local -a w",
+    "  read -ra w <<< \"$1\"; n=${#w[@]}",
+    "  [ \"$n\" -ge 2 ] || return 1",
+    "  for x in \"${w[@]}\"; do",
+    "    [[ $x != *\"$key\"* ]] || c=$((c+1))",
+    String.raw`    [[ $x != *[\$\`]* ]] || return 1`,
+    "  done",
+    "  [ \"$c\" = 1 ] || return 1",
+    "  at_pkg_seg \"${w[@]}\"",
+    "  if [ \"${AT_PW[0]##*/}\" = \"$key\" ]; then",
+    "    j=0",
+    "  else",
+    "    case ${w[0]##*/} in npx|pnpx|bunx|pnpm|yarn|npm|bun|node) ;; *) return 1 ;; esac",
+    "    while [ \"$j\" -lt \"$n\" ]; do case ${w[j]} in dlx|exec|x|-y|--yes|--) j=$((j+1)) ;; *) break ;; esac; done",
+    "    [ \"$j\" -lt \"$n\" ] && [ \"${AT_PW[j]##*/}\" = \"$key\" ] || return 1",
+    "  fi",
+    "  case ${w[j+1]:-} in --help|-h|--version|-v) return 0 ;; esac",
+    "  return 1",
+    "}",
   );
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
   guards.forEach(({ action }, a) => {
@@ -3437,13 +3461,16 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     const isCoarse = (k: { key: string; rest: string }) => ck.some((c) => c.key === k.key && c.rest === k.rest);
     lines.push("while IFS= read -r -u 3 C || [ -n \"$C\" ]; do", ...(ck.length ? ["  RC=$C"] : []), '  C=$(norm "$C")', '  [ "$C" != "  " ] || continue', '  L=$(lower "$C")');
     if (ck.length) lines.push('  at_text_seg "$RC" "$L"');
-    lines.push("  SEG_DOUBT=0; T=0");
-    for (const k of keys) lines.push(`  seg_steps "${isCoarse(k) ? "$LT" : "$L"}" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
+    lines.push(ck.length ? "  SEG_DOUBT=0; T=0; TC=0" : "  SEG_DOUBT=0; T=0");
+    for (const k of keys) lines.push(`  seg_steps "${isCoarse(k) ? "$LT" : "$L"}" ${sq(k.key)} ${sq(k.rest)}; ${isCoarse(k) ? "TC=$((TC + SEG_N))" : "T=$((T + SEG_N))"}`);
+    // The CLI given --help, -h, --version or -v first answers and exits: no run of its steps (at_cli_help).
+    const helpKeys = [...new Set(ck.map((k) => k.key.toLowerCase()))];
+    if (ck.length) lines.push(`  if ${helpKeys.map((k) => `at_cli_help "$LT" ${sq(k)}`).join(" || ")}; then TC=0; fi`, "  T=$((T + TC))");
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
     // Fail closed: a segment the plain reading found no step in, but which names the step's program (or an
     // expansion where a program stands) and holds the step's words, is the step too (at_coarse).
     const coarse = ck.map((k) => `at_coarse "$LT" ${sq(k.key.toLowerCase())} ${sq(k.rest)}`).join(" || ");
-    if (ck.length) lines.push(`  if [ "$T" -eq 0 ] && [ "$SEG_DOUBT" = 0 ] && { ${coarse}; }; then`, ...unreadable("it names the step's program and words in a form this guard does not read as plain", "    "), "  fi");
+    if (ck.length) lines.push(`  if [ "$T" -eq 0 ] && [ "$SEG_DOUBT" = 0 ] && ! { ${helpKeys.map((k) => `at_cli_help "$LT" ${sq(k)}`).join(" || ")}; } && { ${coarse}; }; then`, ...unreadable("it names the step's program and words in a form this guard does not read as plain", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
     if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
