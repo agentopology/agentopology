@@ -54,7 +54,7 @@ import {
 import type { ClaudeProject } from "../import/walk.js";
 import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
 import { otherRecordLines, sameTopologyLines } from "../scaffold/other-records.js";
-import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
+import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, BODY_UNRECORDED_KEPT, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
 import { echoFields } from "../scaffold/echo.js";
@@ -1027,7 +1027,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       case "kept":
         // A file the user edited (or wrote) whose text scaffold would have
         // replaced: said on every run, so nothing is skipped silently.
-        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT) {
+        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT || action.detail === BODY_UNRECORDED_KEPT) {
           console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`);
           if (guardScripts.has(action.path)) console.log(`  ${c.bold("!")} ${c.yellow(keptGuardScriptLine(action.path, packageVersion()))}`);
         }
@@ -1077,7 +1077,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
         ),
       );
     }
-    const keptFiles = actions.filter((a) => a.type === "kept" && (a.detail === USER_EDITED_KEPT || a.detail === NOT_OURS_KEPT)).length;
+    const keptFiles = actions.filter((a) => a.type === "kept" && (a.detail === USER_EDITED_KEPT || a.detail === NOT_OURS_KEPT || a.detail === BODY_UNRECORDED_KEPT)).length;
     if (keptFiles > 0) {
       console.log(
         c.yellow(

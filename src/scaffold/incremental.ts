@@ -36,7 +36,7 @@ import type { FileAction, ManifestEntry, ScaffoldManifest } from "./types.js";
 import { planStructurePatch } from "./structure.js";
 import type { FieldValue } from "./frontmatter-patch.js";
 import { hashContent } from "./manifest.js";
-import { editedRegions, markersIntact, regionHashes, regionsOf, staleBodyNotice } from "./regions.js";
+import { bodyHash, bodyOf, editedRegions, isBodyTracked, markersIntact, regionHashes, regionsOf, staleBodyNotice } from "./regions.js";
 import {
   hasManagedBlock,
   mergeAgentFile,
@@ -59,6 +59,12 @@ import { unsafePathReason } from "../parser/paths.js";
 
 /** A file scaffold wrote and the user edited since, with nothing to patch: never replaced. */
 export const USER_EDITED_KEPT = "user edited — kept";
+/**
+ * A rules file written by 0.13.0 or earlier, which recorded no hash of its
+ * body: its text is read as the user's and kept. Deleting the file has it
+ * generated from the .at again, and recorded.
+ */
+export const BODY_UNRECORDED_KEPT = "body kept — written before bodies were recorded; delete the file to have it generated from the .at";
 /** A file at a generated path that scaffold did not write: never replaced. */
 export const NOT_OURS_KEPT = "exists, not created by scaffold — kept";
 
@@ -229,8 +235,18 @@ export function computeIncrementalPlan(
 
     // A structured file scaffold wrote and nobody edited is regenerated as
     // before; one the user wrote or edited gets a frontmatter patch.
-    const untouched = manifestEntry !== null && shouldOverwriteScript(existingContent, manifestEntry.hash);
+    // The body of an agent, skill, command or rules file is the .at's until
+    // the user edits it: scaffold recorded the hash of the body it wrote.
+    // One that still hashes to it is rewritten from the .at; one that differs
+    // is the user's; with no record (0.13.0 or earlier) it is read as the
+    // user's, and recorded only when scaffold next writes it.
+    const tracked = isBodyTracked(file.path);
+    const recordedBody = tracked && typeof manifestEntry?.body === "string" ? manifestEntry.body : undefined;
+    const bodyUnedited = recordedBody !== undefined && bodyHash(existingContent) === recordedBody;
+    const bodyEdited = recordedBody !== undefined && !bodyUnedited;
     const spec = structureAt.get(file.path);
+    // A file whose whole text is as scaffold wrote it, unless its recorded body says it was edited.
+    const untouched = manifestEntry !== null && shouldOverwriteScript(existingContent, manifestEntry.hash) && !bodyEdited;
     // Which regions of a scaffolded agent file the edit touched (regions.ts).
     const edit = !untouched && manifestEntry ? editedRegions(existingContent, file.content, manifestEntry) : null;
     if (spec && !untouched) {
@@ -238,6 +254,15 @@ export function computeIncrementalPlan(
       if (action.type === "blocked") {
         const whose = manifestEntry ? "user edited" : "exists, not created by scaffold";
         action.detail = `${whose} — kept; ${action.detail}`;
+      } else if (action.type === "patch" && bodyUnedited) {
+        // The frontmatter was edited and the body was not: the frontmatter is
+        // the patch's, the body is the .at's.
+        const front = action.content ?? existingContent;
+        const next = front.slice(0, front.length - bodyOf(front).length) + bodyOf(file.content);
+        if (next !== front) {
+          action.content = next;
+          action.changes.push("body updated from the .at");
+        }
       } else if (action.type === "patch" && edit && !edit.outside && markersIntact(existingContent)) {
         // Only the prompt (and maybe frontmatter) was edited: the generated
         // sections are scaffold's, so they are regenerated around the
@@ -367,8 +392,28 @@ export function computeIncrementalPlan(
       continue;
     }
 
-    // Still exactly as scaffold wrote it: regenerated (an agent file keeps
-    // the text between its prompt markers, as it always did).
+    // Still exactly as scaffold wrote it. Its body hashes to the record:
+    // the .at's body is written, prompt included.
+    if (bodyUnedited && category === "agent") {
+      // The label 0.11.x printed stays where the prompt did not change.
+      const sameInstructions = mergeAgentFile(existingContent, file.content, target) === file.content;
+      actions.push({
+        type: "update",
+        path: file.path,
+        content: file.content,
+        detail: sameInstructions ? "prompt preserved" : "body updated from the .at",
+      });
+      continue;
+    }
+    // No record of the body (0.13.0 or earlier): a file with no prompt to
+    // keep (the rules file) is read as the user's, kept, and said.
+    if (tracked && recordedBody === undefined && category !== "agent" && !spec) {
+      actions.push({ type: "kept", path: file.path, detail: BODY_UNRECORDED_KEPT });
+      continue;
+    }
+
+    // Regenerated (an agent file keeps the text between its prompt markers,
+    // as it always did, when the body has no record).
     if (category === "agent") {
       const merged = mergeAgentFile(existingContent, file.content, target);
       if (merged === existingContent) {
@@ -468,6 +513,31 @@ function withRegions(entry: ManifestEntry, onDisk: string | null, generated: str
   const next: ManifestEntry = { ...entry };
   if (mine.head === theirs.head) next.head = hashes.head;
   if (mine.outside === theirs.outside) next.outside = hashes.outside;
+  return next;
+}
+
+/**
+ * A manifest entry with the hash of the body of an agent, skill, command or
+ * rules file. Recorded when the body on disk is the one the .at generates and
+ * scaffold wrote it this run (`wrote`), or an earlier record exists (the file
+ * was found holding the .at's text, e.g. hand-edited back to it). An earlier
+ * record is otherwise kept, so an edited body stays edited; with none, nothing
+ * is recorded: that body is the user's.
+ */
+function withBody(
+  entry: ManifestEntry,
+  path: string,
+  onDisk: string | null,
+  generated: string | undefined,
+  prev: ManifestEntry | undefined,
+  wrote: boolean,
+): ManifestEntry {
+  if (!isBodyTracked(path)) return entry;
+  const next: ManifestEntry = { ...entry };
+  delete next.body;
+  const asGenerated = onDisk !== null && generated !== undefined && bodyOf(onDisk) === bodyOf(generated);
+  if (asGenerated && (wrote || prev?.body !== undefined)) next.body = bodyHash(onDisk!);
+  else if (prev?.body !== undefined) next.body = prev.body;
   return next;
 }
 
@@ -702,15 +772,24 @@ export function nextManifestFiles(
     // A patched file stays the user's: never claimed, and an earlier entry
     // keeps its old hash (so the file still counts as edited).
     if (action.type === "patch") {
-      if (prev) files[action.path] = withRegions(prev, written ?? readText(join(basePath, action.path)), generatedOf.get(action.path));
+      if (prev) {
+        const text = written ?? readText(join(basePath, action.path));
+        files[action.path] = withBody(withRegions(prev, text, generatedOf.get(action.path)), action.path, text, generatedOf.get(action.path), prev, false);
+      }
       continue;
     }
 
     if (written !== undefined) {
-      files[action.path] = withRegions({ hash: hashContent(written), category }, written, generatedOf.get(action.path));
+      files[action.path] = withBody(
+        withRegions({ hash: hashContent(written), category }, written, generatedOf.get(action.path)),
+        action.path, written, generatedOf.get(action.path), prev, true,
+      );
     } else if (action.type === "unchanged") {
       const onDisk = readFileSync(join(basePath, action.path), "utf-8");
-      files[action.path] = withRegions({ hash: hashContent(onDisk), category }, onDisk, generatedOf.get(action.path));
+      files[action.path] = withBody(
+        withRegions({ hash: hashContent(onDisk), category }, onDisk, generatedOf.get(action.path)),
+        action.path, onDisk, generatedOf.get(action.path), prev, false,
+      );
     } else if (prev && !removed.has(action.path)) {
       files[action.path] = prev;
     }
