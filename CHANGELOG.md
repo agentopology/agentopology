@@ -2,6 +2,12 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.2] - unreleased
+
+### Fixed
+
+- The refusal event now carries the gate's `rule:`. A guard that refuses on behalf of a gate that states `rule:` writes that rule in the row's `rule` field; a gate without `rule:` still writes null. The row's other fields, their order and `v: 1` are unchanged, and without refusal events every generated file is unchanged.
+
 ## [0.13.1] - 2026-11-24
 
 ### Added
