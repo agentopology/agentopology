@@ -210,3 +210,35 @@ describe("plugin loading (CLI)", () => {
     expect(gateLine, withPlugin.out).toMatch(/SubagentStop/);
   });
 });
+
+describe("--help and --version as the first argument load no plugin", () => {
+  // a project whose package.json lists a plugin that writes a marker file when it loads
+  const marked = (): { d: string; marker: string } => {
+    const marker = join(tmpdir(), `at-plugin-help-marker-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const plugin = `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "loaded");\nexport default { id: "acme", version: "1.0.0", apiVersion: 1, blocks: {} };\n`;
+    const d = project({ "package.json": JSON.stringify({ name: "marked", agentopology: { plugins: ["./p.mjs"] } }), "p.mjs": plugin });
+    return { d, marker };
+  };
+  for (const args of [["--help"], ["-h"], ["--help", "scaffold"], ["--version"], ["-v"], ["--help", "--plugin", "./p.mjs"], ["-h", "--plugin", "./p.mjs"]]) {
+    it(`agentopology ${args.join(" ")}: exit 0, no plugin loaded, no marker`, () => {
+      const { d, marker } = marked();
+      try {
+        const r = run(args, d);
+        expect(r.code).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+        expect(`${r.out}${r.err}`).not.toContain("loaded plugin");
+      } finally {
+        rmSync(marker, { force: true });
+      }
+    });
+  }
+  it("the control: validate in the same project loads the plugin", () => {
+    const { d, marker } = marked();
+    try {
+      run(["validate", "w.at"], d);
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      rmSync(marker, { force: true });
+    }
+  });
+});
