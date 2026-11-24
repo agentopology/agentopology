@@ -332,11 +332,15 @@ export interface CoverageReport {
   user?: { total: number; mapped: number; unmapped: InventoryItem[] };
   /** What the .at declares outside the repo (`needs`), with its local status. */
   outside?: OutsideCheck[];
+  /** Per declared island: its owner, test command and how many live files it accounts for. */
+  islands?: Array<{ id: string; path: string; owner: string; test?: string; files: number }>;
+  /** `inventory { strict: true }`: an unmapped live file fails validate. */
+  strict?: boolean;
 }
 
-export type OutsideStatus = "declared" | "mapped" | "missing" | "not checked (account connector)";
+export type OutsideStatus = "declared" | "mapped" | "installed" | "missing" | "not checked (account connector)";
 export interface OutsideCheck {
-  kind: "memory" | "connector" | "user-skill";
+  kind: "memory" | "connector" | "user-skill" | "plugin";
   name: string;
   status: OutsideStatus;
 }
@@ -359,7 +363,47 @@ export function outsideChecks(ast: TopologyAST, check: boolean, home: string): O
   if (n.memory !== undefined) out.push({ kind: "memory", name: n.memory, status: exists(homePath(n.memory, home)) });
   for (const c of n.connectors ?? []) out.push({ kind: "connector", name: c, status: "not checked (account connector)" });
   for (const sk of n.userSkills ?? []) out.push({ kind: "user-skill", name: sk, status: exists(path.join(home, ".claude", "skills", sk)) });
+  for (const pl of n.plugins ?? []) out.push({ kind: "plugin", name: pl, status: check ? (pluginInstalled(pl, home) ? "installed" : "missing") : "declared" });
   return out;
+}
+
+/** A plugin is installed when `~/.claude/plugins/installed_plugins.json` lists `<name>` or `<name>@<marketplace>`, or a folder of that name is under `plugins/` or `plugins/cache/<marketplace>/`. */
+function pluginInstalled(name: string, home: string): boolean {
+  const dir = path.join(home, ".claude", "plugins");
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, "installed_plugins.json"), "utf-8"));
+    const keys = Object.keys(raw?.plugins ?? raw ?? {});
+    if (keys.some((k) => k === name || k.split("@")[0] === name)) return true;
+  } catch { /* no list, or not JSON: fall through to the folders */ }
+  if (fs.existsSync(path.join(dir, name))) return true;
+  try {
+    for (const m of fs.readdirSync(path.join(dir, "cache"))) if (fs.existsSync(path.join(dir, "cache", m, name))) return true;
+  } catch { /* no cache folder */ }
+  return false;
+}
+
+/** A glob over project-relative paths: `**` crosses folders, `*` and `?` do not. A trailing `/` means everything under it. */
+export function globToRegExp(glob: string): RegExp {
+  let g = norm(glob);
+  if (g.endsWith("/")) g += "**";
+  let re = "";
+  for (let i = 0; i < g.length; i++) {
+    const ch = g[i];
+    if (ch === "*") {
+      if (g[i + 1] === "*") {
+        i++;
+        if (g[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*";
+      } else re += "[^/]*";
+    } else if (ch === "?") re += "[^/]";
+    else re += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** The unmapped live files that fail `inventory { strict: true }`: files and project things on disk, not hooks, servers, scripts or jobs. */
+export function strictFailures(r: CoverageReport): InventoryItem[] {
+  if (!r.strict) return [];
+  return r.unmapped.filter((i) => !["hook", "mcp-server", "mcp-tool", "script", "cron", "launchd"].includes(i.kind));
 }
 
 const norm = (p: string) => p.replace(/^\.\//, "").replace(/^\$\{?CLAUDE_PROJECT_DIR\}?\//, "");
@@ -444,6 +488,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
     ...(ast.hooks ?? []).map((h) => h.run ?? ""),
   ].join("\n");
 
+  const islandRes = (ast.islands ?? []).filter((x) => x.path).map((x) => globToRegExp(x.path));
   const isMapped = (i: InventoryItem): boolean => {
     switch (i.kind) {
       case "hook": {
@@ -457,6 +502,7 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
       case "script": return new RegExp(`\\b(?:npm run|pnpm|yarn|bun run) ${i.id.slice(7).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(mentioned);
       default: {
         const p = norm(i.path ?? "");
+        if (p && islandRes.some((r) => r.test(p))) return true;
         // The generated talk guard appends to this log whenever session agents exist.
         if (p === ".claude/state/talk.jsonl" && hasSessions) return true;
         if (genPaths.has(p) || handPaths.has(p)) return true;
@@ -487,8 +533,8 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
     ...declared.filter((d) => !fs.existsSync(path.join(root, d.path))),
     ...rootPointers.filter((d) => !isDir(path.join(root, d.path))),
     ...outside.filter((o) => o.status === "missing").map((o) => ({
-      path: o.kind === "memory" ? o.name : `~/.claude/skills/${o.name}`,
-      from: o.kind === "memory" ? "needs memory:" : "needs user-skills:",
+      path: o.kind === "memory" ? o.name : o.kind === "plugin" ? `~/.claude/plugins/${o.name}` : `~/.claude/skills/${o.name}`,
+      from: o.kind === "memory" ? "needs memory:" : o.kind === "plugin" ? "needs plugins:" : "needs user-skills:",
     })),
   ].filter((d) => (seen.has(d.path) ? false : (seen.add(d.path), true)));
   // Codex files count as "not scaffolded" only in a project that already has a Codex tree, and
@@ -513,6 +559,13 @@ export function coverage(ast: TopologyAST, items: InventoryItem[], root: string,
     ...(rootStats.length ? { roots: rootStats } : {}),
     ...(checkUser ? { user: { total: userItems.length, mapped: userItems.length - userUnmapped.length, unmapped: userUnmapped } } : {}),
     ...(outside.length ? { outside } : {}),
+    ...(ast.islands?.length ? {
+      islands: ast.islands.map((x) => {
+        const re = x.path ? globToRegExp(x.path) : null;
+        return { id: x.id, path: x.path, owner: x.owner, ...(x.test ? { test: x.test } : {}), files: re ? counted.filter((i) => i.path && re.test(norm(i.path))).length : 0 };
+      }),
+    } : {}),
+    ...(ast.inventoryStrict ? { strict: true } : {}),
   };
 }
 
@@ -543,6 +596,9 @@ export function renderCoverage(r: CoverageReport): string[] {
     const p = k.total ? Math.round((k.mapped / k.total) * 100) : 100;
     lines.push(`  root ${k.root}: ${k.mapped} of ${k.total} files are in the .at (${p}%)`);
   }
+  for (const x of r.islands ?? []) lines.push(`  island ${x.id}  owner ${x.owner || "(none)"}  ${x.files} file(s) in ${x.path || "(no path)"}${x.test ? `  test: ${x.test}` : ""}`);
+  const strict = strictFailures(r);
+  if (strict.length) lines.push(`  strict: ${strict.length} live file(s) are not in the .at or an island (inventory { strict: true }); map them or cover them with an island`);
   if (r.outside?.length) lines.push(...renderOutside(r.outside));
   if (r.external.length) lines.push(`  external (${r.external.length}), tagged e, not required: ${r.external.map((i) => i.id).join(", ")}`);
   if (r.notScaffolded.length) lines.push(`  not scaffolded (${r.notScaffolded.length}): scaffold would write these and they are not on disk; rerun scaffold`);
@@ -582,5 +638,7 @@ export function unionCoverage(reports: CoverageReport[]): CoverageReport {
     ...(roots.length ? { roots } : {}),
     ...(userAll.length ? { user: { total: userAll[0].total, mapped: userAll[0].total - userUnmapped.length, unmapped: userUnmapped } } : {}),
     ...(outside.length ? { outside } : {}),
+    ...(reports.some((r) => r.islands?.length) ? { islands: dedupe(reports.flatMap((r) => r.islands ?? []), (x) => x.id) } : {}),
+    ...(reports.some((r) => r.strict) ? { strict: true } : {}),
   };
 }

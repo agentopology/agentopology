@@ -47,9 +47,9 @@ Write your agent team in one `.at` file. Marketing, development, support, copywr
 
 ```
 topology code-review : [pipeline] {
-  agent researcher  { model: sonnet  tools: [Read, Grep, WebSearch] }
-  agent writer      { model: sonnet  tools: [Read, Write] }
-  agent reviewer    { model: opus    tools: [Read, Grep] }
+  agent researcher  { model: sonnet, tools: [Read, Grep, WebSearch] }
+  agent writer      { model: sonnet, tools: [Read, Write] }
+  agent reviewer    { model: opus,   tools: [Read, Grep] }
 
   flow {
     researcher -> writer -> reviewer
@@ -95,7 +95,7 @@ who works, when they work, and what they know when they work. One file, two ways
                         ┌────────────┐
       ┌──────────────┐  │  Parser &  │   scaffold ──▶ Platform configs
       │   .at file   │─▶│  Validator │──┤                ├── .claude/agents/
-      │  (you write) │  │  137 rules  │  │                ├── <topology>.workflow.js
+      │  (you write) │  │  157 rules  │  │                ├── <topology>.workflow.js
       └──────────────┘  └────────────┘  │                ├── .codex/  .cursor/rules/
                                         │                └── …
                                         │
@@ -233,7 +233,7 @@ In Claude Code, type `/agentopology` — or just ask naturally:
 Say **"I want a code review team with an analyzer, security scanner, and reviewer"** — the skill:
 
 1. Generates the `.at` file with the right syntax
-2. Validates it against 137 rules
+2. Validates it against 157 rules
 3. Scaffolds it to Claude Code (or an experimental target: Codex, Cursor)
 
 **Full agent team in under 2 minutes.** No docs to read. No syntax to memorize. You describe what you want, the skill handles the rest.
@@ -446,7 +446,7 @@ agent librarian {
 ```
 store brain {
   sources {
-    gmail { color: "#EA4335" icon: "./gmail.svg" }
+    gmail { color: "#EA4335", icon: "./gmail.svg" }
     slack { color: "#4A154B" }
   }
 }
@@ -561,7 +561,7 @@ import { parse, validate, bindings } from "agentopology";
 // Parse
 const ast = parse(atSource);
 
-// Validate (137 built-in rules, V1-V137)
+// Validate (157 built-in rules, V1-V157)
 const issues = validate(ast);
 
 // Scaffold — generate platform files
@@ -619,7 +619,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 | **Switch platforms** | Rewrite everything | Change `--target` |
 | **Add an agent** | Update 5-12 files across 3 tools | Add 4 lines to `.at` file |
 | **See the architecture** | Read YAML, JSON, TOML, Markdown across 6 dirs | One `.at` file. Or `visualize` it. |
-| **Validate** | Hope for the best | 137 built-in rules catch errors before deploy |
+| **Validate** | Hope for the best | 157 built-in rules catch errors before deploy |
 | **Onboard someone** | "Read these 15 files and figure it out" | "Read this `.at` file" |
 | **Version control** | Diff 47 generated files | Diff one `.at` file |
 | **Move to a new tool** | Start over | `--target new-tool` |
@@ -641,7 +641,7 @@ You can `agentopology visualize` it into an interactive graph. You can hand it t
 ## CLI Reference
 
 ```
-agentopology validate <file>              Validate an .at file (137 rules)
+agentopology validate <file>              Validate an .at file (157 rules)
 agentopology fix <file> [--target <t>] [--write]  List each V135 gate (meant to refuse, no hook runs it) with the fix; --write adds strength: hope to them and nothing else (dry run exits 2 when there is something to fix)
 agentopology plan <file>                  Resolve for interpreted execution — no files written
 agentopology scaffold <file> --target <t> Generate platform configs
@@ -652,6 +652,7 @@ agentopology visualize-brain <folder>     Render a brain vault as an Obsidian-st
 agentopology export <file> --format <fmt> Export as markdown, mermaid, json, ascii, or brief
 agentopology info <file>                  Topology analysis and suggestions
 agentopology guard <file> --check [--dir <d>]   What the project enforces today: refuse / cited / none / hope per gate
+agentopology guard <file> --test [--target claude-code|codex] [--dir <d>]   Run the tests rows of gates and hooks through the generated scripts: refused or allowed per row, exit 1 on a miss
 agentopology guard <file> --target claude-code [--dir <d>] [--dry-run]   Write only the guards (hook scripts, gates, checks, settings hooks and permissions) into a hand-built project
 agentopology inventory [<dir>] [--at <file>] [--user]  What is live in the project (the .claude tree, and for Codex the .codex agents, hooks.json entries, rules, config.toml MCP servers and .agents/skills), as JSON (writes nothing); --at adds the folders the .at lists in `inventory { roots }`, --user adds ~/.claude
 agentopology validate <file> --inventory <dir>  Coverage: live things the .at accounts for; unmapped, missing
@@ -659,15 +660,21 @@ agentopology validate --inventory <dir> a.at b.at  Per-file coverage, then one u
 agentopology validate <file> --inventory <dir> --user  Also counts ~/.claude apart, and checks the `needs` block (user skills, memory path) against the home folder
 agentopology targets                      List supported platforms
 agentopology docs [topic]                 Language reference (43 topics)
+agentopology --version                    Print the agentopology version (also -v)
 ```
 
 ---
 
-## Known issues in 0.12.6
+## Known issues in 0.13.0
 
+- The guards need jq. Without it they print 'jq is not installed' and let ordinary guarded calls through; only writes to their own files are still refused. Install jq first (apt install jq, brew install jq, or your system's package manager).
 - In a gate's or a hook's `run:`, write the interpreter and the script (`python3 tools/x.py`, `python3 -I tools/x.py`) or a script path, not `env …` or `command …`. `scaffold` and `guard --target` can read the first word as a script name and write a stub with that name that blocks every step. `guard --check` grades such a gate `none`, with a note that its check script is still a stub and a line saying how many gates are graded so.
-- A hand-written hook in `.claude/settings.json` that runs a script directly, or by a program other than the interpreters `run:` reads (`./.claude/hooks/x.sh "a b"`, `dash x.sh "a b"`), and passes it quoted arguments is changed by `import` then `scaffold`: a direct run is rewritten with its quotes escaped, and for another program a second entry with escaped quotes is added beside the original, so the script runs twice, once with different arguments. Write it with one of those interpreters (`bash ./.claude/hooks/x.sh "a b"`), which round-trips as written. Fixed in a later release.
+- A hand-written hook in `.claude/settings.json` that runs a script directly, or by a program other than the interpreters `run:` reads (`./.claude/hooks/x.sh "a b"`, `dash x.sh "a b"`), and passes it quoted arguments is changed by `import` then `scaffold`: a direct run is rewritten with its quotes escaped, and for another program a second entry with escaped quotes is added beside the original, so the script runs twice, once with different arguments. Write it with one of those interpreters (`bash ./.claude/hooks/x.sh "a b"`), which round-trips as written. More generally, a `.at` string keeps its backslashes as written in 0.13.0, so a `\"` in `run:` reaches the command with its backslash everywhere except after one of those interpreters followed by a project script: inline `echo`, `printf` and `test` commands; a script run directly (`./.claude/hooks/x.sh \"$1\"`, `"$HOME"/bin/x.sh`); `cd … &&`; `bash -c '…'`; a `$CLAUDE_PROJECT_DIR` path with no interpreter in front; and other programs (`uv`, `npx`, `bun run`, `osascript`, `powershell`). `import` writes a hand-written command's quotes as `\"`, so these forms come from import too. `validate` now warns on them (V96), refusing hooks and gates included, since such a check may never pass or refuse as written; write the quote another way (single quotes). Fixed in a later release.
 - With session lanes, the generated talk guard checks only a session started with `AT_SESSION` set (the start lines in `sessions.md` set it). A session started without it, such as a plain `claude` in a project whose `meta { entry }` names the session's agent, is not talk-guarded: its sends are allowed and logged as `unguarded`. Start lanes from `sessions.md`.
+- A gate's or hook's `run:` that starts with a program instead of a project script (`make lint`, `git diff --quiet`, `npx …`, `python3 -m pkg`, `docker run …`, `jq … | grep …`) becomes a stub named after the program: a gate then refuses every run, and a refuse hook blocks until the script is written. Write the check as a script. Fixed in a later release.
+- Switching to a different `.at` in the same folder keeps the previous topology's hooks, and they still run. `validate --dir` and `guard --check` name them. Before switching, remove them, or scaffold into a clean folder.
+- A `run:` holding `\"` warns in 0.13.0, but the hook or gate it builds never refuses as written; write the check as a script.
+- The first scaffold into a folder with a hand-built harness may remove hand-written hooks that run the same scripts as the .at's hooks. Back up .claude/settings.json first, or start with import.
 
 How a release may change what agentopology accepts, and how it tells you: [docs/compatibility.md](docs/compatibility.md).
 

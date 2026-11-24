@@ -49,7 +49,10 @@ import {
   recordOf,
 } from "./merge.js";
 import type { HookRecord } from "./types.js";
+import { manifestsIn } from "./other-records.js";
 import { InvalidSettingsJsonError, SETTINGS_KEPT_DETAIL, SETTINGS_PATH } from "./undeclared.js";
+
+import { contextSpan, mergeContextBlock } from "../bindings/lib/context-block.js";
 
 export { unsafePathReason } from "../parser/paths.js";
 import { unsafePathReason } from "../parser/paths.js";
@@ -108,6 +111,8 @@ export function computeIncrementalPlan(
     structure?: StructureSpec[];
     /** A file's frontmatter as the .at would state it (see echo.ts). */
     echo?: (spec: StructureSpec, text: string) => Record<string, FieldValue> | null;
+    /** The .at's file name, as its manifest's `source` (defaults to the manifest's). */
+    source?: string;
   } = {},
 ): FileAction[] {
   const actions: FileAction[] = [];
@@ -132,8 +137,20 @@ export function computeIncrementalPlan(
   // The hook entries scaffold wrote to a hooks file: exactly those are the
   // topology's. With no record for the file (no manifest, a hand-built or
   // imported harness, or a manifest written by 0.12.x), the file is merged
-  // as 0.12.6 merged it, this once, and what that wrote is recorded.
+  // as 0.12.6 merged it, this once, and what that wrote is recorded. With no
+  // manifest at all, an entry already in the file before the run is never
+  // recorded (a later run that drops its hook does not remove it): only the
+  // entries this run writes are. (Known limit: 0.12.6's merge itself can
+  // remove a hand-written entry on the same script on that first run.)
+  const firstRun = manifest === null;
   const hookRecordOf = (path: string): HookRecord[] | undefined => manifest?.hooks?.[path];
+
+  // Another .at's manifest in the folder that records the same entry: a
+  // recorded entry this .at no longer generates is kept for it, not removed.
+  const source = options.source ?? manifest?.source;
+  const others = source === undefined ? [] : manifestsIn(basePath, target).filter((m) => m.source !== source);
+  const heldIn = (path: string) => (r: HookRecord): string | undefined =>
+    others.find((m) => (m.hooks?.[path] ?? []).some((o) => o.event === r.event && o.matcher === r.matcher && o.command === r.command))?.source;
 
   // Process each generated file
   for (const file of generatedFiles) {
@@ -199,6 +216,17 @@ export function computeIncrementalPlan(
       continue;
     }
 
+    // The context file (CLAUDE.md): only the block between the markers is
+    // scaffold's, with or without a manifest entry; every other line is the
+    // user's. A file with no block gets it appended.
+    if (contextSpan(file.content)) {
+      const merged = mergeContextBlock(existingContent, file.content);
+      actions.push(merged === existingContent
+        ? { type: "unchanged", path: file.path }
+        : { type: "update", path: file.path, content: merged, detail: "context block updated" });
+      continue;
+    }
+
     // A structured file scaffold wrote and nobody edited is regenerated as
     // before; one the user wrote or edited gets a frontmatter patch.
     const untouched = manifestEntry !== null && shouldOverwriteScript(existingContent, manifestEntry.hash);
@@ -259,7 +287,7 @@ export function computeIncrementalPlan(
       if (isSettings && record !== undefined) {
         // By the record: the entries scaffold wrote are its own, every
         // other entry is the user's.
-        const byRecord = mergeSettingsByRecord(existingContent, file.content, record, ownedPaths);
+        const byRecord = mergeSettingsByRecord(existingContent, file.content, record, ownedPaths, heldIn(file.path));
         merged = byRecord.content;
         notes = byRecord.kept.map((k) => `${file.path} ${k.line}`);
         removedHooks = byRecord.removed;
@@ -277,6 +305,16 @@ export function computeIncrementalPlan(
             )
           : [];
         if (isSettings) hookRecord = recordAfterUnrecordedMerge(merged, file.content);
+        // No manifest: an entry already in the file before this run is never recorded.
+        if (isSettings && hookRecord && firstRun) {
+          const before = recordOf(existingContent);
+          hookRecord = hookRecord.filter((r) => {
+            const i = before.findIndex((b) => b.event === r.event && b.matcher === r.matcher && b.command === r.command);
+            if (i === -1) return true;
+            before.splice(i, 1);
+            return false;
+          });
+        }
       }
       const said = {
         ...(notes.length > 0 ? { notes } : {}),
@@ -385,7 +423,7 @@ export function computeIncrementalPlan(
       // there are removed (they would keep firing), every other entry stays.
       const recorded = isSettingsPath(manifestPath) ? manifest.hooks?.[manifestPath] : undefined;
       if (recorded && recorded.length > 0) {
-        const gone = removeRecordedHooks(readFileSync(absPath, "utf-8"), recorded, ownedPaths);
+        const gone = removeRecordedHooks(readFileSync(absPath, "utf-8"), recorded, ownedPaths, heldIn(manifestPath));
         if (gone) {
           actions.push({
             type: "update",
@@ -437,15 +475,26 @@ function withRegions(entry: ManifestEntry, onDisk: string | null, generated: str
  * A hooks file with the recorded entries taken out (nothing generated), or
  * null when it holds none of them or is not a JSON object.
  */
-function removeRecordedHooks(text: string, record: HookRecord[], ownedPaths: string[]): ReturnType<typeof mergeSettingsByRecord> | null {
+function removeRecordedHooks(
+  text: string,
+  record: HookRecord[],
+  ownedPaths: string[],
+  heldBy: (r: HookRecord) => string | undefined,
+): ReturnType<typeof mergeSettingsByRecord> | null {
   try {
     const root = JSON.parse(text) as unknown;
     if (root === null || typeof root !== "object" || Array.isArray(root)) return null;
   } catch {
     return null;
   }
-  const out = mergeSettingsByRecord(text, "{}", record, ownedPaths);
-  return out.removed.length > 0 ? out : null;
+  // Which recorded entries another manifest holds: those are kept for it.
+  let held = false;
+  const out = mergeSettingsByRecord(text, "{}", record, ownedPaths, (r) => {
+    const other = heldBy(r);
+    if (other !== undefined) held = true;
+    return other;
+  });
+  return out.removed.length > 0 || held ? out : null;
 }
 
 /**

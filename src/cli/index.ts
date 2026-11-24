@@ -21,9 +21,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { execFileSync, execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { parse } from "../parser/index.js";
 import { resolveIncludes } from "../parser/includes.js";
+import { parseRange, satisfiesRange } from "../parser/range.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { ruleAppliesTo, validate } from "../parser/validator.js";
 import { bindings } from "../bindings/index.js";
@@ -50,6 +53,7 @@ import {
 } from "../import/index.js";
 import type { ClaudeProject } from "../import/walk.js";
 import { InvalidManifestError, readManifest, writeManifest, hashContent } from "../scaffold/manifest.js";
+import { otherRecordLines, sameTopologyLines } from "../scaffold/other-records.js";
 import { computeIncrementalPlan, executeActions, nextManifestFiles, nextManifestHooks, NOT_OURS_KEPT, USER_EDITED_KEPT } from "../scaffold/incremental.js";
 import { nextManifestFields } from "../scaffold/structure.js";
 import { agentOwnedPaths, scopeErrors, scopePlan, type InvalidScope } from "../scaffold/invalid-scope.js";
@@ -64,15 +68,18 @@ import { renderAscii } from "../render/ascii.js";
 import { buildExecutionBrief, type Autonomy } from "../plan/brief.js";
 import { renderBriefMarkdown } from "../plan/render.js";
 import { checkCodexGuards } from "../guard/check-codex.js";
+import { hasTests, renderTestRun, runGuardTests, testedGateIds, writeTestResults } from "../guard/test-run.js";
 import { checkGuards, renderGuardReport } from "../guard/check.js";
 import { topLevelPermissionLines } from "../guard/top-level-permissions.js";
 import { checkStep, renderStepReport, parseStepArgs } from "../step/check.js";
 import { planGuardTarget, applyGuardTarget } from "../guard/target.js";
+import { rulesSummary } from "../parser/rules.js";
 import { verifiedOnLine, installedMark, onFailureWarnings } from "../conformance/claude-code.js";
 import { routeWarnings } from "../bindings/lib/route.js";
+import { CLAUDE_CODE_GUARDS, CODEX_GUARDS, guardScriptPaths, keptGuardScriptLine } from "../bindings/lib/guards.js";
 import { platformConformance } from "../conformance/index.js";
 import { applyV135Fixes, planV135Fixes } from "../fix/v135.js";
-import { collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
+import { strictFailures, collectInventory, coverage, renderCoverage, renderOutside, outsideChecks, unionCoverage, type InventoryItem, type CoverageReport } from "../inventory/index.js";
 
 // ---------------------------------------------------------------------------
 // ANSI colors (no external deps)
@@ -152,6 +159,13 @@ ${c.bold("Usage:")}
                        Report which gates, approval steps and permission rules the
                        project enforces today (refuse / cited / none / hope). Writes nothing;
                        exits 1 when something the binding generates is missing.
+  agentopology guard <file.at> --test [--target <claude-code|codex>] [--dir <project-dir>]
+                       Run the tests { refuse: [..] allow: [..] } rows of every gate and hook
+                       through the real generated scripts (before-action.sh for a script step,
+                       before-agent.sh for a subagent launch, a hook's own run: command), as the
+                       PreToolUse payload the host sends. Scaffolds into a temp folder, or into
+                       --dir (files already there are kept). Prints refused or allowed per row;
+                       exits 1 on any row that is not what it was written to be.
   agentopology step check <file.at> <step-id> [--unit U] [--dir D]
                        Exit 0 when every gate before <step-id> holds (its ledger shows the
                        after: step ok for the unit; its run: exits 0 from D), else 1,
@@ -163,6 +177,8 @@ ${c.bold("Usage:")}
   agentopology docs --all
   agentopology docs --agent
   agentopology docs --search <term>
+  agentopology --version | -v
+                       Print the agentopology version (package.json) and exit 0.
 
 ${c.bold("Commands:")}
   plan       Resolve a topology for interpreted execution: validate, apply spec
@@ -223,6 +239,38 @@ function readFile(filePath: string): string {
   return fs.readFileSync(resolved, "utf-8");
 }
 
+/** The version of this package, read from its package.json (next to dist/ and src/). */
+function packageVersion(): string {
+  try {
+    const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+    return JSON.parse(fs.readFileSync(pkg, "utf-8")).version as string;
+  } catch {
+    return "0.0.0";
+  }
+}
+
+/**
+ * `meta { requires }`: every command that reads a .at stops here, with exit 1,
+ * when the running package is outside the range. The one place it is checked:
+ * every reader goes through parseAt (and `step check`, which calls this).
+ * An invalid range is not stopped here; validate reports it (V148).
+ */
+function checkRequires(ast: ReturnType<typeof parse>, filePath: string): void {
+  const range = ast.topology.requires;
+  if (range === undefined || !parseRange(range)) return;
+  const have = packageVersion();
+  if (satisfiesRange(have, range)) return;
+  console.error(c.red(`Error: ${path.basename(filePath)} requires agentopology ${range} (meta { requires }), but this is ${have}. Install a version in that range and run it again.`));
+  process.exit(1);
+}
+
+/** For the commands that work on the text and never go through parseAt (fix, sync): the same check; a file that does not parse is left to the command to report. */
+function checkRequiresInText(source: string, filePath: string): void {
+  let ast;
+  try { ast = parse(source); } catch { return; }
+  checkRequires(ast, filePath);
+}
+
 /**
  * Parse a topology read from `filePath`. The path is recorded on the AST
  * (non-enumerable, so exports do not carry it) so every later `validate(ast)`
@@ -230,6 +278,7 @@ function readFile(filePath: string): string {
  */
 function parseAt(source: string, filePath: string): ReturnType<typeof parse> {
   const ast = parse(source);
+  checkRequires(ast, filePath);
   Object.defineProperty(ast, "sourcePath", { value: path.resolve(filePath), enumerable: false, writable: true, configurable: true });
   // Merge each `include`d fragment into the AST; what cannot be merged is a
   // V8 error validate reports (non-enumerable, so exports do not carry it).
@@ -276,6 +325,8 @@ interface ParsedArgs {
   task: string | undefined;
   root: string | undefined;
   check: boolean;
+  /** `guard --test`: run the tests rows of gates and hooks through the generated scripts. */
+  test: boolean;
   noOpen: boolean;
   noCheck: boolean;
   printSummary: boolean;
@@ -315,6 +366,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     task: undefined,
     root: undefined,
     check: false,
+    test: false,
     noOpen: false,
     noCheck: false,
     printSummary: false,
@@ -362,6 +414,11 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--check") {
       result.check = true;
+      i++;
+      continue;
+    }
+    if (arg === "--test") {
+      result.test = true;
       i++;
       continue;
     }
@@ -501,7 +558,7 @@ function cmdValidateJson(filePath: string, inventory: string, dir: string | unde
       2,
     ),
   );
-  process.exit(checked.errors > 0 || r.missing.length > 0 ? 1 : drift.rows.length > 0 ? 3 : 0);
+  process.exit(checked.errors > 0 || r.missing.length > 0 || strictFailures(r).length > 0 ? 1 : drift.rows.length > 0 ? 3 : 0);
 }
 
 function cmdValidate(filePath: string, inventory?: string, dir?: string, user = false, more: string[] = [], target?: string, json = false): void {
@@ -527,7 +584,7 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
     console.error(c.red(`Error: unknown target "${target}".`));
     process.exit(1);
   }
-  const checked = validateResult(ast, path.resolve(filePath), target);
+  const checked = validateResult(ast, path.resolve(filePath), target, dir ? path.resolve(dir) : undefined);
   // F-14: the Claude Code it runs against must read onFailure, or a refusing hook that cannot run lets the call through.
   // 0.13.0: a `when` edge Claude Code does not enforce is named (lib/route.ts).
   const ccExtra = !target || target === "claude-code" ? [...onFailureWarnings(ast), ...routeWarnings(ast)] : [];
@@ -555,6 +612,9 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
   }
   const drifted = !!drift && drift.rows.length > 0;
   printStubPlan(ast, target, dir);
+  if (dir) printOtherRecords(path.resolve(dir), target ?? "claude-code", filePath, ast.topology.name, true);
+  const rulesLine = rulesSummary(ast);
+  if (rulesLine) { console.log(`  ${rulesLine}`); console.log(""); }
 
   if (results.length === 0) {
     console.log(c.green("  All validation rules passed."));
@@ -579,6 +639,21 @@ function cmdValidate(filePath: string, inventory?: string, dir?: string, user = 
  * target given (claude-code when none is): the binding's own output, so
  * validate and scaffold cannot disagree. Changes no exit code.
  */
+/**
+ * Other .at files in the project: the hooks their manifests record that the
+ * hooks file still holds (scaffold of this .at keeps them), and, with
+ * `copies`, two .at files that declare one topology.
+ */
+function printOtherRecords(root: string, target: string, filePath: string, name: string, copies: boolean): void {
+  const lines = [
+    ...otherRecordLines(root, target, path.basename(filePath)),
+    ...(copies ? sameTopologyLines(root, target, path.resolve(filePath), name) : []),
+  ];
+  if (lines.length === 0) return;
+  for (const line of lines) console.log(`  ${c.yellow(line)}`);
+  console.log("");
+}
+
 function printStubPlan(ast: TopologyAST, target: string | undefined, dir: string | undefined): void {
   const t = target ?? "claude-code";
   const plan = plannedStubs(ast, t, dir ? path.resolve(dir) : undefined);
@@ -632,6 +707,8 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     const { errors } = checked;
     const warnings = checked.warnings + ccExtra.length;
     printStubPlan(ast, target, dir);
+    const rulesLine = rulesSummary(ast);
+    if (rulesLine) { console.log(`  ${rulesLine}`); console.log(""); }
     if (results.length === 0) { console.log(c.green("  All validation rules passed.")); console.log(""); }
     else printFindings(results, errors, warnings);
     if (errors > 0) failed = true;
@@ -647,7 +724,7 @@ function cmdValidateMany(files: string[], inventory?: string, dir?: string, user
     for (const line of lines) console.log(`  ${line}`);
     console.log("");
     printTopLevelPermissions(root);
-    if (u.missing.length) failed = true;
+    if (u.missing.length || strictFailures(u).length) failed = true;
   }
   printVersionLines(target);
   if (failed) process.exit(1);
@@ -685,7 +762,7 @@ function printCoverage(ast: TopologyAST, inventory: string, dir: string | undefi
   for (const line of renderCoverage(r)) console.log(`  ${line}`);
   console.log("");
   printTopLevelPermissions(root);
-  return r.missing.length === 0;
+  return r.missing.length === 0 && strictFailures(r).length === 0;
 }
 
 /** Warn only: allow / deny / ask lists at the top level of the project's settings files, and the move. Changes no exit code. */
@@ -869,6 +946,7 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       force: !!force,
       structure,
       echo: targetName === "claude-code" ? (spec, text) => echoFields(ast, spec, text) : undefined,
+      source: path.basename(filePath),
     });
   } catch (err) {
     exitOnInvalidSettings(err);
@@ -917,6 +995,9 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
     console.log("");
   }
 
+  // 0.13.0: a guard script scaffold kept instead of regenerating is said by name: the new guards are not in it.
+  const guardPlatform = targetName === "claude-code" ? CLAUDE_CODE_GUARDS : targetName === "codex" ? CODEX_GUARDS : null;
+  const guardScripts = new Set(guardPlatform ? guardScriptPaths(ast, guardPlatform) : []);
   const printAction = (action: FileAction, preview: boolean): void => {
     switch (action.type) {
       case "create": console.log(`  ${c.green("+")} ${action.path}`); break;
@@ -946,7 +1027,10 @@ function cmdScaffold(filePath: string, targetName: string, dryRun: boolean, outp
       case "kept":
         // A file the user edited (or wrote) whose text scaffold would have
         // replaced: said on every run, so nothing is skipped silently.
-        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT) console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`);
+        if (action.detail === USER_EDITED_KEPT || action.detail === NOT_OURS_KEPT) {
+          console.log(`  ${c.bold("!")} ${action.path} (${action.detail})`);
+          if (guardScripts.has(action.path)) console.log(`  ${c.bold("!")} ${c.yellow(keptGuardScriptLine(action.path, packageVersion()))}`);
+        }
         // settings.json, kept where a delete used to be: said wherever the delete was.
         else if (preview || (prune && action.detail === SETTINGS_KEPT_DETAIL)) console.log(`  ${c.dim("=")} ${action.path} (${action.detail})`);
         // A script the user wrote: said on every run, so a kept script is seen.
@@ -1094,6 +1178,7 @@ function requireDir(dirPath: string): string {
 
 function cmdSync(filePath: string, targetName: string, dirPath: string): void {
   const atSource = readFile(filePath);
+  checkRequiresInText(atSource, filePath);
   const files = readDirRecursive(dirPath);
 
   const updated = syncFromPlatform(atSource, files, targetName);
@@ -1784,11 +1869,67 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
     console.error(c.red(`Error: guard --check supports claude-code and codex only (got "${target}").`));
     process.exit(1);
   }
-  const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root);
+  const report = target === "codex" ? checkCodexGuards(ast, root) : checkGuards(ast, root, path.basename(filePath));
+  // A gate whose tests rows all matched in the last `guard --test --dir` run of this very file is said to be tested.
+  const tested = testedGateIds(root, source);
+  for (const item of report.items) if (item.kind === "gate" && tested.has(item.id)) item.tested = true;
   console.log(`guard --check ${filePath} (project: ${dirPath})`);
   console.log("");
   for (const line of renderGuardReport(report)) console.log(line);
+  for (const line of otherRecordLines(root, target, path.basename(filePath))) console.log(line);
+  // Listed only: an island's test command is never run here.
+  const islands = ast.islands ?? [];
+  if (islands.length) {
+    console.log("");
+    console.log("islands (test commands are listed, not run):");
+    for (const x of islands) console.log(`  island ${x.id}  owner ${x.owner || "(none)"}  ${x.path}${x.test ? `  test: ${x.test}` : "  (no test command)"}`);
+  }
   process.exit(report.missing > 0 ? 1 : 0);
+}
+
+/**
+ * `guard <file> --test`: run each tests row of the gates and hooks through the generated
+ * scripts (src/guard/test-run.ts). Scaffolds into a temp folder, or into --dir (files
+ * already there are kept). Exit 1 on a row that is not what it was written to be, on a
+ * topology that does not validate for the target (V141/V142 included), and when there
+ * is no row to run.
+ */
+function cmdGuardTest(filePath: string, targetName: string | undefined, dirPath: string | undefined): void {
+  const target = targetName ?? "claude-code";
+  if (target !== "claude-code" && target !== "codex") {
+    console.error(c.red(`Error: guard --test supports claude-code and codex only (got "${target}").`));
+    process.exit(1);
+  }
+  const ast = parseAt(readFile(filePath), filePath);
+  const errors = buildErrors(ast, target);
+  if (errors.length > 0) {
+    console.error(c.red(`  ${errors.length} validation error(s), so the scripts are not run:`));
+    for (const e of errors.slice(0, 5)) console.error(`  ${c.red(`[${e.rule}]`)}${e.line ? ` line ${e.line}:` : ""} ${e.message}`);
+    if (errors.length > 5) console.error(c.dim(`  … and ${errors.length - 5} more`));
+    process.exit(1);
+  }
+  if (!hasTests(ast)) {
+    console.error(c.red(`Error: ${filePath} has no tests rows: write tests { refuse: ["<command>"] allow: ["<command>"] } on a gate or a hook.`));
+    process.exit(1);
+  }
+  const own = dirPath === undefined;
+  const dir = path.resolve(own ? fs.mkdtempSync(path.join(os.tmpdir(), "agentopology-guard-test-")) : dirPath);
+  let run;
+  try {
+    run = runGuardTests(ast, dir, target);
+  } catch (err) {
+    // a binding that refuses the topology (Codex and a Claude model): one line, exit 1
+    console.error(c.red(`Error: ${(err as Error).message}`));
+    if (own) fs.rmSync(dir, { recursive: true, force: true });
+    process.exit(1);
+  }
+  console.log(`guard --test ${filePath} (${own ? "temp project" : `project: ${dirPath}`}, ${target})`);
+  console.log("");
+  for (const line of renderTestRun(run)) console.log(line);
+  if (own) fs.rmSync(dir, { recursive: true, force: true });
+  // With --dir the project is known: leave what passed for `guard --check --dir` to say `tested`.
+  else writeTestResults(dir, readFile(filePath), run);
+  process.exit(run.misses > 0 || run.results.length === 0 ? 1 : 0);
 }
 
 /**
@@ -1919,6 +2060,7 @@ function cmdFix(filePath: string, target: string | undefined, write: boolean, dr
     console.error(c.red(`Error: ${name} is not valid UTF-8, so --write would change bytes outside the lines it edits. Nothing written; save it as UTF-8 first, or add strength: hope by hand.`));
     process.exit(1);
   }
+  checkRequiresInText(source, filePath);
   const importLine = (p: { relayed: unknown[]; relayedFiles: string[] }) =>
     `${p.relayed.length} V135 error(s) in imported files: run fix on ${p.relayedFiles.map((f) => path.relative(process.cwd(), f) || f).join(", ")}`;
   const on = target ? `--target ${target}` : "no target";
@@ -2035,6 +2177,12 @@ function cmdStubs(dirPath: string): void {
 // ---------------------------------------------------------------------------
 
 function main(): void {
+  // --version / -v as the first word: print the version, nothing else.
+  const first = process.argv[2];
+  if (first === "--version" || first === "-v") {
+    console.log(packageVersion());
+    process.exit(0);
+  }
   const args = parseArgs(process.argv);
 
   if (args.help || !args.command) {
@@ -2174,6 +2322,10 @@ function main(): void {
         console.error(c.red("Error: guard requires a file argument."));
         process.exit(1);
       }
+      if (args.test) {
+        cmdGuardTest(args.file, args.target, args.dir);
+        break;
+      }
       // E-2: --check reads and never writes, on any target.
       if (args.check) {
         cmdGuardCheck(args.file, args.dir ?? ".", args.target);
@@ -2184,7 +2336,7 @@ function main(): void {
         break;
       }
       if (!args.check) {
-        console.error(c.red("Error: guard needs --check (read-only report) or --target claude-code|codex (write the guards)."));
+        console.error(c.red("Error: guard needs --check (read-only report), --test (run the tests rows) or --target claude-code|codex (write the guards)."));
         process.exit(1);
       }
       cmdGuardCheck(args.file, args.dir ?? ".");
@@ -2200,7 +2352,9 @@ function main(): void {
         console.error(c.red("Usage: agentopology step check <file.at> <step-id> [--unit U] [--dir D]"));
         process.exit(1);
       }
-      const report = checkStep(parse(readFile(a.file)), a.step, { unit: a.unit, dir: a.dir ?? "." });
+      const stepAst = parse(readFile(a.file));
+      checkRequires(stepAst, a.file);
+      const report = checkStep(stepAst, a.step, { unit: a.unit, dir: a.dir ?? "." });
       for (const line of renderStepReport(report)) (report.ok ? console.log : console.error)(line);
       process.exit(report.ok ? 0 : 1);
     }

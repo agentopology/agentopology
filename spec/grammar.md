@@ -61,6 +61,12 @@ This is not a parser limitation to route around — some unquoted values are
 legitimately multi-token (`on-fail: fallback reviewer`), so whitespace could not
 separate fields without ambiguity. V90 rejects the collapsed form, in `meta` and in every node block.
 
+A comma does separate fields: `checkpoint { backend: sqlite, strategy: every-node, ttl: 7d }`
+reads the same as the three-line form. A comma separates only at the top level of
+the block and only before a `key:`; a comma inside `[..]`, `{..}`, `(..)` or quotes
+stays part of the value. V157 refuses a value in `checkpoint`, `interface`,
+`defaults`, `observability` or `metering` that still holds `, <field>:`.
+
 **Exception:** free-prose fields (`description`, `role`, `generates`,
 `termination`) are exempt once their quotes have been stripped by the parser,
 because a colon in English is ordinary — `description: "Demo: agent pipeline"`.
@@ -186,10 +192,10 @@ topology-body   = topology-section*
 topology-section = meta | orchestrator | roles | action | agent | skill-decl | use-stmt
                  | memory | flow | gates | depth | batch | environments | triggers
                  | hooks | settings | mcp-servers | metering | tools | context | env
-                 | schedule | interfaces | inventory | needs
+                 | schedule | interfaces | inventory | needs | threat-model | islands
 ```
 
-**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, and `needs` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
+**Ordering:** Sections may appear in any order. Each of `meta`, `orchestrator`, `roles`, `memory`, `flow`, `gates`, `depth`, `batch`, `environments`, `triggers`, `settings`, `mcp-servers`, `metering`, `tools`, `context`, `env`, `schedule`, `interfaces`, `inventory`, `needs`, `threat-model`, and `islands` (and the other sections listed in `src/parser/sections.ts`) may appear **at most once**: a second copy is a V23 warning and only the first is used. `hooks` may appear more than once: every block's hooks are used, in file order; a hook name used in two blocks is a V23 error. `action`, `agent`, `skill-decl`, and `use-stmt` may appear multiple times.
 
 Sub-block productions used within topology-body:
 
@@ -327,6 +333,12 @@ meta {
 | `description` | string | yes | -- |
 | `domain` | identifier | no | -- |
 | `entry` | agent-id | no | -- |
+| `outpoints` | node-id list | no | -- |
+| `target` | path | no | the project root |
+
+**`outpoints`** -- `outpoints: [builder, checker]` lists the nodes a run may end at. Each must be a declared node (V150 error). Once the list is written, a flow node with no outgoing edge that is not on it warns (V150). With no `outpoints`, nothing is checked. claude-code compiles a `[finish]` edge into the generated flow text (`[finish]` on the edge, plus a line saying the edge closes the run and hands back to the entry agent); when the topology declares a `records` entry, that line also tells the step before the edge to append `{"run": "closed", "ts": "<ISO time>"}` to the run ledger when it closes ok. No generated script writes step rows (a step's own script does), so the closed row is an instruction in the text, not a hook.
+
+**`target`** -- The directory the generated hooks resolve project paths against, absolute or relative to the project: a gate's ledger, its `run:` check, a project-relative `run:` script of a hook, and the globs of `before: write "<glob>"`. Claude Code only (Codex finds its scripts from their own place and ignores it). The hooks still live in the project's `.claude/`; only the work is found in the target. A target that does not exist blocks the check (exit 2). V152: a value that is empty or holds characters a directory path does not is an error.
 
 **`domain`** -- Optional domain identifier (e.g., `legal`, `marketing`, `engineering`). Used by bindings and tooling for categorization and routing.
 
@@ -350,7 +362,7 @@ meta {
 
 The entry must be a declared agent that claude-code writes as a subagent: not an action, gate, human, group or orchestrator, not `runs: inline` or `runs: fork` (written as a skill), and not an `execution: workflow` agent (V134). An empty value or a list is a V134 error too: `entry` takes one agent id. It needs no flow edge (V4 does not apply to it, unless V134 refuses it). Import reads a settings.json `agent` back as `entry` when it matches an imported agent's frontmatter `name` or its id, and does not mark that agent `invocation: manual`.
 
-`entry` here is the session's agent; `interface { entry: <id> exit: <id> }` (composition) is a fragment's flow entry point. They are separate fields.
+`entry` here is the session's agent; `interface { entry: <id>, exit: <id> }` (composition) is a fragment's flow entry point. They are separate fields.
 
 ---
 
@@ -401,6 +413,7 @@ agent-field     = 'role' ':' identifier
                 | 'phase' ':' number
                 | 'tools' ':' tool-list
                 | 'disallowed-tools' ':' tool-list
+                | 'never-reads' ':' string-list
                 | 'reads' ':' path-list
                 | 'writes' ':' path-list
                 | 'outputs' ':' typed-map
@@ -416,6 +429,8 @@ agent-field     = 'role' ':' identifier
                 | 'background' ':' boolean
                 | 'description' ':' string
                 | 'max-turns' ':' number
+                | 'max-subagents' ':' number
+                | 'max-cost' ':' number
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
                 | agent-extensions
@@ -443,6 +458,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |
+| `never-reads` | string-list | no | `[]` | Path globs this agent may not read (see 4.32) |
 | `reads` | path-list | no | `[]` | Input artifacts |
 | `writes` | path-list | no | `[]` | Output artifacts |
 | `outputs` | typed-map | no | `{}` | Values that affect flow |
@@ -467,6 +483,8 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `background` | boolean | no | `false` | Run in background |
 | `description` | string | no | -- | Human-readable purpose of this agent |
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
+| `max-subagents` | number | no | -- | Most subagents this agent may have open at once; a positive whole number (V156). On claude-code a PreToolUse hook on `Agent\|Task` refuses a launch at the cap, counted per session from a log the SubagentStart and SubagentStop hooks write |
+| `max-cost` | number | no | -- | Spend cap in US dollars (V156). Advisory, not enforced: Claude Code hooks do not see spend; the value is written to the metering output for reporting |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |
 | `hooks` | agent-hooks | no | -- | Per-agent hooks (scoped to agent lifetime). May be written more than once: the first block's hooks belong to the agent; a second and later block's hooks are project hooks (settings.json), as in 0.11.4. A hook name in two of its blocks is a V23 error |
 | `sandbox` | string \| boolean | no | -- | Execution sandbox (true, false, docker, none, network-only) |
@@ -518,7 +536,7 @@ agent classifier {
 
 **Scale in flow:** When an agent has `scale`, its flow edges apply to ALL instances. `deduplicator -> classifier` means "deduplicator feeds all classifier instances." `classifier -> synthesizer` means "all classifier instances feed synthesizer." The orchestrator handles fan-out distribution and merge.
 
-**Backward compatibility:** An agent without `scale` behaves as `scale { mode: fixed  min: 1  max: 1 }` -- exactly one instance, identical to current behavior.
+**Backward compatibility:** An agent without `scale` behaves as `scale { mode: fixed, min: 1, max: 1 }` -- exactly one instance, identical to current behavior.
 
 ---
 
@@ -1018,6 +1036,7 @@ flow {
 | `a -> [b, c] [when x]` | Conditional fan-out: condition applies to the fan-out as a whole |
 | `[when x.y == z]` | Conditional: edge taken only when condition is true |
 | `[max N]` | Bounded loop: back-edge limited to N iterations |
+| `[finish]` | Finish edge: `builder -> lead [finish]` closes the run and hands the line back to the entry agent. An end, not a loop, so it needs no `[max N]` (V6 does not apply). It must point at `meta { entry }` (V149). Combine as `[when x.y == z, finish]` |
 | `[per ticket]` | One instance per unit (currently only `ticket` is valid) |
 | `[strength: none]` | Enforcement written down: `refuse`, `detect`, `hope` or `none` (V104), so an absence is declared, not implied |
 | `[at: "story/SKILL.md"]` | Where the enforcement, or the prose that hopes, lives (V106) |
@@ -1104,10 +1123,17 @@ gates {
 | `match` | string | no | -- | Text expected within 5 lines of `at`, so a refactor that removes the check is caught. Needs `at` (V106) |
 | `bypass` | string | no | -- | The declared way around it (an env switch, a flag) |
 | `ledger` | record id | no | the only record | The record a gate before a script step reads. Omitted, a topology with exactly one `record` uses it (V112) |
+| `tests` | block | no | -- | `tests { refuse: ["<command>", ..]  allow: ["<command>", ..] }`. Each row is a Bash command the guarded check is fed as a PreToolUse payload (before a subagent, an agent name instead); `agentopology guard <file> --test` runs every row through the real generated script (before-action.sh, before-agent.sh) and exits 1 on a row that is not refused (`refuse`) or not allowed (`allow`). Needs a generated check that holds the gate, a script step or a subagent in `before:` (V141). Also allowed on a `hook` (a command hook on `PreToolUse`): the rows are fed to its own `run:` command |
+| `mode` | `shadow` / `refuse` | no | `refuse` | `shadow`: the generated check logs what it would refuse to `logs/shadow.jsonl` (`{gate, at, command, reason}`) and exits 0. Works where `tests` does (V142) |
+| `let-go` | `once` | no | -- | One override per step. A refusal is lifted for one run when the gate's human has an ok ledger row for it: in the gate's ledger, `step` is the human's id, `ok: true`, `gate` is this gate's id, `"let-go": true`, and `at` is newer than the gate's last refusal (`logs/refused.jsonl`) and than the row of the last use. The use is written to `logs/let-go.jsonl`, so the row lifts one run. Needs a human and a ledger (V142) |
+| `lift` | human id | no | the human in `after:` | The human whose row lets the gate go. Needs `let-go` (V142) |
+| `rule` | string | no | -- | The id of a `rules { }` entry this gate enforces; an unknown id is an error (V144). Written into the gate's section and listed by `guard --check` |
+
+**Tests, mode and let-go (0.13).** `tests` is enforced by running: `guard --test` scaffolds into a temp folder (or `--dir`, keeping files already there) and feeds each row to the generated script as the host would (a gate holding a script step gets the row as a Bash command, a gate holding a subagent launch gets it as the agent's name, a hook gets the row through its `run:` command), printing `refused` or `allowed` per row. A gate in `mode: shadow` exits 0 whatever it would refuse; `--test` counts a row it logged as refused and says so. `mode: shadow` and `let-go: once` are compiled into before-action.sh and before-agent.sh only; on a gate those scripts do not hold (a SubagentStop gate) they are errors (V142), not silent text. `let-go` reads the human's row from the gate's own ledger, which the ledger guard keeps the model from writing; a refusal with no row is logged to `logs/refused.jsonl`, and only a row newer than that logged refusal lifts it.
 
 **Gates before a script step.** A gate whose `before:` is an `action` with `commands:` refuses that step in Claude Code sessions. The claude-code binding writes one script, `before-action.sh`, wired as a `PreToolUse` hook on `Bash|Monitor|PowerShell` (every Claude Code tool that runs a shell command; Monitor from Claude Code 2.1.314) with `onFailure: "block"`. A PowerShell command is read the same way, a backslash as a path separator, and a mention of the tool not read as a declared step is refused; a Monitor call with no `command` passes. When the command starts with one of the action's `commands:` (leading `VAR=value` words are ignored), the script checks the gate: if it has a ledger, the **last** line for the `after:` step (and the same unit, when the command names one with `unit-from`) must have `ok: true`; if it has `run:`, that wrapper must exit 0. Anything else exits 2 and says which gate, step, unit and ledger path refused. A gate with neither a ledger nor `run:` has nothing to check (V110).
 
-**The go: a typed word.** A `human` step may carry `word: "<go word>"` (a string) and `binds: [<project paths>]` (a list). On claude-code the human gets a generated `UserPromptSubmit` hook, `go-<human>.sh`. When a prompt the person typed is the word, after leading and trailing spaces are trimmed, or starts with the word followed by a space (`go release, notes look right`), the hook appends the go row to the ledger of every gate whose `after:` names the human: `{"step": "<human id>", "ok": true, "word": "<word>", "ts": "<UTC ISO time>", "binds": {"<path>": "<sha256>"}}`. A bound file that is missing is recorded as `null`. The word is matched case-sensitively. The hook never blocks a prompt. Claude Code also runs `UserPromptSubmit` for prompts nobody typed (a message from another session, a scheduled task, a background subagent reporting back), and its input does not say where a prompt came from. So the hook uses the same typed test as a deciding session's prompt log: a prompt that opens with `<cross-session-message` arrived from another session, and one that holds a `<task-notification` envelope anywhere is a background report; neither writes a row. A session-scoped scheduled task or `/loop` prompt arrives as written, with no envelope, so one that starts with the word counts: that text is the person's own. In `before-action.sh`, a gate after such a human counts the go row only while every bound file's current sha256 equals the one in the row (a changed or deleted file fails the gate and names the file), and, when the human has `valid:`, only while today is not past the window's end and the row's `ts` (or `at`) falls inside the window. The agent cannot write the row: an edit of the ledger, and a Bash command that writes it, are refused, and so are an edit of the go hook and a command that runs or changes it. V127: `word:` needs a ledger to write to (a gate after the human, with a record whose path has no `{unit}`); `binds:` needs `word:`, and its paths must be inside the project.
+**The go: a typed word.** A `human` step may carry `word: "<go word>"` (a string) and `binds: [<project paths>]` (a list). On claude-code the human gets a generated `UserPromptSubmit` hook, `go-<human>.sh`. When a prompt the person typed is the word, after leading and trailing spaces are trimmed, or starts with the word followed by a space or one of `, . : ; ! ?` (`go release, notes look right`; a longer word such as `go released` does not count), the hook appends the go row to the ledger of every gate whose `after:` names the human: `{"step": "<human id>", "ok": true, "word": "<word>", "ts": "<UTC ISO time>", "binds": {"<path>": "<sha256>"}}`. A bound file that is missing is recorded as `null`. The word is matched case-sensitively. The hook never blocks a prompt. Claude Code also runs `UserPromptSubmit` for prompts nobody typed (a message from another session, a scheduled task, a background subagent reporting back), and its input does not say where a prompt came from. So the hook uses the same typed test as a deciding session's prompt log: a prompt that opens with `<cross-session-message` arrived from another session, and one that holds a `<task-notification` envelope anywhere is a background report; neither writes a row. A session-scoped scheduled task or `/loop` prompt arrives as written, with no envelope, so one that starts with the word would count; the model schedules those with the CronCreate and ScheduleWakeup tools, and `before-schedule.sh`, a generated PreToolUse hook on `CronCreate|ScheduleWakeup`, refuses one whose prompt starts with the word (the go hook's match, after a leading `/loop` and interval). In `before-action.sh`, a gate after such a human counts the go row only while every bound file's current sha256 equals the one in the row (a changed or deleted file fails the gate and names the file), and, when the human has `valid:`, only while today is not past the window's end and the row's `ts` (or `at`) falls inside the window. What is enforced against the agent writing the row: an edit of the ledger, and a Bash command that writes it, are refused, and so are an edit of the go hook and a command that runs or changes it. A Bash command that runs `claude` (a new session, whose prompt the go hook would read as typed) is refused when it holds the go word anywhere, or when it matches no runner step the topology declares (an action whose `commands:` run `claude`, its words in order after `claude`, or a schedule job's `claude -p ... --agent <agent>`). Within a command that runs `claude`, the go word matches as a whole word anywhere, so a runner prompt that merely mentions it is refused too (rare, and it fails closed). A Bash command that runs a keystroke tool (tmux, screen, xdotool, osascript, wtype, ydotool, or a program listed in the human's optional `typed-only-programs: [<program>, ...]`) and holds the go word as a whole word is refused. These are refused when the hook, the ledger or the go word appears in the command; a command built at run time can still reach them. V127: `word:` needs a ledger to write to (a gate after the human, with a record whose path has no `{unit}`); `binds:` needs `word:`, and its paths must be inside the project; `typed-only-programs:` needs `word:`, and each entry is a program name with no path.
 
 ```agenttopology
 human owner-go {
@@ -1128,6 +1154,8 @@ gates {
 }
 ```
 
+**Gates before a write of a path.** `before: write "<glob>"` holds an edit of a matching path until the gate holds, the way a gate before a script step holds that step: its ledger (the last line for its `after:` step must be ok) and its `run:` check, both as `before-action.sh` checks them. It is a path anchor, not a node id; a gate has one `before:` line, so a gate that stands before both a step and a path is written as two gates. The claude-code binding writes `before-edit.sh` (the hook on `Write|Edit|MultiEdit|NotebookEdit`, which already refuses an edit of a gate's ledger) so that it refuses an edit whose path, made relative to the project root (or to `meta { target }`), matches the glob, until the gate holds. `before-action.sh` refuses a Bash command that names a matching path and does more than read it (a `>` or `tee`, or a program that is not known to only read its arguments) until the gate holds; a path reached through a variable set elsewhere, or another script, is not seen. `*` and `**` both match across folders; `**/` also matches no folder; a glob with no wildcard names a path or the folder under it. Without jq the edit hook refuses every edit. V151: an empty glob is an error, and a gate with neither a ledger nor a `run:` has nothing to check (warning). Codex gets the same scripts through its `apply_patch` hook.
+
 **A gate that refuses needs a moment a hook can mark (V135).** On Claude Code (and Codex, which wires gates the same way) a gate's `run:` script runs from a hook in three cases: every `after:` is a subagent (an `agent` without `runs: inline/fork`, or a `group`), so a `SubagentStop` hook runs it; a `before:` is a subagent, so `before-agent.sh` runs it before that agent starts; or a `before:` is a script step, so `before-action.sh` runs it before the step's command. With `orchestrator { delegation: inline }` no subagent runs, and only the script step wires. Any other gate gets its wrapper script and nothing that calls it. When such a gate is meant to refuse (its `run:` names a script, it is not `behavior: advisory`, and its `strength` is `refuse` or not written), validate reports a V135 error naming each anchor and what it is, unless an edge between its anchors cites (`guard:`) a declared hook with `strength: refuse` that can block, or another gate a hook runs, or a declared hook with `strength: refuse` that can block runs the gate's own `run:` command (then a V135 warning names that hook, its matcher and `if:`: it runs only on the calls they select, and `guard --check` grades the gate hope, or cited with `at:`, never refuse). A hook can block when it is a command hook, not async, on an event the platform blocks on (the list `guard --check` reads). Fix the anchor, or write `strength: hope` when a playbook runs the gate by hand; a cited gate may instead drop `run:` and keep the citation as the claim. A citation (`at:`) does not exempt it: only the gate's own generated hook makes it refuse. On Claude Code an `execution: workflow` agent is not a subagent (it runs in the workflow script). On Codex a gate run only by SubagentStop passes V135 but cannot hold the next step (CX9-noblock warns). Cursor writes a hook for every gate and is not checked; `plan` (interpreted mode) places the gate by its anchors and does not stop on V135.
 
 ```agenttopology
@@ -1137,6 +1165,33 @@ records {
 ```
 
 `records { record <id> { path: "<project-relative path>" } }` declares ledgers. `path` may contain `{unit}`. `append-only` and `written-by` are reserved and not implemented.
+
+A record may also say what a row holds. Write one field per line:
+
+```agenttopology
+records {
+  record trace {
+    path: "logs/trace.jsonl"
+    fields: [step: string, ok: boolean, ts: ts]
+    schema: row
+    writer: render
+  }
+  record state {
+    path: "logs/state.jsonl"
+    kind: run-state
+  }
+}
+```
+
+| Field | Value | Required | Description |
+|-------|-------|----------|-------------|
+| `path` | string | yes | Project-relative file, may contain `{unit}` (V112) |
+| `fields` | `[<name>: <type>, ..]` | no | The fields a row must hold. Types: `string`, `number`, `boolean`, `ts` (an ISO 8601 time) (V139) |
+| `schema` | schema id | no | A schema declared in `schemas { }` (V139) |
+| `writer` | action id, agent id or project-relative script path | no | What writes the record (V139) |
+| `kind` | `run-state` | no | A run-state record has the fixed fields `target` and `step` (both `string`); it takes no `fields:` (V139) |
+
+On `claude-code` a record that declares any of these compiles to: (1) `.claude/skills/<topology>/scripts/record-<id>.sh '<json>'`, which appends a row only when it holds every declared field with the declared type, otherwise exits 2 naming the missing or mistyped field and writes nothing, and adds `ts` when missing; a row `{step, ok: "n/a", reason}` goes through it and `reason` is required; (2) when a gate reads the record and its `after:` step is an action with `commands:`, `after-action.sh`, a `PostToolUse` hook on `Bash` that appends `{step, ok: true, ts, model}` (and the unit, when the step has one) when the step's command succeeded. It reads the command with the same step matcher `before-action.sh` uses. `PostToolUse` fires only for a call that succeeded (a failed `Bash` call fires `PostToolUseFailure`, whose `error` starts `Exit code N`), and the hook also skips a payload that says it failed; it writes nothing for a command joined with `;`, `|`, `||` or a single `&`, since the exit status is then not the step's. (3) `.claude/records.json` lists every record, with its id, path, fields, writer and the gates that read it (`readBy`), so a record no gate reads is still written down. Codex and cursor write none of this; `validate --target codex` and `--target cursor` warn (V140).
 
 **Ledger line format** (JSON Lines, one object per line). The step's own script appends the line when it finishes; agentopology only reads it:
 
@@ -1330,6 +1385,7 @@ hooks {
 | `model` | identifier | no (prompt, agent) | -- |
 | `flag` | env-name | no (mod only) | -- |
 | `timeout` | number | no | `600` |
+| `tests` | block | no | -- | `tests { refuse: ["<command>", ..] allow: ["<command>", ..] }`: Bash commands `guard --test` feeds the hook's own `run:` command as PreToolUse payloads; exit 2 is refused (V141). A command hook on `PreToolUse` only. `mode` and `let-go` are gate fields (V142) |
 
 `hook-type` is `command` (a shell command), `prompt` or `agent` (a model or a
 subagent judges the event; `run:` is the prompt), `http` (the event is POSTed
@@ -1444,6 +1500,7 @@ metering-field  = 'track' ':' name-list
                 | 'output' ':' string
                 | 'format' ':' ('json' | 'jsonl' | 'csv')
                 | 'pricing' ':' ('anthropic-current' | 'custom' | 'none')
+                | ('max-cost' | 'cap') ':' number
 ```
 
 ```agenttopology
@@ -1463,6 +1520,9 @@ metering {
 | `output` | string | no | `"metrics/"` | Directory for metering output files |
 | `format` | `json` / `jsonl` / `csv` | no | `jsonl` | Output format |
 | `pricing` | `anthropic-current` / `custom` / `none` | no | `anthropic-current` | How to calculate cost |
+| `max-cost` | number | no | -- | Spend cap in US dollars; `cap:` is accepted as an alias. Advisory, not enforced (V156): written to the metering output for reporting |
+
+Any other key in `metering` is a V102 error: it would be written nowhere.
 
 Any other key in `metering` is a V102 error: it would be written nowhere.
 
@@ -1740,22 +1800,30 @@ Singleton block. Configures the context/instructions file generated by bindings 
 
 ```ebnf
 context         = 'context' '{' context-fields '}'
-context-fields  = ('file' ':' string | 'includes' ':' string-list)*
+context-fields  = ('file' ':' string | 'includes' ':' string-list
+                  | 'max-lines' ':' integer | glossary)*
+glossary        = 'glossary' '{' (string ':' string)* '}'
 ```
 
 ```agenttopology
 context {
-  file: "CONTEXT.md"
+  file: "CLAUDE.md"
   includes: ["docs/architecture.md", "docs/conventions.md"]
+  max-lines: 200
+  glossary {
+    "ticket": "A unit of customer work"
+  }
 }
 ```
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `file` | string | no | binding-dependent | Filename for the context/instructions file |
-| `includes` | string-list | no | `[]` | Additional files to include in context |
+| `file` | string | no | none | The context file the binding writes a block into |
+| `includes` | string-list | no | `[]` | Project files the block imports |
+| `max-lines` | integer | no | none | Longest the context file may be; V146 warns above it |
+| `glossary` | block of `"term": "definition"` | no | none | Terms the block defines |
 
-**Binding behavior:** If `file` is omitted, the binding generates a default context file using its platform convention (e.g., `CLAUDE.md`, `CODEX.md`). The `includes` list is referenced from the generated context file.
+**Claude Code binding:** only when `file:` is declared, that file is written with ONE block between `<!-- agentopology:context:begin ... -->` and `<!-- agentopology:context:end -->` markers. The block holds the entry agent's name (`meta { entry }`) with an instruction to start as it and the sentence `If no agent is named, start as <entry>.`, one `@<path>` import line per include, and the glossary as a `- term: definition` list. A missing file is created. In an existing file only the text between the markers is replaced, every other line stays as the user wrote it, and a file with no block gets it appended. Without `file:` no CLAUDE.md is written. The topology's full description always goes to `.claude/rules/<topology>.md`. An include that is not in the project is a warning (V145, `validate --dir`); a file longer than `max-lines` is a warning (V146).
 
 **Backward compatibility:** A topology without `context` generates a default context file. Existing `.at` files continue to work unchanged.
 
@@ -2010,12 +2078,16 @@ agent expensive-thinker {
 ### 4.30 `inventory`
 
 ```ebnf
-inventory       = 'inventory' '{' 'roots' ':' string-list '}'
+inventory       = 'inventory' '{' (roots-field | strict-field)* '}'
+roots-field     = 'roots' ':' string-list
+strict-field    = 'strict' ':' ('true' | 'false')
 ```
 
 ```agenttopology
 inventory { roots: ["harness/", "scripts/"] }
 ```
+
+With `strict: true`, `validate --inventory` exits 1 when a live file is not in the .at and not covered by an island (4.32); today it lists them and exits 0. Hooks, servers, scripts and jobs are not files and do not count.
 
 Extra project folders whose files a run really reads. `agentopology inventory --at <file.at>` and `validate --inventory` list every file under each root as a live thing of kind `file` (id `file:<path>`), and a file counts as mapped when the topology points at it (a hook's or gate's `run:`, `file:`, `at:`, a tool's `script:`). A root that is not a folder on disk is reported as missing (exit 1). Each root must be a path inside the project: absolute paths, home paths (`~`) and `..` are a validate error (V128). Bindings emit nothing for it.
 
@@ -2024,10 +2096,11 @@ Extra project folders whose files a run really reads. `agentopology inventory --
 ### 4.31 `needs`
 
 ```ebnf
-needs           = 'needs' '{' (memory-field | connectors-field | user-skills-field)* '}'
+needs           = 'needs' '{' (memory-field | connectors-field | user-skills-field | plugins-field)* '}'
 memory-field    = 'memory' ':' string
 connectors-field = 'connectors' ':' name-list
 user-skills-field = 'user-skills' ':' name-list
+plugins-field   = 'plugins' ':' name-list
 ```
 
 ```agenttopology
@@ -2035,10 +2108,120 @@ needs {
   memory: "~/notes/agent-memory"
   connectors: [gmail, calendar]
   user-skills: [writer]
+  plugins: [my-plugin]
 }
 ```
 
 What the topology needs that lives outside the repo. `validate` lists every entry under "declared outside the repo". `memory` is a path under the user's home, written `~/<path>`; `user-skills` are skills expected at `~/.claude/skills/<name>`; `connectors` are account connectors. Validate rejects a memory path that is absolute (other than `~/`) or holds `..`, and a skill or connector name that is a path (V129). With `validate --inventory ... --user`, a declared user skill and a memory path count as mapped when they exist under the home folder and as missing (exit 1) when they do not; connectors cannot be checked locally and print `not checked (account connector)`, never mapped. Without `--user` the home folder is not read. Bindings emit nothing for it.
+
+`plugins` names plugins expected under `~/.claude/plugins`; a name is a bare name (V129). With `--user`, each is reported `installed` when `installed_plugins.json` lists it (`<name>` or `<name>@<marketplace>`) or a folder of that name is under `~/.claude/plugins/` or `~/.claude/plugins/cache/<marketplace>/`, and `missing` (exit 1, as for a missing user skill) when not.
+
+### 4.32 `threat-model`
+
+```ebnf
+threat-model    = 'threat-model' '{' (untrusted-field | outside-field | refuse-field | lift-field)* '}'
+untrusted-field = 'untrusted' ':' '[' untrusted-entry (',' untrusted-entry)* ']'
+untrusted-entry = 'web' | 'mcp:' identifier | string          (* a path glob *)
+outside-field   = 'outside-sandbox' ':' string-list
+refuse-field    = 'refuse-after-untrusted' ':' string-list    (* permission rules, as in settings { deny } *)
+lift-field      = 'lift' ':' identifier                       (* a human step *)
+```
+
+```agenttopology
+threat-model {
+  untrusted: [web, mcp:crm, "inbox/**"]
+  refuse-after-untrusted: ["Bash(git push *)", "SendMessage"]
+  outside-sandbox: ["npm"]
+  lift: owner
+}
+```
+
+Inputs the session cannot trust, and what is held back once one has been read. `web` is the WebFetch and WebSearch tools; `mcp:<id>` is every tool of a server declared in `mcp-servers { }`; a quoted path glob is a read of a matching file by Read, Grep or Glob. An MCP server written `trust: untrusted` is added to the list (`trust:` takes `untrusted` or `trusted`). Entries of `refuse-after-untrusted` are permission-rule strings in the `settings { deny }` form (`Tool` or `Tool(specifier)`).
+
+claude-code writes two hooks. `taint-mark.sh` (PostToolUse, on the untrusted tools) writes `.claude/state/taint/<session_id>` with the source and time, reading the session id from the hook's stdin JSON. `taint-guard.sh` (PreToolUse, on the tools the rules name) refuses with exit 2, naming the source, a call that matches a rule while the session's mark exists. The mark ends only in a new session (a new session id has no mark), or for one act when the human named in `lift:` has an ok row in `.claude/state/approvals.jsonl` whose `act` equals the rule string and whose `at` is not older than the mark; a later untrusted read marks again. There is no blanket clear. The mark folder and the approvals file are refused to the agent by the before-edit and before-action guards. `outside-sandbox` entries that are commands go to `sandbox.excludedCommands`, and entries that are paths (a leading `/` or `~`, a trailing `/`, or a `*`) to `sandbox.filesystem.allowWrite`; Claude Code reads them only with `settings { sandbox: true }`. An agent's `sandbox:` field is still not written (V130).
+
+Validate (V138) errors on an `untrusted` entry that is none of the three forms, an `mcp:<id>` naming no declared server, a `lift` naming no declared human, and a refuse rule that is not a permission rule. Codex and Cursor write nothing for it; `validate --target codex|cursor` warns.
+
+### 4.33 `rules`
+
+```ebnf
+rules           = 'rules' '{' rule-decl* '}'
+rule-decl       = 'rule' string '{' 'text' ':' string ('source' ':' string)? '}'
+```
+
+```agenttopology
+rules {
+  rule "R-7.6" {
+    text: "Never publish a draft without a second read."
+    source: "editorial handbook, section 7"
+  }
+}
+```
+
+Conduct rules traced to their ids. The id is a quoted string and may hold dots; each id appears once, and `text` is required and never empty (V143). `source` says where the rule comes from. A second `rules { }` block is ignored with a V23 warning.
+
+A gate or a hook may cite a rule with `rule: "<id>"`; an id the block does not declare is an error (V144). The citation is a trace, not enforcement.
+
+claude-code writes a `## Rules` section, one entry per rule with its id, between `<!-- agentopology:rules -->` markers into the entry agent's file (the `meta { entry }` agent), or into the topology skill when there is no entry agent; text outside the markers is the user's. A cited rule is written as `Rule: <id>` in the gate's section and listed beside the gate by `guard --check`. codex writes the same section into AGENTS.md. `validate` prints `rules: N declared (<ids>)`.
+
+### 4.34 `islands`
+
+```ebnf
+islands         = 'islands' '{' island* '}'
+island          = 'island' id '{' path-field owner-field test-field? '}'
+path-field      = 'path' ':' string
+owner-field     = 'owner' ':' id
+test-field      = 'test' ':' string
+```
+
+```agenttopology
+person ana { away: "2026-01-01..2026-01-02" }
+islands {
+  island core {
+    path: "harness/core/**"
+    owner: ana
+    test: "npm run test:core"
+  }
+}
+```
+
+A region of the project one person owns. `path` is a glob over project-relative paths: `**` crosses folders, `*` and `?` stay in one. A live file the glob matches counts as accounted for in `validate --inventory`, which lists each island with its owner and file count. The owner must be a declared `person`, and a path is required (V147). `test` is a command: `guard --check` lists it and never runs it. Bindings emit nothing for it.
+
+### 4.35 `meta { requires }`
+
+`meta { requires: ">=0.13.0" }` names the agentopology versions the file is written for: comparators `>=`, `<=`, `>`, `<`, `=` or `^` before `x.y.z`, separated by blanks, all of which must hold (`^0.13.0` is `>=0.13.0 <0.14.0`; `^1.2.3` is `>=1.2.3 <2.0.0`). Every command that reads the file checks it against the running package first and exits 1 with a message naming both when it does not match. A value that is not a range is a V148 error, reported by `validate`.
+
+### 4.36 `secrets` and `never-reads`
+
+```ebnf
+secrets         = 'secrets' '{' secret* '}'
+secret          = 'secret' id '{' 'path' ':' string ','? 'readers' ':' name-list '}'
+```
+
+```agenttopology
+secrets {
+  secret prod-config { path: "config/prod/**", readers: [deployer, main] }
+}
+agent reviewer {
+  never-reads: [".env", "private/**"]
+}
+```
+
+Per-agent walls on what can be read. `never-reads` on an agent lists path globs that agent may not read. A `secret` names a path glob (project-relative; `**` and `*` match across folders, a pattern with no `/` also matches a file name anywhere) and the `readers` that may read it: agent ids, or `main` for the main session. Every other agent, and the main session unless `main` is listed, is refused. A reader that is not a declared agent or `main` is an error (V153); a secret with no `path` is an error (V154).
+
+Claude Code compiles this to one generated PreToolUse hook on `Read|Grep|Glob|Bash` (`before-read.sh`) that exits 2 on a match. The calling agent is `agent_type` in the hook input, which Claude Code sets when the call comes from a subagent or from a session started with `--agent`, and leaves out in the plain main session. The paths checked are Read `file_path`, Grep `path` and `glob`, Glob `path` and `pattern`, and the words of a Bash command. A Bash command can hide a path from this check: one built in a variable or substitution, one reached after `cd`, one a script opens itself, a search from a folder above the protected one. Other targets write nothing for it.
+
+### 4.37 `ci`
+
+```agenttopology
+ci {
+  provider: github
+  on: [pull_request, push]
+  gates: [publish-ready]
+}
+```
+
+`ci { provider: github, on: [<event>, ...], gates: [<gate id>, ...] }` runs the gates in CI. Fields sit one per line or, on one line, apart by commas. `provider` is required and must be `github`. `on` lists the events that start the workflow; it defaults to `[pull_request, push]`. `gates` lists declared gates, each with a `before:` step. For the claude-code target, scaffold writes `.github/workflows/agentopology-gates.yml`: it checks out the repo, sets up Node and runs `npx agentopology@<the running version> step check <file.at> <step>` for the step after each listed gate (each step once). Scaffold regenerates the file while it is as scaffold wrote it and keeps it once you edit it. A provider other than `github`, an undeclared gate id, or a gate with no step after it is an error (V155).
 
 ---
 
@@ -2082,6 +2265,8 @@ All optional fields and their defaults when omitted:
 | `agent` | `background` | `false` |
 | `agent` | `hooks` | -- (none) |
 | `agent` | `max-turns` | -- (none) |
+| `agent` | `max-subagents` | -- (no cap) |
+| `agent` | `max-cost` | -- (no cap) |
 | `agent` | `sandbox` | -- (none) |
 | `agent` | `fallback-chain` | `[]` |
 | `agent` | `extensions` | -- (none) |

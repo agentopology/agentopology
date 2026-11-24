@@ -261,9 +261,10 @@ export function mergeSettingsByRecord(
   generatedRaw: string,
   record: HookRecord[],
   ownedPaths: string[] = [],
+  heldBy: (r: HookRecord) => string | undefined = () => undefined,
 ): RecordMerge {
   const outcome: RecordMerge = { content: "", record: [], removed: [], kept: [] };
-  outcome.content = mergeSettings(existingRaw, generatedRaw, (ex, gen) => mergeHooksByRecord(ex, gen, record, outcome, ownedPaths));
+  outcome.content = mergeSettings(existingRaw, generatedRaw, (ex, gen) => mergeHooksByRecord(ex, gen, record, outcome, ownedPaths, heldBy));
   if (existingRaw.trim() === "") outcome.record = recordOf(generatedRaw);
   return outcome;
 }
@@ -701,6 +702,7 @@ function mergeHooksByRecord(
   record: HookRecord[],
   outcome: RecordMerge,
   ownedPaths: string[],
+  heldBy: (r: HookRecord) => string | undefined,
 ): Record<string, unknown[]> | undefined {
   const scripts = ownedPaths.filter((p) => !/\.(md|json)$/.test(p)).map((p) => p.replace(/^\.\//, ""));
   const ex = isPlainObject(existingHooks) ? existingHooks : {};
@@ -817,7 +819,15 @@ function mergeHooksByRecord(
       const keep = g.hooks.filter((h, hi) => {
         const e = state.get(`${gi}:${hi}`)!;
         if (e.state === "gone") {
-          outcome.removed.push(hookLine({ event, matcher: e.matcher, command: e.command! }));
+          const line = hookLine({ event, matcher: e.matcher, command: e.command! });
+          // Another .at's manifest records the same entry: it is still that
+          // topology's, so it stays (and is no longer this one's).
+          const other = heldBy({ event, matcher: e.matcher, command: e.command! });
+          if (other !== undefined) {
+            outcome.kept.push({ event, line: `hooks.${event}: kept generated hook ${line} for ${other}: its manifest still records it` });
+            return true;
+          }
+          outcome.removed.push(line);
           return false;
         }
         if (e.state === "ours") rec.push({ event, matcher: e.matcher, command: e.command! });
