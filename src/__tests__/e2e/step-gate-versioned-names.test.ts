@@ -288,6 +288,94 @@ const VALIDATE_REFUSED = [
   "npm exec -- agentopology@0.13.1 validate gated.at --no-plugins",
 ];
 
+/**
+ * More spellings of a run of the CLI, `{s}` standing for the gated step and its file. Each runs the CLI,
+ * so the step gate refuses it before its go or its sign.
+ */
+const STEP_FORMS: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["a later runner word whose package name reads as empty", [
+    "npx agentopology@1 {s} # npx npm:",
+    "npx agentopology@1 {s} # npx x@npm:",
+    "pnpm dlx agentopology@1 {s} # yarn dlx npm:",
+    "npx agentopology@1 {s} --dir 'npx x@npm:'",
+    "npx agentopology@1 {s} bunx y@npm:",
+  ]],
+  ["a runner option with a value before dlx, exec or x", [
+    "pnpm -C . dlx agentopology@1 {s}",
+    "pnpm --dir . dlx agentopology@1 {s}",
+    "pnpm --filter x dlx agentopology@1 {s}",
+    "npm --prefix . exec agentopology@1 {s}",
+    "npm --prefix . x agentopology@1 {s}",
+    "npm --prefix . exec -- agentopology@1 {s}",
+    "npm -w x exec agentopology@1 {s}",
+    "npm --registry R exec agentopology@1 {s}",
+    "yarn --cwd . dlx agentopology@1 {s}",
+    "bun --cwd . x agentopology@1 {s}",
+    "pnpm --some-option value dlx agentopology@1 {s}",
+  ]],
+  ["a variable set to a versioned name", [
+    "f=agentopology@1; npx $f {s}",
+  ]],
+  ["a tarball or a git spec", [
+    "npx ./agentopology-0.13.1.tgz {s}",
+    "npx https://registry.npmjs.org/agentopology/-/agentopology-0.13.1.tgz {s}",
+    "npx git+https://github.com/agentopology/agentopology.git {s}",
+  ]],
+  ["the CLI's own file, a here-string, a runner's --call", [
+    "node node_modules/agentopology/dist/cli/index.js {s}",
+    "bash <<<'agentopology {s}'",
+    "npx --call='agentopology {s}'",
+    "npm exec --call='agentopology {s}'",
+  ]],
+  ["wrappers, letter case and spaces around a versioned name", [
+    "env npx agentopology@1 {s}",
+    "nice npx agentopology@1 {s}",
+    "sudo npx agentopology@1 {s}",
+    "sh -c 'npx agentopology@1 {s}'",
+    "eval npx agentopology@1 {s}",
+    "echo x | xargs npx agentopology@1 {s}",
+    "NPX Agentopology@1 {s}",
+    "npx    agentopology@1    {s}",
+  ]],
+];
+
+/** Commands near those forms that run no gated step: they still pass. */
+const NEAR_PASSED = [
+  "pnpm -C . dlx create-vite@5.0.0 scaffold",
+  "npm --prefix . exec prettier@3.0.0 -- --check .",
+  "npx ./other-tool-1.0.0.tgz scaffold",
+  "npx --call='echo hi'",
+  "node node_modules/other/dist/cli/index.js scaffold",
+  "cat <<<'hello world'",
+  "x=other@1; npx $x scaffold",
+];
+
+describe.skipIf(!hasJq)("more spellings of a run of the CLI reach the step gate", () => {
+  for (const [label, , name] of TOPOLOGIES) {
+    for (const [group, forms] of STEP_FORMS) {
+      for (const form of forms) {
+        const cmd = form.replace("{s}", "scaffold probe.at");
+        it(`${label}: ${group}: refused: ${cmd}`, () => {
+          expect(off(name, [cmd], 2)).toEqual([]);
+        });
+      }
+    }
+    for (const cmd of NEAR_PASSED) {
+      it(`${label}: passes: ${cmd}`, () => {
+        expect(off(name, [cmd], 0)).toEqual([]);
+      });
+    }
+  }
+  for (const [group, forms] of STEP_FORMS) {
+    for (const form of forms) {
+      const cmd = form.replace("{s}", "validate gated.at");
+      it(`two step gates: ${group}: the validate step is refused before the sign: ${cmd}`, () => {
+        expect(off("two-gates", [cmd], 2)).toEqual([]);
+      });
+    }
+  }
+});
+
 describe.skipIf(!hasJq)("a step gate recognises the CLI named with a version, a tag or a runner", () => {
   for (const [label, , name] of TOPOLOGIES) {
     for (const cmd of SCAFFOLD_REFUSED) {
