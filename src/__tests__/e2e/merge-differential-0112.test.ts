@@ -38,6 +38,11 @@
  * that differs from 0.11.2 only that way is held to one of three classes
  * (removed-line, generated-removed, user-kept); any other difference stays red.
  * The number per class is pinned (HOOK_RECORD).
+ *
+ * A fifth named exception, unescaped-quote-warning (differential/unescaped-quote.ts,
+ * approved for 0.13.0): an rt harness whose imported run: keeps a `\"` the run
+ * reader does not decode gets a new V96 warning; validate's output and import's
+ * verdict line differ by that warning only. Pinned (UNESCAPED_QUOTE_WARNING).
  */
 
 import { describe, it, expect } from "vitest";
@@ -53,6 +58,7 @@ import { ruledSides } from "./differential/stub-rulings.mjs";
 import { readAsPath, type ReadAsPathKind } from "./differential/read-as-path.js";
 import { refuseStubRegenerated } from "./differential/refuse-stub.js";
 import { hookRecordKind, type HookRecordKind } from "./differential/hook-record.js";
+import { unescapedQuoteImport, unescapedQuoteValidate } from "./differential/unescaped-quote.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(here, "../../../dist/cli/index.js");
@@ -79,6 +85,17 @@ const REFUSE_STUB_REGENERATED = 5;
  */
 const HOOK_RECORD: Record<HookRecordKind, number> = { "removed-line": 19, "generated-removed": 16, "user-kept": 6 };
 
+/**
+ * The rt sequences whose imported run: keeps a `\"` the run reader does not decode
+ * (approved exception, differential/unescaped-quote.ts): validate now warns on it (V96),
+ * and that warning, in validate's output and in import's verdict line, is the only
+ * difference. Fifteen: the inline echo and printf forms, `./.claude/hooks/x.sh "$1"`,
+ * uv, npx, bun run, bash -c, osascript and powershell. The warning is a warning on
+ * every hook and gate, so no exit code moves; a run V96 already refuses gets no
+ * second message.
+ */
+const UNESCAPED_QUOTE_WARNING = 15;
+
 interface Step { args: string; code: number | null; output: string; settings: string | null }
 /**
  * guard --check prints the Claude Code version installed on the machine that runs it
@@ -104,6 +121,7 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
   let asserted = 0;
   const readAsPathSeqs: Record<ReadAsPathKind, string[]> = { "project-dir": [], flags: [], both: [] };
   const refuseStubSeqs = new Set<string>();
+  const quoteSeqs = new Set<string>();
   const hookRecordSeqs: Record<HookRecordKind, string[]> = { "removed-line": [], "generated-removed": [], "user-kept": [] };
   const indexed = (SEQUENCES as Array<{ name: string }>).map((seq, i) => [seq.name, i] as const);
 
@@ -150,7 +168,11 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         // validated. Elsewhere the import invariant applies (import-invariant.test.ts).
         if (rt && n === 0) {
           const ref = rtImport.get(seq.name);
-          if (!ref || ref.code !== step.code || ref.output !== step.output) diffs.push(`${at}: differs from 0.11.3's reviewed import reference`);
+          if (ref && ref.code === step.code && ref.output === step.output) return;
+          // unescaped-quote-warning (differential/unescaped-quote.ts): only import's verdict line, for the new warning.
+          const back = ref && ref.code === step.code && now[1] ? unescapedQuoteImport(step.output, hostless(now[1].output)) : null;
+          if (back !== null && back === ref!.output) return void quoteSeqs.add(seq.name);
+          diffs.push(`${at}: differs from 0.11.3's reviewed import reference`);
           return;
         }
         if (rt && was[1].code !== 0) return;
@@ -167,6 +189,12 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
         if (wasOut === nowOut) return;
         // refuse-stub-regenerated (differential/refuse-stub.ts): only the regenerated stub line and the counts it moves.
         if (!rt && refuseStubRegenerated(wasOut, nowOut, hostless(step.output))) return void refuseStubSeqs.add(seq.name);
+        // unescaped-quote-warning (differential/unescaped-quote.ts): only the new V96 warning on rt's validate step.
+        const unwarned = rt && n === 1 ? unescapedQuoteValidate(hostless(step.output)) : null;
+        if (unwarned !== null) {
+          const [wasBack, nowBack] = ruledSides(hostless(w.output), unwarned);
+          if (wasBack === nowBack) return void quoteSeqs.add(seq.name);
+        }
         diffs.push(`${at}: output differs\n--- 0.11.2\n${w.output}\n--- now\n${step.output}`);
       });
       // Hook ownership by record (differential/hook-record.ts): a sequence that
@@ -197,6 +225,10 @@ describe("[D-merge-0112] every scaffold → edit → re-scaffold sequence matche
       "generated-removed": hookRecordSeqs["generated-removed"].length,
       "user-kept": hookRecordSeqs["user-kept"].length,
     }).toEqual(HOOK_RECORD);
+  });
+
+  it("held only the rt sequences whose run: keeps a \\\" to unescaped-quote-warning, counted", () => {
+    expect(quoteSeqs.size).toBe(UNESCAPED_QUOTE_WARNING);
   });
 
   it("held only the rt sequences read as a path to the read-as-path rule, counted per kind", () => {

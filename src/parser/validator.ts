@@ -22,7 +22,7 @@
 import { MISSING } from "./index.js";
 import { gateAnchors, pluginMcpServer, pluginMcpServers } from "./ast.js";
 import { CLAUDE_CODE_PERMISSION_MODES, mapPermissionMode, mcpRefs, pluginMcpPrefix } from "../bindings/claude-code.js";
-import { isProjectPath, isShellCommand, proseInRun, runParts, scriptNameFromRun } from "./run.js";
+import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
@@ -1180,6 +1180,18 @@ function v96RunIsCommand(ast: TopologyAST): ValidationResult[] {
   const check = (owner: string, run: string | undefined, nodeId?: string, agentHook = false) => {
     if (run === undefined) return;
     const why = proseInRun(run) ?? (agentHook ? null : unsafeScriptPath(run));
+    // Strings are not unescaped in 0.13.0: a \" the run reader does not decode reaches the
+    // command with its backslash, so the check may never match what it was written to
+    // match. A warning on every hook and gate, refusing ones included (unescaping comes
+    // later). A run V96 already refuses below is not reported twice.
+    if (!why && run.includes('\\"') && !runDecodesQuotes(run)) {
+      results.push({
+        rule: "V96",
+        level: "warning",
+        message: `${owner} "run": \`\\"\` reaches the command unescaped; this check may never pass or refuse as written`,
+        ...(nodeId ? { node: nodeId, line: lookupLine(ast, nodeId) } : {}),
+      });
+    }
     if (!why) return;
     results.push({
       rule: "V96",
