@@ -4881,6 +4881,10 @@ function v130ClaudeCodePlacement(ast: TopologyAST, opts: ValidateOptions): Valid
     if (a.sandbox != null) warn(`agent "${a.id}" sets sandbox; Claude Code has no per-agent sandbox, so it is not written. settings { sandbox: true } turns on the project's sandbox (sandbox.enabled).`, a.id);
     if (a.fallbackChain && a.fallbackChain.length > 0) warn(`agent "${a.id}" sets fallback-chain; Claude Code has no per-agent fallback chain, so it is not written. settings { fallback-chain } sets the project's fallbackModel.`, a.id);
   }
+  // A gate's bypass: lands in the skill's gate section as text; no hook or check reads it.
+  for (const n of ast.nodes) {
+    if (n.type === "gate" && (n as GateNode).bypass) warn(`gate ${n.id} has bypass: it is written as text only; it is not enforced.`, n.id);
+  }
   const s = ast.settings ?? {};
   if (s.sandbox != null && typeof s.sandbox !== "boolean")
     warn(`settings sandbox: "${String(s.sandbox)}" is not written for Claude Code, which turns its sandbox on or off (sandbox.enabled): write true or false, or set sandbox.* keys in extensions { claude-code }.`);
