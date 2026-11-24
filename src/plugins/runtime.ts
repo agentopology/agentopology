@@ -36,6 +36,7 @@ export const CORE_KEYWORDS: ReadonlySet<string> = new Set([
 ]);
 
 const KEYWORD = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const COMMAND_NAME = /^[a-z][a-z0-9-]*$/;
 
 /** Check one plugin's shape; throws a {@link PluginError} naming it. */
 export function checkPlugin(p: unknown, where = "plugin"): AtPlugin {
@@ -54,6 +55,14 @@ export function checkPlugin(p: unknown, where = "plugin"): AtPlugin {
       throw new PluginError(`${name}: block "${kw}" needs multiplicity "single" or "repeated".`);
     }
   }
+  if (plugin.commands !== undefined) {
+    if (!plugin.commands || typeof plugin.commands !== "object" || Array.isArray(plugin.commands)) throw new PluginError(`${name}: \`commands\` is an object of command name to function.`);
+    for (const [cmd, fn] of Object.entries(plugin.commands)) {
+      if (!COMMAND_NAME.test(cmd)) throw new PluginError(`${name}: command name ${JSON.stringify(cmd)} is not a lower-case word of letters, digits and - (it runs as \`agentopology ${plugin.id}:<name>\`).`);
+      if (typeof fn !== "function") throw new PluginError(`${name}: command ${cmd} is not a function.`);
+    }
+  }
+  if (plugin.guardReport !== undefined && typeof plugin.guardReport !== "function") throw new PluginError(`${name}: \`guardReport\` is not a function.`);
   if (plugin.reads !== undefined) {
     if (!Array.isArray(plugin.reads) || plugin.reads.some((r) => r !== "refusals")) {
       throw new PluginError(`${name}: \`reads\` is a list of what the plugin reads; only "refusals" exists.`);
@@ -195,6 +204,47 @@ export function pluginDiagnostics(ast: TopologyAST, opts: { target?: string } = 
     }
   }
   return out;
+}
+
+/**
+ * The lines `guard --check` prints for the loaded plugins' `guardReport`: `plugin <id> claimed: <row>`
+ * for each row. Claimed by the plugin, never counted by the core; a plugin that throws gets one line saying so.
+ */
+export function pluginReportLines(ast: TopologyAST, ctx: { target?: string } = {}): string[] {
+  const state = pluginStateOf(ast);
+  if (!state) return [];
+  const out: string[] = [];
+  for (const plugin of state.plugins) {
+    if (!plugin.guardReport) continue;
+    let rows: unknown;
+    try {
+      rows = plugin.guardReport(state.data[plugin.id] ?? {}, viewOf(ast), { ...(ctx.target ? { target: ctx.target } : {}) });
+    } catch (err) {
+      rows = [`its guardReport failed: ${err instanceof Error ? err.message : String(err)}`];
+    }
+    if (!Array.isArray(rows)) rows = [`its guardReport did not return a list of rows`];
+    for (const row of rows as unknown[]) out.push(`plugin ${plugin.id} claimed: ${String(row).replace(/\s*\r?\n\s*/g, " ").trim()}`);
+  }
+  return out;
+}
+
+/**
+ * Run `<pluginId>:<name>`: the exit code the command returns. A plugin that is not loaded, a name it does not
+ * have, and a return that is not a whole number from 0 to 255 are {@link PluginError}s.
+ */
+export function runPluginCommand(word: string, args: string[], ctx: { cwd: string; projectDir: string }): number {
+  const at = word.indexOf(":");
+  const id = word.slice(0, at);
+  const cmd = word.slice(at + 1);
+  const plugin = active.find((p) => p.id === id);
+  if (!plugin) throw new PluginError(`plugin ${id} is not loaded; run with --plugin ${id}`);
+  const fn = plugin.commands && Object.prototype.hasOwnProperty.call(plugin.commands, cmd) ? plugin.commands[cmd] : undefined;
+  if (!fn) throw new PluginError(`plugin ${id} has no command ${cmd}`);
+  const code = fn(args, { pluginId: id, cwd: ctx.cwd, projectDir: ctx.projectDir });
+  if (typeof code !== "number" || !Number.isInteger(code) || code < 0 || code > 255) {
+    throw new PluginError(`plugin ${id}: command ${cmd} did not return an exit code (a whole number from 0 to 255)`);
+  }
+  return code;
 }
 
 /** What the loaded plugins add to one target's scaffold, kept on the prepared AST. */

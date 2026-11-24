@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "../parser/index.js";
 import { resolveIncludes } from "../parser/includes.js";
 import { parseRange, satisfiesRange } from "../parser/range.js";
-import { PluginError, preparePluginTarget, setActivePlugins } from "../plugins/runtime.js";
+import { PluginError, pluginReportLines, preparePluginTarget, runPluginCommand, setActivePlugins } from "../plugins/runtime.js";
 import { loadPlugins, packagePluginRequests, type PluginRequest } from "../plugins/load.js";
 import type { TopologyAST } from "../parser/ast.js";
 import { ruleAppliesTo, validate } from "../parser/validator.js";
@@ -513,7 +513,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.command = arg;
     } else if (!result.file) {
       result.file = arg;
-    } else if (result.command === "validate") {
+    } else if (result.command === "validate" || result.command.includes(":")) {
       result.more.push(arg);
     }
     i++;
@@ -1896,6 +1896,12 @@ function cmdGuardCheck(filePath: string, dirPath: string, targetName?: string): 
     console.log("islands (test commands are listed, not run):");
     for (const x of islands) console.log(`  island ${x.id}  owner ${x.owner || "(none)"}  ${x.path}${x.test ? `  test: ${x.test}` : "  (no test command)"}`);
   }
+  // A plugin's own rows (EXPERIMENTAL), after everything the core checked: claimed by the plugin, not counted in the total, no say in the exit code.
+  const claimed = pluginReportLines(ast, { target });
+  if (claimed.length) {
+    console.log("");
+    for (const line of claimed) console.log(line);
+  }
   process.exit(report.missing > 0 ? 1 : 0);
 }
 
@@ -2189,6 +2195,11 @@ function cmdStubs(dirPath: string): void {
 // Main
 // ---------------------------------------------------------------------------
 
+/** `<pluginId>:<name>`: a command a plugin adds (EXPERIMENTAL). No core command has a colon. */
+function isPluginCommand(command: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_-]*:[a-z][a-z0-9-]*$/.test(command);
+}
+
 /** Commands that read an .at file, and so may load plugins. */
 const PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["validate", "fix", "scaffold", "sync", "visualize", "export", "plan", "info", "guard"]);
 
@@ -2198,8 +2209,10 @@ const PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["validate", "fix", "scaffo
  * is --dir, else the .at's folder. Nothing an .at says is read here.
  */
 function pluginRequests(args: ParsedArgs): { requests: PluginRequest[]; projectDir: string } {
-  const projectDir = path.resolve(args.dir ?? (args.file ? path.dirname(path.resolve(args.file)) : "."));
-  if (!args.command || !PLUGIN_COMMANDS.has(args.command)) return { requests: [], projectDir };
+  // A plugin's own command (`<id>:<name>`) takes its arguments as it likes: the project folder is --dir, else here.
+  const pluginCommand = !!args.command && isPluginCommand(args.command);
+  const projectDir = path.resolve(args.dir ?? (!pluginCommand && args.file ? path.dirname(path.resolve(args.file)) : "."));
+  if (!args.command || !(PLUGIN_COMMANDS.has(args.command) || pluginCommand)) return { requests: [], projectDir };
   const flags = args.plugins.map((spec) => ({ spec, base: process.cwd(), from: "--plugin" }));
   return { requests: [...flags, ...packagePluginRequests(projectDir)], projectDir };
 }
@@ -2431,6 +2444,16 @@ function main(args: ParsedArgs): void {
       break;
 
     default:
+      if (isPluginCommand(args.command)) {
+        // The words after the command, the file slot included: the plugin reads them as it likes.
+        try {
+          process.exit(runPluginCommand(args.command, [...(args.file ? [args.file] : []), ...args.more], { cwd: process.cwd(), projectDir: path.resolve(args.dir ?? ".") }));
+        } catch (err) {
+          if (!(err instanceof PluginError)) throw err;
+          console.error(c.red(`Error: ${err.message}`));
+          process.exit(1);
+        }
+      }
       console.error(c.red(`Unknown command: "${args.command}"`));
       usage();
       process.exit(1);

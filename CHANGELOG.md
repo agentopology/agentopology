@@ -13,6 +13,7 @@ All notable changes to agentopology are documented here.
 - A gate that carries `extensions { <id> { } }` can get its check from that plugin; it is wired as a `run:` gate is, so V135 and `guard --check` see it.
 - A new docs topic, `agentopology docs plugins`.
 - A refusal event a plugin may read (EXPERIMENTAL): with `meta { refusal-events: true }`, or a loaded plugin that declares `reads: ["refusals"]`, every generated claude-code guard that refuses appends one JSON line `{v, ts, guard, gate, rule, tool, reason}` to `.claude/agentopology/events/refusals.jsonl` just before its exit 2. Only the core writes it; `RefusalEvent` is a read-only type in `agentopology/plugins`. The line holds no command text and no tool input. A failed append never turns a refusal into a pass. The before-edit guard refuses the Edit and Write tools on the file. A guard another guard runs writes nothing, so a refusal is one line.
+- Plugin commands and report rows (EXPERIMENTAL): `commands` in a plugin run as `agentopology <pluginId>:<name> [args...]`, namespaced so a plugin command never replaces a core one, and return the exit code. `guardReport` rows are printed by `guard --check` after the core rows as `plugin <id> claimed: <row>`; they are never counted in the core's enforcement total and the exit code stays the core's.
 - Without a plugin, and without the opt-in, parse, validate and scaffold output are unchanged.
 
 ## [0.13.0] - 2026-11-24

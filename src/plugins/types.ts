@@ -118,6 +118,20 @@ interface PluginScaffoldOutput {
 }
 
 /**
+ * What a plugin command is told about the run.
+ *
+ * EXPERIMENTAL: may change before 1.0.
+ */
+export interface PluginCommandContext {
+  /** The plugin's id. */
+  pluginId: string;
+  /** The folder the command was started in. */
+  cwd: string;
+  /** The project folder: `--dir`, else `cwd`. */
+  projectDir: string;
+}
+
+/**
  * One line of `.claude/agentopology/events/refusals.jsonl`, the refusal event. READ-ONLY and
  * generic: only the core writes it (a plugin reads it, and the before-edit guard refuses the
  * Edit and Write tools on it). Written only when the topology opts in, by `meta { refusal-events: true }`
@@ -165,6 +179,19 @@ export interface AtPlugin {
    * that lists it makes every generated guard that refuses append one line there.
    */
   reads?: Array<"refusals">;
+  /**
+   * Commands the plugin adds to the CLI, by name. One runs as `agentopology <pluginId>:<name> [args...]`
+   * (the plugin must be loaded: `--plugin`, or the project's package.json). It never replaces a core command:
+   * the namespace keeps them apart. `args` are the words after the command (flags the core knows, such as
+   * `--dir`, are not in it). It returns the process exit code, a whole number from 0 to 255.
+   */
+  commands?: Record<string, (args: string[], ctx: PluginCommandContext) => number>;
+  /**
+   * Rows `guard --check` prints after the core's rows, one `plugin <id> claimed: <row>` line each. They are
+   * what the plugin claims, not what the core checked: they are never part of the core's enforcement
+   * count, and the exit code stays the core's. `ctx.target` is the target checked.
+   */
+  guardReport?(data: PluginData, view: ReadonlyTopology, ctx: { target?: string }): string[];
   /** Per target name (e.g. "claude-code"): what the plugin adds to that target's scaffold. */
   scaffold?: Record<string, (data: PluginData, view: ReadonlyTopology) => PluginScaffoldOutput>;
 }

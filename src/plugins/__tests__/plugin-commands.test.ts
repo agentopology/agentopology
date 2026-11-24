@@ -118,7 +118,7 @@ describe("plugin report rows in guard --check", () => {
     const d = project();
     const withRows = run(["guard", join(d, "w.at"), "--check", "--dir", d, "--plugin", ACME]);
     const rows = withRows.out.split("\n").filter((l) => l.startsWith("plugin acme"));
-    expect(rows).toEqual(["plugin acme claimed: widgets 1, nodes 3, target claude-code"]);
+    expect(rows).toEqual(["plugin acme claimed: widgets 1, nodes 4, target claude-code"]);
 
     // The same plugin with its guardReport switched off: the core's output and exit code are the same.
     const off = join(d, "acme-off.mjs");

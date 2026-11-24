@@ -4921,6 +4921,33 @@ These are errors that name the plugin: a block keyword that is a core section;
 a file path or a hook the core scaffold writes; a rule id outside the plugin's
 namespace.
 
+## Commands and report rows
+
+\`\`\`ts
+const plugin: AtPlugin = {
+  id: "acme",
+  apiVersion: 1,
+  blocks: {},
+  commands: {
+    // agentopology acme:hello a b   ->   args = ["a", "b"]
+    hello: (args, ctx) => { console.log("hi", args, ctx.projectDir); return 0; },
+  },
+  guardReport: (data, view, ctx) => ["widgets: 2"],
+};
+\`\`\`
+
+- A command runs as \`agentopology <pluginId>:<name> [args...]\`, with the plugin
+  loaded (\`--plugin <module>\`, or the project's package.json). The name is a
+  lower-case word. The colon keeps it apart from the core commands: a plugin
+  command never replaces one. It returns the exit code, a whole number from 0 to
+  255; anything else is an error. \`ctx\` has \`pluginId\`, \`cwd\` and \`projectDir\`
+  (\`--dir\`, else \`cwd\`).
+- \`guardReport\` rows are printed by \`guard --check\` after the core's rows, one
+  line each: \`plugin <id> claimed: <row>\`. They are what the plugin claims, not
+  what the core checked: they are never counted in the core's enforcement
+  total, and the exit code stays the core's. A \`guardReport\` that throws prints
+  one row that says so.
+
 ## The refusal event (read-only)
 
 A plugin may read what the guards refused. Only the core writes it. It is on
