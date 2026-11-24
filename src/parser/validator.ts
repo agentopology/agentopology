@@ -42,7 +42,7 @@ import { notExpressibleHits, writingJobsWithoutSandbox } from "../bindings/lib/n
 import { overrideMessage, telemetryPlan } from "../bindings/lib/claude-code-telemetry.js";
 import { ccKey, coerceCcValue, isClaudeCodeModelName, nearestCcKey, resolveSettingsKey, type CcSurface } from "../bindings/claude-code-schema.js";
 import { parse as parseSource } from "./index.js";
-import { pluginDiagnostics } from "../plugins/runtime.js";
+import { pluginDiagnostics, preparePluginTarget } from "../plugins/runtime.js";
 import type {
   HookDef,
   TopologyAST,
@@ -4128,6 +4128,10 @@ export interface ValidateOptions {
 }
 
 export function validate(ast: TopologyAST, opts: ValidateOptions = {}): ValidationResult[] {
+  // Plugins (EXPERIMENTAL): judge the gates a plugin checks (gateRuns) for the
+  // target, claude-code when none is given (the default scaffold target), so
+  // V110 and V135 see the check. Without plugins this is `ast` itself.
+  ast = preparePluginTarget(ast, opts.target ?? "claude-code");
   return [
     ...(opts.target === "codex" ? codexWarnings(ast) : []),
     ...v1UniqueNames(ast),

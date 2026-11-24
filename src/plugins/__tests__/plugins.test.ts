@@ -160,7 +160,9 @@ describe("acme loaded", () => {
       ["  action finish {", "    kind: report", '    description: "sum up"', "  }", "  gates {", "    gate g2 {", "      after: finish", "      extensions {", "        acme { }", "      }", "    }", "  }"].join("\n"),
     ).replace("orchestrator {\n    model: sonnet\n  }", "orchestrator {\n    model: sonnet\n    handles: [finish]\n  }").replace("a -> b\n", "a -> b\n    b -> finish\n");
     const ast = parse(src, { plugins: [acme] });
-    expect(validate(ast, { target: "claude-code" }).filter((r) => r.rule === "V135")).toEqual([]);
+    // Without the plugin the gate has no run:, so V135 has nothing to judge; validate prepares the plugin's check itself.
+    expect(validate(parse(src), { target: "claude-code" }).filter((r) => r.rule === "V135")).toEqual([]);
+    expect(validate(ast, { target: "claude-code" }).filter((r) => r.rule === "V135").map((r) => r.node)).toEqual(["g2"]);
     const v135 = validate(preparePluginTarget(ast, "claude-code"), { target: "claude-code" }).filter((r) => r.rule === "V135");
     expect(v135.map((r) => [r.level, r.node])).toEqual([["error", "g2"]]);
   });
