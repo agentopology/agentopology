@@ -1,0 +1,12 @@
+topology p26-block-include : [pipeline] {
+  meta {
+    version: "0.1.0"
+    description: "A building block (the brain) included as a fragment: its gate lands in settings"
+  }
+  include "./blocks/brain.at"
+  agent builder {
+    model: sonnet
+    description: "Builds"
+    invocation: manual
+  }
+}

@@ -80,6 +80,16 @@ function manifestProblem(m: Record<string, unknown>): string | null {
   for (const [p, e] of Object.entries(m.files)) {
     if (!isObject(e) || typeof e.hash !== "string") return `files[${JSON.stringify(p)}] is not an entry with a hash`;
   }
+  if (m.hooks !== undefined) {
+    if (!isObject(m.hooks)) return "hooks is not an object";
+    for (const [p, list] of Object.entries(m.hooks)) {
+      if (!Array.isArray(list)) return `hooks[${JSON.stringify(p)}] is not a list`;
+      for (const [i, r] of list.entries()) {
+        const ok = isObject(r) && typeof r.event === "string" && typeof r.command === "string" && (r.matcher === null || typeof r.matcher === "string");
+        if (!ok) return `hooks[${JSON.stringify(p)}][${i}] is not a hook entry (event, matcher, command)`;
+      }
+    }
+  }
   if (m.fields === undefined) return null;
   if (!isObject(m.fields)) return "fields is not an object";
   for (const [p, entry] of Object.entries(m.fields)) {

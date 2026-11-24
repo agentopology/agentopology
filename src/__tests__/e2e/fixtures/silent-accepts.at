@@ -1,0 +1,78 @@
+topology silent-accepts : [pipeline] {
+  meta {
+    version: "0.1.0"
+    description: "Each thing here looked wired or accepted and did nothing"
+  }
+  agent builder {
+    model: sonnet
+    description: "Builds"
+    writes: ["workspace/out.md"]
+    prompt {
+      Build.
+    }
+  }
+  agent reviewer {
+    model: opus
+    description: "Reviews"
+    tools: [Read, Grep, Glob]
+    reads: ["workspace/out.md"]
+    prompt {
+      Review.
+    }
+  }
+  flow {
+    builder -> reviewer
+  }
+  gates {
+    gate tests-green {
+      after: builder
+      before: reviewer
+      run: "npm test"
+      description: "The suite passes before review"
+      strength: refuse
+      on-fail: bounce-back
+      bypass: "none"
+    }
+  }
+  hooks {
+    hook lift-gate {
+      on: Stop
+      run: "bash tools/lift-gate.sh"
+      type: command
+      timeout: 60
+      strength: refuse
+    }
+    hook sub-gate {
+      on: SubagentStop
+      run: "bash tools/sub-gate.sh"
+      type: command
+      strength: refuse
+    }
+    hook stop-log {
+      on: Stop
+      run: "bash tools/stop-log.sh"
+      type: command
+      strength: detect
+    }
+    hook stop-plain {
+      on: Stop
+      run: "bash tools/stop-plain.sh"
+      type: command
+    }
+  }
+  settings {
+    deny: ["Bash(sudo *)"]
+    sandbox: true
+    fallback-chain: [claude-sonnet-4-5]
+    scope: local
+    pin-models: true
+  }
+  metering {
+    track: [cost]
+    per: [run]
+    output: "metrics/usage.jsonl"
+    format: jsonl
+    pricing: anthropic-current
+    limit: 5
+  }
+}

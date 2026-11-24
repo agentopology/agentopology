@@ -525,13 +525,20 @@ describe("[0.11.2-h] every example scaffolds as before", () => {
         delete j.generatedAt;
         return j;
       };
-      // The one declared addition: `fields`, the frontmatter values scaffold
-      // applied to agent, skill and command files (the three-way base). It
-      // names only those files; every other byte of the manifest is as before.
-      const { fields, ...rest } = m(viaCli);
+      // The two declared additions: `fields`, the frontmatter values scaffold
+      // applied to agent, skill and command files (the three-way base), and
+      // `hooks`, the record of the hook entries scaffold wrote (approved for
+      // hook ownership by record). `fields` names only those files, `hooks`
+      // only the hooks file, each entry its event, matcher and command;
+      // every other byte of the manifest is as before.
+      const { fields, hooks, ...rest } = m(viaCli);
       expect(rest).toEqual(m(viaLib));
       for (const p of Object.keys(fields ?? {})) {
         expect(p).toMatch(/^\.claude\/(agents\/[^/]+\/AGENT\.md|skills\/[^/]+\/SKILL\.md|commands\/[^/]+\.md)$/);
+      }
+      for (const [p, list] of Object.entries((hooks ?? {}) as Record<string, unknown[]>)) {
+        expect(p).toBe(".claude/settings.json");
+        for (const r of list) expect(Object.keys(r as object).sort()).toEqual(["command", "event", "matcher"]);
       }
       expect(JSON.stringify(m(viaCli))).not.toContain("undeclaredRulesNamed");
     });

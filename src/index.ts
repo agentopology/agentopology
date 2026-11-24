@@ -8,6 +8,7 @@
 
 export { parse } from "./parser/index.js";
 export { validate } from "./parser/validator.js";
+export { resolveIncludes } from "./parser/includes.js";
 export type { ValidationResult } from "./parser/validator.js";
 export { bindings } from "./bindings/index.js";
 export { claudeCodeBinding } from "./bindings/claude-code.js";

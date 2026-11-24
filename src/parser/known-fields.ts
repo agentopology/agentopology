@@ -9,7 +9,7 @@
  * other name with the block it sits in.
  *
  * Blocks whose contents are free-form or not yet listed (prompt, extensions,
- * settings, env, mcp-servers, memory, providers, ...) are not looked inside;
+ * env, mcp-servers, memory, providers, ...) are not looked inside;
  * their own name is still checked where they sit.
  *
  * @module
@@ -28,20 +28,21 @@ interface BlockSchema {
 const OPAQUE = null;
 
 const HOOK: BlockSchema = {
-  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass"],
-  blocks: { extensions: OPAQUE },
+  fields: ["on", "matcher", "if", "run", "type", "flag", "timeout", "url", "server", "tool", "async", "model", "strength", "bypass", "mode", "let-go", "rule"],
+  blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
 };
 
 const AGENT: BlockSchema = {
   fields: [
     "file", "role", "model", "permissions", "phase", "description",
-    "tools", "disallowed-tools", "skills", "reads", "writes", "mcp-servers",
+    "tools", "disallowed-tools", "never-reads", "skills", "reads", "writes", "mcp-servers",
     "produces", "consumes", "outputs", "skip", "behavior", "invocation", "runs",
     "independent", "color", "initial-prompt", "omit-claude-md", "retry", "timeout",
     "on-fail", "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
     "custodian-of", "place", "machine", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
+    "max-subagents", "max-cost",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],
@@ -70,18 +71,18 @@ const NODE_SCHEMAS = {
   agent: AGENT,
   action: { fields: ["kind", "source", "description", "commands", "timeout", "on-fail", "join", "unit-from"] },
   gate: {
-    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger"],
-    blocks: { extensions: OPAQUE },
+    fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "mode", "let-go", "lift", "rule"],
+    blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "binds", "typed-only-programs"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },
   hook: HOOK,
   job: { fields: ["cron", "every", "agent", "action", "enabled", "machine", "carrier", "survives"] },
   artifact: { fields: ["type", "path", "retention", "depends-on"] },
-  record: { fields: ["path"] },
-  tool: { fields: ["script", "description", "args", "lang"] },
+  record: { fields: ["path", "fields", "schema", "writer", "kind"] },
+  tool: { fields: ["script", "command", "description", "args", "lang"] },
   skill: {
     fields: [
       "description", "scripts", "domains", "references", "prompt", "file", "when-to-use",
@@ -91,7 +92,7 @@ const NODE_SCHEMAS = {
     blocks: { prompt: OPAQUE, extensions: OPAQUE },
   },
   meta: {
-    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "durable"],
+    fields: ["version", "description", "domain", "foundations", "advanced", "timeout", "error-handler", "entry", "outpoints", "durable", "requires", "target"],
   },
 } satisfies Record<string, BlockSchema>;
 
@@ -110,19 +111,29 @@ const TOPOLOGY: BlockSchema = {
     hooks: { fields: [], blocks: { hook: NODE_SCHEMAS.hook } },
     schedule: { fields: [], blocks: { job: NODE_SCHEMAS.job } },
     person: { fields: ["away"] },
-    inventory: { fields: ["roots"] },
-    needs: { fields: ["memory", "connectors", "user-skills"] },
+    inventory: { fields: ["roots", "strict"] },
+    needs: { fields: ["memory", "connectors", "user-skills", "plugins"] },
+    "threat-model": { fields: ["untrusted", "outside-sandbox", "refuse-after-untrusted", "lift"] },
+    islands: { fields: [], blocks: { island: { fields: ["path", "owner", "test"] } } },
+    ci: { fields: ["provider", "on", "gates"] },
     machines: { fields: [], blocks: { machine: { fields: ["os"] } } },
+    secrets: { fields: [], blocks: { secret: { fields: ["path", "readers"] } } },
     artifacts: { fields: [], blocks: { artifact: NODE_SCHEMAS.artifact } },
     records: { fields: [], blocks: { record: NODE_SCHEMAS.record } },
     tools: { fields: [], blocks: { tool: NODE_SCHEMAS.tool } },
     // Not in the grammar, but the parser reads the skills inside it.
     skills: { fields: [], blocks: { skill: NODE_SCHEMAS.skill } },
+    // What parseSettings reads. An `env { }` inside it warns on its own (its
+    // keys are not written to settings.json; the topology env is top-level).
+    settings: { fields: ["allow", "deny", "ask", "sandbox", "fallback-chain"], blocks: { env: OPAQUE } },
+    // What parseMetering reads.
+    // `cap:` is max-cost's alias (parseMetering reads both).
+    metering: { fields: ["track", "per", "output", "format", "pricing", "max-cost", "cap"] },
     // Sections whose contents are not checked yet.
     roles: OPAQUE, flow: OPAQUE, depth: OPAQUE, memory: OPAQUE, batch: OPAQUE,
-    environments: OPAQUE, triggers: OPAQUE, settings: OPAQUE, "mcp-servers": OPAQUE,
-    metering: OPAQUE, context: OPAQUE, env: OPAQUE, providers: OPAQUE,
-    interfaces: OPAQUE, defaults: OPAQUE, schemas: OPAQUE, observability: OPAQUE,
+    environments: OPAQUE, triggers: OPAQUE, "mcp-servers": OPAQUE,
+    context: OPAQUE, env: OPAQUE, providers: OPAQUE,
+    interfaces: OPAQUE, defaults: OPAQUE, schemas: OPAQUE, rules: OPAQUE, observability: OPAQUE,
     checkpoint: OPAQUE, extensions: OPAQUE, params: OPAQUE, interface: OPAQUE,
     // Children of a misplaced container keyword are reported by V98 instead.
     gate: OPAQUE, hook: OPAQUE, tool: OPAQUE, job: OPAQUE, command: OPAQUE, level: OPAQUE,
@@ -190,6 +201,21 @@ function topLevelItems(body: string): Item[] {
       const block = field ? null : /^[ \t]*([A-Za-z_][\w-]*)(?:[ \t]+([A-Za-z_][\w-]*))?[^\n{:"]*\{/.exec(rest);
       if (field) {
         items.push({ kind: "field", name: field[1] });
+        // A one-line block (`a: 1, b: 2`): a top-level comma before `key:` starts
+        // another field, as the parser's field reader (splitOneLineFields) reads it.
+        let paren = 0;
+        let inner = 0;
+        for (let k = i + field[0].length; k < mask.length && mask[k] !== "\n"; k++) {
+          const ch = mask[k];
+          if (ch === "(") paren++;
+          else if (ch === ")") paren--;
+          else if (ch === "[" || ch === "{") inner++;
+          else if (ch === "]" || ch === "}") inner--;
+          else if (ch === "," && paren === 0 && inner === 0) {
+            const next = /^\s*([A-Za-z_][\w-]*)\s*:/.exec(mask.slice(k + 1));
+            if (next) items.push({ kind: "field", name: next[1] });
+          }
+        }
       } else if (block) {
         const open = i + block[0].length;
         const close = closingBrace(braceText(body), open);

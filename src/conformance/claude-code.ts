@@ -265,7 +265,12 @@ export function checkStdout(event: string, stdout: string): string | null {
   return null;
 }
 
-/** Claude Code events whose hook can stop the call it runs before (exit 2). guard --check and V135 read this one list. */
+/**
+ * Claude Code events whose hook can stop the call it runs before: by exit 2 on
+ * PreToolUse and UserPromptSubmit, by the deny decision on PermissionRequest
+ * (exit 2 is not read there; the claude-code binding wraps a refuse hook's
+ * command so its exit 2 becomes that deny). guard --check and V135 read this one list.
+ */
 export const BLOCKING_EVENTS: ReadonlySet<string> = new Set(["PreToolUse", "UserPromptSubmit", "PermissionRequest"]);
 
 /** Tool events: the ones a handler's `if` is read on, and whose matcher is a tool name. */

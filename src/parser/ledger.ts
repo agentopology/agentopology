@@ -36,6 +36,20 @@ export function gateLedger(ast: TopologyAST, gate: GateNode): RecordDef | undefi
   return records.length === 1 ? records[0] : undefined;
 }
 
+/**
+ * The ledgers a human's go row goes to: those of the gates whose `after:` names the
+ * human, once each, in declaration order. Empty when no gate after it reads a record.
+ */
+export function goLedgers(ast: TopologyAST, humanId: string): RecordDef[] {
+  const out: RecordDef[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "gate" || !gateAnchors(n as GateNode, "after").includes(humanId)) continue;
+    const rec = gateLedger(ast, n as GateNode);
+    if (rec && !out.includes(rec)) out.push(rec);
+  }
+  return out;
+}
+
 /** A unit goes into a file path, so it is one safe path segment: no `/`, no `..`. */
 const SAFE_UNIT = /^[A-Za-z0-9_.@+-]+$/;
 

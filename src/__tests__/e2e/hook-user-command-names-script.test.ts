@@ -188,23 +188,40 @@ describe("an edited copy of the generated command is still the topology's, as in
       "an argument appended": (g: string) => `${g} --extra`,
       "a command chained after it": (g: string) => `${g} && ./my-extra.sh`,
     })) {
-      it(`${target}: ${what}, then the .at renames the script: replaced by the new command`, () => {
+      // Changed for hook ownership by record (approved ruling): an edited copy
+      // is the user's. Before: replaced by the new command on the rename.
+      it(`${target}: ${what}: the edited copy is the user's, kept; the original is not written again beside it`, () => {
         fs.writeFileSync(at, AT(target, AT_CHANGES["the .at unchanged"]));
         expect(scaffold().code).toBe(0);
         const doc = JSON.parse(read()) as Doc;
         const group = Object.values(doc.hooks).flat().find((g) => g.hooks.some((h) => /guard\.sh/.test(h.command ?? "")))!;
         const entry = group.hooks.find((h) => /guard\.sh/.test(h.command ?? ""))!;
-        const edited = edit(entry.command!);
+        const original = entry.command!;
+        const edited = edit(original);
         entry.command = edited;
         fs.writeFileSync(join(project, HF), JSON.stringify(doc, null, 2) + "\n");
-        fs.writeFileSync(at, AT(target, AT_CHANGES["the .at renames the hook's script"]));
 
+        const same = scaffold();
+        expect(same.code, same.out).toBe(0);
+        expect(commands()).toContain(edited);
+        expect(commands()).not.toContain(original);
+        expect(same.out).toContain("kept your edited copy of PreToolUse Bash; the generated hook is not added again; delete your copy to get it back");
+
+        // The .at renames the script: the copy stays the user's; guard2.sh is another hook, written.
+        fs.writeFileSync(at, AT(target, AT_CHANGES["the .at renames the hook's script"]));
         const { out, code } = scaffold();
         expect(code, out).toBe(0);
         const now = commands();
-        expect(now).not.toContain(edited);
+        expect(now).toContain(edited);
+        expect(now).not.toContain(original);
         expect(now.some((c) => /guard2\.sh/.test(c ?? ""))).toBe(true);
-        expect(out).not.toContain("kept a command");
+        expect(out).toContain("you edited the entry scaffold wrote");
+        // And says the copy still runs the old script.
+        const old = (/(\.(?:codex|claude)\/[^\s"'\\]*guard\.sh)/.exec(original) ?? [])[1]!;
+        expect(out).toContain(`${HF} hooks.PreToolUse: your edited copy of PreToolUse Bash still runs ${old}`);
+        // Not when the .at drops the hook (nothing renamed).
+        fs.writeFileSync(at, AT(target, AT_CHANGES["the .at drops that hook"]));
+        expect(scaffold().out).not.toContain("still runs");
       });
     }
   }

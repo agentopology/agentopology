@@ -17,13 +17,16 @@
 
 import type { ActionNode, AgentNode, GateNode, HumanNode, OrchestratorNode, TopologyAST } from "../../parser/ast.js";
 import { gateAnchors } from "../../parser/ast.js";
-import { gateLedger, guardedActions } from "../../parser/ledger.js";
+import { gateLedger, goLedgers, guardedActions } from "../../parser/ledger.js";
+import { parseWindow } from "../../parser/window.js";
+import { threatModelActive } from "./threat.js";
 import { scriptNameFromRun } from "../../parser/run.js";
 import { sessionAgentsOf, talkEdgesOf } from "../../parser/session-graph.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { sessionAgentId } from "./entry.js";
 import { isWorkflowSeamAgent } from "./seam.js";
+import { hasRoutes, routeActionCheckLines, routeActionTargets, routeCheckFunction, routeCheckLines, routeRecordPath, routeTargets } from "./route.js";
 
 /** What differs between hosts when a guard script is written. */
 export interface GuardPlatform {
@@ -132,20 +135,34 @@ function upToRoot(p: GuardPlatform, topology: string): string {
  *
  * With no project-dir variable every mode finds the root from the script's place.
  */
-export function projectRootLines(p: GuardPlatform, topology: string, mode: "cd" | "strict" | "fallback"): string[] {
+export function projectRootLines(p: GuardPlatform, topology: string, mode: "cd" | "strict" | "fallback", target?: string): string[] {
   const v = p.projectDirVar;
   const here = `$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, topology)}" && pwd)`;
   if (v === null) {
     return mode === "fallback" ? [`ROOT="${here}"`, 'cd "$ROOT"'] : [`cd "${here}"`];
   }
-  if (mode === "cd") return [`cd "$${v}"`];
+  // meta { target }: AT_PROJECT is the project (where the scripts are), then the work is done in the target.
+  const intoTarget = target === undefined || mode === "fallback"
+    ? []
+    : [`cd ${shellQuote(target)} || { echo "agentopology: the target directory ${target.replace(/[^A-Za-z0-9_.@+/ -]/g, "")} does not exist, so this step cannot be checked and is blocked" >&2; exit 2; }`];
+  if (mode === "cd") return target === undefined ? [`cd "$${v}"`] : [`AT_PROJECT="$${v}"`, 'cd "$AT_PROJECT"', ...intoTarget];
   if (mode === "strict") {
     return [
       `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this step cannot be checked and is blocked" >&2; exit 2; fi`,
-      `cd "$${v}"`,
+      ...(target === undefined ? [`cd "$${v}"`] : [`AT_PROJECT="$${v}"`, 'cd "$AT_PROJECT"', ...intoTarget]),
     ];
   }
   return [`ROOT="\${${v}:-}"`, `if [ -z "$ROOT" ]; then ROOT=${here}; fi`, 'cd "$ROOT"'];
+}
+
+/** The target directory a platform's guards work in: `meta { target }` where the host sets a project-dir variable (Claude Code). */
+export function rootTarget(ast: TopologyAST, p: GuardPlatform): string | undefined {
+  return p.projectDirVar === null ? undefined : targetOf(ast);
+}
+
+/** The `DIR=` line: the scripts folder, absolute from $AT_PROJECT when the script has moved into a target. */
+function scriptsDirLine(p: GuardPlatform, topology: string, target: string | undefined): string {
+  return target === undefined ? `DIR="${p.scriptsDir(topology)}"` : `DIR="$AT_PROJECT/${p.scriptsDir(topology)}"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,16 +327,22 @@ export function approvalTargets(ast: TopologyAST, human: HumanNode, p: GuardPlat
 export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const name = ast.topology.name;
   const steps = new Map<string, string[]>();
+  const hold = holdLines(ast, p, "agent");
   const add = (agent: string, lines: string[]) => steps.set(agent, [...(steps.get(agent) ?? []), ...lines]);
 
+  // 0.13.0: an agent every way into which is a `when` route starts only on its route (lib/route.ts).
+  for (const agent of routeTargets(ast, p).keys()) add(agent, routeCheckLines(ast, agent, p));
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
     if (!gate.run || gate.behavior === "advisory" || !scriptNameFromRun(gate.run)) continue;
+    const held = hold !== null && (gate.mode === "shadow" || gate.letGo === "once");
     for (const agent of spawnHeldAgents(ast, gate, p)) {
       add(agent, [
         `    # gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`,
-        `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
+        held
+          ? `    bash "$DIR/gate-${gate.id}.sh" >&2 || at_hold ${shellQuote(gate.id)} "its check script failed" || exit 2`
+          : `    bash "$DIR/gate-${gate.id}.sh" >&2 || exit 2`,
       ]);
     }
   }
@@ -346,8 +369,8 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
       : `# reason to ${p.modelName}. ${p.label} cannot ask, so an approval step holds until a record exists.`,
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    ...projectRootLines(p, name, "cd"),
-    `DIR="${p.scriptsDir(name)}"`,
+    ...projectRootLines(p, name, "cd", rootTarget(ast, p)),
+    scriptsDirLine(p, name, rootTarget(ast, p)),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this launch, so it is blocked",
       pass: "agentopology: jq is not installed; this launch names no gated agent, so it runs. Install jq to check launches.",
@@ -360,6 +383,7 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
     // trailing punctuation), so " Reviewer ", "re\u200bviewer" and "agents/reviewer:" are still reviewer.
     `AGENT=$(jq -er '(${p.payload.subagentType} // "") | strings | ${JQ_AGENT_NORM}') || { echo "agentopology: the hook input is not valid JSON, so the launch is blocked" >&2; exit 2; }`,
     "",
+    ...(hold ?? []),
     ...(p.supportsAsk
       ? [
           // D-4: one decision per run. Each approval step adds its reason; one JSON object is printed at the end.
@@ -367,6 +391,10 @@ export function generateBeforeAgentScript(ast: TopologyAST, p: GuardPlatform): G
           "ask() { ASK=\"${ASK:+$ASK; }$1\"; }",
           "",
         ]
+      : []),
+    ...routeCheckFunction(ast, p),
+    ...(p.supportsAsk
+      ? []
       : hasHuman(ast, p)
         ? [
             `APPROVALS="${p.stateDir}/approvals.jsonl"`,
@@ -414,6 +442,41 @@ export function checkableActionGate(ast: TopologyAST, gate: GateNode): boolean {
   return !!gateLedger(ast, gate) || !!scriptNameFromRun(gate.run);
 }
 
+/**
+ * What a before-action.sh on disk lacks for a gate before a script step (guard --check, both
+ * platforms): the gate's line, the ledger read when the gate has a ledger, and the run of its
+ * check when it has a `run:` script. A gate with both needs both; a script that has the line but
+ * skips one (kept from an older scaffold, edited by hand) holds less than the .at says.
+ */
+export function beforeActionGateProblems(ast: TopologyAST, gate: GateNode, script: string): string[] {
+  if (!script.includes(`# gate ${gate.id} (`)) return [`before-action.sh has no line for gate ${gate.id}`];
+  const problems: string[] = [];
+  const has = (call: string) => script.split("\n").some((l) => l.trimStart().startsWith(`${call} ${shellQuote(gate.id)} `));
+  if (gateLedger(ast, gate) && !has("check_ledger")) problems.push(`before-action.sh does not read the ledger of gate ${gate.id}`);
+  if (scriptNameFromRun(gate.run) && !has("at_gate")) problems.push(`before-action.sh does not run the run: check of gate ${gate.id}`);
+  return problems;
+}
+
+/**
+ * The generated checks that hold a gate: `action` when before-action.sh runs it
+ * (a script step in `before:`), `agent` when before-agent.sh does (it holds the
+ * launch of a subagent). Empty when no generated check runs it before something
+ * (a SubagentStop-only gate, or none). `tests`, `mode` and `let-go` work on
+ * these two only.
+ */
+export function gateChecks(ast: TopologyAST, gate: GateNode, p: GuardPlatform = CLAUDE_CODE_GUARDS): Array<"action" | "agent"> {
+  const out: Array<"action" | "agent"> = [];
+  if (checkableActionGate(ast, gate)) out.push("action");
+  if (gate.run && gate.behavior !== "advisory" && scriptNameFromRun(gate.run) && spawnHeldAgents(ast, gate, p).length > 0) out.push("agent");
+  return out;
+}
+
+/** The human whose ledger row lets a gate go: its `lift:`, else the human its `after:` names. */
+export function letGoHuman(ast: TopologyAST, gate: GateNode): string | undefined {
+  if (gate.lift) return gate.lift;
+  return gateAnchors(gate, "after").find((id) => ast.nodes.some((n) => n.id === id && n.type === "human"));
+}
+
 /** A gate duration (`30s`, `5m`, `2h`, `1d`) in seconds, or null. */
 export function durationSeconds(d: string | undefined): number | null {
   const m = /^(\d+)([smhd])$/.exec(d ?? "");
@@ -449,7 +512,61 @@ export function inlineGateBudget(gate: GateNode): number {
 
 /** The gates whose check script before-action.sh runs, each once. */
 export function beforeActionGates(ast: TopologyAST): GateNode[] {
-  return [...new Set(actionGuards(ast).flatMap(({ gates }) => gates))].filter((g) => !!scriptNameFromRun(g.run));
+  return [...new Set([...actionGuards(ast).flatMap(({ gates }) => gates), ...writeGates(ast)])].filter((g) => !!scriptNameFromRun(g.run));
+}
+
+/**
+ * The gates with a `before: write "<glob>"` anchor that have something to check: a ledger or a `run:`
+ * script, and not advisory. An edit (before-edit.sh) or a Bash write (before-action.sh) of a path
+ * matching one of the globs is refused until the gate holds.
+ */
+export function writeGates(ast: TopologyAST): GateNode[] {
+  return ast.nodes.filter((n): n is GateNode => n.type === "gate")
+    .filter((g) => g.behavior !== "advisory" && (g.beforeWrite ?? []).some((x) => x.trim() !== "") && (!!gateLedger(ast, g) || !!scriptNameFromRun(g.run)));
+}
+
+/** The words of a glob's literal parts (`src/**` + `/gen` → src, gen), for the no-jq reading. */
+function globWords(glob: string): string[] {
+  return glob.split(/[*?/[\]\\]+/).filter((w) => lettersOf(w) !== "");
+}
+
+/** A gate's write globs that are not empty. */
+function writeGlobs(gate: GateNode): string[] {
+  return (gate.beforeWrite ?? []).filter((x) => x.trim() !== "");
+}
+
+/**
+ * A path glob as lower-case `[[ == ]]` patterns, for a path relative to the project root. `*` and `**`
+ * both match across folders (the guard errs toward refusing); `**` + `/` also matches no folder; a glob
+ * with no wildcard names a path or a folder under it.
+ */
+export function writeGlobPatterns(glob: string): string[] {
+  const g0 = glob.trim().replace(/^\.\//, "");
+  const variants = g0.includes("**/") ? [g0.split("**/").join(""), g0.split("**/").join("*/")] : [g0];
+  const out = new Set<string>();
+  for (const v of variants) {
+    const esc = v.toLowerCase().replace(/[[\]\\]/g, "\\$&").replace(/\*+/g, "*");
+    out.add(esc);
+    if (!esc.endsWith("*")) out.add(`${esc.replace(/\/$/, "")}/*`);
+  }
+  return [...out];
+}
+
+/** The `meta { target }` directory, or undefined when none is set (or it is empty: V152 reports that). */
+export function targetOf(ast: TopologyAST): string | undefined {
+  const t = ast.topology.target?.trim();
+  return t ? t : undefined;
+}
+
+/**
+ * The shell expression for the directory project paths resolve against: the project root (`$VAR`), or
+ * with `meta { target }` the target, absolute as written or under the project root. The one place that
+ * joins the target to the project-dir variable; every generated script and hook command takes it from here.
+ */
+export function projectRootRef(ast: TopologyAST, v: string = "CLAUDE_PROJECT_DIR"): string {
+  const t = targetOf(ast);
+  if (t === undefined) return `$${v}`;
+  return t.startsWith("/") ? t.replace(/\/+$/, "") || "/" : `$${v}/${t.replace(/^\.\//, "").replace(/\/+$/, "")}`;
 }
 
 /**
@@ -458,6 +575,15 @@ export function beforeActionGates(ast: TopologyAST): GateNode[] {
  */
 export function beforeActionHookTimeout(ast: TopologyAST): number {
   return Math.max(BEFORE_ACTION_MIN_TIMEOUT, beforeActionBudgetSum(ast) + BEFORE_ACTION_MARGIN);
+}
+
+/**
+ * The hook timeout for before-edit.sh: set only when a gate before a write runs a check script (its
+ * budgets plus the margin), else 0 and the host's default stands.
+ */
+export function beforeEditHookTimeout(ast: TopologyAST): number {
+  const runs = writeGates(ast).filter((g) => !!scriptNameFromRun(g.run));
+  return runs.length === 0 ? 0 : Math.max(BEFORE_ACTION_MIN_TIMEOUT, runs.reduce((s, g) => s + inlineGateBudget(g), 0) + BEFORE_ACTION_MARGIN);
 }
 
 /** The sum of the budgets of the gate checks before-action.sh may run in one command. */
@@ -1137,7 +1263,7 @@ export function noJqWords(t: string, extra = ""): string[] {
  *   tool's letters at all (jq reads any mention it cannot account for as doubt).
  * Anything else runs, with one line on stderr. Needs the FAIL_CLOSED trap; tr and cat only.
  */
-function noJqLines(o: {
+export function noJqLines(o: {
   refuse: string;
   pass: string;
   words?: string[][];
@@ -1147,8 +1273,13 @@ function noJqLines(o: {
   powershell?: boolean;
   /** The first word of every git step the topology declares: refuse a tool run by a program that reads its arguments from stdin. */
   stdinGitSteps?: string[];
+  /** Refuse every call when jq is missing: the guard checks a path it cannot read without jq. */
+  refuseAll?: boolean;
 }): string[] {
   const sq = shellQuote;
+  if (o.refuseAll) {
+    return ["if ! command -v jq >/dev/null 2>&1; then", `  echo ${sq(o.refuse)} >&2`, "  exit 2", "fi"];
+  }
   const lists = (o.inOrder ?? []).map((ws) => ws.map(lettersOf).filter(Boolean)).filter((ws) => ws.length > 0);
   const wordLists = (o.words ?? []).map((ws) => ws.flatMap((w) => noJqWords(w, o.split ?? ""))).filter((ws) => ws.length > 0);
   const tools = [...new Set((o.expansion ?? []).map(lettersOf).filter(Boolean))];
@@ -1314,16 +1445,29 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     if (rec) paths.push(rec.path.replace(/^\.\//, ""));
   }
   if (!p.supportsAsk && hasHuman(ast, p)) paths.push(`${p.stateDir}/approvals.jsonl`);
-  return [...new Set(paths)].map((path) => {
-    const base = path.replace(/^.*\//, "");
-    const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
-    // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
-    const unitInName = base.includes("{unit}");
-    // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
-    const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
-    return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
-  });
+  // The threat model's session marks, and the ledger its lift person approves in (Claude Code only).
+  if (p.id === "claude-code" && threatModelActive(ast)) {
+    paths.push(`${p.stateDir}/taint/{unit}`);
+    if (ast.threatModel?.lift) paths.push(`${p.stateDir}/approvals.jsonl`);
+  }
+  return [...new Set(paths)].map(protectedFile);
+}
+
+/** A project-relative path (`{unit}` allowed) as the patterns and letters the guards match it by. */
+function protectedFile(path: string): ProtectedLedger {
+  const base = path.replace(/^.*\//, "");
+  const strip = (t: string) => t.replace(/\{unit\}/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  // A file name that holds the unit (`logs/{unit}.jsonl`) has no fixed name to match on its own: `*.jsonl`
+  // would refuse every .jsonl edit. Then only the whole path's pattern and letters count.
+  const unitInName = base.includes("{unit}");
+  // A [[ == ]] pattern: the literal parts with their glob characters escaped, {unit} as *.
+  const raw = (t: string) => t.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
+  return { path, glob: raw(path), name: unitInName ? "" : raw(base), letters: unitInName ? strip(path) : strip(base) || strip(path) };
+}
+
+/** The route record as a protected file (0.13.0), or null when no launch reads one (lib/route.ts). */
+function protectedRouteRecord(ast: TopologyAST, p: GuardPlatform): ProtectedLedger | null {
+  return hasRoutes(ast, p) ? protectedFile(routeRecordPath(ast, p)) : null;
 }
 
 /**
@@ -1332,11 +1476,512 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
  * the command only reads its arguments (AT_READS, a reading git subcommand) and the command holds no
  * `>` and no `tee`. Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS, and runs under `set -f`.
  */
-function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
-  if (ledgers.length === 0) return [];
+function ledgerGuardLines(
+  ledgers: ProtectedLedger[],
+  route: ProtectedLedger | null = null,
+  /** The gates before a write of a path (writeGateGuardLines). */
+  writeGateLines: string[] = [],
+  /** Write the helpers (at_only_reads, PATH_FUNCTIONS) even with nothing else to guard: the guards' own files follow (0.13.0). */
+  helpers = false,
+): string[] {
+  if (ledgers.length === 0 && !route && writeGateLines.length === 0 && !helpers) return [];
+  const routeLines = route
+    ? [
+        "# 0.13.0: the route record is refused the same way: only route.sh writes it.",
+        "# route_guard 'PATTERN' LETTERS PATH: refuse the command when it names the route record and does more than read it.",
+        "route_guard() {",
+        "  local hit=0 w",
+        "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+        "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+        "  at_path_named \"$4\" \"$5\" \"$6\" && hit=1",
+        "  [ \"$hit\" = 1 ] || return 0",
+        "  at_reads_plain \"$4\" \"$5\" \"$6\" \"$2\" && return 0",
+        "  echo \"agentopology: the command touches the route record $3; only route.sh writes it ($CMD)\" >&2",
+        "  exit 2",
+        "}",
+        `route_guard ${shellQuote(route.glob)} ${shellQuote(route.letters)} ${shellQuote(route.path)} ${pathArgs(route.path)}`,
+        "",
+      ]
+    : [];
+  // 0.13.0: every word read once, as the paths it may name (PATH_FUNCTIONS).
+  const pathLines = ["", ...PATH_FUNCTIONS, "at_pw_init", ""];
+  if (ledgers.length === 0 && writeGateLines.length === 0) return [...atOnlyReadsLines(), ...pathLines, ...routeLines];
   return [
     "# F-4: a gate's ledger is a file the agent could write. A command that names one is refused unless it",
-    "# only reads it. Not seen: a ledger reached through a variable set elsewhere, or another script.",
+    "# only reads it. Since 0.13.0 a word is matched as a glob, through the command's own variables and after a",
+    "# cd. Not seen: a ledger reached through a variable set elsewhere, or another script.",
+    ...atOnlyReadsLines(),
+    ...pathLines,
+    ...(ledgers.length === 0 ? [] : [
+      "# ledger_guard 'PATTERN' LETTERS PATH LIT GLOB NAME: refuse the command when it names the ledger and does more than read it.",
+      "ledger_guard() {",
+      "  local hit=0 w",
+      "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+      "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+      "  at_path_named \"$4\" \"$5\" \"$6\" && hit=1",
+      "  [ \"$hit\" = 1 ] || return 0",
+      "  at_reads_plain \"$4\" \"$5\" \"$6\" \"$2\" && return 0",
+      "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+      "  exit 2",
+      "}",
+      ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)} ${pathArgs(l.path)}`),
+    ]),
+    ...writeGateLines,
+    "",
+    ...routeLines,
+  ];
+}
+
+/**
+ * The before-action.sh lines for the gates before a write of a path: a command that names a path matching
+ * a gate's glob and does more than read it is held until the gate holds. Needs at_only_reads (ledgerGuardLines
+ * writes it), deny, check_ledger, at_gate and $UNIT.
+ */
+function writeGateGuardLines(ast: TopologyAST, wgates: GateNode[]): string[] {
+  if (wgates.length === 0) return [];
+  return [
+    "# A gate before a write of a path: a command that names a path matching its glob and does more than read",
+    "# it is held until the gate holds. Not seen: a path reached through a variable set elsewhere, or another script.",
+    "at_writes_to() {",
+    "  local w",
+    "  for w in $(norm \"$CMD\"); do",
+    "    w=$(lower \"${w##*>}\")",
+    "    [ -n \"$w\" ] || continue",
+    "    if [[ $w == $1 || $w == */$1 ]]; then return 0; fi",
+    "  done",
+    "  return 1",
+    "}",
+    "at_not_only_reads() { local r=0; set +u; if at_only_reads; then r=1; fi; set -u; [ \"$r\" = 1 ] && return 1; return 0; }",
+    ...wgates.flatMap((g) => {
+      const hit = writeGlobs(g).flatMap(writeGlobPatterns).map((pat) => `at_writes_to ${shellQuote(pat)}`).join(" || ");
+      return [`if { ${hit}; } && at_not_only_reads; then`, `  UNIT=''`, ...gateCheckLines(ast, g, "  "), "fi"];
+    }),
+  ];
+}
+
+/**
+ * The paths a command may name, however it names them (0.13.0): before-action.sh reads every word once
+ * (at_pw_init) into the lists the protected-file guards match on. Needs MATCH_FUNCTIONS and $CMD, and
+ * runs under `set -f`.
+ * - AT_CW: every word as a path, quotes dropped and lower case: the command's own literal assignments
+ *   (NAME=VALUE anywhere in it, VALUE with no `$`; a name assigned twice is not read) read into $NAME and
+ *   ${NAME}, every other expansion read as `*`, a `cd DIR` read into the relative words after it, `.`
+ *   and `..` resolved, the project root dropped. A word that is only an expansion counts only as a
+ *   redirect target or an argument of a program that writes or removes.
+ * - AT_CB: the globs with no `/` (the folder they expand in is not known): matched on file names.
+ * - AT_CD: the words of a segment that does more than read (any program but those that only read,
+ *   mkdir, touch and cd): matched on the folders that hold a protected file.
+ * A glob written in the command is also expanded in the project, the way the shell would.
+ * A guard matches a word as a glob: `.claude/st*` names `.claude/state/taint/s1`.
+ */
+export const PATH_FUNCTIONS: string[] = [
+  "# 0.13.0: the paths a command names, however it names them: a glob, a variable of its own, a cd first.",
+  "AT_PW_WRITERS=\" rm rmdir mv cp ln tee truncate install rsync dd shred unlink chmod chown chgrp sed perl \"",
+  "AT_PW_SAFE=\" mkdir touch cd pushd popd \"",
+  "# at_lex PATH: AT_LX, PATH with . and .. resolved lexically and the project root dropped.",
+  "at_lex() {",
+  "  local v=$1 out='' part abs=''",
+  "  [[ $v == /* ]] && abs=/",
+  "  while [ -n \"$v\" ]; do",
+  "    part=${v%%/*}",
+  "    if [[ $v == */* ]]; then v=${v#*/}; else v=''; fi",
+  "    case $part in",
+  "      ''|.) ;;",
+  "      ..) if [ -n \"$out\" ] && [[ $out != .. && $out != */.. ]]; then if [[ $out == */* ]]; then out=${out%/*}; else out=''; fi; elif [ -z \"$abs\" ]; then out=${out:+$out/}..; fi ;;",
+  "      *) out=${out:+$out/}$part ;;",
+  "    esac",
+  "  done",
+  "  AT_LX=$abs$out",
+  "  [ -n \"$AT_LX\" ] || AT_LX=.",
+  "  case $AT_LX in \"$AT_PW_ROOT\") AT_LX=. ;; \"$AT_PW_ROOT\"/*) AT_LX=${AT_LX#\"$AT_PW_ROOT\"/} ;; esac",
+  "}",
+  "# at_pw_sub WORD: AT_SX, WORD with the command's own literal assignments read in and any other expansion as *.",
+  "at_pw_sub() {",
+  "  local s=$1 out='' n r v",
+  "  while [[ $s == *'$'* ]]; do",
+  "    out+=${s%%\\$*}; s=${s#*\\$}; n=''",
+  "    if [[ $s == '{'* ]]; then",
+  "      r=${s#?}; n=${r%%[!a-z0-9_]*}",
+  "      if [ -n \"$n\" ] && [ \"${r:${#n}:1}\" = '}' ]; then s=${r:${#n}+1}; else n=''; if [[ $r == *'}'* ]]; then s=${r#*\\}}; else s=''; fi; fi",
+  "    else",
+  "      n=${s%%[!a-z0-9_]*}; s=${s:${#n}}",
+  "      # a special parameter ($? $$ $# $! $- $@ $*) is one expansion",
+  "      if [ -z \"$n\" ]; then case ${s:0:1} in [?\\$#!@*-]) s=${s:1} ;; esac; fi",
+  "    fi",
+  "    # a value's quoted glob is live once the value is expanded unquoted",
+  "    if [ -n \"$n\" ] && [[ $AT_PW_MAP == *\" $n=\"* && $AT_PW_DUP != *\" $n \"* ]]; then v=${AT_PW_MAP#*\" $n=\"}; v=${v%% *}; at_pw_glob \"$v\"; out+=$AT_GX; else out+='*'; fi",
+  "  done",
+  "  AT_SX=$out$s",
+  "}",
+  "# at_pw_glob TEXT: AT_GX, TEXT with the quoted glob characters (held as \\001 \\002 \\003) made live again.",
+  "at_pw_glob() { AT_GX=${1//$'\\001'/*}; AT_GX=${AT_GX//$'\\002'/?}; AT_GX=${AT_GX//$'\\003'/[}; }",
+  "# at_pw_add WORD IN-WRITE EXPANDED: one word into the lists. A glob written in the command counts only as the",
+  "# files it expands to here, from the folder the command runs in; one that matches nothing names nothing.",
+  "at_pw_add() {",
+  "  local c e k=0; local -a ex",
+  "  at_lex \"$1\"; c=$AT_LX",
+  "  if [ \"$3\" = 0 ] && [[ $c == *[\\*\\?\\[]* ]]; then",
+  "    shopt -s nocaseglob; set +f; ex=( $c ); set -f; shopt -u nocaseglob",
+  "    for e in \"${ex[@]}\"; do",
+  "      [ \"$e\" != \"$c\" ] || continue",
+  "      k=$((k+1)); [ \"$k\" -le 256 ] || break",
+  "      at_pw_put \"$e\" \"$2\"",
+  "    done",
+  "    return 0",
+  "  fi",
+  "  at_pw_put \"$c\" \"$2\"",
+  "}",
+  "# at_pw_put PATH IN-WRITE: AT_CW every path; AT_CX one in a write position (wpos); AT_CD one of a segment that",
+  "# does more than read, a copy's source aside; AT_RT a redirect target.",
+  "at_pw_put() {",
+  "  at_lex \"$1\"",
+  "  AT_CW+=(\"$AT_LX\")",
+  "  [ \"$wpos\" = 0 ] || AT_CX+=(\"$AT_LX\")",
+  "  [ \"$2\" = 0 ] || [ \"$issrc\" = 1 ] || AT_CD+=(\"$AT_LX\")",
+  "  [ \"$tgt\" = 0 ] || AT_RT+=(\"$AT_LX\")",
+  "  return 0",
+  "}",
+  "# at_pw_rel WORD: AT_RX, WORD read from the folder the command runs in (cdp: the session's, or a cd's).",
+  "at_pw_rel() { if [ -n \"$cdp\" ] && [[ $1 != /* ]]; then AT_RX=$cdp/$1; else AT_RX=$1; fi; }",
+  "# at_pw_unquote TEXT: AT_UQ, TEXT with a glob character or a separator inside quotes, or after a backslash, held",
+  "# as text (\\001 * \\002 ? \\003 [ \\004 the separators): the shell neither expands nor cuts there.",
+  "at_pw_unquote() {",
+  "  local s=$1 out='' q='' c i n=${#1}",
+  "  for ((i=0; i<n; i++)); do",
+  "    c=${s:i:1}",
+  "    if [ \"$c\" = '\\' ] && [ \"$q\" != \"'\" ]; then out+=$c; i=$((i+1)); c=${s:i:1}; at_pw_ph; out+=$c; continue; fi",
+  "    if [ -z \"$q\" ]; then case $c in \"'\"|'\"') q=$c ;; esac",
+  "    elif [ \"$c\" = \"$q\" ]; then q=''",
+  "    else at_pw_ph",
+  "    fi",
+  "    out+=$c",
+  "  done",
+  "  AT_UQ=$out",
+  "}",
+  "at_pw_ph() { case $c in '*') c=$'\\001' ;; '?') c=$'\\002' ;; '[') c=$'\\003' ;; '|'|';'|'&'|'('|')'|'<'|'>'|$'\\n') c=$'\\004' ;; esac; }",
+  "# at_pw_seg: the words of one segment (seg) into the lists; a cd sets the folder later relative words are read from (cdp).",
+  "at_pw_seg() {",
+  "  local p=0 n=${#seg[@]} base='' des=0 wr=0 tgt=0 j w c e ri=-1 isrun=0 issrc=0 wpos=0 cps=0 last=-1 tt=0",
+  "  while [ \"$p\" -lt \"$n\" ]; do",
+  "    w=${seg[p]}",
+  "    if [[ $w =~ ^[a-z_][a-z0-9_]*= || \"$AT_LEAD\" == *\" $w \"* ]]; then p=$((p+1)); continue; fi",
+  "    if [ \"$w\" = '>' ]; then p=$((p+2)); continue; fi",
+  "    break",
+  "  done",
+  "  if [ \"$p\" -lt \"$n\" ]; then",
+  "    base=${seg[p]##*/}",
+  "    if [[ $AT_PW_SAFE == *\" $base \"* ]] || at_reads_only \"$base\" \"${seg[@]:p+1}\"; then des=0; else des=1; fi",
+  "    [[ $AT_PW_WRITERS == *\" $base \"* ]] && wr=1",
+  "    # git rm, mv and restore change the files they name, though they count as reading git",
+  "    if [ \"$base\" = git ]; then for w in \"${seg[@]:p+1}\"; do case $w in -*) ;; rm|mv|restore|checkout|clean|reset|stash|switch) AT_PW_GITW=1; des=1; wr=1; break ;; *) break ;; esac; done; fi",
+  "    # find reads, unless it deletes or runs a program that does more than read",
+  "    if [ \"$base\" = find ]; then des=0; for ((j=p+1; j<n; j++)); do case ${seg[j]} in -exec|-execdir|-ok|-okdir) at_find_execs \"$j\" && des=1 ;; -delete) des=1; wr=1 ;; esac; done; fi",
+  "    [ \"$base\" != find ] || at_pw_find",
+  "    ri=$p",
+  "    case $base in bash|sh|zsh|dash|ksh) for ((j=p+1; j<n; j++)); do [[ ${seg[j]} == -* ]] || { ri=$j; break; }; done ;; esac",
+  "    # a copy reads its sources: only its last word (the target) is written",
+  "    case $base in cp|install|rsync) cps=1 ;; esac",
+  "    for ((j=p+1; j<n; j++)); do w=${seg[j]}; if [ \"$w\" = '>' ]; then tt=1; continue; fi; if [ \"$tt\" = 1 ]; then tt=0; continue; fi; [[ $w == -* ]] || last=$j; done",
+  "  fi",
+  "  for ((j=0; j<n; j++)); do",
+  "    w=${seg[j]}",
+  "    if [ \"$w\" = '>' ]; then tgt=1; continue; fi",
+  "    [[ $w =~ ^[a-z_][a-z0-9_]*= ]] && w=${w#*=}",
+  "    # a lone $ opens a command substitution $(...): it names no path",
+  "    if [ -z \"$w\" ] || [ \"$w\" = '$' ]; then tgt=0; continue; fi",
+  "    if [[ $w == *'$'* ]]; then e=1; at_pw_sub \"$w\"; c=$AT_SX; else e=0; c=$w; fi",
+  "    # an expansion counts where the segment does more than read, or as a redirect target; one that is only",
+  "    # an expansion, as a redirect target or a writer's argument only",
+  "    if [ \"$e\" = 1 ] && [ \"$tgt\" = 0 ] && { [ \"$des\" = 0 ] || { [ -z \"${c//[\\*\\/]/}\" ] && [ \"$wr\" = 0 ]; }; }; then continue; fi",
+  "    # the script a segment runs (its program, or an interpreter's script), and a copy's source, are not written",
+  "    isrun=0; [ \"$j\" = \"$ri\" ] && [ \"$tgt\" = 0 ] && isrun=1",
+  "    issrc=0; [ \"$cps\" = 1 ] && [ \"$tgt\" = 0 ] && [ \"$j\" -gt \"$p\" ] && [ \"$j\" != \"$last\" ] && [[ $w != -* ]] && issrc=1",
+  "    wpos=0; if [ \"$tgt\" = 1 ] || { [ \"$des\" = 1 ] && [ \"$isrun\" = 0 ] && [ \"$issrc\" = 0 ]; }; then wpos=1; fi",
+  "    at_pw_rel \"$c\"; at_pw_add \"$AT_RX\" \"$des\" \"$e\"",
+  "    if [[ $c == *=* ]]; then at_pw_rel \"${c##*=}\"; at_pw_add \"$AT_RX\" \"$des\" \"$e\"; fi",
+  "    tgt=0",
+  "  done",
+  "  if [ \"$base\" = cd ] || [ \"$base\" = pushd ]; then",
+  "    for ((j=p+1; j<n; j++)); do",
+  "      w=${seg[j]}; [[ $w == -* ]] && continue",
+  "      at_pw_sub \"$w\"; if [[ $AT_SX == /* ]]; then cdp=$AT_SX; else cdp=${cdp:+$cdp/}$AT_SX; fi",
+  "      break",
+  "    done",
+  "  fi",
+  "  return 0",
+  "}",
+  "# at_pw_find (in at_pw_seg, a find): a find that deletes (-delete) or runs a program that does more than read",
+  "# (-exec, -execdir, -ok, -okdir) adds one AT_FIND entry per starting folder, -name and -path pattern:",
+  "# \"FOLDER<tab>NAME<tab>PATH\" (no -name or -path: *).",
+  "# at_find_execs J (seg, n): find's -exec at word J hands the found paths ({}) to a program that does more than read.",
+  "at_find_execs() {",
+  "  local k x=${seg[$1+1]:-}",
+  "  at_reads_only \"${x##*/}\" && return 1",
+  "  # chmod that only adds permissions (+x, u+rw) takes nothing away from a guard",
+  "  [[ ${x##*/} == chmod && ${seg[$1+2]:-} =~ ^[ugoa]*\\+[rwxX]+$ ]] && return 1",
+  "  for ((k=$1+1; k<n; k++)); do [[ ${seg[k]} != *'{}'* ]] || return 0; done",
+  "  return 1",
+  "}",
+  "at_pw_find() {",
+  "  local j w x s d=0 k=0; local -a st nm pt",
+  "  for ((j=p+1; j<n; j++)); do",
+  "    w=${seg[j]}",
+  "    case $w in",
+  "      -delete) d=1 ;;",
+  "      -exec|-execdir|-ok|-okdir) at_find_execs \"$j\" && d=1 ;;",
+  "      # find matches its own patterns: a quoted glob there is live",
+  "      -name|-iname) x=${seg[j+1]:-*}; [[ $x != *'$'* ]] || { at_pw_sub \"$x\"; x=$AT_SX; }; at_pw_glob \"$x\"; nm+=(\"$AT_GX\") ;;",
+  "      -path|-ipath|-wholename|-iwholename) x=${seg[j+1]:-*}; [[ $x != *'$'* ]] || { at_pw_sub \"$x\"; x=$AT_SX; }; at_pw_glob \"$x\"; pt+=(\"$AT_GX\") ;;",
+  "    esac",
+  "    if [ \"$k\" = 0 ]; then case $w in -*|'!') k=1 ;; *) st+=(\"$w\") ;; esac; fi",
+  "  done",
+  "  [ \"$d\" = 1 ] || return 0",
+  "  [ \"${#st[@]}\" -gt 0 ] || st=(.)",
+  "  [ \"${#nm[@]}\" -gt 0 ] || nm=('*')",
+  "  [ \"${#pt[@]}\" -gt 0 ] || pt=('*')",
+  "  for s in \"${st[@]}\"; do",
+  "    [[ $s != *'$'* ]] || { at_pw_sub \"$s\"; s=$AT_SX; }",
+  "    [ -z \"$cdp\" ] || [[ $s == /* ]] || s=$cdp/$s",
+  "    at_lex \"$s\"; s=$AT_LX",
+  "    for w in \"${nm[@]}\"; do for x in \"${pt[@]}\"; do AT_FIND+=(\"$s\"$'\\t'\"$w\"$'\\t'\"$x\"); done; done",
+  "  done",
+  "  return 0",
+  "}",
+  "# at_find_named LIT...: a find that deletes or runs a writer reaches one of these paths: it starts in the",
+  "# project root, in the path or in a folder that holds it, and its -name and -path can match it (AT_ANC).",
+  "at_find_named() { local r=0; set +u; shopt -s nocasematch; _at_find_named \"$@\" || r=1; shopt -u nocasematch; set -u; return \"$r\"; }",
+  "_at_find_named() {",
+  "  local e s nm pt l",
+  "  for e in \"${AT_FIND[@]}\"; do",
+  "    s=${e%%$'\\t'*}; e=${e#*$'\\t'}; nm=${e%%$'\\t'*}; pt=${e#*$'\\t'}",
+  "    for l in \"$@\"; do",
+  "      if [[ $l == '?'* ]]; then l=${l#?}; [ -e \"${AT_PROJECT:-$PWD}/$l\" ] || continue; fi",
+  "      if [ \"$s\" = . ] || [[ $l == $s || $l == $s/* || $AT_PW_ROOT/$l == $s/* ]]; then",
+  "        if [[ ${l##*/} == $nm ]] && [[ $l == $pt || ./$l == $pt || $AT_PW_ROOT/$l == $pt ]]; then AT_ANC=$l; return 0; fi",
+  "      fi",
+  "    done",
+  "  done",
+  "  return 1",
+  "}",
+  "at_pw_init() { set +u; _at_pw_init; set -u; }",
+  "_at_pw_init() {",
+  "  local t x w n cdp='' re='^([a-z_][a-z0-9_]*)=([^$]*)$'",
+  "  local -a ws seg",
+  "  AT_CW=(); AT_CD=(); AT_CX=(); AT_RT=(); AT_FIND=(); AT_PW_MAP=' '; AT_PW_DUP=' '; AT_PW_GITW=0",
+  "  AT_PW_ROOT=$(lower \"$PWD\")",
+  "  # the folder the session is in (the hook input's cwd): a relative word is read from there",
+  "  if [ -n \"${INPUT:-}\" ]; then",
+  "    x=$(printf '%s' \"$INPUT\" | jq -r '.cwd // \"\" | strings' 2>/dev/null) || x=''",
+  "    if [ -n \"$x\" ]; then at_lex \"$(lower \"$x\")\"; [ \"$AT_LX\" = . ] || cdp=$AT_LX; fi",
+  "  fi",
+  "  # find's own parentheses, \\( and '(', group its tests: they cut no segment",
+  "  t=$CMD; for x in '\\(' '\\)' \"'('\" \"')'\" '\"(\"' '\")\"'; do t=${t//\"$x\"/ }; done",
+  "  # what is quoted is text (with no command substitution in the command; with one, as before: quotes dropped)",
+  "  if [[ $t != *'$('* && $t != *'`'* && $t == *[\\'\\\"\\\\]* ]] && [ \"${#t}\" -le 4096 ]; then at_pw_unquote \"$t\"; t=$AT_UQ; fi",
+  "  t=$(lower \"$(norm \"$t\")\")",
+  "  t=${t//$'\\n'/ ; }",
+  "  # &>FILE and >&FILE write FILE; 2>&1 and >&2 name a stream",
+  "  t=${t//'&>'/' > '}; t=${t//'>&'/' > '}",
+  "  for x in ';' '&' '|' '(' ')' '`'; do t=${t//\"$x\"/ ; }; done",
+  "  t=${t//'>'/ > }; t=${t//'<'/ }",
+  "  read -ra ws <<< \"$t\"",
+  "  for w in \"${ws[@]}\"; do",
+  "    if [[ $w =~ $re ]]; then",
+  "      n=${BASH_REMATCH[1]}",
+  "      if [[ $AT_PW_MAP == *\" $n=\"* ]]; then AT_PW_DUP+=\"$n \"; else AT_PW_MAP+=\"$n=${BASH_REMATCH[2]} \"; fi",
+  "    fi",
+  "  done",
+  "  ws+=(';'); seg=()",
+  "  for w in \"${ws[@]}\"; do",
+  "    if [ \"$w\" != ';' ]; then seg+=(\"$w\"); continue; fi",
+  "    [ \"${#seg[@]}\" = 0 ] || at_pw_seg",
+  "    seg=()",
+  "  done",
+  "  return 0",
+  "}",
+  "# at_path_named LIT GLOB NAME [ok|rt]: a word names the path: it is LIT, or a word with an expansion read as *",
+  "# matches LIT, or the word matches GLOB. ok: only words in a write position (AT_CX); rt: only redirect",
+  "# targets (AT_RT). A glob written in the command was read as the files it expands to. Case is not told apart.",
+  "at_path_named() { local r=0; set +u; shopt -s nocasematch; _at_path_named \"$@\" || r=1; shopt -u nocasematch; set -u; return \"$r\"; }",
+  "_at_path_named() {",
+  "  local lit=$1 g=$2 c; local -a cw",
+  "  case ${4:-} in ok) cw=(\"${AT_CX[@]}\") ;; rt) cw=(\"${AT_RT[@]}\") ;; *) cw=(\"${AT_CW[@]}\") ;; esac",
+  "  for c in \"${cw[@]}\"; do",
+  "    if [ -n \"$lit\" ] && [[ $lit == $c || $AT_PW_ROOT/$lit == $c ]]; then return 0; fi",
+  "    if [[ $c == $g || $c == */$g ]]; then return 0; fi",
+  "  done",
+  "  return 1",
+  "}",
+  "# at_anc_named LIT GLOB ...: a word of a segment that does more than read names one of these folders (AT_ANC).",
+  "at_anc_named() { local r=0; set +u; shopt -s nocasematch; _at_anc_named \"$@\" || r=1; shopt -u nocasematch; set -u; return \"$r\"; }",
+  "_at_anc_named() {",
+  "  local a g c",
+  "  while [ \"$#\" -ge 2 ]; do",
+  "    a=$1; g=$2; shift 2",
+  "    for c in \"${AT_CD[@]}\"; do",
+  "      if [[ $a == $c || $AT_PW_ROOT/$a == $c || $c == $g || $c == */$g ]]; then AT_ANC=$a; return 0; fi",
+  "    done",
+  "  done",
+  "  return 1",
+  "}",
+  "# at_reads_plain [LIT GLOB NAME]: every program in the command only reads its arguments, nothing is tee'd, no git",
+  "# rm, mv or restore is among it, and no redirect writes the path. A redirect elsewhere (2>/dev/null, 2>&1,",
+  "# > build/out) does not make a read a write.",
+  "at_reads_plain() {",
+  "  local r=1; set +u; shopt -s nocasematch",
+  "  if at_reads_segs && [ \"$AT_PW_GITW\" = 0 ] && { [ \"$#\" = 0 ] || ! { _at_path_named \"$1\" \"$2\" \"${3:-}\" rt || at_rt_letters \"${4:-}\"; }; }; then r=0; fi",
+  "  shopt -u nocasematch; set -u; return \"$r\"",
+  "}",
+  "# at_rt_letters LETTERS: a redirect target holds the path's letters (the guard's letters fallback, as for its words).",
+  "at_rt_letters() { local c; [ -n \"$1\" ] || return 1; for c in \"${AT_RT[@]}\"; do [[ ${c//[^a-z0-9]/} != *\"$1\"* ]] || return 0; done; return 1; }",
+  "# at_reads_segs: at_only_reads, its redirections aside (SEGS holds the command without them).",
+  "at_reads_segs() {",
+  "  local seg x base; local -a ws",
+  "  [[ $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
+  "  while IFS= read -r seg || [ -n \"$seg\" ]; do",
+  "    read -ra ws <<< \"$(lower \"$(norm \"$seg\")\")\"",
+  "    x=0",
+  "    while [ \"$x\" -lt \"${#ws[@]}\" ] && [[ \"$AT_LEAD\" == *\" ${ws[x]} \"* ]]; do x=$((x+1)); done",
+  "    [ \"$x\" -lt \"${#ws[@]}\" ] || continue",
+  "    [[ ${ws[x]} =~ ^[a-z_][a-z0-9_]*= ]] && return 1",
+  "    at_special \"${ws[x]}\" && return 1",
+  "    base=${ws[x]##*/}",
+  "    at_reads_only \"$base\" \"${ws[@]:x+1}\" || return 1",
+  "  done <<< \"$SEGS\"",
+  "  return 0",
+  "}",
+];
+
+/** A protected path as the shell arguments at_path_named takes: LIT (its {unit} as `u`), GLOB, NAME. */
+function pathArgs(path: string): string {
+  const lower = path.toLowerCase();
+  const base = lower.replace(/^.*\//, "");
+  const glob = lower.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*");
+  const name = base.includes("{unit}") ? "" : base.replace(/[*?[\]\\]/g, "\\$&");
+  return [lower.replace(/\{unit\}/g, "u"), glob, name].map(shellQuote).join(" ");
+}
+
+/** The folders that hold `paths` (the project root not among them), as LIT GLOB pairs for at_anc_named. */
+function ancestorArgs(paths: string[]): string {
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const parts = path.toLowerCase().replace(/^\.\//, "").split("/");
+    for (let i = 1; i < parts.length; i++) seen.add(parts.slice(0, i).join("/"));
+  }
+  return [...seen].filter((a) => a && a !== ".").map((a) => `${shellQuote(a.replace(/\{unit\}/g, "u"))} ${shellQuote(a.split("{unit}").map((x) => x.replace(/[*?[\]\\]/g, "\\$&")).join("*"))}`).join(" ");
+}
+
+/** `paths` and the folders that hold them, lower case, {unit} as `u`: the LIT arguments of at_find_named. */
+function findLits(paths: string[]): string {
+  const out = new Set<string>();
+  for (const path of paths) {
+    const parts = path.toLowerCase().replace(/^\.\//, "").replace(/\{unit\}/g, "u").split("/");
+    for (let i = 1; i <= parts.length; i++) out.add(parts.slice(0, i).join("/"));
+  }
+  return [...out].filter((x) => x && x !== ".").map(shellQuote).join(" ");
+}
+
+/** The generated guard scripts a topology may hold, by file name (0.13.0): an edit of one would switch a guard off. */
+function guardScriptNames(ast: TopologyAST): string[] {
+  const ids = (t: string) => ast.nodes.filter((n) => n.type === t).map((n) => n.id);
+  return [
+    "before-edit.sh", "before-action.sh", "before-agent.sh", "before-read.sh", "after-action.sh", "route.sh",
+    "taint-mark.sh", "taint-guard.sh", "spawn-guard.sh",
+    "talk-guard.sh", "caps-log.sh", "max-subagents.sh", "timeout.sh", "lead-timeout.sh",
+    ...ids("gate").map((id) => `gate-${id}.sh`),
+    ...(ast.records ?? []).map((r) => `record-${r.id}.sh`),
+    ...ids("human").map(goHookScript),
+    ...ids("agent").flatMap((id) => [promptLogScript(id), `output-schema-${id}.sh`]),
+  ];
+}
+
+/**
+ * The files the guards trust and scaffold writes (0.13.0): every generated guard script, the hooks file
+ * (settings.json, and settings.local.json on Claude Code) and the scaffold manifest. An edit or a Bash
+ * write of one is refused; scaffold, run outside a session, is not held by them.
+ */
+export function guardOwnFiles(ast: TopologyAST, p: GuardPlatform): string[] {
+  const dir = p.hooksFile.replace(/\/[^/]*$/, "");
+  return [
+    ...guardScriptNames(ast).map((n) => `${p.scriptsDir(ast.topology.name)}/${n}`),
+    // before-schedule.sh: written only on Claude Code, and only with a human who has a go word
+    ...(p.id ===CLAUDE_CODE_GUARDS.id && goScriptPaths(ast, p).length > 0 ? [`${p.scriptsDir(ast.topology.name)}/before-schedule.sh`] : []),
+    p.hooksFile,
+    ...(p.id === CLAUDE_CODE_GUARDS.id ? [`${dir}/settings.local.json`] : []),
+    `${dir}/.scaffold-manifest.json`,
+    `${dir}/.scaffold-manifest.${ast.topology.name.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`,
+  ];
+}
+
+/** The generated guard scripts among guardOwnFiles (0.13.0): the files whose text holds the guards. */
+export function guardScriptPaths(ast: TopologyAST, p: GuardPlatform): string[] {
+  const dir = `${p.scriptsDir(ast.topology.name)}/`;
+  return guardOwnFiles(ast, p).filter((f) => f.startsWith(dir));
+}
+
+/**
+ * The line scaffold prints, and the note guard --check gives, for a guard script at its generated path
+ * that scaffold kept instead of regenerating (a file it did not write, or one edited since): the guards
+ * this version writes are not in it. A kept file is never replaced, --force included.
+ */
+export function keptGuardScriptLine(path: string, version: string): string {
+  return `kept your ${path}: the new ${version} guards are NOT in it; delete it and scaffold again to have it generated (--force does not replace it), or merge by hand`;
+}
+
+/**
+ * Whether the guards protect their own files and the folders of the protected ones (0.13.0): only where
+ * there is something a person's word stands on: a human with a go word, or a ledger, approvals or taint
+ * state a guard reads. A plain topology's guards carry none of it.
+ */
+export function protectsOwnFiles(ast: TopologyAST, p: GuardPlatform): boolean {
+  return goScriptPaths(ast, p).length > 0 || protectedLedgers(ast, p).length > 0;
+}
+
+/** The guards' own files as no-jq word lists (noJqLines inOrder): each file name's letters. */
+function ownFileWords(ast: TopologyAST, p: GuardPlatform): string[][] {
+  if (!protectsOwnFiles(ast, p)) return [];
+  return [...new Set(guardOwnFiles(ast, p).map((f) => lettersOf(f.replace(/^.*\//, ""))))].filter(Boolean).map((l) => [l]);
+}
+
+/**
+ * The before-action.sh lines that refuse a command naming a file the guards trust (guardOwnFiles), or
+ * removing, moving or writing a folder that holds one or any other protected file. Needs PATH_FUNCTIONS
+ * (at_pw_init run) and at_only_reads.
+ */
+function ownFilesGuardLines(own: string[], held: string[], scripts: Set<string>): string[] {
+  // a generated script is guarded where the topology has it (a ? before its path: only when it exists)
+  const lits = findLits([...own, ...held]).split(" ").filter(Boolean)
+    .map((l) => (scripts.has(l.replace(/^'|'$/g, "")) ? `'?${l.slice(1)}` : l)).join(" ");
+  return [
+    "# 0.13.0: the guards' own files. A command that names one and does more than read it is refused, and so",
+    "# is one that removes, moves or writes a folder holding a protected file. Running one (bash route.sh ...) is",
+    "# not refused here: the go hooks, the one script whose run writes what a person must, are guarded above.",
+    "# own_guard LIT GLOB NAME PATH [s]: refuse a command that writes PATH (a word of it in a write position:",
+    "# a redirect target, or an argument of a program that does more than read, a copy's source aside).",
+    "# s: a generated script, guarded only where the topology has it.",
+    "own_guard() {",
+    "  [ -z \"${5:-}\" ] || [ -e \"${AT_PROJECT:-$PWD}/$4\" ] || return 0",
+    "  at_path_named \"$1\" \"$2\" \"$3\" ok || return 0",
+    "  echo \"agentopology: the command changes $4, which agentopology scaffold writes and the guards trust; ask the person ($CMD)\" >&2",
+    "  exit 2",
+    "}",
+    ...own.map((f) => `own_guard ${pathArgs(f)} ${shellQuote(f)}${scripts.has(f) ? " s" : ""}`),
+    "# a find that deletes, or runs a writer, from a folder that holds a protected file, with a -name or -path that can match it",
+    `if at_find_named ${lits}; then`,
+    "  echo \"agentopology: the command runs find over $AT_ANC, which the guards protect; ask the person ($CMD)\" >&2",
+    "  exit 2",
+    "fi",
+    `if at_anc_named ${ancestorArgs([...own, ...held])} && ! at_reads_plain; then`,
+    "  echo \"agentopology: the command removes, moves or writes the folder $AT_ANC, which holds files the guards protect; ask the person ($CMD)\" >&2",
+    "  exit 2",
+    "fi",
+    "",
+  ];
+}
+
+/** at_only_reads (F-4): every program in the command only reads its arguments, and nothing is redirected or tee'd. */
+function atOnlyReadsLines(): string[] {
+  return [
     "at_only_reads() {",
     "  local seg x base; local -a ws",
     "  [[ $CMD != *'>'* && $(lower \"$(norm \"$CMD\")\") != *tee* ]] || return 1",
@@ -1352,19 +1997,285 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
     "  done <<< \"$SEGS\"",
     "  return 0",
     "}",
-    "# ledger_guard 'PATTERN' LETTERS PATH: refuse the command when it names the ledger and does more than read it.",
-    "ledger_guard() {",
+  ];
+}
+
+/** The project paths of the topology's go hooks (claude-code only): the agent must not run or change them. */
+function goScriptPaths(ast: TopologyAST, p: GuardPlatform): string[] {
+  if (p.id !== CLAUDE_CODE_GUARDS.id) return [];
+  return goHumans(ast, p).map((h) => `${p.scriptsDir(ast.topology.name)}/${goHookScript(h.id)}`);
+}
+
+/**
+ * The before-action.sh lines that refuse a command naming a go hook unless it only reads it: run by the
+ * agent with a payload it wrote, the hook would write the go row nobody typed. Needs ledgerGuardLines
+ * (a go hook always has a ledger, so they are there).
+ */
+function goScriptGuardLines(paths: string[]): string[] {
+  if (paths.length === 0) return [];
+  return [
+    "# The go: a human's go hook writes the go row from a typed prompt. A command that names it and does",
+    "# more than read it (runs it with a payload of its own, or writes it) is refused.",
+    "go_script_guard() {",
     "  local hit=0 w",
-    "  for w in $(norm \"$CMD\"); do if [[ $w == $1 || $w == */$1 ]]; then hit=1; fi; done",
+    "  for w in $(norm \"$CMD\"); do if [[ $w == \"$1\" || $w == */\"$1\" ]]; then hit=1; fi; done",
     "  [[ $CMD_L == *\"$2\"* ]] && hit=1",
+    "  # 0.13.0: also a glob (go-*.sh), a cd first, a for loop's list, find's -exec, a variable of the command's own",
+    "  at_path_named \"$4\" \"$5\" \"$6\" && hit=1",
     "  [ \"$hit\" = 1 ] || return 0",
-    "  set +u; if at_only_reads; then set -u; return 0; fi; set -u",
-    "  echo \"agentopology: the command touches the gate ledger $3; only the gate's own step writes it ($CMD)\" >&2",
+    "  at_reads_plain \"$4\" \"$5\" \"$6\" \"$2\" && return 0",
+    "  echo \"agentopology: the command runs or changes the go hook $3; only a prompt the person types runs it ($CMD)\" >&2",
     "  exit 2",
     "}",
-    ...ledgers.map((l) => `ledger_guard ${shellQuote(l.glob)} ${shellQuote(l.letters)} ${shellQuote(l.path)}`),
+    ...paths.map((path) => {
+      const base = path.replace(/^.*\//, "");
+      return `go_script_guard ${shellQuote(base)} ${shellQuote(lettersOf(base))} ${shellQuote(path)} ${pathArgs(path)}`;
+    }),
     "",
   ];
+}
+
+/** A go word as the words a guard compares: lower case, every run of characters other than a-z 0-9 one space. */
+export function goWordWords(word: string): string {
+  return word.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * The runner steps a `claude` call from Bash may match (the words after `claude`, as stepKey reads them):
+ * every declared action command whose program is `claude`, and every schedule job with an agent, whose
+ * generated script runs `claude -p "..." --agent <agent>` (its fixed words: -p, then --agent <agent>).
+ */
+export function claudeRunners(ast: TopologyAST): string[] {
+  const fromActions = ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
+    .map(stepKey).filter((k) => k.key === "claude").map((k) => k.rest);
+  const fromSchedules = (ast.schedules ?? []).filter((j) => j.agent).map((j) => `-p --agent ${j.agent!.toLowerCase()}`);
+  return [...new Set([...fromActions, ...fromSchedules])];
+}
+
+/**
+ * The before-action.sh lines that keep a `claude` run from Bash from giving the go (claude-code, a human
+ * with `word:`): a new session's prompt fires UserPromptSubmit, and the go hook would read it as typed.
+ * A segment runs `claude` when the step matcher reads `claude` as a program there (seg_steps: by any path,
+ * after env/timeout/npx or any program that can run its arguments). The command is refused when it runs
+ * `claude` and holds a go word anywhere (its words, cut at every character other than a-z 0-9, lower case:
+ * a prompt argument, a pipe or a here-string into it); when a run of `claude` cannot be read (an expansion
+ * among its words); and when a run matches no runner step (claudeRunners: the runner's words in order
+ * after `claude`, as a script step is matched). A command that holds the word and runs no `claude` runs.
+ * Needs MATCH_FUNCTIONS, $CMD, $CMD_L and $SEGS.
+ */
+function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
+  if (goScriptPaths(ast, p).length === 0) return [];
+  const sq = shellQuote;
+  const words = goHumans(ast, p).map((h) => h.word!.trim());
+  const runners = claudeRunners(ast);
+  const route = protectedRouteRecord(ast, p);
+  const held = [...guardOwnFiles(ast, p), ...protectedLedgers(ast, p).map((l) => l.path), ...(route ? [route.path] : []), ...goScriptPaths(ast, p)];
+  const typists =[...new Set([...KEYSTROKE_PROGRAMS, ...goHumans(ast, p).flatMap((h) => h.typedOnlyPrograms ?? []).map((t) => t.toLowerCase())])];
+  const wordTests = words.map((w) => {
+    const ws = goWordWords(w);
+    // a word with no a-z 0-9 at all is looked for as written
+    return ws ? `[[ $AT_GO_CMD == *${sq(` ${ws} `)}* ]]` : `[[ $CMD == *${sq(w)}* ]]`;
+  });
+  return [
+    "# The go, through a new session: a `claude` run from Bash submits its prompt as a prompt, which the go",
+    "# hook would read as typed. A command that runs claude is refused when it holds a go word anywhere, when",
+    "# a run of claude cannot be read, and when a run matches no runner step the topology declares.",
+    `# Runner steps: ${runners.length ? runners.map((r) => `claude ${r}`.trim()).join("; ") : "none"}.`,
+    "# Not seen: claude run by another script, or a prompt it reads from a file or another program's output.",
+    "AT_GO_CMD=\" $(printf '%s' \"$CMD\" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' ' | tr -s ' ') \"",
+    "# 0.13.0: Claude Code's package name (npx, pnpm dlx, bunx, yarn dlx; any version, any file in it) runs claude.",
+    "at_claude_pkg() { local w o=' '; for w in $1; do [[ $w != *anthropic-ai/claude-code* ]] || w=claude; o+=\"$w \"; done; printf '%s' \"$o\"; }",
+    "AT_CLAUDE=0; AT_CLAUDE_DOUBT=0; AT_CLAUDE_OFF=0",
+    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
+    '  L=$(lower "$(norm "$C")")',
+    "  [[ $L != *anthropic-ai/claude-code* ]] || L=$(at_claude_pkg \"$L\")",
+    "  SEG_DOUBT=0; seg_steps \"$L\" claude ''",
+    '  [ "$SEG_N" -gt 0 ] || [ "$SEG_DOUBT" = 1 ] || continue',
+    "  AT_CLAUDE=1; AT_N=$SEG_N",
+    '  [ "$SEG_DOUBT" = 1 ] && AT_CLAUDE_DOUBT=1',
+    "  AT_M=0",
+    ...runners.map((r) => `  SEG_DOUBT=0; seg_steps "$L" claude ${sq(r)}; [ "$SEG_N" -ge "$AT_N" ] && AT_M=1`),
+    '  [ "$AT_M" = 1 ] || AT_CLAUDE_OFF=1',
+    'done 3<<< "$SEGS"',
+    'if [ "$AT_CLAUDE" = 1 ]; then',
+    `  if ${wordTests.join(" || ")}; then`,
+    '    echo "agentopology: the command runs claude and holds a go word; a claude run submits its prompt as a prompt, and only the person types the go ($CMD)" >&2',
+    "    exit 2",
+    "  fi",
+    '  if [ "$AT_CLAUDE_DOUBT" = 1 ]; then',
+    '    echo "agentopology: the command runs claude in a form this guard cannot read (an expansion among its words), so it cannot tell the prompt holds no go word; write the prompt out ($CMD)" >&2',
+    "    exit 2",
+    "  fi",
+    '  if [ "$AT_CLAUDE_OFF" = 1 ]; then',
+    runners.length
+      ? `    echo ${sq(`agentopology: the command runs claude, and the run matches no runner step this topology declares (${runners.map((r) => `claude ${r}`.trim()).join("; ")}); a claude run submits its prompt as a prompt, which could give the go nobody typed `)}"($CMD)" >&2`
+      : '    echo "agentopology: the command runs claude, and this topology declares no runner step for it (an action whose commands run claude, or a schedule job); a claude run submits its prompt as a prompt, which could give the go nobody typed ($CMD)" >&2',
+    "    exit 2",
+    "  fi",
+    "fi",
+    "# 0.13.0: a deferred run. at, batch and systemd-run run their input (stdin, a here-string, their arguments) later,",
+    "# where no guard reads it. One run as a program (after wrappers such as sudo, nohup, timeout, or a shell's -c)",
+    "# in a command that holds a claude call, a go word or a protected file's name is refused. nohup, setsid and",
+    "# disown run it now, in this command, and the checks above and below already read it.",
+    `AT_HELD_L=${sq(` ${[...new Set(held.map((f) => protectedFile(f).letters).filter(Boolean))].join(" ")} `)}`,
+    "at_defer_holds() {",
+    "  local l",
+    `  [[ $AT_GO_CMD == *' claude '* || $CMD_L == *anthropicaiclaudecode* ]] && return 0`,
+    `  if ${wordTests.join(" || ")}; then return 0; fi`,
+    "  for l in $AT_HELD_L; do [[ $CMD_L != *\"$l\"* ]] || return 0; done",
+    "  return 1",
+    "}",
+    "# at_prog_at WORD...: AT_PX, the offset of the program the words run, past assignments, if/then/..., and",
+    "# wrappers (sudo, nohup, timeout, setsid, a shell's -c, ...) with their options; the word count when none.",
+    "at_prog_at() {",
+    "  local b; AT_PX=0",
+    "  while [ \"$AT_PX\" -lt \"$#\" ]; do",
+    "    b=${@:AT_PX+1:1}",
+    "    if [[ $b =~ ^[a-z_][a-z0-9_]*= || \"$AT_LEAD\" == *\" $b \"* || $b == -* || $b =~ ^[0-9.]+[smhd]?$ ]]; then AT_PX=$((AT_PX+1)); continue; fi",
+    "    case ${b##*/} in env|sudo|doas|nice|nohup|timeout|command|exec|stdbuf|ionice|chrt|taskset|setsid|time|unbuffer|sh|bash|zsh|dash|ksh) AT_PX=$((AT_PX+1)); continue ;; esac",
+    "    return 0",
+    "  done",
+    "}",
+    "at_defer_prog() {",
+    "  local b; local -a ws",
+    "  read -ra ws <<< \"$1\"",
+    "  at_prog_at \"${ws[@]}\"",
+    "  [ \"$AT_PX\" -lt \"${#ws[@]}\" ] || return 1",
+    "  b=${ws[AT_PX]}",
+    "  at_names \"$b\" at || at_names \"$b\" batch || at_names \"$b\" systemd-run",
+    "}",
+    "if at_defer_holds; then",
+    "  while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
+    '    if at_defer_prog "$(lower "$(norm "$C")")"; then',
+    '      echo "agentopology: the command hands a claude call, a go word or a file the guards protect to a deferred run (at, batch, systemd-run), which runs it later where no guard reads it; only the person types the go ($CMD)" >&2',
+    "      exit 2",
+    "    fi",
+    '  done 3<<< "$SEGS"',
+    "fi",
+    "# 0.13.0: a terminal device. Text written to /dev/pts/*, /dev/tty* or /dev/console reaches the person's",
+    "# terminal as if typed, and an agent has no reason to write there: a command that names one (also as a glob,",
+    "# through $(tty), in dd's of=) is refused, unless it only reads it with <.",
+    "at_tty_write() {",
+    "  local t w d re='(^|[^<0-9&])[0-9]*<[[:space:]]*/dev/(tty|pts|console)[^[:space:];&|)]*'",
+    "  t=$(lower \"$CMD\")",
+    "  [[ $t == *dev* || $t == *tty* ]] || return 1",
+    "  while [[ $t =~ $re ]]; do t=${t/\"${BASH_REMATCH[0]}\"/ }; done",
+    "  [[ $t == *'$(tty)'* || $t == *'`tty`'* ]] && return 0",
+    "  for w in $(norm \"$t\"); do",
+    "    [[ $w == *dev/* ]] || continue",
+    "    w=${w##*dev/}; w=${w%%/*}",
+    "    [ -n \"$w\" ] || continue",
+    "    for d in pts tty tty1 console; do [[ $d == $w* || $w == $d* ]] && return 0; done",
+    "  done",
+    "  return 1",
+    "}",
+    "if at_tty_write; then",
+    '  echo "agentopology: the command writes to a terminal device (/dev/pts, /dev/tty, /dev/console), where the text reads as typed by the person; only the person types the go ($CMD)" >&2',
+    "  exit 2",
+    "fi",
+    "# Keystrokes typed into the person's terminal are a prompt the person seems to type. A command that runs",
+    "# a keystroke tool (the built-in ones, and the human's typed-only-programs) and holds a go word is refused.",
+    "# Not seen: any other way to type into the person's terminal.",
+    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
+    '  L=$(lower "$(norm "$C")")',
+    ...typists.map((t) => `  SEG_DOUBT=0; seg_steps "$L" ${sq(t)} ''; if [ "$SEG_N" -gt 0 ] && { ${wordTests.join(" || ")}; }; then echo ${sq(`agentopology: the command runs ${t}, which types into a terminal, and holds a go word; only the person types the go `)}"($CMD)" >&2; exit 2; fi`),
+    'done 3<<< "$SEGS"',
+    "# 0.13.0: keys typed one by one. Every key a keystroke tool types in the command (tmux send-keys and its chained",
+    "# send-keys, screen's stuff, the other tools' arguments) is joined in order, a key name dropped (Enter, Space,",
+    "# C-m; not under send-keys -l), and the go word's letters looked for in the joined letters.",
+    `AT_TYPISTS=${sq(` ${typists.join(" ")} `)}`,
+    "AT_KEYS=''",
+    "at_keys_seg() {",
+    "  local n m='' lit=0 w t; local -a ws",
+    "  read -ra ws <<< \"$1\"; n=${#ws[@]}",
+    "  at_prog_at \"${ws[@]}\"",
+    "  [ \"$AT_PX\" -lt \"$n\" ] || return 0",
+    "  w=${ws[AT_PX]}",
+    "  if at_names \"$w\" tmux; then m=tmux",
+    "  elif at_names \"$w\" screen; then m=screen",
+    "  elif [ \"$w\" = send-keys ] || [ \"$w\" = send ]; then m=keys",
+    "  else for t in $AT_TYPISTS; do at_names \"$w\" \"$t\" && m=other; done",
+    "  fi",
+    "  [ -n \"$m\" ] || return 0",
+    "  for ((AT_PX=AT_PX+1; AT_PX<n; AT_PX++)); do",
+    "    w=${ws[AT_PX]}",
+    "    case $m in",
+    "      tmux) case $w in send-keys|send) m=keys; lit=0 ;; -l|-s|-f|-c|-t) AT_PX=$((AT_PX+1)) ;; esac ;;",
+    "      screen) [ \"$w\" = stuff ] && m=stuff ;;",
+    "      stuff) AT_KEYS+=$w ;;",
+    "      keys)",
+    "        case $w in",
+    "          -t|-n|-c) AT_PX=$((AT_PX+1)); continue ;;",
+    "          -l) lit=1; continue ;;",
+    "          -*) continue ;;",
+    "          send-keys|send) lit=0; continue ;;",
+    "        esac",
+    "        if [ \"$lit\" = 0 ]; then",
+    "          case $w in",
+    "            space) AT_KEYS+=' '; continue ;;",
+    "            enter|tab|btab|bspace|escape|up|down|left|right|home|end|npage|ppage|pgup|pgdn|pageup|pagedown|ic|dc|kpenter|f[0-9]|f[0-9][0-9]|[cms]-*) continue ;;",
+    "          esac",
+    "        fi",
+    "        AT_KEYS+=$w ;;",
+    "      other) case $w in -*|type|key|keydown|keyup|keystroke|tell|application|system|events|to) ;; *) AT_KEYS+=$w ;; esac ;;",
+    "    esac",
+    "  done",
+    "}",
+    "while IFS= read -r -u 3 C || [ -n \"$C\" ]; do",
+    '  set +u; at_keys_seg "$(lower "$(norm "$C")")"; set -u',
+    'done 3<<< "$SEGS"',
+    "if [ -n \"$AT_KEYS\" ]; then",
+    "  AT_KEYS_L=$(letters \"$AT_KEYS\")",
+    `  if ${words.map((w) => lettersOf(w)).filter(Boolean).map((l) => `[[ $AT_KEYS_L == *${sq(l)}* ]]`).join(" || ") || "false"}; then`,
+    '    echo "agentopology: the command types keys into a terminal that spell a go word, one by one or across send-keys calls; only the person types the go ($CMD)" >&2',
+    "    exit 2",
+    "  fi",
+    "fi",
+    "",
+  ];
+}
+
+/** Programs that type keystrokes into a terminal or pane; with a go word in the command, before-action.sh refuses them. */
+export const KEYSTROKE_PROGRAMS = ["tmux", "screen", "xdotool", "osascript", "wtype", "ydotool"];
+
+/**
+ * before-schedule.sh (claude-code, a human with `word:`): a PreToolUse hook on CronCreate|ScheduleWakeup.
+ * A scheduled or /loop prompt fires UserPromptSubmit as written, so one the model creates that starts with
+ * a go word would give the go. Every string in tool_input is read (the prompt; the docs name a scheduled
+ * task's `prompt` field in Stop input's session_crons), leading spaces and a leading `/loop` with an optional
+ * interval dropped, and matched as the go hook matches: the word, trimmed, alone or followed by a space or
+ * one of , . : ; ! ?. A match, input that is not JSON, or no jq: exit 2. Null with no go human.
+ */
+export function generateBeforeScheduleScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
+  if (goScriptPaths(ast, p).length === 0) return null;
+  const name = ast.topology.name;
+  const words = goHumans(ast, p).map((h) => h.word!.trim());
+  const filter = [
+    "def hit($w): (sub(\"\\\\s+\\\\z\"; \"\")) as $p | ($p == $w) or (($p | startswith($w)) and ($p | length) > ($w | length) and (\" ,.:;!?\" | contains($p[($w | length):(($w | length) + 1)])));",
+    "[.tool_input // {} | .. | strings | sub(\"\\\\A\\\\s+\"; \"\") | ., sub(\"\\\\A/loop\\\\s+\"; \"\"), sub(\"\\\\A/loop\\\\s+\\\\S+\\\\s+\"; \"\")]",
+    "| any(.[]; . as $s | $ws | any(.[]; . as $w | $s | hit($w)))",
+  ].join(" ");
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Before ${p.label} schedules a prompt in a project of topology "${name}".`,
+    `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on CronCreate|ScheduleWakeup.`,
+    "# A scheduled or /loop prompt fires UserPromptSubmit as written, so the go hook would count one that starts",
+    "# with a go word. One the model schedules that starts with a go word is refused (exit 2, the reason on",
+    `# stderr to ${p.modelName}). Input it cannot read blocks too.`,
+    "set -uo pipefail",
+    'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check a scheduled prompt for the go word, so it is blocked" >&2; exit 2; }',
+    "INPUT=$(cat)",
+    `AT_GO_WORDS=${shellQuote(JSON.stringify(words))}`,
+    `HIT=$(printf '%s' "$INPUT" | jq -r --argjson ws "$AT_GO_WORDS" ${shellQuote(filter)} 2>/dev/null) || { echo "agentopology: the hook input is not valid JSON, so the scheduled prompt is blocked" >&2; exit 2; }`,
+    'if [ "$HIT" = true ]; then',
+    '  echo "agentopology: the scheduled prompt starts with a go word; it would be submitted as a prompt and give the go nobody typed. Only the person types the go; schedule the prompt without it." >&2',
+    "  exit 2",
+    "fi",
+    '[ "$HIT" = false ] || { echo "agentopology: the scheduled prompt could not be checked, so it is blocked" >&2; exit 2; }',
+    "exit 0",
+    "",
+  ];
+  return { path: `${p.scriptsDir(name)}/before-schedule.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
 /**
@@ -1376,28 +2287,51 @@ function ledgerGuardLines(ledgers: ProtectedLedger[]): string[] {
  */
 export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
   const ledgers = protectedLedgers(ast, p);
-  if (ledgers.length === 0) return null;
+  const route = protectedRouteRecord(ast, p);
+  const wgates = writeGates(ast);
+  if (ledgers.length === 0 && !route && wgates.length === 0) return null;
+  const goScripts = goScriptPaths(ast, p);
   const name = ast.topology.name;
   const v = p.projectDirVar;
+  const target = rootTarget(ast, p);
   const lines = [
     "#!/usr/bin/env bash",
     `# Before ${p.label} edits a file in a project of topology "${name}" (F-4).`,
     `# Auto-generated by agentopology scaffold. Wired in ${p.hooksFile} as a PreToolUse hook on`,
     `# ${p.supportsAsk ? "Write|Edit|MultiEdit|NotebookEdit" : "apply_patch"}. A gate's ledger is a file the agent could write, so an edit`,
     `# of one is refused (exit 2, the reason on stderr to ${p.modelName}). Input it cannot read blocks too.`,
+    ...(route ? [`# The route record ${route.path} is refused the same way: only route.sh writes it.`] : []),
+    ...(wgates.length ? ["# A gate before a write of a path (before: write \"<glob>\") holds an edit of a matching path until it holds."] : []),
     "set -euo pipefail",
     ...FAIL_CLOSED,
     ...(v === null
       ? [`ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/${upToRoot(p, name)}" && pwd)"`]
       : [
           `if [ -z "\${${v}:-}" ]; then echo "agentopology: ${v} is not set, so this edit cannot be checked and is blocked" >&2; exit 2; fi`,
-          `ROOT="$(cd "$${v}" && pwd)"`,
+          ...(target === undefined
+            ? [`ROOT="$(cd "$${v}" && pwd)"`]
+            : [
+                `AT_PROJECT="$(cd "$${v}" && pwd)"`,
+                `ROOT="$(cd "$AT_PROJECT" && cd ${shellQuote(target)} 2>/dev/null && pwd)" || { echo "agentopology: the target directory does not exist, so this edit cannot be checked and is blocked" >&2; exit 2; }`,
+              ]),
         ]),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this edit, so it is blocked",
       pass: "agentopology: jq is not installed; this edit names no gate ledger, so it runs. Install jq to check edits.",
-      inOrder: ledgers.map(ledgerWords),
+      inOrder: [...[...ledgers, ...(route ? [route] : [])].map(ledgerWords), ...goScripts.map((s) => [lettersOf(s.replace(/^.*\//, ""))]), ...ownFileWords(ast, p)],
+      // a gate before a write reads the path and the ledger with jq: without it nothing can be told apart
+      refuseAll: wgates.length > 0,
     }),
+    ...(wgates.length
+      ? [
+          `DIR="${target === undefined ? "$ROOT" : "$AT_PROJECT"}/${p.scriptsDir(name)}"`,
+          'cd "$ROOT"',
+          "EDITED=''; UNIT=''",
+          'deny() { echo "agentopology: gate $1 refuses the edit of $EDITED: $2" >&2; exit 2; }',
+          ...(beforeActionGates(ast).some((g) => wgates.includes(g)) ? GATE_BUDGET_FUNCTIONS : []),
+          ...CHECK_LEDGER_FUNCTION,
+        ]
+      : []),
     "INPUT=$(cat)",
     '[ -n "$INPUT" ] || { echo "agentopology: the hook input is empty, so the edit is blocked" >&2; exit 2; }',
     "TOOL=$(printf '%s' \"$INPUT\" | jq -er '.tool_name | strings') || { echo \"agentopology: the hook input is not valid JSON, so the edit is blocked\" >&2; exit 2; }",
@@ -1410,6 +2344,7 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     '[ -n "$PATHS" ] || { echo "agentopology: no file path could be read from the edit, so it is blocked" >&2; exit 2; }',
     ...CANON_FUNCTION,
     "refuse() { echo \"agentopology: the edit touches the gate ledger $1 ($2); only the gate's own step writes it\" >&2; exit 2; }",
+    ...(route ? ["refuse_route() { echo \"agentopology: the edit touches the route record $1 ($2); only route.sh writes it\" >&2; exit 2; }"] : []),
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
     '  R="$(canon "$P")"',
@@ -1420,6 +2355,38 @@ export function generateBeforeEditScript(ast: TopologyAST, p: GuardPlatform): Ge
     // The pattern is a quoted value; unquoted inside [[ ]] it is matched as a glob and never run.
     lines.push(`  PAT=${shellQuote(l.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
     if (l.name) lines.push(`  PAT=${shellQuote(l.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse ${shellQuote(l.path)} "$R"; fi`);
+  }
+  // The go: an edit of a go hook would let the agent write the go row nobody typed.
+  for (const s of goScripts) {
+    lines.push(`  if [[ \${RL##*/} == ${shellQuote(s.replace(/^.*\//, "").toLowerCase())} ]]; then echo "agentopology: the edit changes the go hook ${s} ($R); only agentopology scaffold writes it" >&2; exit 2; fi`);
+  }
+  if (route) {
+    lines.push(`  PAT=${shellQuote(route.glob.toLowerCase())}; if [[ $RL == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
+    lines.push(`  PAT=${shellQuote(route.name.toLowerCase())}; if [[ \${RL##*/} == $PAT ]]; then refuse_route ${shellQuote(route.path)} "$R"; fi`);
+  }
+  for (const g of wgates) {
+    // the pattern goes through a variable: unquoted in [[ ]] it is matched as a glob
+    lines.push(`  for PAT in ${writeGlobs(g).flatMap(writeGlobPatterns).map(shellQuote).join(" ")}; do`);
+    lines.push("    if [[ $RL == $PAT ]]; then", '      EDITED=$R', ...gateCheckLines(ast, g, "      "), "      break", "    fi", "  done");
+  }
+  // 0.13.0: the guards' own files (the scripts, the hooks file, the scaffold manifest): only scaffold writes them.
+  // Only where the topology protects them (protectsOwnFiles), and a generated script only where it has it.
+  // The path is the project's own (frontend/.claude/settings.json is another file); with meta { target } the
+  // project is outside the root, so any folder's copy counts.
+  if (protectsOwnFiles(ast, p)) {
+    const q = (f: string) => shellQuote(f.toLowerCase().replace(/[*?[\]\\]/g, "\\$&"));
+    const scripts = new Set(guardScriptPaths(ast, p));
+    const own = guardOwnFiles(ast, p);
+    const hit = (pat: string) => `[[ $RL == ${pat}${target === undefined ? "" : ` || $RL == */${pat}`} ]]`;
+    const msg = 'echo "agentopology: the edit changes $R, which agentopology scaffold writes and the guards trust; ask the person" >&2; exit 2';
+    lines.push(
+      `  for PAT in ${own.filter((f) => !scripts.has(f)).map(q).join(" ")}; do`,
+      `    if ${hit("$PAT")}; then ${msg}; fi`,
+      "  done",
+      `  for PAT in ${own.filter((f) => scripts.has(f)).map(q).join(" ")}; do`,
+      `    if ${hit("$PAT")} && [ -e "${target === undefined ? "$ROOT" : "$AT_PROJECT"}/$PAT" ]; then ${msg}; fi`,
+      "  done",
+    );
   }
   lines.push('done <<< "$PATHS"', FAIL_CLOSED_DONE, "exit 0", "");
   return { path: `${p.scriptsDir(name)}/before-edit.sh`, content: lines.join("\n"), category: "script", executable: true };
@@ -1475,14 +2442,174 @@ const GATE_BUDGET_FUNCTIONS: string[] = [
   "",
 ];
 
+/** at_sha FILE: the file's sha256 in hex (sha256sum, else shasum -a 256 on macOS). */
+const SHA_FUNCTION = "at_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum < \"$1\"; else shasum -a 256 < \"$1\"; fi | cut -d' ' -f1; }";
+
+/**
+ * What before-action.sh checks of a human's go row beyond ok: its `valid:` window (empty when none or
+ * malformed) and its bound files. Null when `step` is no human, or one with neither.
+ */
+function goCheckOf(ast: TopologyAST, step: string): { start: string; end: string; binds: string[] } | null {
+  const h = ast.nodes.find((n) => n.id === step && n.type === "human") as HumanNode | undefined;
+  if (!h) return null;
+  const w = parseWindow(h.valid);
+  const binds = h.binds ?? [];
+  if (!w && binds.length === 0) return null;
+  return { start: w?.start ?? "", end: w?.end ?? "", binds };
+}
+
+/**
+ * check_go (before-action.sh): the human's go row, read as check_ledger reads it, counts only inside the
+ * human's `valid:` window (today not past its end, the step check rule, and the row's ts, or at, inside
+ * it) and while each bound file's sha256 is the one in the row. Needs deny and jq.
+ */
+const GO_CHECK_FUNCTIONS: string[] = [
+  "# check_go GATE HUMAN LEDGER-PATH UNIT START END [FILE...]: the human's go must lie in its valid window",
+  "# START..END (empty: none), and each FILE it binds must still have the sha256 the go recorded.",
+  SHA_FUNCTION,
+  "check_go() {",
+  "  local gate=$1 human=$2 path=$3 unit=$4 start=$5 end=$6 row now ts f want have",
+  "  shift 6",
+  "  row=$(jq -cs --arg step \"$human\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last' \"$path\") \\",
+  '    || deny "$gate" "the go ledger $path could not be read"',
+  '  if [ -n "$end" ]; then',
+  "    # AT_TODAY moves today only in the package's own tests (AGENTOPOLOGY_TEST=1), never in a session",
+  "    now=''; [ \"${AGENTOPOLOGY_TEST:-}\" != 1 ] || now=${AT_TODAY:-}",
+  '    [[ $now =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || now=$(date +%Y-%m-%d)',
+  '    if [[ $now > $end ]]; then deny "$gate" "human $human\'s approval is valid $start..$end, and today ($now) is after it"; fi',
+  "    ts=$(printf '%s' \"$row\" | jq -r '(.ts // .at // \"\") | strings | .[0:10]') || ts=''",
+  '    [[ $ts =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || deny "$gate" "human $human\'s go in $path has no time (ts), so it cannot be checked against its valid window $start..$end"',
+  '    if [[ $ts < $start || $ts > $end ]]; then deny "$gate" "human $human\'s go was given $ts, outside its valid window $start..$end"; fi',
+  "  fi",
+  '  for f in "$@"; do',
+  "    want=$(printf '%s' \"$row\" | jq -r --arg f \"$f\" '(.binds // {})[$f] // \"\" | strings') || want=''",
+  '    [[ $want =~ ^[0-9a-f]{64}$ ]] || deny "$gate" "human $human\'s go in $path records no sha256 for $f, which it binds; type the go word again"',
+  '    [ -f "$f" ] || deny "$gate" "$f, which human $human\'s go approved, is gone; type the go word again"',
+  '    have=$(at_sha "$f") || deny "$gate" "$f, which human $human\'s go binds, could not be read"',
+  '    [ "$have" = "$want" ] || deny "$gate" "$f changed after human $human\'s go (sha256 $want at the go, $have now); type the go word again"',
+  "  done",
+  "}",
+  "",
+];
+
+/**
+ * `mode: shadow` and `let-go: once` (0.13): the shell a check script needs to
+ * honour them, or null when no gate it holds uses either (the script is then
+ * written exactly as before).
+ *
+ * `at_hold GATE WHY` is called where the script would refuse. It returns 0, and
+ * the step goes on, when
+ * - the gate is `mode: shadow`: what it would refuse is appended to
+ *   logs/shadow.jsonl ({gate, at, command, reason}); or
+ * - the gate is `let-go: once` and the human's ledger row lets this one go: an
+ *   ok row of the human's step, with `gate` naming this gate and `let-go: true`,
+ *   newer than the gate's last refusal (logs/refused.jsonl) and newer than the
+ *   row of the last use (logs/let-go.jsonl). The use is written there, so the
+ *   row lifts one run.
+ * Otherwise it returns 1, after writing the refusal to logs/refused.jsonl (a let-go gate only).
+ * The ledger is the gate's own, which the ledger guard keeps the model from writing.
+ */
+function holdLines(ast: TopologyAST, p: GuardPlatform, kind: "action" | "agent"): string[] | null {
+  const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => gateChecks(ast, g, p).includes(kind));
+  const shadow = gates.filter((g) => g.mode === "shadow").map((g) => g.id);
+  const letGo = gates.flatMap((g) => {
+    const human = g.letGo === "once" ? letGoHuman(ast, g) : undefined;
+    const ledger = human ? gateLedger(ast, g) : undefined;
+    return human && ledger ? [{ id: g.id, human, path: ledger.path.replace(/^\.\//, "") }] : [];
+  });
+  if (shadow.length === 0 && letGo.length === 0) return null;
+  const sq = shellQuote;
+  return [
+    "# at_hold GATE WHY: 0 when the step may go on although the gate would refuse it: the gate is mode: shadow (the",
+    "# refusal is logged to logs/shadow.jsonl), or it is let-go: once and its human's row lets this one go (the use is",
+    "# logged to logs/let-go.jsonl). Otherwise 1.",
+    `AT_SHADOW=${sq(` ${shadow.join(" ")} `)}`,
+    `AT_LETGO=${sq(` ${letGo.map((l) => l.id).join(" ")} `)}`,
+    "at_letgo_cfg() {",
+    '  case "$1" in',
+    ...letGo.map((l) => `    ${sq(l.id)}) printf '%s|%s' ${sq(l.human)} ${sq(l.path)} ;;`),
+    "  esac",
+    "}",
+    "at_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }",
+    "# at_last FILE GATE KEY: KEY of the last line of FILE for GATE, or nothing.",
+    'at_last() { [ -f "$1" ] || return 0; jq -rs --arg g "$2" --arg k "$3" \'[.[] | select(.gate == $g)] | last | (.[$k] // "")\' "$1" 2>/dev/null || true; }',
+    "at_hold() {",
+    "  local g=$1 why=$2 what=${CMD-${AGENT-}} unit=${UNIT-} cfg human path row refused used",
+    '  if [[ $AT_SHADOW == *" $g "* ]]; then',
+    "    mkdir -p logs",
+    '    jq -nc --arg gate "$g" --arg at "$(at_now)" --arg command "$what" --arg unit "$unit" --arg reason "$why" \'{gate: $gate, at: $at, command: $command, reason: $reason} + (if $unit == "" then {} else {unit: $unit} end)\' >> logs/shadow.jsonl',
+    '    echo "agentopology: gate $g would refuse ($why); it is mode: shadow, so this is logged to logs/shadow.jsonl and the step runs." >&2',
+    "    return 0",
+    "  fi",
+    '  [[ $AT_LETGO == *" $g "* ]] || return 1',
+    '  cfg=$(at_letgo_cfg "$g"); human=${cfg%%|*}; path=${cfg#*|}; path=${path//\\{unit\\}/$unit}',
+    '  refused=$(at_last logs/refused.jsonl "$g" at); used=$(at_last logs/let-go.jsonl "$g" row-at); row=\'\'',
+    '  if [ -n "$refused" ] && [ -f "$path" ]; then',
+    "    row=$(jq -rs --arg h \"$human\" --arg g \"$g\" --arg u \"$unit\" '[.[] | select(.step == $h and .ok == true and .gate == $g and .[\"let-go\"] == true and ($u == \"\" or .unit == $u))] | last | (.at // \"\")' \"$path\" 2>/dev/null) || row=''",
+    "  fi",
+    '  if [ -n "$row" ] && [[ "$row" > "$refused" ]] && [[ "$row" > "$used" ]]; then',
+    "    mkdir -p logs",
+    '    jq -nc --arg gate "$g" --arg at "$(at_now)" --arg row "$row" --arg human "$human" --arg command "$what" \'{gate: $gate, at: $at, "row-at": $row, human: $human, command: $command}\' >> logs/let-go.jsonl',
+    '    echo "agentopology: gate $g refused ($why), and $human let this one go (let-go: once); the step runs." >&2',
+    "    return 0",
+    "  fi",
+    "  mkdir -p logs",
+    '  jq -nc --arg gate "$g" --arg at "$(at_now)" --arg command "$what" --arg reason "$why" \'{gate: $gate, at: $at, command: $command, reason: $reason}\' >> logs/refused.jsonl',
+    "  return 1",
+    "}",
+    "",
+  ];
+}
+
+/** check_ledger (before-edit.sh): the last ledger line for a step (and unit) must be ok. Needs deny and jq. */
+const CHECK_LEDGER_FUNCTION: string[] = [
+  "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
+  "check_ledger() {",
+  "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
+  '  if [[ "$tmpl" == *"{unit}"* ]]; then',
+  '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
+  '    path="${tmpl//\\{unit\\}/$unit}"',
+  "  else",
+  '    path="$tmpl"',
+  "  fi",
+  '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
+  "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
+  '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
+  '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
+  "}",
+];
+
+/**
+ * The shell lines that check one gate: its ledger (the last line for each `after:` step must be ok) and its
+ * `run:` check script (at_gate), for the gates before a write (a script step's gates keep their own lines, with its route and go checks).
+ * Needs deny, check_ledger, at_gate and $UNIT.
+ */
+function gateCheckLines(ast: TopologyAST, gate: GateNode, indent: string): string[] {
+  const sq = shellQuote;
+  const out: string[] = [`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`];
+  const ledger = gateLedger(ast, gate);
+  if (ledger) {
+    for (const step of gateAnchors(gate, "after")) {
+      out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+    }
+  }
+  if (scriptNameFromRun(gate.run)) {
+    const fix = gateWorstCase(gate) === null ? "declare a timeout: on the gate if it needs longer" : "raise the gate's timeout: if it needs longer";
+    out.push(`${indent}at_gate ${sq(gate.id)} ${inlineGateBudget(gate)} ${sq(fix)}`);
+  }
+  return out;
+}
+
 /** Every action a gate guards, with its gates, in declaration order. */
-function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: GateNode[] }> {
+function actionGuards(ast: TopologyAST, p: GuardPlatform = CLAUDE_CODE_GUARDS): Array<{ action: ActionNode; gates: GateNode[] }> {
   const gates = ast.nodes.filter((n): n is GateNode => n.type === "gate").filter((g) => checkableActionGate(ast, g));
+  // 0.13.0: a script step that only `when` routes reach is guarded too, by its route (lib/route.ts).
+  const routed = routeActionTargets(ast, p);
   const out: Array<{ action: ActionNode; gates: GateNode[] }> = [];
   for (const node of ast.nodes) {
     if (node.type !== "action") continue;
     const mine = gates.filter((g) => guardedActions(ast, g).some((a) => a.id === node.id));
-    if (mine.length > 0) out.push({ action: node as ActionNode, gates: mine });
+    if (mine.length > 0 || routed.has(node.id)) out.push({ action: node as ActionNode, gates: mine });
   }
   return out;
 }
@@ -1500,12 +2627,20 @@ function actionGuards(ast: TopologyAST): Array<{ action: ActionNode; gates: Gate
  * itself with `agentopology step check`.
  */
 export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): GeneratedFile | null {
-  const guards = actionGuards(ast);
+  const guards = actionGuards(ast, p);
   // F-4: a topology with a ledger (or, on Codex, an approval step) gets the ledger check even with no guarded step.
   const ledgers = protectedLedgers(ast, p);
-  if (guards.length === 0 && ledgers.length === 0) return null;
+  // 0.13.0: a topology whose launches read the route record gets the shell check for it too.
+  const route = protectedRouteRecord(ast, p);
+  const wgates = writeGates(ast);
+  if (guards.length === 0 && ledgers.length === 0 && !route && wgates.length === 0) return null;
   const name = ast.topology.name;
   const resolve = GUARD_OPTIONS.resolveLeadingAssignments;
+  // A gate after a human with a valid: window or binds: checks the go row beyond ok (check_go).
+  const goNeeded = guards.some(({ gates }) => gates.some((g) => gateLedger(ast, g) && gateAnchors(g, "after").some((s) => goCheckOf(ast, s))));
+  // mode: shadow and let-go: once (0.13): deny may return, and the check ends there.
+  const hold = holdLines(ast, p, "action");
+  const d = (call: string) => (hold ? `{ ${call}; return 0; }` : call);
   // Every gated step's tool and words (no jq), and the first word of every git step the topology declares (git reads).
   const stepWords = guards.flatMap(({ action }) => (action.commands ?? []).map(stepKey));
   const gitSteps = [...new Set(ast.nodes.flatMap((n) => (n.type === "action" ? (n as ActionNode).commands ?? [] : []))
@@ -1521,7 +2656,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "# `agentopology step check` itself.",
     "set -euo pipefail",
     ...FAIL_CLOSED,
-    ...projectRootLines(p, name, "strict"),
+    ...projectRootLines(p, name, "strict", rootTarget(ast, p)),
     ...noJqLines({
       refuse: "agentopology: jq is required to check this step, so it is blocked",
       pass: "agentopology: jq is not installed; this command names no gated step, so it runs. Install jq to check steps.",
@@ -1531,13 +2666,19 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       // inline git alias (`V=commit git -calias.x=V x`), which can name a git step in no words of its own
       inOrder: [
         ...ledgers.map(ledgerWords),
+        ...(route ? [ledgerWords(route)] : []),
+        ...wgates.flatMap((g) => writeGlobs(g).map(globWords).filter((w) => w.length > 0)),
         ...(stepWords.some((s) => s.key === "git") ? [["git", "alias"], ["git", "include"]] : []),
+        // 0.13.0: the guards' own files, by their file names' letters
+        ...ownFileWords(ast, p),
       ],
       expansion: stepWords.map((s) => s.key),
       powershell: !!p.powershellTool,
       stdinGitSteps: gitSteps,
+      // a write glob with no letters (`**`) names every path: nothing can be told apart without jq
+      refuseAll: wgates.some((g) => writeGlobs(g).some((x) => globWords(x).length === 0)),
     }),
-    `DIR="${p.scriptsDir(name)}"`,
+    scriptsDirLine(p, name, rootTarget(ast, p)),
     ...(p.powershellTool
       ? [
         // One read of stdin: the command, and whether the tool is PowerShell. A call with no command (Monitor's ws input) reads as "" and runs nothing.
@@ -1547,24 +2688,29 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       ]
       : [`CMD=$(jq -er '${p.payload.command} // ""') || { echo "agentopology: the hook input is not valid JSON, so the command is blocked" >&2; exit 2; }`]),
     "",
-    "deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }",
+    ...(hold
+      ? [...hold, 'deny() { at_hold "$1" "$2" && return 0; echo "agentopology: gate $1 refuses this command ($CMD): $2" >&2; exit 2; }']
+      : ["deny() { echo \"agentopology: gate $1 refuses this command ($CMD): $2\" >&2; exit 2; }"]),
     "",
-    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS : []),
+    ...routeCheckFunction(ast, p, "action"),
+    // With mode: shadow or let-go, deny can return: the check ends there (return 0) instead of going on to read what is missing.
+    ...(beforeActionGates(ast).length ? GATE_BUDGET_FUNCTIONS.map((l) => (hold ? l.replace(/\|\| (deny .*)$/, "|| { $1; return 0; }") : l)) : []),
     "# check_ledger GATE STEP LEDGER-PATH UNIT: the last line for STEP (and UNIT) must be ok.",
     "check_ledger() {",
     "  local gate=$1 step=$2 tmpl=$3 unit=$4 path ok",
     '  if [[ "$tmpl" == *"{unit}"* ]]; then',
-    '    [ -n "$unit" ] || deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"',
+    `    [ -n "$unit" ] || ${d('deny "$gate" "step \\"$step\\" must have finished ok, but no unit could be read from the command to find its ledger $tmpl"')}`,
     '    path="${tmpl//\\{unit\\}/$unit}"',
     "  else",
     '    path="$tmpl"',
     "  fi",
-    '  [ -f "$path" ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"',
+    `  [ -f "$path" ] || ${d('deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\": the ledger $path does not exist"')}`,
     "  ok=$(jq -rs --arg step \"$step\" --arg unit \"$unit\" '[.[] | select(.step == $step and ($unit == \"\" or .unit == $unit))] | last | (.ok == true)' \"$path\") \\",
-    '    || deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"',
-    '  [ "$ok" = true ] || deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"',
+    `    || ${d('deny "$gate" "step \\"$step\\" for unit \\"$unit\\": the ledger $path could not be read"')}`,
+    `  [ "$ok" = true ] || ${d('deny "$gate" "step \\"$step\\" has no ok record for unit \\"$unit\\" in ledger $path (its last record must have ok: true)"')}`,
     "}",
     "",
+    ...(goNeeded ? GO_CHECK_FUNCTIONS : []),
     "# The command is read as bash reads it, as far as a guard can, and what it cannot read is refused (F-batch):",
     "# - a backslash at a line end joins the next line;",
     "# - redirections (`>out`, `2>&1`, `<<<x`, `< f`) are dropped before the command is cut, so they neither",
@@ -1607,7 +2753,13 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     "for sep in '&' '|' ';' '(' ')' '`'; do SEGS=${SEGS//\"$sep\"/$'\\n'}; done",
     "UNIT=''",
     "",
-    ...ledgerGuardLines(ledgers),
+    ...ledgerGuardLines(ledgers, route, writeGateGuardLines(ast, wgates), protectsOwnFiles(ast, p)),
+    ...goScriptGuardLines(goScriptPaths(ast, p)),
+    ...goEntryGuardLines(ast, p),
+    // 0.13.0: the guards' own files, and the folders that hold any protected file, last (the messages above stay first).
+    ...(protectsOwnFiles(ast, p)
+      ? ownFilesGuardLines(guardOwnFiles(ast, p), [...ledgers.map((l) => l.path), ...(route ? [route.path] : []), ...goScriptPaths(ast, p)], new Set(guardScriptPaths(ast, p).map((f) => f.toLowerCase())))
+      : []),
   ];
   const sq = shellQuote;
   // Pass 1: how often each step is read plainly, so the doubt rule can tell a mention it could not read.
@@ -1637,13 +2789,18 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     const keys = [...new Map((action.commands ?? []).map((c) => { const k = stepKey(c); return [`${k.key} ${k.rest}`, k]; })).values()];
     const names = [...new Set(keys.map((k) => k.key))];
     const gateChecks = (indent: string) => {
-      const out: string[] = [];
+      // 0.13.0: the step's route first, when only `when` routes reach it.
+      const out: string[] = [...routeActionCheckLines(ast, action.id, p, indent)];
       for (const gate of gates) {
         out.push(`${indent}# gate ${gate.id} (after: ${gateAnchors(gate, "after").join(", ") || "-"})`);
         const ledger = gateLedger(ast, gate);
         if (ledger) {
           for (const step of gateAnchors(gate, "after")) {
             out.push(`${indent}check_ledger ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT"`);
+            const go = goCheckOf(ast, step);
+            if (go) {
+              out.push(`${indent}check_go ${sq(gate.id)} ${sq(step)} ${sq(ledger.path.replace(/^\.\//, ""))} "$UNIT" ${sq(go.start)} ${sq(go.end)}${go.binds.map((b) => ` ${sq(b)}`).join("")}`);
+            }
           }
         }
         if (scriptNameFromRun(gate.run)) {
@@ -1653,7 +2810,9 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
       }
       return out;
     };
-    const unreadable = (why: string, indent: string) => action.unitFrom
+    // A step held only by its route has no gate to name, and its route reads no unit.
+    const byUnit = !!action.unitFrom && gates.length > 0;
+    const unreadable = (why: string, indent: string) => byUnit
       ? [`${indent}deny ${sq(gates[0].id)} "it names ${names.join("/")} in a form this guard cannot read (${why}); write the step as a plain command"`]
       : [`${indent}UNIT=''`, ...gateChecks(indent)];
     lines.push(`# step ${action.id}`);
@@ -1669,7 +2828,7 @@ export function generateBeforeActionScript(ast: TopologyAST, p: GuardPlatform): 
     for (const k of keys) lines.push(`  seg_steps "$L" ${sq(k.key)} ${sq(k.rest)}; T=$((T + SEG_N))`);
     lines.push('  if [ "$SEG_DOUBT" = 1 ]; then', ...unreadable("an expansion or glob among the tool's words", "    "), "  fi");
     lines.push('  if [ "$T" -gt 0 ]; then');
-    if (action.unitFrom) {
+    if (byUnit && action.unitFrom) {
       // Every unit the segment names needs its own ok record (F-5): a second step must not ride the first's.
       lines.push(
         `    UNITS=$(jq -nr --arg c "$C" --arg re ${sq(action.unitFrom)} '[$c | match($re; "g") | .captures[0].string // ""] | if length == 0 then [""] else . end | .[]') || deny ${sq(gates[0].id)} "unit-from does not compile"`,
@@ -1768,7 +2927,7 @@ export function generateGateWrapperScripts(
       "set -euo pipefail",
       ...FAIL_CLOSED,
       // A platform with no project-dir variable runs the hook in the session's folder; the check path is root-relative.
-      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : []),
+      ...(p.projectDirVar === null ? projectRootLines(p, name, "cd") : rootTarget(ast, p) !== undefined ? projectRootLines(p, name, "strict", rootTarget(ast, p)) : []),
       "",
       "# Gate runs after: " + (gateAnchors(gate, "after").join(", ") || "any"),
       "# Gate runs before: " + (gateAnchors(gate, "before").join(", ") || "any"),
@@ -1843,7 +3002,7 @@ const JQ_NORM = String.raw`gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("\
  * `plugin:` prefix dropped. An empty result (no agent_type, or null) is a
  * default spawn, which no case matches.
  */
-const JQ_AGENT_NORM = String.raw`gsub("\\p{Cf}"; "") | gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("[\\s:;.,!?]+\\z"; "") | sub("\\A.*/"; "") | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
+export const JQ_AGENT_NORM = String.raw`gsub("\\p{Cf}"; "") | gsub("\\A\\s+|\\s+\\z"; "") | ascii_downcase | sub("[\\s:;.,!?]+\\z"; "") | sub("\\A.*/"; "") | sub("\\A.*:"; "") | gsub("\\A\\s+|\\s+\\z"; "")`;
 
 function appendLines(p: GuardPlatform): string[] {
   return [
@@ -1971,6 +3130,90 @@ export function talkGuard(topology: string, ast: TopologyAST, p: GuardPlatform):
   return { path: `${p.scriptsDir(topology)}/talk-guard.sh`, content: lines.join("\n"), category: "script", executable: true };
 }
 
+/**
+ * The typed test (T-04): reads $PAYLOAD's prompt into $PROMPT (leading space dropped) and sets $KIND to
+ * `arrived` when it opens with the `<cross-session-message` wrapper Claude Code puts around a message
+ * from another session, or when it holds, anywhere, the `<task-notification` envelope a background task's
+ * report arrives in; `typed` for any other non-empty prompt, `unknown` when none was read. One source
+ * for a deciding session's prompt log and a human's go hook.
+ */
+const TYPED_TEST_LINES: string[] = [
+  "KIND=unknown",
+  String.raw`PROMPT=$(printf '%s' "$PAYLOAD" | jq -er '.prompt | strings | sub("\\A\\s+"; "") | select(length > 0)' 2>/dev/null) || PROMPT=`,
+  'if [ -n "$PROMPT" ]; then',
+  '  case "$PROMPT" in',
+  '    "<cross-session-message"*) KIND=arrived ;;',
+  '    *"<task-notification"*) KIND=arrived ;;',
+  "    *) KIND=typed ;;",
+  "  esac",
+  "fi",
+];
+
+/** The file name of a human's go hook. */
+export function goHookScript(id: string): string {
+  return `go-${id}.sh`;
+}
+
+/**
+ * A human's go hook (UserPromptSubmit): when a prompt the person typed is the human's `word:` (trimmed),
+ * or opens with the word and a space or one of , . : ; ! ?, it appends `{step, ok: true, word, ts, binds}` to each ledger the
+ * gates after the human read, `binds` holding the sha256 of each bound file (null for one missing). A
+ * prompt the typed test reads as arrived, or as unknown, writes nothing. It never blocks (always exit 0).
+ * Null when the human has no word or no ledger to write (V127 reports that).
+ */
+export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): GeneratedFile | null {
+  const ledgers = goLedgers(ast, human.id).map((r) => r.path.replace(/^\.\//, ""));
+  if (human.word === undefined || human.word.trim() === "" || ledgers.length === 0 || ledgers.some((l) => l.includes("{unit}"))) return null;
+  const topology = ast.topology.name;
+  const sq = shellQuote;
+  const binds = human.binds ?? [];
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# The go for human "${human.id}" of topology "${topology}".`,
+    "# Auto-generated by agentopology scaffold. UserPromptSubmit hook. When a prompt the person typed",
+    `# is the go word (trimmed), or opens with it and a space or , . : ; ! ?, it appends {step, ok: true, word, ts${binds.length ? ", binds" : ""}}`,
+    `# to ${ledgers.join(", ")}${binds.length ? `; binds holds the sha256 of ${binds.join(", ")}` : ""}.`,
+    "# Claude Code runs this hook for prompts nobody typed too (a message from another session, a",
+    "# scheduled task, a background subagent reporting back), and its input says nothing of where a prompt",
+    `# came from. The typed test is the one ${promptLogScript("<id>")} uses: a prompt that opens with`,
+    "# <cross-session-message, or holds a <task-notification envelope, writes nothing. A scheduled task or",
+    "# /loop prompt is sent as written, so one that starts with the word counts; before-schedule.sh refuses",
+    "# such a prompt when the model schedules it (CronCreate, ScheduleWakeup).",
+    "# It never blocks (exit 0).",
+    "PAYLOAD=$(cat 2>/dev/null || true)",
+    ...TYPED_TEST_LINES,
+    '[ "$KIND" = typed ] || exit 0',
+    `W=${sq(human.word.trim())}`,
+    'P="${PROMPT%"${PROMPT##*[![:space:]]}"}"',
+    "# The word counts alone, or followed by a space or one of , . : ; ! ? (then anything): never a longer word.",
+    'case "$P" in "$W"|"$W"[\\ ,.:\\;!?]*) ;; *) exit 0 ;; esac',
+    ...projectRootLines(p, topology, "fallback").map((l, i) => (i === 2 ? 'cd "$ROOT" 2>/dev/null || exit 0' : l)),
+    SHA_FUNCTION,
+    "BINDS='{}'",
+    ...binds.map((b) => [
+      `F=${sq(b)}; H=''`,
+      'if [ -f "$F" ]; then H=$(at_sha "$F" 2>/dev/null) || H=\'\'; fi',
+      `BINDS=$(printf '%s' "$BINDS" | jq -c --arg p "$F" --arg h "$H" '. + {($p): (if $h == "" then null else $h end)}') || exit 0`,
+    ].join("\n")),
+    `ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$W" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson binds "$BINDS" '{step: $step, ok: true, word: $word, ts: $ts}${binds.length ? " + {binds: $binds}" : ""}') || exit 0`,
+    "go_append() { # LEDGER: one JSON line on stdin; never writes through a symlink or a hard link",
+    '  local d; d=$(dirname "$1")',
+    '  if [ -L "$1" ] || [ -L "$d" ]; then echo "go: $1 or its folder is a symlink; the go is not written" >&2; return 1; fi',
+    '  if [ -n "$(find "$1" -type f -links +1 2>/dev/null)" ]; then echo "go: $1 has more than one hard link; the go is not written" >&2; return 1; fi',
+    '  mkdir -p "$d" && cat >> "$1"',
+    "}",
+    ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2`),
+    "exit 0",
+    "",
+  ];
+  return { path: `${p.scriptsDir(topology)}/${goHookScript(human.id)}`, content: lines.join("\n"), category: "script", executable: true };
+}
+
+/** Humans whose go hook is written: a `word:` and a ledger to write it to. */
+export function goHumans(ast: TopologyAST, p: GuardPlatform): HumanNode[] {
+  return ast.nodes.filter((n): n is HumanNode => n.type === "human").filter((h) => goHook(ast, h, p) !== null);
+}
+
 /** The file name of the prompt-log script for a deciding session. */
 export function promptLogScript(id: string): string {
   return `session-prompt-${id}.sh`;
@@ -1987,14 +3230,7 @@ export function promptLog(topology: string, agent: AgentNode, p: GuardPlatform):
     "# unless a non-empty prompt was read. It never blocks (always exit 0).",
     `[ "\${AT_SESSION:-}" = "${agent.id}" ] || exit 0`,
     "PAYLOAD=$(cat 2>/dev/null || true)",
-    "KIND=unknown",
-    String.raw`PROMPT=$(printf '%s' "$PAYLOAD" | jq -er '.prompt | strings | sub("\\A\\s+"; "") | select(length > 0)' 2>/dev/null) || PROMPT=`,
-    'if [ -n "$PROMPT" ]; then',
-    '  case "$PROMPT" in',
-    '    "<cross-session-message"*) KIND=arrived ;;',
-    "    *) KIND=typed ;;",
-    "  esac",
-    "fi",
+    ...TYPED_TEST_LINES,
     ...projectRootLines(p, topology, "fallback").map((l, i) => (i === 2 ? 'cd "$ROOT" 2>/dev/null || exit 0' : l)),
     ...appendLines(p),
     `jq -nc --arg kind "$KIND" --arg session "${agent.id}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{ts: $ts, kind: $kind, session: $session}' 2>/dev/null | append 2>/dev/null || true`,

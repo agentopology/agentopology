@@ -18,7 +18,7 @@ import { join } from "node:path";
 import type { GateNode, HumanNode, TopologyAST } from "../parser/ast.js";
 import { gateAnchors } from "../parser/ast.js";
 import { scriptNameFromRun } from "../parser/run.js";
-import { approvalTargets, CODEX_GUARDS, LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
+import { approvalTargets, beforeActionGateProblems, CODEX_GUARDS, LEDGER_WRITABLE_NOTE } from "../bindings/lib/guards.js";
 import { gateLedger } from "../parser/ledger.js";
 import { buildCodexHooks, codexGateHold, codexGateScript } from "../bindings/lib/codex-hooks.js";
 import { humanGateForgeable } from "../bindings/lib/codex-policy.js";
@@ -57,7 +57,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
   for (const node of ast.nodes) {
     if (node.type !== "gate") continue;
     const gate = node as GateNode;
-    const base = { kind: "gate" as const, id: gate.id };
+    const base = { kind: "gate" as const, id: gate.id, ...(gate.rule ? { rule: gate.rule } : {}) };
     const hold = codexGateHold(ast, gate);
     const wrapper = `gate-${gate.id}.sh`;
     switch (hold.kind) {
@@ -80,7 +80,7 @@ export function checkCodexGuards(ast: TopologyAST, root: string): GuardReport {
       case "action": {
         const problems = guardProblems("PreToolUse", "Bash", "before-action.sh");
         const script = readText(join(root, dir, "before-action.sh"));
-        if (script !== null && !script.includes(`# gate ${gate.id} (`)) problems.push(`before-action.sh has no line for gate ${gate.id}`);
+        if (script !== null) problems.push(...beforeActionGateProblems(ast, gate, script));
         if (scriptNameFromRun(gate.run) && readText(join(root, dir, wrapper)) === null) problems.push(`${dir}/${wrapper} is missing`);
         const stub = gate.run && scriptNameFromRun(gate.run) ? stubCheckProblem(root, codexGateScript(gate.run)) : null;
         if (stub) problems.push(stub);
