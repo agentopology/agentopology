@@ -260,6 +260,7 @@ const VALIDATE_PASSED = [
   "agentopology validate probe.at --no-plugins",
   "npx agentopology validate probe.at --no-plugins",
   "npx agentopology@0.13.1 validate probe.at --no-plugins",
+  "npx agentopology@0.13.1 validate x.at",
   "pnpm dlx agentopology@0.13.1 validate probe.at --no-plugins",
 ];
 
