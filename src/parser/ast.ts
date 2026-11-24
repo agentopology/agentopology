@@ -485,6 +485,10 @@ export interface RecordDef {
   writer?: string;
   /** `run-state`: the fixed fields target and step. Any other value is reported by V139. */
   kind?: string;
+  /** `max-per-day: N`: at most N rows a UTC day (0.13.1). Set when N is a positive whole number. */
+  maxPerDay?: number;
+  /** `max-per-day` as written, kept when it is not a positive whole number so V158 can name it. */
+  maxPerDayRaw?: string;
 }
 
 /** One field of a record, as written: the type is kept as written so V139 can name a wrong one. */
