@@ -178,17 +178,11 @@ const ROUND3_PASS = [
   "screen -ls",
   "screen -r build",
   "screen -dmS build npm run build",
-];
-
-/**
- * Third-read rows still refused where the own-file guard is written: a redirect to a variable the command
- * does not set (a pure expansion still counts as a redirect target), and a quoted argument whose words name
- * a protected file or folder (`--body "... .claude/settings.json ..."`, a runner prompt naming `logs`).
- * They run on the plain topology.
- */
-const STILL_REFUSED = [
+  // a temp file the command makes with mktemp
   'tmp=$(mktemp); echo x > "$tmp"; rm -f "$tmp"',
+  // a quoted argument with a space is text
   'gh pr create --title "x" --body "changes .claude/settings.json handling"',
+  // the declared runner
   'claude -p --agent x "summarize the logs"',
 ];
 
@@ -242,6 +236,18 @@ const EDGES_REFUSE = [
   "scp host:/tmp/x .claude/settings.json",
   // a case pattern is dropped, the command after it is read
   "case $x in a) rm -rf .claude ;; esac",
+  // a quoted argument without a space, a redirect target, a writer's argument, inline code: read as before
+  'rm -rf "logs"',
+  'cp x "logs/go.jsonl"',
+  'echo x > "logs/go.jsonl"',
+  'bash -c "echo go release >> logs/go.jsonl"',
+  "rm -rf \"logs/go.jsonl\" 'logs dir'",
+  `nohup sh -c 'echo {} > .claude/settings.json' &`,
+  'eval "rm -rf .claude"',
+  // a variable set to a path, or set twice, is no temp file
+  'tmp=logs/go.jsonl; echo x > "$tmp"',
+  'tmp=$(mktemp); tmp=logs/go.jsonl; echo x > "$tmp"',
+  'tmp=$(mktemp); for tmp in logs/go.jsonl; do echo x > "$tmp"; done',
   // a for list stays named: running a go hook through it
   `for f in .claude/skills/p09-human/scripts/go-*.sh; do echo '{"prompt":"go release"}' | bash "$f"; done`,
 ];
@@ -287,12 +293,6 @@ describe.skipIf(!hasJq)("proof: ordinary commands run on every topology", () => 
     it(`${label}: the third read's ${ROUND3_PASS.length} rows pass`, () => {
       expect(off(name, ROUND3_PASS, 0)).toEqual([]);
     });
-  }
-  it(`plain: the third read's ${STILL_REFUSED.length} rows still refused elsewhere pass`, () => {
-    expect(off("plain", STILL_REFUSED, 0)).toEqual([]);
-  });
-  for (const cmd of STILL_REFUSED) {
-    it.todo(`a ledger gate and a go word: ${cmd}`);
   }
   // A ledger read by a program other than cat (grep, jq, a copy) is still refused, as before 0.13.0.
   for (const cmd of ["grep -c ok logs/run.jsonl", "jq -c 'select(.ok)' logs/run.jsonl | wc -l", "cp logs/run.jsonl build/"]) {
