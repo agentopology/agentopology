@@ -153,7 +153,7 @@ agent NAME {
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
-| disallowed-tools | string[] | no | -- | Denied tools; may be set with tools (removed first, then tools is resolved; a tool in both is removed -- V14 warns) |
+| disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
 | never-reads | string[] | no | -- | Path globs this agent may not read; see the \`secrets\` topic |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
@@ -253,7 +253,7 @@ retry {
 - **V7**: Every agent must have a \`model\` field
 - **V10**: Prompt blocks should not be empty (warning)
 - **V11**: reads/writes must match flow order
-- **V14**: warning, a tool is in both \`tools\` and \`disallowed-tools\` (both lists together are allowed)
+- **V14**: Cannot have both \`tools\` and \`disallowed-tools\`
 - **V4**: Agents must appear in flow or have \`invocation: manual\`
 - **V5**: \`[when x.y == z]\` must reference declared outputs
 - **V22**: Fallback chain models should exist in a provider (warning)
@@ -3302,11 +3302,11 @@ Gate \`after\` and \`before\` fields must reference declared nodes.
 **Violation:** \`after: nonexistent-agent\`.
 **Fix:** Reference a declared node.
 
-### V14: Tool Exclusivity (warning)
-An agent may set both \`tools\` and \`disallowed-tools\`: Claude Code removes the denied tools first, then resolves \`tools\` against what remains. A tool in both lists is removed, so the agent does not get it.
+### V14: Tool Exclusivity (error)
+An agent cannot have both \`tools\` and \`disallowed-tools\`.
 
-**Violation:** \`tools: [Read, Bash] disallowed-tools: [Bash]\`.
-**Fix:** Drop \`Bash\` from one list.
+**Violation:** \`tools: [Read] disallowed-tools: [Bash]\`.
+**Fix:** Use one or the other.
 
 ### V15: Exhaustive Conditions (error)
 Conditional edges from a node must cover all declared output values.
@@ -3462,7 +3462,7 @@ A \`secrets\` entry needs a \`path\` glob; with none it guards nothing.
 | V11 | error | Reads/Writes Consistent |
 | V12 | error | Edge Attribute Order |
 | V13 | error | Gate Placement |
-| V14 | warning | Tool Exclusivity |
+| V14 | error | Tool Exclusivity |
 | V15 | error | Exhaustive Conditions |
 | V16 | error | API Key Env Vars |
 | V17 | error | Single Default Provider |

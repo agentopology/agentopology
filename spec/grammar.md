@@ -443,7 +443,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 
 **Per-agent `hooks`:** Hooks defined inside an agent block are scoped to that agent's lifetime. They only fire while the agent is active. The hook sub-block syntax is identical to the global `hooks` section -- same fields (`on`, `matcher`, `run`, `type`, `timeout`), same hook events.
 
-**`tools` and `disallowed-tools`:** Both may be set on one agent, and both are written. Claude Code applies `disallowed-tools` first, then resolves `tools` against what remains; a tool in both is removed (V14 warns). Use `tools` to allowlist (only these). Use `disallowed-tools` to denylist (all except these).
+**`tools` vs `disallowed-tools`:** Mutually exclusive. Parser error if both are specified on the same agent. Use `tools` to allowlist (only these). Use `disallowed-tools` to denylist (all except these).
 
 **Tool list deduplication:** If both an unrestricted tool and a constrained variant appear (e.g., `Bash` and `Bash("pattern")`), the unrestricted form subsumes the constrained. The constrained entry is ignored. No parser error.
 

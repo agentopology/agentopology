@@ -750,27 +750,25 @@ function v13GatePlacement(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-/**
- * V14: a tool named in both `tools` and `disallowed-tools` on one agent. Claude Code accepts both keys
- * (https://code.claude.com/docs/en/sub-agents: "If both are set, `disallowedTools` is applied first, then
- * `tools` is resolved against the remaining pool. A tool listed in both is removed."), so the two lists
- * together are fine; a tool in both is dropped, which is rarely what was meant.
- */
+/** V14: `tools` and `disallowed-tools` cannot both appear on the same agent. */
 function v14ToolExclusivity(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const node of ast.nodes) {
     if (!isAgent(node)) continue;
-    if (!node.tools?.length || !node.disallowedTools?.length) continue;
-    const denied = new Set(node.disallowedTools);
-    const both = node.tools.filter((t) => denied.has(t));
-    if (both.length === 0) continue;
-    results.push({
-      rule: "V14",
-      level: "warning",
-      message: `Agent "${node.id}" lists ${both.join(", ")} in both "tools" and "disallowed-tools" — Claude Code removes a tool that is in both, so the agent will not have it`,
-      node: node.id,
-      line: lookupLine(ast, node.id),
-    });
+    if (
+      node.tools &&
+      node.tools.length > 0 &&
+      node.disallowedTools &&
+      node.disallowedTools.length > 0
+    ) {
+      results.push({
+        rule: "V14",
+        level: "error",
+        message: `Agent "${node.id}" has both "tools" and "disallowed-tools" — they are mutually exclusive`,
+        node: node.id,
+        line: lookupLine(ast, node.id),
+      });
+    }
   }
   return results;
 }

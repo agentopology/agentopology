@@ -687,7 +687,7 @@ through the validator like any other rule.
 | V11 | error | If agent A writes X and agent B reads X, a path A -> B must exist in flow — unless either is on demand (`invocation: manual`), which has no flow by definition |
 | V12 | error | Edge attribute order must be [when, max, per] |
 | V13 | error | Gate `after` and `before` must reference declared nodes |
-| V14 | warning | A tool is named in both `tools` and `disallowed-tools` on one agent. Both lists together are allowed (Claude Code applies `disallowed-tools` first, then resolves `tools`), but a tool in both is removed |
+| V14 | error | `tools` and `disallowed-tools` cannot both appear on the same agent |
 | V15 | error/warning | When a node has ONLY conditional outgoing edges, the conditions must |
 | V16 | error/warning | `api-key` must be a `${...}` env-var reference (no literal secrets) |
 | V17 | error/warning | At most one provider may have `default: true` |

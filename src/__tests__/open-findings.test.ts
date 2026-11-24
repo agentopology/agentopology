@@ -10,6 +10,7 @@
 import { describe, it } from "vitest";
 
 describe("open findings (spec/testing.md)", () => {
+  it.todo("[I4] V14 refuses an agent with both `tools` and `disallowed-tools`, but Claude Code accepts both, so an honest import of such a hand-built agent has validation errors");
   it.todo("[B3] Agent teams (peers that message each other) have no node or edge type; experimental in Claude Code, interactive sessions only");
   it.todo("[B7] The `observability { }` block is ignored by the claude-code binding");
   it.todo("[N22] Subagent nesting depth (Claude Code: 3) and fan-out (20 at once) are not checked");
