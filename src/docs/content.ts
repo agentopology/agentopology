@@ -160,6 +160,7 @@ agent NAME {
 | tools | string[] | no | -- | Allowed tools (supports wildcards like \`mcp.server.*\`) |
 | disallowed-tools | string[] | no | -- | Denied tools (mutually exclusive with tools -- V14) |
 | never-reads | string[] | no | -- | Path globs this agent may not read; see the \`secrets\` topic |
+| ask-reads | string[] | no | -- | Paths a Read asks about instead of refusing (\`permissions.ask\`, session-wide); see the \`secrets\` topic |
 | skills | string[] | no | -- | Skill IDs this agent can use |
 | reads | string[] | no | -- | Memory keys this agent reads (V11) |
 | writes | string[] | no | -- | Memory keys this agent writes (V11) |
@@ -3386,6 +3387,9 @@ agent reviewer {
 
 - \`readers\` are agent ids, or \`main\` for the main session. Any other agent, and the main session unless \`main\` is listed, is refused.
 - A glob is project-relative. \`**\` and \`*\` match across folders; a pattern with no \`/\` also matches a file name anywhere.
+- A path may start with \`~/\` (the home folder) or \`//\` (absolute, from the filesystem root): the forms Claude Code's Read and Edit rules use (https://code.claude.com/docs/en/permissions, "Read and Edit"). A single leading \`/\` stays the project root.
+- \`ask-reads: [paths]\` on an agent makes a Read ask instead of refuse. It compiles to \`permissions.ask\` \`Read(...)\` rules (\`~/x\` stays \`~/x\`, \`//x\` stays \`//x\`, \`notes/**\` becomes \`Read(/notes/**)\`). That is a permission rule (strong, Claude Code applies it) but it holds for the whole session, not one agent. The same path in \`never-reads\` and \`ask-reads\` is V158.
+- The \`before-read.sh\` hook is a text check (weaker): it reads the paths a call names and the words of a Bash command.
 
 ## What it compiles to (claude-code)
 
@@ -3399,6 +3403,7 @@ Not seen in a Bash command: a path built in a variable or substitution, one reac
 
 - **V153**: a reader must be a declared agent or \`main\`
 - **V154**: a secret needs a \`path\`
+- **V158**: the same path in \`never-reads\` and \`ask-reads\`
 `,
   },
 
@@ -3871,6 +3876,12 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 **Violation:** \`checkpoint { backend: sqlite, ttl: (7d, strategy: x }\`
 **Fix:** Close the bracket or quote, or put the field on its own line.
 
+### V158: Never-reads And Ask-reads Overlap (error)
+The same path is in \`never-reads\` and in \`ask-reads\`. One refuses and the other asks; \`ask-reads\` is a session-wide permission rule, so both cannot hold. Compared by anchor (\`~/\`, \`//\`, project) and path, across all agents.
+
+**Violation:** \`never-reads: ["private/**"]\` and \`ask-reads: ["private/**"]\`.
+**Fix:** Keep one.
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -3929,6 +3940,7 @@ In a \`checkpoint\`, \`interface\`, \`defaults\`, \`observability\` or \`meterin
 | V155 | error | CI Block |
 | V156 | error/warning | Caps |
 | V157 | error | Field Swallowed Into A Value |
+| V158 | error | Never-reads And Ask-reads Overlap |
 `,
   },
 

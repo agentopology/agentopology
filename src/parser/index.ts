@@ -578,6 +578,7 @@ export function parseAgent(
   const writes = parseMultilineList(body, "writes");
   const disallowedTools = parseMultilineList(body, "disallowed-tools");
   const neverReads = parseMultilineList(body, "never-reads");
+  const askReads = parseMultilineList(body, "ask-reads");
   const outputs = parseOutputsBlock(body);
 
   const node: AgentNode = {
@@ -622,6 +623,7 @@ export function parseAgent(
   if (writes.length) node.writes = writes;
   if (disallowedTools.length) node.disallowedTools = disallowedTools;
   if (neverReads.length) node.neverReads = neverReads;
+  if (askReads.length) node.askReads = askReads;
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;

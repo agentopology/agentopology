@@ -414,6 +414,7 @@ agent-field     = 'role' ':' identifier
                 | 'tools' ':' tool-list
                 | 'disallowed-tools' ':' tool-list
                 | 'never-reads' ':' string-list
+                | 'ask-reads' ':' string-list
                 | 'reads' ':' path-list
                 | 'writes' ':' path-list
                 | 'outputs' ':' typed-map
@@ -458,7 +459,8 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `phase` | number | no | -- | Pipeline position (ordering by numeric value) |
 | `tools` | tool-list | no | all | Tool allowlist |
 | `disallowed-tools` | tool-list | no | `[]` | Explicit deny-list |
-| `never-reads` | string-list | no | `[]` | Path globs this agent may not read (see 4.32) |
+| `never-reads` | string-list | no | `[]` | Path globs this agent may not read (see 4.36); `~/` and `//` paths allowed |
+| `ask-reads` | string-list | no | `[]` | Paths a Read asks about instead of refusing: `permissions.ask` Read rules, session-wide (see 4.36, V158) |
 | `reads` | path-list | no | `[]` | Input artifacts |
 | `writes` | path-list | no | `[]` | Output artifacts |
 | `outputs` | typed-map | no | `{}` | Values that affect flow |
@@ -2207,7 +2209,20 @@ agent reviewer {
 
 Per-agent walls on what can be read. `never-reads` on an agent lists path globs that agent may not read. A `secret` names a path glob (project-relative; `**` and `*` match across folders, a pattern with no `/` also matches a file name anywhere) and the `readers` that may read it: agent ids, or `main` for the main session. Every other agent, and the main session unless `main` is listed, is refused. A reader that is not a declared agent or `main` is an error (V153); a secret with no `path` is an error (V154).
 
-Claude Code compiles this to one generated PreToolUse hook on `Read|Grep|Glob|Bash` (`before-read.sh`) that exits 2 on a match. The calling agent is `agent_type` in the hook input, which Claude Code sets when the call comes from a subagent or from a session started with `--agent`, and leaves out in the plain main session. The paths checked are Read `file_path`, Grep `path` and `glob`, Glob `path` and `pattern`, and the words of a Bash command. A Bash command can hide a path from this check: one built in a variable or substitution, one reached after `cd`, one a script opens itself, a search from a folder above the protected one. Other targets write nothing for it.
+Path forms. A path in `never-reads`, `secrets` or `ask-reads` is project-relative (`private/**`, `./private`, `/private`: all the project root), or starts with `~/` (the home folder) or `//` (an absolute path from the filesystem root). These are the forms Claude Code's Read and Edit permission rules use (https://code.claude.com/docs/en/permissions, "Read and Edit": `//path` absolute, `~/path` home, `/path` relative to the settings source, `path` relative to the current directory). A single leading `/` is not absolute in a rule, so here it stays the project root; write `//etc/hosts` for an absolute path.
+
+```agenttopology
+agent reviewer {
+  never-reads: ["~/.ssh/**", "//etc/shadow"]
+  ask-reads: ["~/Documents/**", "notes/**"]
+}
+```
+
+`ask-reads: [paths]` on an agent lists paths a Read asks about instead of refusing. It compiles to `permissions.ask` rules in `.claude/settings.json`, one `Read(<path>)` each, in the forms above (`~/x` stays `~/x`, `//x` stays `//x`, `notes/**` becomes `Read(/notes/**)`, a bare name such as `.env` stays `Read(.env)` and matches at any depth). This is a permission rule, so Claude Code itself applies it, but a permission rule has no per-agent form: it holds for the whole session, whichever agent's field named it. The same path in `never-reads` and `ask-reads` is an error (V158). A secret with `readers: []` at a `~/` or `//` path also writes a `Read(...)` deny rule; every other wall depends on who is asking, which a permission rule cannot say, so it stays in the hook below.
+
+What is strong and what is a text check. A `permissions.ask` or `permissions.deny` rule is applied by Claude Code. `before-read.sh` is a text check: it reads the paths a call names and the words of a Bash command, so it is weaker (see what it cannot see, below). For a `~/` or `//` path it also reads a Bash word starting `~`, `$HOME` or `${HOME}` as the home folder, and a quoted message after `--body`, `--title`, `--message`, `--notes`, `-m`, `-b` or `-t` is not read as a path unless it holds `$` or a backtick.
+
+Claude Code compiles `never-reads` and `secrets` to one generated PreToolUse hook on `Read|Grep|Glob|Bash` (`before-read.sh`) that exits 2 on a match. The calling agent is `agent_type` in the hook input, which Claude Code sets when the call comes from a subagent or from a session started with `--agent`, and leaves out in the plain main session. The paths checked are Read `file_path`, Grep `path` and `glob`, Glob `path` and `pattern`, and the words of a Bash command. A Bash command can hide a path from this check: one built in a variable or substitution, one reached after `cd`, one a script opens itself, a search from a folder above the protected one. Other targets write nothing for it.
 
 ### 4.37 `ci`
 

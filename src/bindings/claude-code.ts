@@ -65,7 +65,7 @@ import { generateRouteScript, routeActionTargets, routeInstructions, routeKeys }
 import { generateTaintGuardScript, generateTaintMarkScript, taintGuardMatcher, taintMarkMatcher } from "./lib/taint.js";
 import { isSandboxPath } from "./lib/threat.js";
 import { generateAfterActionScript, generateRecordScripts, generateRecordsJson } from "./lib/records.js";
-import { generateBeforeReadScript as buildBeforeReadScript } from "./lib/walls.js";
+import { generateBeforeReadScript as buildBeforeReadScript, wallPermissionRules } from "./lib/walls.js";
 import { capsSettingsHooks, generateCapsScripts, timeoutScriptFor } from "./lib/caps.js";
 
 /** Name of the timeout hook written into an agent's frontmatter for its `timeout:`. */
@@ -2920,7 +2920,9 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   // rules written in settings { allow } (lib/repo-tools.ts).
   const perms = ast.settings;
   const toolRules = toolAllowRules(ast);
-  if (perms || toolRules.length > 0) {
+  // ask-reads and a secret nobody may read: permission rules (lib/walls.ts).
+  const wallRules = wallPermissionRules(ast);
+  if (perms || toolRules.length > 0 || wallRules.ask.length > 0 || wallRules.deny.length > 0) {
     const permObj: Record<string, string[]> = {};
     for (const key of ["allow", "ask", "deny"] as const) {
       const rules = perms?.[key] as string[] | undefined;
@@ -2928,6 +2930,10 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
     }
     const extra = toolRules.filter((r) => !(permObj.allow ?? []).includes(r));
     if (extra.length > 0) permObj.allow = [...(permObj.allow ?? []), ...extra];
+    for (const key of ["ask", "deny"] as const) {
+      const add = wallRules[key].filter((r) => !(permObj[key] ?? []).includes(r));
+      if (add.length > 0) permObj[key] = [...(permObj[key] ?? []), ...add];
+    }
     if (Object.keys(permObj).length > 0) settings.permissions = permObj;
   }
   if (perms) {

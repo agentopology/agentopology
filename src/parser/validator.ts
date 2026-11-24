@@ -29,6 +29,7 @@ import { repoTool, runsThroughBash } from "../bindings/lib/repo-tools.js";
 import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, scriptNameFromRun } from "./run.js";
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
+import { samePathKey } from "./path-forms.js";
 import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
 import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
 import { sessionAgentsOf, talkEdgesOf } from "./session-graph.js";
@@ -106,7 +107,7 @@ const RESERVED_KEYWORDS: ReadonlySet<string> = new Set([
   "event", "level", "hooks", "hook", "settings", "mcp-servers", "metering",
   "tools", "tool", "scale", "skill", "threat-model", "rules", "rule", "secrets", "secret",
   // Field keywords
-  "model", "disallowed-tools", "never-reads", "readers", "reads", "writes", "outputs", "skip",
+  "model", "disallowed-tools", "never-reads", "ask-reads", "readers", "reads", "writes", "outputs", "skip",
   "retry", "isolation", "phase", "kind", "role", "version", "description",
   "permissions", "prompt", "generates", "handles", "argument", "factors",
   "behavior", "invocation", "delegation", "subagent",
@@ -4240,6 +4241,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v152MetaTarget(ast),
     ...v153SecretReaders(ast),
     ...v154SecretPath(ast),
+    ...v158AskNeverOverlap(ast),
     ...v155CiBlock(ast),
     ...v156Caps(ast),
     ...v157SwallowedFields(ast),
@@ -4408,7 +4410,31 @@ function v154SecretPath(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-const HOME_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
+/**
+ * V158: the same path in `never-reads` and `ask-reads`. One says refuse and the other says ask; an ask
+ * rule applies to the whole session, so the pair cannot both hold. Compared by anchor (`~/`, `//`, project)
+ * and path, across all agents.
+ */
+function v158AskNeverOverlap(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  const never = new Map<string, string>();
+  for (const n of ast.nodes.filter(isAgent)) {
+    for (const p of n.neverReads ?? []) if (p.trim()) never.set(samePathKey(p), n.id);
+  }
+  for (const n of ast.nodes.filter(isAgent)) {
+    for (const p of n.askReads ?? []) {
+      const owner = never.get(samePathKey(p));
+      if (owner === undefined) continue;
+      results.push({
+        rule: "V158", level: "error", node: n.id, line: lookupLine(ast, n.id),
+        message: `Path "${p}" is in ask-reads of agent "${n.id}" and in never-reads of agent "${owner}": refuse and ask cannot both hold for one path; keep one`,
+      });
+    }
+  }
+  return results;
+}
+
+const HOME_PATH =/(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^/\s"'`]+\/|\/home\/[^/\s"'`]+\/|[A-Za-z]:\\{1,2}Users\\{1,2})/;
 
 /**
  * V123 (T-07): an absolute path into one person's home folder

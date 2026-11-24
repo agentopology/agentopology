@@ -683,6 +683,11 @@ export interface AgentNode extends BaseNode {
   disallowedTools?: string[];
   /** Path globs this agent may not read (Read, Grep, Glob, and Bash commands naming them). */
   neverReads?: string[];
+  /**
+   * Paths a Read asks about instead of refusing. Compiled to `permissions.ask` Read(...) rules, which
+   * apply to the whole session (a permission rule has no per-agent form). Same path forms as `neverReads`.
+   */
+  askReads?: string[];
   /** Skip condition expression. */
   skip?: string;
   /** Behavior mode (e.g. "advisory", "blocking"). */

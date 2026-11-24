@@ -35,7 +35,7 @@ const HOOK: BlockSchema = {
 const AGENT: BlockSchema = {
   fields: [
     "file", "role", "model", "permissions", "phase", "description",
-    "tools", "disallowed-tools", "never-reads", "skills", "reads", "writes", "mcp-servers",
+    "tools", "disallowed-tools", "never-reads", "ask-reads", "skills", "reads", "writes", "mcp-servers",
     "produces", "consumes", "outputs", "skip", "behavior", "invocation", "runs",
     "independent", "color", "initial-prompt", "omit-claude-md", "retry", "timeout",
     "on-fail", "temperature", "max-tokens", "top-p", "top-k", "stop", "seed",
