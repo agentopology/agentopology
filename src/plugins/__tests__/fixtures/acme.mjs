@@ -1,0 +1,10 @@
+// A test plugin for the plugin seam, as one self-contained file (no package.json).
+// Generic on purpose: "acme", "widget" and "gadget" stand for any plugin and block.
+// widget: one rule, one file, one PreToolUse hook. gadget: a parse that reads the block id.
+// A gate with extensions { acme { } } gets acme's check; a skill with it gets a view file.
+const files=(w,g,s,v)=>[...(w.length?[{path:".claude/acme/widget.json",content:JSON.stringify(w,null,2)+"\n"},{path:".claude/acme/hook.sh",content:"#!/usr/bin/env bash\nexit 0\n",executable:true}]:[]),...(g.length?[{path:".claude/acme/check.sh",content:"#!/usr/bin/env bash\n# acme gate check\necho \"acme check tool=${AT_TOOL-unset}\" >&2\nexit 0\n",executable:true}]:[]),...(s.length?[{path:".claude/acme/view.json",content:JSON.stringify({skills:s.map(x=>({id:x.id,acme:x.extensions.acme})),records:(v.records??[]).map(r=>({id:r.id,path:r.path})),persons:(v.persons??[]).map(p=>p.id)},null,2)+"\n"}]:[])];
+export default{id:"acme",version:"1.0.0",apiVersion:1,blocks:{widget:{multiplicity:"repeated",fields:["a","b"]},gadget:{multiplicity:"repeated",parse:(body,ctx)=>({name:ctx.id??null,line:ctx.line(0),text:body.trim()})}},
+validate(d){return(d.widget??[]).filter(w=>!w.a).map(w=>({rule:"acme/widget-needs-a",level:"error",message:`widget ${w.id??"(no id)"} has no a:`,...(w.id?{node:w.id}:{})}))},
+commands:{hello:(a,c)=>{console.log("acme hello "+a.join("|")+" in "+c.pluginId);return 0},fail:()=>3,validate:()=>0,bad:()=>"x"},
+guardReport(d,v,c){return["widgets "+(d.widget??[]).length+", nodes "+v.nodes.length+", target "+(c.target??"none")]},
+scaffold:{"claude-code":(d,v)=>{const w=d.widget??[],g=v.nodes.filter(n=>n.type==="gate"&&n.extensions&&n.extensions.acme),s=(v.skills??[]).filter(x=>x.extensions&&x.extensions.acme);return{files:files(w,g,s,v),settingsHooks:w.length?{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:'bash "$CLAUDE_PROJECT_DIR/.claude/acme/hook.sh"'}]}]}:{},gateRuns:Object.fromEntries(g.map(x=>[x.id,"bash .claude/acme/check.sh"]))}}}};

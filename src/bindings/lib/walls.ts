@@ -25,6 +25,7 @@
  */
 
 import type { AgentNode, TopologyAST } from "../../parser/ast.js";
+import { pathForm, permissionRulePath, type PathAnchor } from "../../parser/path-forms.js";
 import type { GeneratedFile } from "../types.js";
 import { FAIL_CLOSED, FAIL_CLOSED_DONE } from "./stub.js";
 import { CANON_FUNCTION, JQ_AGENT_NORM, MATCH_FUNCTIONS, noJqLines, shellQuote, type GuardPlatform } from "./guards.js";
@@ -33,8 +34,10 @@ import { CANON_FUNCTION, JQ_AGENT_NORM, MATCH_FUNCTIONS, noJqLines, shellQuote, 
 export interface Wall {
   /** The glob as the author wrote it. */
   path: string;
-  /** The glob as a lower-case shell pattern (see {@link wallPattern}). */
+  /** The glob as a lower-case shell pattern (see {@link wallPattern}); for `~/` and `//` paths, the part below the anchor. */
   pattern: string;
+  /** Where the path starts: the project root, the home folder (`~/`) or the filesystem root (`//`). */
+  anchor: PathAnchor;
   kind: "never-reads" | "secret";
   /** never-reads: the one agent it binds. secret: the secret's id. */
   owner: string;
@@ -53,19 +56,47 @@ export function wallPattern(glob: string): string {
   return g.replace(/\*{2,}/g, "*").toLowerCase();
 }
 
+/** A wall's pattern: the glob for a project path, the part below `~/` or `//` for the others. */
+function patternOf(glob: string): { anchor: PathAnchor; pattern: string } {
+  const f = pathForm(glob);
+  return { anchor: f.anchor, pattern: f.anchor === "project" ? wallPattern(glob) : wallPattern(f.rest) };
+}
+
 /** Every wall the topology declares, in source order. */
 export function wallsOf(ast: TopologyAST): Wall[] {
   const walls: Wall[] = [];
   for (const n of ast.nodes) {
     if (n.type !== "agent") continue;
     for (const g of (n as AgentNode).neverReads ?? []) {
-      if (g.trim()) walls.push({ path: g, pattern: wallPattern(g), kind: "never-reads", owner: n.id, readers: [] });
+      if (g.trim()) walls.push({ path: g, ...patternOf(g), kind: "never-reads", owner: n.id, readers: [] });
     }
   }
   for (const s of ast.secrets ?? []) {
-    if (s.path && s.path.trim()) walls.push({ path: s.path, pattern: wallPattern(s.path), kind: "secret", owner: s.id, readers: s.readers.map((r) => r.toLowerCase()) });
+    if (s.path && s.path.trim()) walls.push({ path: s.path, ...patternOf(s.path), kind: "secret", owner: s.id, readers: s.readers.map((r) => r.toLowerCase()) });
   }
   return walls;
+}
+
+/**
+ * The permission rules the path fields write (strong: Claude Code itself applies them).
+ * `ask`: one `Read(...)` per `ask-reads` path, in the forms of https://code.claude.com/docs/en/permissions.
+ * `deny`: a secret nobody may read (`readers: []`) at a `~/` or `//` path; every other wall depends on who
+ * is asking, which a permission rule cannot say, so it stays in before-read.sh.
+ */
+export function wallPermissionRules(ast: TopologyAST): { ask: string[]; deny: string[] } {
+  const ask: string[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "agent") continue;
+    for (const g of (n as AgentNode).askReads ?? []) {
+      if (g.trim()) ask.push(`Read(${permissionRulePath(g)})`);
+    }
+  }
+  const deny: string[] = [];
+  for (const s of ast.secrets ?? []) {
+    if (!s.path || !s.path.trim() || s.readers.length > 0) continue;
+    if (pathForm(s.path).anchor !== "project") deny.push(`Read(${permissionRulePath(s.path)})`);
+  }
+  return { ask: [...new Set(ask)], deny: [...new Set(deny)] };
 }
 
 /** The longest run of plain characters in a glob: what the no-jq reading looks for. */
@@ -83,6 +114,7 @@ export function generateBeforeReadScript(ast: TopologyAST, p: GuardPlatform): Ge
   const walls = wallsOf(ast);
   if (walls.length === 0) return null;
   const name = ast.topology.name;
+  const outside = walls.some((w) => w.anchor !== "project");
   const v = p.projectDirVar;
   const lines = [
     "#!/usr/bin/env bash",
@@ -124,6 +156,14 @@ export function generateBeforeReadScript(ast: TopologyAST, p: GuardPlatform): Ge
     "    CMD=''",
     "    ;;",
     "esac",
+    ...(outside
+      ? [
+          "# Text given as a message (--body, --title, -m ...) is not a path the command reads: `gh pr create --body \"see ~/.ssh\"`",
+          "# passes. A message holding $ or a backtick stays, since it can run a command that reads a path.",
+          "MSGRE='(--body|--title|--message|--notes|-m|-b|-t)([= ]+)(\"[^\"$`]*\"|'\"'\"'[^'\"'\"'$`]*'\"'\"')'",
+          'while [[ $CMD =~ $MSGRE ]]; do CMD=${CMD/"${BASH_REMATCH[0]}"/ ${BASH_REMATCH[1]} }; done',
+        ]
+      : []),
   ];
   lines.push(
     "# Paths from the tool's own fields: Read file_path; Grep path and glob; Glob path, pattern, and both joined.",
@@ -133,9 +173,21 @@ export function generateBeforeReadScript(ast: TopologyAST, p: GuardPlatform): Ge
     "  PATHS=$(printf '%s\\n' \"$(norm \"$CMD\")\" | tr ';&|()<>=:,' '\\n' | tr ' ' '\\n')",
     "fi",
     ...CANON_FUNCTION,
+    ...(outside
+      ? [
+          "# Walls at ~/ or // paths: HOME and the project root as lower-case absolute paths.",
+          'HOMED="${HOME:-/nonexistent-agentopology-home}"; HOMEL="$(lower "${HOMED%/}")"; ROOTL="$(lower "$CROOT")"',
+        ]
+      : []),
     "CANDS=''",
     "while IFS= read -r P || [ -n \"$P\" ]; do",
     '  [ -n "$P" ] || continue',
+    ...(outside
+      ? [
+          "  # bash expands a word's leading ~ and $HOME; the guard reads the same",
+          `  case "$P" in '~') P=$HOMED ;; '~/'*) P="$HOMED/\${P#'~/'}" ;; '$HOME') P=$HOMED ;; '$HOME/'*) P="$HOMED/\${P#'$HOME/'}" ;; '\${HOME}') P=$HOMED ;; '\${HOME}/'*) P="$HOMED/\${P#'\${HOME}/'}" ;; esac`,
+        ]
+      : []),
     '  R="$(canon "$P")"',
     "  CANDS=\"$CANDS$(lower \"$R\")\"$'\\n'",
     'done <<< "$PATHS"',
@@ -151,15 +203,35 @@ export function generateBeforeReadScript(ast: TopologyAST, p: GuardPlatform): Ge
     "}",
     "HIT=''",
   );
+  if (outside) {
+    lines.push(
+      "# habs PATTERN: as hit, for a pattern that is an absolute path; a candidate inside the project is made absolute first.",
+      "habs() {",
+      "  local c",
+      "  while IFS= read -r c || [ -n \"$c\" ]; do",
+      '    [ -n "$c" ] || continue',
+      '    case "$c" in /*) ;; .) c=$ROOTL ;; *) c="$ROOTL/$c" ;; esac',
+      '    if [[ $c == $1 || "$c/" == $1 ]]; then HIT=$c; return 0; fi',
+      "  done <<< \"$CANDS\"",
+      "  return 1",
+      "}",
+    );
+  }
+  // How a wall's pattern is passed to hit (project paths) or habs (`~/` and `//` paths).
+  const test = (w: Wall): string => {
+    if (w.anchor === "project") return `hit ${shellQuote(w.pattern)}`;
+    const base = w.anchor === "home" ? '"$HOMEL"' : '""';
+    return `habs ${base}${shellQuote(`/${w.pattern}`)}`;
+  };
   for (const w of walls) {
     if (w.kind === "never-reads") {
       lines.push(
-        `if [ "$AGENT" = ${shellQuote(w.owner.toLowerCase())} ] && hit ${shellQuote(w.pattern)}; then echo "agentopology: agent ${w.owner} must not read ${w.path} (never-reads); refused: $HIT" >&2; exit 2; fi`,
+        `if [ "$AGENT" = ${shellQuote(w.owner.toLowerCase())} ] && ${test(w)}; then echo "agentopology: agent ${w.owner} must not read ${w.path} (never-reads); refused: $HIT" >&2; exit 2; fi`,
       );
     } else {
       const list = ` ${w.readers.join(" ")} `;
       lines.push(
-        `case ${shellQuote(list)} in *" $AGENT "*) ;; *) if hit ${shellQuote(w.pattern)}; then echo "agentopology: secret ${w.owner} (${w.path}) is for ${w.readers.length ? w.readers.join(", ") : "no one"} only; $AGENT may not read it; refused: $HIT" >&2; exit 2; fi ;; esac`,
+        `case ${shellQuote(list)} in *" $AGENT "*) ;; *) if ${test(w)}; then echo "agentopology: secret ${w.owner} (${w.path}) is for ${w.readers.length ? w.readers.join(", ") : "no one"} only; $AGENT may not read it; refused: $HIT" >&2; exit 2; fi ;; esac`,
       );
     }
   }

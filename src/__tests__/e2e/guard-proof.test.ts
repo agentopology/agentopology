@@ -270,7 +270,7 @@ function action(root: string, name: string, command: string) {
   const env: Record<string, string | undefined> = { ...process.env, CLAUDE_PROJECT_DIR: root };
   delete env.AT_SESSION;
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", session_id: "s1", cwd: root, tool_name: "Bash", tool_input: { command } });
-  return spawnSync("bash", [join(root, `.claude/skills/${name}/scripts/before-action.sh`)], { cwd: root, input: payload, env: env as NodeJS.ProcessEnv, encoding: "utf8", timeout: 20_000 });
+  return spawnSync("bash", [join(root, `.claude/skills/${name.replace(/\+at$/, "")}/scripts/before-action.sh`)], { cwd: root, input: payload, env: env as NodeJS.ProcessEnv, encoding: "utf8", timeout: 20_000 });
 }
 
 /** The rows whose exit is not `want`, each with the guard's first line. */
@@ -301,6 +301,122 @@ describe.skipIf(!hasJq)("proof: ordinary commands run on every topology", () => 
   it("a ledger gate: cat of the ledger passes", () => {
     expect(off("led", ["cat logs/run.jsonl"], 0)).toEqual([]);
   });
+});
+
+// 0.13.1: a gate `before: write "**/*.at"`: agentopology's own read-only subcommands name a .at file and are reads.
+const AT_GATE: Record<string, string> = {
+  plain: `    gate at-open {
+      after: build
+      before: write "**/*.at"
+      run: "scripts/check.sh"
+      strength: refuse
+    }
+`,
+  led: `    gate at-open {
+      after: draft
+      before: write "**/*.at"
+      ledger: run-ledger
+      strength: refuse
+    }
+`,
+  "p09-human": `    gate at-open {
+      after: owner-go
+      before: write "**/*.at"
+      ledger: go-ledger
+      strength: refuse
+    }
+`,
+};
+
+// A read loads no plugin: --no-plugins is part of every read form.
+const AT_READ_FORMS = [
+  "agentopology validate x.at --no-plugins",
+  "agentopology guard x.at --check --no-plugins",
+  "agentopology guard x.at --test --no-plugins",
+  "agentopology inventory x.at --no-plugins",
+  "agentopology plan x.at --no-plugins",
+  "agentopology step check x.at --no-plugins",
+  "agentopology info x.at --no-plugins",
+  "agentopology visualize x.at --no-open --no-plugins",
+  "agentopology scaffold x.at --dry-run --no-plugins",
+  "npx agentopology validate x.at --no-plugins",
+  "npx agentopology@0.13.0 validate x.at --no-plugins",
+  "npx agentopology@0.13.1 validate x.at --no-plugins",
+  "npx agentopology@1.0.0-rc.1 validate x.at --no-plugins",
+  "npx -y agentopology validate x.at --no-plugins",
+  "npx --yes agentopology@0.13.1 validate x.at --no-plugins",
+  "agentopology validate docs/x.at --no-plugins",
+  "npx agentopology@0.13.1 validate docs/x.at --no-plugins",
+  "agentopology guard docs/x.at --check --no-plugins",
+];
+
+const AT_WRITE_FORMS = [
+  "agentopology scaffold x.at",
+  "agentopology guard x.at --target claude-code",
+  "agentopology sync x.at",
+  "agentopology import --dir . x.at",
+  "agentopology validate x.at > packs/new.at",
+  "echo x > packs/new.at",
+  "cp a.at packs/b.at",
+  // export writes its output next to the .at it reads (docs/code-review.md): a write
+  "agentopology export x.at",
+  "agentopology export docs/x.at",
+  // a plugin is code that runs: not a read
+  "agentopology validate x.at --plugin ./evil.mjs --no-plugins",
+  "agentopology validate x.at --plugin=./evil.mjs --no-plugins",
+  "agentopology info --plugin ./evil.mjs x.at --no-plugins",
+  // npx runs only the agentopology package itself, by name or name@version
+  "npx agentopology@npm:evilpkg validate x.at --no-plugins",
+  "npx agentopology@file:/tmp/evil validate x.at --no-plugins",
+  "npx agentopology@latest validate x.at --no-plugins",
+  "npx --package=evilpkg agentopology validate x.at --no-plugins",
+  "npx -p evilpkg agentopology validate x.at --no-plugins",
+  "npx --registry=https://example.invalid agentopology validate x.at --no-plugins",
+  // --plugin always runs code, --no-plugins or not
+  "agentopology validate docs/x.at --no-plugins --plugin ./p.mjs",
+  "agentopology validate docs/x.at --no-plugins --plugin=./p.mjs",
+  // --no-plugins counts only as its own word before any --
+  "agentopology validate docs/x.at -- --no-plugins",
+  'agentopology validate "docs/x.at --no-plugins"',
+  // --no-plugins counts only in the agentopology call's own segment
+  'agentopology validate "docs/x.at --no-plugins"; echo --no-plugins',
+  "agentopology validate docs/x.at && agentopology info docs/x.at --no-plugins",
+  "agentopology validate docs/x.at | cat --no-plugins",
+  "agentopology validate docs/x.at\necho --no-plugins",
+  // without --no-plugins a package.json plugin may run: not a read
+  "agentopology validate docs/x.at",
+  "agentopology info docs/x.at",
+  // --dir names the folder whose package.json plugins load: not a read
+  "agentopology validate docs/x.at --dir evil",
+  "agentopology validate docs/x.at --dir=evil",
+  "agentopology guard x.at --check --dir .",
+  // only agentopology found on PATH: a program at a path is not it
+  "evil/agentopology validate docs/x.at --no-plugins",
+  "/tmp/evil/agentopology validate docs/x.at --no-plugins",
+  "./node_modules/.bin/agentopology validate docs/x.at --no-plugins",
+  "evil/npx agentopology validate docs/x.at --no-plugins",
+];
+
+describe.skipIf(!hasJq)("proof: agentopology's read-only subcommands on a .at file", () => {
+  for (const [label, src, name] of TOPOLOGIES) {
+    const key = `${name}+at`;
+    beforeAll(() => { roots.set(key, scaffold(src.replace("  gates {\n", `  gates {\n${AT_GATE[name]}`))); });
+    for (const cmd of AT_READ_FORMS) {
+      it(`${label}, a .at gate, passes: ${cmd}`, () => {
+        expect(off(key, [cmd], 0)).toEqual([]);
+      });
+    }
+    for (const cmd of AT_WRITE_FORMS) {
+      it(`${label}, a .at gate, refused: ${cmd}`, () => {
+        expect(off(key, [cmd], 2)).toEqual([]);
+      });
+    }
+    it(`${label}, a .at gate, the refusal of a read without --no-plugins says to add it`, () => {
+      const r = action(roots.get(key)!, key, "agentopology validate docs/x.at");
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain("add --no-plugins");
+    });
+  }
 });
 
 describe.skipIf(!hasJq)("proof: the first read's forms stay refused", () => {

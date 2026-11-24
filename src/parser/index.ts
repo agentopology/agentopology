@@ -55,16 +55,17 @@ import type {
   ReplayConfig,
   ArtifactDef,
   RecordDef,
-  CiDef,
   PromptVariant,
   AuthDef,
   StoreNode,
   MachineDef,
   SecretDef,
+  BoundaryDef,
   PersonDef,
   IslandDef,
   NeedsDef,
   ThreatModelDef,
+  EgressDef,
   RetrievalNode,
   EmbeddingConfig,
   IndexConfig,
@@ -114,6 +115,17 @@ import { findUnknownNames } from "./known-fields.js";
 import { findLostStructure } from "./lost-structure.js";
 import { SINGLE_SECTIONS } from "./sections.js";
 import { parseRules } from "./rules.js";
+import { activePlugins, checkPluginSet, parsePluginBlocks, setHidden } from "../plugins/runtime.js";
+import type { AtPlugin } from "../plugins/types.js";
+
+/** Options for {@link parse}. */
+export interface ParseOptions {
+  /**
+   * Plugins whose blocks this parse reads (EXPERIMENTAL: may change before 1.0).
+   * Omitted: the set the CLI loaded with `--plugin`, which is empty unless it did.
+   */
+  plugins?: readonly AtPlugin[];
+}
 
 // Re-export AST types for convenience
 export type * from "./ast.js";
@@ -188,6 +200,9 @@ function detectSwallowedFields(
  * "is it present?" check downstream. V91 recognises them and reports the field
  * as missing, which is what the spec says it is.
  */
+/** V155: the message for a top-level `ci { }` block, which this package does not read. */
+export const CI_BLOCK_REMOVED = "the `ci` block isn't part of this package; a plugin can provide it";
+
 export const MISSING = {
   /** `orchestrator.model` — spec/grammar.md, orchestrator field table. */
   model: "unknown",
@@ -430,6 +445,7 @@ export function parseMeta(body: string): Partial<TopologyMeta> {
   else if (/^\s*entry\s*:\s*(#.*)?$/m.test(body)) result.entry = "";
   if (fields.outpoints !== undefined) result.outpoints = parseList(fields.outpoints);
   if (fields.durable) result.durable = fields.durable === "true";
+  if (fields["refusal-events"] !== undefined) result.refusalEvents = fields["refusal-events"].trim() === "true";
   if (fields.requires !== undefined) result.requires = unquote(fields.requires.trim());
   // Kept as written, an empty value included: V152 reports one that is not a path.
   if (fields.target !== undefined) result.target = unquote(fields.target.trim());
@@ -578,6 +594,7 @@ export function parseAgent(
   const writes = parseMultilineList(body, "writes");
   const disallowedTools = parseMultilineList(body, "disallowed-tools");
   const neverReads = parseMultilineList(body, "never-reads");
+  const askReads = parseMultilineList(body, "ask-reads");
   const outputs = parseOutputsBlock(body);
 
   const node: AgentNode = {
@@ -622,6 +639,7 @@ export function parseAgent(
   if (writes.length) node.writes = writes;
   if (disallowedTools.length) node.disallowedTools = disallowedTools;
   if (neverReads.length) node.neverReads = neverReads;
+  if (askReads.length) node.askReads = askReads;
   if (fields.skip) node.skip = fields.skip;
   if (fields.behavior) node.behavior = fields.behavior;
   if (fields.invocation) node.invocation = fields.invocation;
@@ -828,12 +846,14 @@ export function parseAgent(
   // New fields: description, max-turns, extensions
   if (fields.description) node.description = unquote(fields.description);
   if (fields["max-turns"]) node.maxTurns = parseInt(fields["max-turns"], 10);
+  if (fields["output-into"] !== undefined) node.outputInto = unquote(fields["output-into"].trim());
   // Caps: kept as written when not valid, so V156 can name the value.
   if (fields["max-subagents"] !== undefined) {
     const raw = unquote(fields["max-subagents"].trim());
     if (/^[1-9]\d*$/.test(raw)) node.maxSubagents = parseInt(raw, 10);
     else node.maxSubagentsRaw = raw;
   }
+  if (fields["wall-time"] !== undefined) node.wallTime = unquote(fields["wall-time"].trim());
   if (fields["max-cost"] !== undefined) {
     const cost = parseUsd(fields["max-cost"]);
     if (cost.value !== undefined) node.maxCost = cost.value;
@@ -959,6 +979,7 @@ export function parseHuman(
   if (fields.who) node.who = unquote(fields.who);
   if (fields.valid) node.valid = unquote(fields.valid);
   if (fields.word !== undefined) node.word = unquote(fields.word);
+  if (fields["stop-word"] !== undefined) node.stopWord = unquote(fields["stop-word"]);
   if (fields.binds) node.binds = parseList(fields.binds);
   if (fields["typed-only-programs"]) node.typedOnlyPrograms = parseList(fields["typed-only-programs"]);
 
@@ -2250,6 +2271,7 @@ export function parseObservability(body: string): ObservabilityDef {
 
   if (endpoint !== undefined) def.endpoint = endpoint;
   if (service !== undefined) def.service = service;
+  if (fields.protocol) def.protocol = unquote(fields.protocol);
   if (spansBlock) def.spansWritten = true;
 
   // attributes { key: "value" }: resource attributes. A key may hold dots
@@ -2368,50 +2390,14 @@ export function parseRecords(topBody: string): RecordDef[] {
       if (f.schema !== undefined) rec.schema = unquote(f.schema);
       if (f.writer !== undefined) rec.writer = unquote(f.writer);
       if (f.kind !== undefined) rec.kind = unquote(f.kind);
+      if (f["max-per-day"] !== undefined) {
+        // a positive whole number; anything else is kept as written so V158 can name it
+        const raw = unquote(f["max-per-day"]).trim();
+        if (/^[1-9]\d*$/.test(raw)) rec.maxPerDay = parseInt(raw, 10);
+        else rec.maxPerDayRaw = raw;
+      }
       return rec;
     });
-}
-
-/**
- * Parse the top-level `ci { provider: github, on: [...], gates: [...] }`
- * block. Fields sit one per line or, as the one-line form writes them, apart
- * by commas outside the brackets. `on` defaults to pull_request and push; a
- * missing provider reads as empty so V155 can name it.
- */
-export function parseCi(topBody: string): CiDef | undefined {
-  // Only a `ci {` of the topology's own level: a looser match would also read
-  // `circuit-breaker {` or a block nested in an agent.
-  const at = depthZeroText(topBody).search(/(?:^|\n)[ \t]*ci[ \t]*\{/);
-  if (at === -1) return undefined;
-  const block = extractBlock(topBody.slice(at), "ci");
-  if (!block) return undefined;
-  const entries: string[] = [];
-  for (const line of block.body.split("\n")) {
-    let depth = 0;
-    let quote = false;
-    let start = 0;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"' && line[i - 1] !== "\\") quote = !quote;
-      else if (quote) continue;
-      else if (ch === "[") depth++;
-      else if (ch === "]") depth--;
-      else if (ch === "," && depth === 0) { entries.push(line.slice(start, i)); start = i + 1; }
-    }
-    entries.push(line.slice(start));
-  }
-  const fields: Record<string, string> = {};
-  for (const e of entries) {
-    const m = /^\s*([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$/.exec(e);
-    if (m) fields[m[1]] = m[2];
-  }
-  const list = (raw: string | undefined, fallback: string[]) =>
-    raw === undefined ? fallback : parseList(raw).map(unquote).filter((s) => s !== "");
-  return {
-    provider: unquote(fields.provider ?? ""),
-    on: list(fields.on, ["pull_request", "push"]),
-    gates: list(fields.gates, []),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2688,7 +2674,8 @@ function topBodyLineFinder(source: string, rawBody: string, topBody: string): (a
   return (at) => first + (topBody.slice(0, at).match(/\n/g)?.length ?? 0);
 }
 
-export function parse(source: string): TopologyAST {
+export function parse(source: string, opts: ParseOptions = {}): TopologyAST {
+  const plugins = opts.plugins ? checkPluginSet(opts.plugins) : activePlugins();
   const src = stripComments(source);
 
   // --- Source map (line numbers for nodes) ---
@@ -2743,6 +2730,7 @@ export function parse(source: string): TopologyAST {
     ...(metaFields.entry !== undefined ? { entry: metaFields.entry } : {}),
     ...(metaFields.outpoints !== undefined ? { outpoints: metaFields.outpoints } : {}),
     ...(metaFields.durable !== undefined ? { durable: metaFields.durable } : {}),
+    ...(metaFields.refusalEvents ? { refusalEvents: true } : {}),
     ...(metaFields.requires !== undefined ? { requires: metaFields.requires } : {}),
     ...(metaFields.target !== undefined ? { target: metaFields.target } : {}),
   };
@@ -2828,6 +2816,11 @@ export function parse(source: string): TopologyAST {
   const pinField = depthZeroText(topBody).match(/(?:^|\n)[ \t]*pin-models[ \t]*:[ \t]*(true|false)\b/);
   const pinModels = pinField ? pinField[1] === "true" : undefined;
 
+  // `uses-plugins: [a, b]`: a check only (V167). It never loads code.
+  const usesList = parseMultilineList(topText, "uses-plugins");
+  const usesField = usesList.length ? null : topText.match(/(?:^|\n)[ \t]*uses-plugins[ \t]*:[ \t]*([^\n]*)/);
+  const usesPlugins = usesList.length ? usesList.map(unquote) : usesField ? parseList(usesField[1]).map(unquote) : undefined;
+
   // --- Machines (top-level `machines { machine <id> { os: ... } }`) ---
   const machinesBlock = extractBlock(topBody, "machines");
   const machines: MachineDef[] | undefined = machinesBlock
@@ -2860,6 +2853,23 @@ export function parse(source: string): TopologyAST {
           id: b.id as string,
           ...(f.path ? { path: unquote(f.path) } : {}),
           readers: parseMultilineList(body, "readers"),
+        };
+      })
+    : undefined;
+
+  // --- Boundaries (top-level `boundary <id> { path, in, out, outbound, branch }`) ---
+  const boundaryBlocks = extractAllBlocks(topBody, "boundary").filter((b) => b.id);
+  const boundaries: BoundaryDef[] | undefined = boundaryBlocks.length
+    ? boundaryBlocks.map((b) => {
+        const body = commaLines(b.body);
+        const f = parseFields(body);
+        return {
+          id: b.id as string,
+          ...(f.path !== undefined ? { path: unquote(f.path) } : {}),
+          ...(f.in !== undefined ? { in: unquote(f.in) } : {}),
+          ...(f.out !== undefined ? { out: unquote(f.out) } : {}),
+          outbound: parseMultilineList(body, "outbound"),
+          ...(f.branch !== undefined ? { branch: unquote(f.branch) } : {}),
         };
       })
     : undefined;
@@ -2923,6 +2933,20 @@ export function parse(source: string): TopologyAST {
           outsideSandbox: list("outside-sandbox"),
           refuseAfterUntrusted: list("refuse-after-untrusted"),
           ...(f.lift ? { lift: unquote(f.lift) } : {}),
+        };
+      })()
+    : undefined;
+
+  // --- Egress (top-level `egress { gate: <human or record id>, covers: [..] }`) ---
+  const egressBlock = extractBlock(topBody, "egress");
+  const egress: EgressDef | undefined = egressBlock
+    ? (() => {
+        // The fields may share a line: `egress { gate: boss covers: [web] }`.
+        const body = egressBlock.body.replace(/(?<=[\]\w"])[ \t]+(?=(?:gate|covers)[ \t]*:)/g, "\n");
+        const f = parseFields(body);
+        return {
+          gate: f.gate ? unquote(f.gate.trim()) : "",
+          covers: parseMultilineList(body, "covers").map(unquote),
         };
       })()
     : undefined;
@@ -3072,9 +3096,6 @@ export function parse(source: string): TopologyAST {
   // --- Records ---
   const records = parseRecords(topBody);
 
-  // --- CI ---
-  const ci = parseCi(topBody);
-
   // --- Top-level Extensions ---
   // Only an `extensions` block at the topology's own level. The first one
   // anywhere used to win, so an agent's extensions (effort, color, ...) were
@@ -3143,7 +3164,39 @@ export function parse(source: string): TopologyAST {
   // --- Names the parser does not read ---
   // A field or block the grammar does not have was dropped with no message,
   // and validate passed (N23). V102 names each one with its block.
-  const unknownNameErrors = findUnknownNames(topBody);
+  // Plugins (EXPERIMENTAL): a loaded plugin's keywords are known; their
+  // blocks parse to data kept off the enumerable AST. With `uses-plugins`
+  // naming a plugin that is not loaded, an unknown top-level block is V167
+  // (it needs that plugin) instead of V102. Without either, nothing changes.
+  const pluginParse = plugins.length > 0 ? parsePluginBlocks(topBody, plugins, lineInTopBody) : undefined;
+  if (pluginParse) duplicateSectionWarnings.push(...pluginParse.warnings);
+  const loadedIds = new Set(plugins.map((p) => p.id));
+  const unloaded = (usesPlugins ?? []).filter((id) => !loadedIds.has(id));
+  const pluginNeedErrors: Array<{ rule: string; level: "error"; message: string }> = [];
+  const runWith = unloaded.map((id) => `--plugin ${id}`).join(" or ");
+  // V155: a top-level `ci { }` block is not part of this package. A loaded plugin that owns `ci` reads
+  // it (its keyword is then known and never reaches the claim); with `uses-plugins` naming a plugin that
+  // is not loaded, it is V167 like any other block that plugin may own.
+  const ciBlockErrors: Array<{ rule: string; level: "error"; message: string }> = [];
+  const unknownNameErrors = findUnknownNames(topBody, {
+    ...(pluginParse ? { blocks: pluginParse.schemas } : {}),
+    claim: (keyword: string) => {
+      if (unloaded.length > 0) {
+        pluginNeedErrors.push({ rule: "V167", level: "error", message: `block ${keyword} needs plugin ${unloaded.join(" or ")}; run with ${runWith}` });
+        return true;
+      }
+      if (keyword === "ci") {
+        ciBlockErrors.push({ rule: "V155", level: "error", message: CI_BLOCK_REMOVED });
+        return true;
+      }
+      return false;
+    },
+  });
+  if (unloaded.length > 0 && pluginNeedErrors.length === 0) {
+    for (const id of unloaded) {
+      pluginNeedErrors.push({ rule: "V167", level: "error", message: `uses-plugins names plugin ${id}, which is not loaded; run with --plugin ${id}` });
+    }
+  }
   // F5: since S-13 only a top-level `env { }` is the topology env; the keys of
   // one inside `settings { }` are not written to settings.json.
   const settingsEnv = settingsBlock ? extractTopLevelBlocks(settingsBlock.body, "env")[0] : undefined;
@@ -3206,15 +3259,17 @@ export function parse(source: string): TopologyAST {
     checkpoint,
     artifacts,
     records,
-    ...(ci ? { ci } : {}),
     ...(decisions ? { decisions } : {}),
     ...(pinModels !== undefined ? { pinModels } : {}),
+    ...(usesPlugins ? { usesPlugins } : {}),
     ...(machines ? { machines } : {}),
     ...(secrets ? { secrets } : {}),
+    ...(boundaries ? { boundaries } : {}),
     ...(persons ? { persons } : {}),
     ...(inventoryRoots?.length ? { inventoryRoots } : {}),
     ...(needs ? { needs } : {}),
     ...(threatModel ? { threatModel } : {}),
+    ...(egress ? { egress } : {}),
     ...(inventoryStrict ? { inventoryStrict } : {}),
     ...(islandList.length ? { islands: islandList } : {}),
     ...(isFragment ? { isFragment: true } : {}),
@@ -3262,6 +3317,11 @@ export function parse(source: string): TopologyAST {
   if (Object.keys(sourceMap).length > 0) {
     ast._sourceMap = sourceMap;
   }
+
+  // Plugins: non-enumerable, so JSON export and goldens never see them.
+  if (pluginParse) setHidden(ast, "_plugins", pluginParse.state);
+  if (pluginNeedErrors.length > 0) setHidden(ast, "_pluginNeedErrors", pluginNeedErrors);
+  if (ciBlockErrors.length > 0) setHidden(ast, "_ciBlockErrors", ciBlockErrors);
 
   return ast;
 }

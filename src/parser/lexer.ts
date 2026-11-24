@@ -255,8 +255,9 @@ export function extractTopLevelBlocks(
     else if (braces[i] === "}") depth--;
   }
   const results: BlockResult[] = [];
+  // The brace may be on a later line, with only blank or comment lines (blank on the mask) between.
   const re = new RegExp(
-    `(?:^|\\n)\\s*${escapeRegex(keyword)}(?![a-zA-Z0-9_-])(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?[^{\\n]*\\{`,
+    `(?:^|\\n)\\s*${escapeRegex(keyword)}(?![a-zA-Z0-9_-])(?:\\s+([a-zA-Z][a-zA-Z0-9_-]*))?(?:[^{\\n]*|[ \\t]*(?:\\n[ \\t]*)+)\\{`,
     "gm"
   );
   let m: RegExpExecArray | null;

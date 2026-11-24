@@ -24,6 +24,25 @@ export interface Regions {
   outside: string;
 }
 
+/** Everything after the frontmatter block (the whole text when there is none). */
+export function bodyOf(content: string): string {
+  return content.slice(HEAD.exec(content)?.[0].length ?? 0);
+}
+
+/** The hash of a file's body, as the manifest records it for a file whose body the .at owns. */
+export function bodyHash(content: string): string {
+  return hashContent(bodyOf(content));
+}
+
+/**
+ * Whether the manifest records the body of this generated file: the agent,
+ * skill and command files and the rules file. For each, the body is the .at's
+ * until the user edits it.
+ */
+export function isBodyTracked(path: string): boolean {
+  return /^\.claude\/(?:agents|skills|commands)\/.+\.md$/.test(path) || /^\.claude\/rules\/[^/]+\.md$/.test(path);
+}
+
 /** The file's regions, or null when it has no prompt markers in its body. */
 export function regionsOf(content: string): Regions | null {
   const head = HEAD.exec(content)?.[0] ?? "";
