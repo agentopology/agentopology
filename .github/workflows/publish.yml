@@ -99,7 +99,11 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      # One test file at a time: some tests time real processes and differ
+      # from a pinned old release byte for byte, so they need the machine to
+      # themselves (they are flaky with files running in parallel).
+      - name: Test (one file at a time)
+        run: npx vitest run --no-file-parallelism
 
       - name: Publish (dry run)
         if: steps.mode.outputs.dry == 'true'
