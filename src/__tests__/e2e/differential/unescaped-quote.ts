@@ -20,16 +20,24 @@
  * settings.json as before, so any other difference stays red.
  */
 
-const MESSAGE = '`\\"` reaches the command unescaped; this check may never pass or refuse as written';
+import { lessonsFor } from "../../../docs/teach.js";
+
+const MESSAGE ='`\\"` reaches the command unescaped; this check may never pass or refuse as written';
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const WARN = new RegExp(`  WARN  \\[V96\\] Hook "[^"\\n]+" "run": ${esc(MESSAGE)}\\n\\n  0 error\\(s\\), 1 warning\\(s\\)\\n\\n`, "g");
-const LESSON = /  ── how to write it ─+\n\n  \[V96\]\n(?: {4}.*\n)+?\n$/;
 
-/** validate's output with the one V96 quote warning and its lesson put back as the pass line, or null. */
+/** V96's lesson exactly as validate prints it (src/cli printLessons, no colour): every line pinned. */
+const V96 = lessonsFor(["V96"])[0];
+const LESSON =
+  "  ── how to write it ──────────────────────────────────\n\n  [V96]\n" +
+  V96.snippet.split("\n").map((l) => `    ${l}\n`).join("") +
+  `    → agentopology docs ${V96.topic}\n\n`;
+
+/** validate's output with the one V96 quote warning and its exact lesson put back as the pass line, or null. */
 export function unescapedQuoteValidate(now: string): string | null {
-  if ((now.match(WARN) ?? []).length !== 1 || !LESSON.test(now)) return null;
-  return now.replace(LESSON, "").replace(WARN, "  All validation rules passed.\n\n");
+  if ((now.match(WARN) ?? []).length !== 1 || !now.endsWith(LESSON)) return null;
+  return now.slice(0, now.length - LESSON.length).replace(WARN, "  All validation rules passed.\n\n");
 }
 
 const COUNT = /\n\n {2}0 error\(s\), 1 warning\(s\) in generated file\.\n {2}Run agentopology validate \S+ for details\.\n/;
