@@ -50,6 +50,7 @@ import {
   generateBeforeAgentScript as buildBeforeAgentScript,
   generateBeforeEditScript as buildBeforeEditScript,
   generateBeforeScheduleScript,
+  SCHEDULE_HOOK_TIMEOUT,
   generateGateWrapperScripts as buildGateWrapperScripts,
   getDelegationMode,
   goHook,
@@ -2985,8 +2986,8 @@ function generateSettings(ast: TopologyAST): GeneratedFile | null {
   if (generateBeforeScheduleScript(ast, CLAUDE_CODE_GUARDS)) {
     if (!hooksByEvent.PreToolUse) hooksByEvent.PreToolUse = [];
     hooksByEvent.PreToolUse.push({
-      matcher: "CronCreate|ScheduleWakeup",
-      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "before-schedule.sh")}`, onFailure: "block" }],
+      matcher: "CronCreate|ScheduleWakeup|RemoteTrigger",
+      hooks: [{ type: "command", command: `bash ${skillScriptPath(topologyName, "before-schedule.sh")}`, timeout: SCHEDULE_HOOK_TIMEOUT, onFailure: "block" }],
     });
   }
 

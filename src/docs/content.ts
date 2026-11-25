@@ -134,6 +134,7 @@ agent NAME {
 | max-turns | number | no | -- | Max agentic turns before stopping |
 | output-into | record id | no | -- | Append the agent's output-schema fields to this record when it stops: a SubagentStop hook writes \`{ts, agent, ...fields}\`, or \`{ts, agent, error: "schema"}\` when the output does not match (never the raw output). Needs an output-schema (V159). It reads \`last_assistant_message\` and matches on \`agent_type\`; a text-level check, claude-code only |
 | wall-time | duration | no | -- | Wall-clock cap on the whole session (\`4h\`, \`90m\`), on the entry agent only (V161). A SessionStart hook records the start; a PreToolUse guard on every tool refuses each call, a subagent's too, once the cap has passed, with a reason naming it; no recorded start refuses too. A text check of elapsed time between calls: it does not interrupt a call already running |
+| renew-on | human id | no | -- | Beside \`wall-time\`: past the cap, the typed go of that human (a human with a go word; the same typed check as every go) starts a fresh window. The start is reset and a renewal row \`{ts, human, previous_start}\` is appended to the go ledger. A relayed go, another human's go, and a session with no recorded start do not renew (V161). Past the cap, one typed go both renews the window and gives the go for the gates after that human: the two are one word. The renewal follows the go row: when the go row or the renewal row cannot be written, the start is not moved. The \`.claude/state\` folder is refused to the agent (guards, sandbox, permission rules), and a start later than now refuses |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -622,9 +623,10 @@ human NAME {
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
-| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
-| stop-word | string | no | -- | The stop word the person types. On claude-code the go hook, on a typed prompt that is the stop word (read as the go word is), appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V160). A text check of the ledger: it does not stop a process already running |
+| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word as the whole message, matched without regard to case (ASCII) and surrounding whitespace and punctuation (\`go release\`, \`Go release.\`), writes the go row to the ledger of the gate after this human. A trailing clause (\`go release, notes look right\`) does not count, and neither does a question or a quotation (\`go release?\`, \`"go release"\`): type the go alone, as its own message. Needs such a gate with a ledger (V127) |
+| stop-word | string or list | no | -- | The stop word the person types, or a list of them (\`stop-word: [stop, עצור]\`). On claude-code the go hook, on a typed prompt whose first word is a stop word (without regard to case for an ASCII word, exactly for one in another script; whitespace and punctuation around the word are trimmed, and so are the marks phones add: typographic quotes and guillemets, Hebrew geresh, gershayim and maqaf, CJK and full-width punctuation, direction and zero-width marks, \`#\`, \`>\`, brackets and the stop-sign emoji; full-width letters are read as ASCII and Hebrew points are dropped; a trailing clause is allowed: \`Stop, the build is wrong\`). Another form of a word in another script (\`תעצור\`, \`עצרו\`) is a different word: list each form you type. The stop word then appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V160, V169). A text check of the ledger: it does not stop a process already running |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
+| stop-from | \`any\` | no | -- | Opt-in, and \`any\` is the only value (V169). With it, a stop word in a prompt the person did not type (a message from another session, a background report, a scheduled prompt) still halts: the go hook writes the halt row. What is read: the body of a message from another session (the text after its header), and the text after the last \`</task-notification>\` of a background report (text inside the notification, such as its summary, is not read). A go word in a prompt that was not typed never counts, with or without this field. Needs \`stop-word\` |
 | typed-only-programs | list of program names | no | -- | Your own programs that type into the person's terminal or pane, beyond the built-in tmux, screen, xdotool, osascript, wtype and ydotool. On claude-code a Bash command that runs one and holds the go word is refused. Needs \`word\` (V127) |
 
 ## The go: a typed word
@@ -652,11 +654,16 @@ On claude-code this writes \`go-owner-go.sh\`, a UserPromptSubmit hook. When the
 \`{"step": "owner-go", "ok": true, "word": "go release", "ts": "...", "binds": {"docs/release-notes.md": "<sha256>"}}\`
 to \`logs/go.jsonl\`. It never blocks a prompt. Claude Code also runs this hook for prompts nobody typed, such as a
 message from another session or a background subagent's report. A prompt that opens with \`<cross-session-message\`,
-or holds a \`<task-notification\` envelope anywhere, writes no row, and the word counts only at the start of the prompt.
+or holds a \`<task-notification\` envelope anywhere, writes no row, and the word counts only as the whole message.
 A session-scoped scheduled task or \`/loop\` prompt arrives as its text was written, with no envelope, so one that
-starts with the word would count as typed. The model schedules those prompts with the CronCreate and ScheduleWakeup
-tools, and \`before-schedule.sh\`, a PreToolUse hook on \`CronCreate|ScheduleWakeup\`, refuses one that starts with
-the word (the same match as the go hook), whoever asked for it.
+reads as the word would count as typed. The model schedules those prompts with the CronCreate and ScheduleWakeup
+tools (and a cloud routine with RemoteTrigger), and \`before-schedule.sh\`, a PreToolUse hook on
+\`CronCreate|ScheduleWakeup|RemoteTrigger\` (30 s timeout, blocking on failure), reads each string of the call
+with the go hook's own readers and a wider trim (also \`?\`, quotes and the marks phones add), also after a leading
+\`/loop\` and its interval, and refuses one that is the word or opens with it (\`Go release\`, \`**go release**\`,
+\`- go release\`, \`/loop 5m Go release\`, \`go release now\`), whoever asked for it. A message longer than the go
+word by more than 64 bytes is never the go; a scheduled string over 4096 bytes is refused unread, and the hook
+refuses once it has run 10 seconds.
 
 \`before-action.sh\` then lets \`release\` run only while \`docs/release-notes.md\` is unchanged since the go (a changed
 file fails and is named) and inside the \`valid\` window.
@@ -678,10 +685,20 @@ These forms are refused, each proven by a test that feeds the hook the call:
   are held to the same rules as the command run directly;
 - a command that names a terminal device (\`/dev/pts/*\`, \`/dev/tty*\`, \`/dev/console\`, also as a glob, through
   \`$(tty)\`, or as dd's \`of=\`), unless it only reads it with \`<\`;
-- a keystroke tool (tmux, screen, xdotool, osascript, wtype, ydotool, or a program the human lists in
-  \`typed-only-programs\`) in a command that holds the go word as a whole word; and keys that spell the go word one
-  by one or across chained calls (\`tmux send-keys g o Space r e l e a s e Enter\`, \`send-keys -l\`, several
-  \`send-keys\` joined by \`;\` or \`&&\`).
+- typing into a terminal, whatever it types (0.13.3; the go word can hide in hex keys, a variable or an encoding):
+  a \`send-keys\`, \`send-text\`, \`send-key\` or \`write-chars\` word anywhere in the command (tmux, kitty, wezterm, a
+  program named by an expansion), tmux with \`send\` or \`paste-buffer\`, screen with \`stuff\`, zellij with \`write\`,
+  and any mention of xdotool, wtype, ydotool, osascript or a program the human lists in \`typed-only-programs\`
+  (list your own pane tools there). \`tmux ls\` and \`screen -ls\` still run. Known false refusals: those words in a
+  commit message or an \`echo\`.
+- with a wall-time cap, the whole \`.claude/state\` folder (the session's start file is there): an Edit or Write, a
+  Bash write, \`cp\`, \`mv\` or \`rm\`. \`wall-time.sh\` also refuses a start later than now.
+
+What these checks do not read (known, documented, not fixed): a stop word after U+202F, U+2009, U+2028, U+2060, U+00AD
+or the bidi embedding marks; a stop word typed before a task notification in the same prompt; a \`">\` inside a quoted
+header attribute of a cross-session message (the body is read after the first \`">\`); a stop word after an image
+marker such as \`[Image #1]\`; and the stop reader's 256-character prefix, counted in bytes under the C locale and in
+characters under UTF-8.
 
 With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. A go word turns it
 on (see Sandbox below). An interpreter can still reach the route record, the gate ledgers your own steps write and
@@ -694,7 +711,8 @@ When a human has a go word (\`word:\`), the claude-code binding writes into \`.c
 - \`sandbox.enabled: true\`, \`sandbox.allowUnsandboxedCommands: false\` (a command the sandbox stops is not run again
   outside it) and \`sandbox.failIfUnavailable: true\`;
 - \`sandbox.filesystem.denyWrite\`: each go ledger, \`.claude/state/talk.jsonl\` when talk-guard.sh or a
-  session-prompt script is generated, and the scaffold manifest (\`.claude/.scaffold-manifest.json\`); and
+  session-prompt script is generated, the scaffold manifest (\`.claude/.scaffold-manifest.json\`), and, with a
+  wall-time cap, the folder \`.claude/state\` (\`Edit(/.claude/state/**)\` in \`permissions.deny\`); and
   \`permissions.deny\` \`Edit(...)\` for each of them. A ledger a gate after a step also reads is left out: the step
   writes it.
 - Hooks run outside the sandbox (Claude Code: command hooks "run with your full access"), so the go hook can still write.
@@ -4018,7 +4036,7 @@ A human's \`stop-word:\` needs \`word:\`, must be one non-empty line, must diffe
 
 ### V161: Wall Time (error)
 
-\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`.
+\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`. \`renew-on: <human-id>\` beside it needs \`wall-time:\` on the entry agent and names a human with a \`word:\`.
 
 ### V162: Egress (error)
 
@@ -4056,6 +4074,12 @@ EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not
 
 **Violation:** \`observability { protocol: http/xml }\`
 **Fix:** \`protocol: http/json\`
+
+### V169: Stop Words (error)
+Each of a human's stop words is a non-empty word on one line, no word is listed twice (case aside), none is the go word (compared without regard to case and surrounding punctuation), and none holds a character the stop reader cuts the first word at (a comma, a full stop, a quote ...), since it could never match. \`stop-from:\` takes the one value \`any\` and needs a \`stop-word:\`.
+
+**Violation:** \`stop-word: [stop, Stop]\`, or \`stop-word: "stop, now"\`
+**Fix:** \`stop-word: [stop, halt]\`
 
 ## Summary
 
@@ -4126,6 +4150,7 @@ EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not
 | V166 | warning | Boundary Outbound Without Sandbox |
 | V167 | error | Plugin Not Loaded |
 | V168 | error | OTLP Protocol |
+| V169 | error | Stop Words |
 `,
   },
 
