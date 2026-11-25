@@ -12,6 +12,7 @@ All notable changes to agentopology are documented here.
 ### Added
 
 - `stop-word:` may be a list (`stop-word: [stop, עצור]`). The stop word is read as the first word of a typed message, after whitespace and the punctuation `. , ; : ! ? ' " * / ) ( - _`, a backtick, `…`, `–` and `—` are trimmed from both ends of that word; a trailing clause is allowed (`Stop, the build is wrong`, `stop…`, `**stop**` halt; `please stop`, `stopwatch`, `don't stop` do not). A word in another script is matched exactly. The trim is done with patterns, so a multibyte character is removed whole.
+- `wall-time: <duration>` on the entry agent gains `renew-on: <human-id>` (a human with a go word; V161 refuses anything else). Past the cap, that human's typed go (the same typed check as every go) starts a fresh window: the start is reset and a renewal row `{ts, human, previous_start}` is appended to the go ledger. A relayed go, another human's go, a go before the cap, and a session with no recorded start do not renew. Without `renew-on` nothing changes.
 - V169: each stop word is non-empty, none is listed twice or equals the go word, and none holds a character the reader cuts the first word at.
 
 ## [0.13.2] - 2026-11-24

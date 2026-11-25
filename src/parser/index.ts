@@ -854,6 +854,7 @@ export function parseAgent(
     else node.maxSubagentsRaw = raw;
   }
   if (fields["wall-time"] !== undefined) node.wallTime = unquote(fields["wall-time"].trim());
+  if (fields["renew-on"] !== undefined) node.renewOn = unquote(fields["renew-on"].trim());
   if (fields["max-cost"] !== undefined) {
     const cost = parseUsd(fields["max-cost"]);
     if (cost.value !== undefined) node.maxCost = cost.value;

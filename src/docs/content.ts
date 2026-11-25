@@ -134,6 +134,7 @@ agent NAME {
 | max-turns | number | no | -- | Max agentic turns before stopping |
 | output-into | record id | no | -- | Append the agent's output-schema fields to this record when it stops: a SubagentStop hook writes \`{ts, agent, ...fields}\`, or \`{ts, agent, error: "schema"}\` when the output does not match (never the raw output). Needs an output-schema (V159). It reads \`last_assistant_message\` and matches on \`agent_type\`; a text-level check, claude-code only |
 | wall-time | duration | no | -- | Wall-clock cap on the whole session (\`4h\`, \`90m\`), on the entry agent only (V161). A SessionStart hook records the start; a PreToolUse guard on every tool refuses each call, a subagent's too, once the cap has passed, with a reason naming it; no recorded start refuses too. A text check of elapsed time between calls: it does not interrupt a call already running |
+| renew-on | human id | no | -- | Beside \`wall-time\`: past the cap, the typed go of that human (a human with a go word; the same typed check as every go) starts a fresh window. The start is reset and a renewal row \`{ts, human, previous_start}\` is appended to the go ledger. A relayed go, another human's go, and a session with no recorded start do not renew (V161) |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -4018,7 +4019,7 @@ A human's \`stop-word:\` needs \`word:\`, must be one non-empty line, must diffe
 
 ### V161: Wall Time (error)
 
-\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`.
+\`wall-time: <duration>\` (\`4h\`, \`90m\`) caps the whole session, so it sits on the entry agent (\`meta { entry: <agent> }\`) only; on any other agent, or with no entry named, it is an error (a subagent's own limit is \`timeout\`). The value must be a positive whole number and \`s\`, \`m\`, \`h\` or \`d\`. \`renew-on: <human-id>\` beside it needs \`wall-time:\` on the entry agent and names a human with a \`word:\`.
 
 ### V162: Egress (error)
 

@@ -4000,6 +4000,38 @@ const GO_WORD_FUNCTIONS: string[] = [
 ];
 
 /**
+ * The lines of a human's go hook that renew the wall-time cap (`renew-on: <human>` on the entry agent): past
+ * the cap, this typed go resets the session's start (the file wall-start.sh wrote) to now and appends
+ * `{ts, human, previous_start}` to each go ledger. With no recorded start, or one not past the cap, nothing changes.
+ * Empty for any other human, and for a topology with no renew-on.
+ */
+function renewLines(ast: TopologyAST, human: HumanNode, ledgers: string[], p: GuardPlatform): string[] {
+  const entry = ast.nodes.find((n): n is AgentNode => n.type === "agent" && n.id === ast.topology.entry);
+  const secs = durationSeconds(entry?.wallTime);
+  if (!entry || entry.renewOn !== human.id || secs === null || secs <= 0) return [];
+  const sq = shellQuote;
+  const dir = `${p.stateDir}/wall-time`;
+  return [
+    `# wall-time renew: past the cap of ${entry.wallTime}, this typed go starts a fresh window (reset the start, write a renewal row).`,
+    `WD=${dir}`,
+    `SID=$(printf '%s' "$PAYLOAD" | jq -er '.session_id | strings') || SID=''`,
+    `case "$SID" in ''|*[!A-Za-z0-9_-]*) SID='' ;; esac`,
+    'if [ -n "$SID" ] && [ ! -L "$WD" ] && [ -f "$WD/$SID" ] && [ ! -L "$WD/$SID" ]; then',
+    `  START=$(head -n 1 "$WD/$SID" 2>/dev/null) || START=''`,
+    `  case "$START" in ''|*[!0-9]*) START='' ;; esac`,
+    "  NOW=$(date +%s)",
+    '  [ "${AGENTOPOLOGY_TEST:-}" = 1 ] && [ -n "${AT_NOW:-}" ] && NOW=$AT_NOW',
+    `  if [ -n "$START" ] && [ $((NOW - 10#$START)) -gt ${secs} ]; then`,
+    '    if printf \'%s\\n\' "$NOW" > "$WD/$SID.new" && mv -f "$WD/$SID.new" "$WD/$SID"; then',
+    `      RROW=$(jq -nc --arg human ${sq(human.id)} --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$((10#$START))" '{ts: $ts, human: $human, previous_start: $prev}') || exit 0`,
+    ...ledgers.map((l) => `      printf '%s\\n' "$RROW" | go_append ${sq(l)} || echo ${sq(`go: the renewal for ${human.id} was not written to ${l}`)} >&2`),
+    "    fi",
+    "  fi",
+    "fi",
+  ];
+}
+
+/**
  * A human's go hook (UserPromptSubmit): when a prompt the person typed is the human's `word:` as the whole
  * message (any case in ASCII, whitespace and punctuation around it trimmed), it appends `{step, ok: true, word, ts, binds}` to each ledger the
  * gates after the human read, `binds` holding the sha256 of each bound file (null for one missing). A
@@ -4087,6 +4119,7 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
     `ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$W" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson binds "$BINDS" '{step: $step, ok: true, word: $word, ts: $ts}${binds.length ? " + {binds: $binds}" : ""}') || exit 0`,
     ...(stop === undefined ? goAppend : []),
     ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2`),
+    ...renewLines(ast, human, ledgers, p),
     "exit 0",
     "",
   ];

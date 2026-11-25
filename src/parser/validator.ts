@@ -5085,6 +5085,14 @@ function v152MetaTarget(ast: TopologyAST): ValidationResult[] {
 function v161WallTime(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const n of ast.nodes) {
+    if (n.type === "agent" && n.renewOn !== undefined) {
+      const rerr = (message: string) => results.push({ rule: "V161", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+      const h = ast.nodes.find((x) => x.id === n.renewOn);
+      if (n.wallTime === undefined) rerr(`Agent "${n.id}" has renew-on: ${n.renewOn} but no wall-time:. renew-on starts a fresh window past the cap, so give the entry agent wall-time: too.`);
+      else if (ast.topology.entry !== n.id) rerr(`Agent "${n.id}" has renew-on: ${n.renewOn}, but it is not the entry agent. renew-on sits beside wall-time: on the entry agent only.`);
+      if (h === undefined || h.type !== "human") rerr(`Agent "${n.id}" renew-on: "${n.renewOn}" is not a human. Name a human with a go word.`);
+      else if (h.word === undefined || h.word.trim() === "") rerr(`Agent "${n.id}" renew-on: human "${n.renewOn}" has no word:, so nothing the person types can renew the cap. Add word: "<the go word>" to the human.`);
+    }
     if (n.type !== "agent" || n.wallTime === undefined) continue;
     const err = (message: string) => results.push({ rule: "V161", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
     const entry = ast.topology.entry;

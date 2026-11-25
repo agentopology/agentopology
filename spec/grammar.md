@@ -443,6 +443,7 @@ agent-field     = 'role' ':' identifier
                 | 'max-cost' ':' number
                 | 'output-into' ':' record-id
                 | 'wall-time' ':' duration
+                | 'renew-on' ':' human-id
                 | 'sandbox' ':' (boolean | identifier)
                 | 'fallback-chain' ':' name-list
                 | agent-extensions
@@ -498,6 +499,7 @@ scale-field     = 'mode' ':' ('auto' | 'fixed' | 'config')
 | `max-turns` | number | no | -- | Maximum agentic turns before stopping |
 | `max-subagents` | number | no | -- | Most subagents this agent may have open at once; a positive whole number (V156). On claude-code a PreToolUse hook on `Agent\|Task` refuses a launch at the cap, counted per session from a log the SubagentStart and SubagentStop hooks write |
 | `wall-time` | duration | no | -- | Wall-clock cap on the whole session, such as `4h` or `90m`; on the entry agent (`meta { entry }`) only, V161 refuses it on any other agent (a subagent's own limit is `timeout`). On claude-code a `SessionStart` hook, `wall-start.sh`, records the session's start time in `.claude/state/wall-time/<session_id>` (once: a resume or compact keeps the first start), and `wall-time.sh`, a PreToolUse hook on every tool, refuses each tool call, a subagent's too, once more than the cap has passed, with a reason naming the cap. With no start recorded (the file is gone, jq missing, no usable session id) it refuses too. A text check of elapsed time between tool calls: it does not interrupt a call already running, and a command that rewrites the state file is not seen (only the sandbox stops that) |
+| `renew-on` | human-id | no | -- | Beside `wall-time` on the entry agent: past the cap, the TYPED go of that human (a human with a `word:`; the go hook's typed test, the same as every go) starts a fresh window. The go hook resets the session's start in `.claude/state/wall-time/<session_id>` to now and appends a renewal row `{"ts": "<UTC ISO time>", "human": "<human id>", "previous_start": <epoch seconds>}` to the go ledger. A go that is relayed (not typed), another human's go, a go before the cap has passed, and a session with no recorded start do not renew (the cap stays strict). V161 refuses `renew-on` with no `wall-time`, or naming something that is not a human with a `word:`. Without `renew-on` nothing changes |
 | `max-cost` | number | no | -- | Spend cap in US dollars (V156). Advisory, not enforced: Claude Code hooks do not see spend; the value is written to the metering output for reporting |
 | `output-into` | record id | no | -- | Append the agent's `output-schema` fields to this record when it stops (0.13.1, V159). See below |
 | `scale` | agent-scale | no | -- | Dynamic scaling configuration (see below) |

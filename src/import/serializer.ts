@@ -177,6 +177,7 @@ function serializeAgent(node: AgentNode): string {
   if (node.maxTurns) lines.push(`    max-turns: ${node.maxTurns}`);
   if (node.outputInto) lines.push(`    output-into: ${node.outputInto}`);
   if (node.wallTime !== undefined) lines.push(`    wall-time: ${node.wallTime}`);
+  if (node.renewOn !== undefined) lines.push(`    renew-on: ${node.renewOn}`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);

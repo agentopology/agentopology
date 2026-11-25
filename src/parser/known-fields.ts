@@ -42,7 +42,7 @@ const AGENT: BlockSchema = {
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
     "custodian-of", "place", "machine", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
-    "max-subagents", "max-cost", "output-into", "wall-time",
+    "max-subagents", "max-cost", "output-into", "wall-time", "renew-on",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],

@@ -778,6 +778,8 @@ export interface AgentNode extends BaseNode {
   maxSubagents?: number;
   /** Wall-clock cap on the whole session, as written (`4h`, `90m`); the entry agent only (V161). On claude-code a PreToolUse guard refuses every tool once it has passed. */
   wallTime?: string;
+  /** `renew-on: <human-id>` beside `wall-time:`: past the cap, that human's typed go starts a fresh window (V161). */
+  renewOn?: string;
   /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
   maxSubagentsRaw?: string;
   /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */
