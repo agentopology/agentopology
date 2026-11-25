@@ -1007,7 +1007,8 @@ export interface HumanNode extends BaseNode {
   word?: string;
   /** The stop word the person types. On claude-code the same go hook then appends a halt row to the same ledger, and go-halt.sh refuses every tool until the person types the go word again. */
   stopWord?: string;
-  /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
+  /** The stop words as written when `stop-word:` is a list (`stop-word: [stop, עצור]`); `stopWord` then holds the first one. */
+  stopWords?: string[];  /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
   binds?: string[];
   /** Programs that type into the person's terminal (beyond the built-in keystroke tools): a Bash command running one that holds the go word is refused. */
   typedOnlyPrograms?: string[];

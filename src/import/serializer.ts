@@ -351,8 +351,8 @@ function serializeHuman(node: HumanNode): string {
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
   if (node.word !== undefined) lines.push(`    word: ${q(node.word)}`);
-  if (node.stopWord !== undefined) lines.push(`    stop-word: ${q(node.stopWord)}`);
-  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
+  if (node.stopWords !== undefined) lines.push(`    stop-word: [${node.stopWords.map(q).join(", ")}]`);
+  else if (node.stopWord !== undefined) lines.push(`    stop-word: ${q(node.stopWord)}`);  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
   if (node.typedOnlyPrograms) lines.push(`    typed-only-programs: [${node.typedOnlyPrograms.map(q).join(", ")}]`);
   lines.push("  }");
   return lines.join("\n");

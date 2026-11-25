@@ -12,8 +12,41 @@
  * @module
  */
 
-import type { ActionNode, GateNode, RecordDef, TopologyAST } from "./ast.js";
+import type { ActionNode, GateNode, HumanNode, RecordDef, TopologyAST } from "./ast.js";
 import { gateAnchors } from "./ast.js";
+
+/** A human's stop words as written: the list, or the one string; empty when it has none. */
+export function stopWordsOf(h: HumanNode): string[] {
+  return h.stopWords ?? (h.stopWord !== undefined ? [h.stopWord] : []);
+}
+
+/** The ASCII letters of `s` folded to lower case; every other character stays as it is. */
+export function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/** The characters the stop-word reader cuts the first word at: a stop word holding one could never match. */
+export const STOP_CUT_CHARS = ",;:!?.\"*/()`<>…–—";
+/** The characters trimmed from both ends of a word, besides whitespace. */
+export const TRIM_CHARS = ".,;:!?'\"*/()-_`…–—";
+
+/** True when `w` holds a character outside ASCII (such a word is matched exactly, with no case folding). */
+export const isNonAscii = (w: string): boolean => /[^\x00-\x7f]/.test(w);
+
+/** `w` with whitespace and the TRIM_CHARS taken off both ends, and inner whitespace one space. */
+export function trimWord(w: string): string {
+  const trim = new Set([...TRIM_CHARS]);
+  let chars = [...w.trim()];
+  while (chars.length > 0 && (trim.has(chars[0]) || /\s/.test(chars[0]))) chars.shift();
+  while (chars.length > 0 && (trim.has(chars[chars.length - 1]) || /\s/.test(chars[chars.length - 1]))) chars.pop();
+  return chars.join("").split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** A go or stop word as the go hook compares it: ends trimmed, inner whitespace one space, ASCII lower case (when `fold`). */
+export function normalWord(w: string, fold = true): string {
+  const t = trimWord(w);
+  return fold ? asciiLower(t) : t;
+}
 
 /** The actions a gate stands before that a command can name (they have `commands:`). */
 export function guardedActions(ast: TopologyAST, gate: GateNode): ActionNode[] {

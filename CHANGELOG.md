@@ -2,6 +2,18 @@
 
 All notable changes to agentopology are documented here.
 
+## [0.13.3] - unreleased
+
+### Changed behaviour
+
+- The go word must now be the whole message, matched without regard to case and surrounding punctuation (before: case-sensitive, and a trailing clause was allowed). Type it alone, as its own message; put notes in a separate message. The stop word is matched without regard to case as the first word, and `stop-word:` may list several words, including words in other scripts, matched exactly.
+- `before-schedule.sh` keeps its stricter, older rule, unchanged: it still refuses a scheduled prompt that starts with the go word, case-sensitively.
+
+### Added
+
+- `stop-word:` may be a list (`stop-word: [stop, עצור]`). The stop word is read as the first word of a typed message, after whitespace and the punctuation `. , ; : ! ? ' " * / ) ( - _`, a backtick, `…`, `–` and `—` are trimmed from both ends of that word; a trailing clause is allowed (`Stop, the build is wrong`, `stop…`, `**stop**` halt; `please stop`, `stopwatch`, `don't stop` do not). A word in another script is matched exactly. The trim is done with patterns, so a multibyte character is removed whole.
+- V169: each stop word is non-empty, none is listed twice or equals the go word, and none holds a character the reader cuts the first word at.
+
 ## [0.13.2] - 2026-11-24
 
 ### Fixed

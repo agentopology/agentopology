@@ -622,8 +622,8 @@ human NAME {
 | on-timeout | string | no | "halt" | "halt", "skip", or "fallback <agent-id>" |
 | who | identifier | no | -- | The \`person\` block this step waits on; a person who is away today or later gets a V126 warning (V127 checks the name) |
 | valid | string | no | -- | \`"YYYY-MM-DD..YYYY-MM-DD"\`: the window this human's approval holds; \`step check\` refuses a step they guard after it, and on claude-code and codex \`before-action.sh\` refuses it too, also when the go row's time is outside the window |
-| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word (trimmed), or starts with it followed by a space or one of , . : ; ! ? (\`go release, notes look right\`), writes the go row to the ledger of the gate after this human. Needs such a gate with a ledger (V127) |
-| stop-word | string | no | -- | The stop word the person types. On claude-code the go hook, on a typed prompt that is the stop word (read as the go word is), appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V160). A text check of the ledger: it does not stop a process already running |
+| word | string | no | -- | The go word the person types. On claude-code a typed prompt that is the word as the whole message, matched without regard to case (ASCII) and surrounding whitespace and punctuation (\`go release\`, \`Go release.\`), writes the go row to the ledger of the gate after this human. A trailing clause (\`go release, notes look right\`) does not count: type the go alone, as its own message. Needs such a gate with a ledger (V127) |
+| stop-word | string or list | no | -- | The stop word the person types, or a list of them (\`stop-word: [stop, עצור]\`). On claude-code the go hook, on a typed prompt whose first word is a stop word (without regard to case for an ASCII word, exactly for one in another script; whitespace and punctuation around the word are trimmed; a trailing clause is allowed: \`Stop, the build is wrong\`), appends a halt row \`{step, ok: false, halt: true, word, ts}\` to the same ledger, and \`go-halt.sh\` (PreToolUse, every tool) refuses every tool call while the human's last row is a halt, until the person types the go word. Needs \`word\` and must differ from it (V160, V169). A text check of the ledger: it does not stop a process already running |
 | binds | list of paths | no | -- | Project files the go approves. The go row records each one's sha256, and the go counts only while they are unchanged. Needs \`word\` (V127) |
 | typed-only-programs | list of program names | no | -- | Your own programs that type into the person's terminal or pane, beyond the built-in tmux, screen, xdotool, osascript, wtype and ydotool. On claude-code a Bash command that runs one and holds the go word is refused. Needs \`word\` (V127) |
 
@@ -4057,6 +4057,12 @@ EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not
 **Violation:** \`observability { protocol: http/xml }\`
 **Fix:** \`protocol: http/json\`
 
+### V169: Stop Words (error)
+Each of a human's stop words is a non-empty word on one line, no word is listed twice (case aside), none is the go word (compared without regard to case and surrounding punctuation), and none holds a character the stop reader cuts the first word at (a comma, a full stop, a quote ...), since it could never match.
+
+**Violation:** \`stop-word: [stop, Stop]\`, or \`stop-word: "stop, now"\`
+**Fix:** \`stop-word: [stop, halt]\`
+
 ## Summary
 
 | Rule | Severity | Name |
@@ -4126,6 +4132,7 @@ EXPERIMENTAL. \`uses-plugins: [<id>, ...]\` names a plugin that this run did not
 | V166 | warning | Boundary Outbound Without Sandbox |
 | V167 | error | Plugin Not Loaded |
 | V168 | error | OTLP Protocol |
+| V169 | error | Stop Words |
 `,
   },
 

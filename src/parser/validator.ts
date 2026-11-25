@@ -30,7 +30,7 @@ import { isProjectPath, isShellCommand, proseInRun, runDecodesQuotes, runParts, 
 import { matcherMatches, matcherProblem, matcherGaps, TOOL_EVENTS } from "../conformance/claude-code.js";
 import { unsafePathReason } from "./paths.js";
 import { samePathKey } from "./path-forms.js";
-import { gateLedger, goLedgers, guardedActions } from "./ledger.js";
+import { gateLedger, goLedgers, guardedActions, normalWord, STOP_CUT_CHARS, stopWordsOf } from "./ledger.js";
 import { isPathGlob, isPermissionRule, untrustedEntries } from "../bindings/lib/threat.js";
 import { asList as asCcList } from "../bindings/claude-code-schema.js";
 import { NO_HOSTS_MESSAGE, sandboxFromAst, sandboxPlan, sandboxWeakenings, weakeningMessage } from "../bindings/lib/sandbox.js";
@@ -4255,6 +4255,7 @@ export function validate(ast: TopologyAST, opts: ValidateOptions = {}): Validati
     ...v158RecordMaxPerDay(ast),
     ...v159OutputInto(ast, opts),
     ...v160StopWord(ast),
+    ...v169StopWords(ast),
     ...v161WallTime(ast),
     ...v162Egress(ast),
     ...v163AskNeverOverlap(ast),
@@ -5131,6 +5132,10 @@ function v160StopWord(ast: TopologyAST): ValidationResult[] {
   for (const n of ast.nodes) {
     if (n.type !== "human" || n.stopWord === undefined) continue;
     const err = (message: string) => results.push({ rule: "V160", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    if (n.stopWords !== undefined) { // a list: V169 reads each word
+      if (n.word === undefined || n.word.trim() === "") err(`Human "${n.id}" has stop-word: but no word:. The stop is lifted by the go word, so add word: "<the go word>".`);
+      continue;
+    }
     if (n.stopWord.trim() === "" || /[\r\n]/.test(n.stopWord)) { err(`Human "${n.id}" stop-word: must be a non-empty word on one line, the text the person types to halt the run.`); continue; }
     if (n.word === undefined || n.word.trim() === "") { err(`Human "${n.id}" has stop-word: but no word:. The stop is lifted by the go word, so add word: "<the go word>".`); continue; }
     const go = wordWords(n.word) || n.word.trim().toLowerCase();
@@ -5142,7 +5147,35 @@ function v160StopWord(ast: TopologyAST): ValidationResult[] {
   return results;
 }
 
-const MAX_COST_ADVISORY = "max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
+/**
+ * V169: the stop words of a human. Each is non-empty and on one line, no word is listed twice (case aside), none
+ * equals the go word (as the go hook compares: ends trimmed, any case in ASCII), and none holds a character the
+ * stop reader cuts the first word at (a comma, a stop, a quote ...), since the word could never match.
+ */
+function v169StopWords(ast: TopologyAST): ValidationResult[] {
+  const results: ValidationResult[] = [];
+  for (const n of ast.nodes) {
+    if (n.type !== "human" || n.stopWord === undefined) continue;
+    const err = (message: string) => results.push({ rule: "V169", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+    const words = stopWordsOf(n);
+    if (n.stopWords !== undefined && n.stopWords.length === 0) { err(`Human "${n.id}" stop-word: is an empty list. Name at least one word.`); continue; }
+    const go =n.word !== undefined ? normalWord(n.word) : undefined;
+    const seen = new Set<string>();
+    for (const w of words) {
+      if (n.stopWords !== undefined && (w.trim() === "" || /[\r\n]/.test(w))) { err(`Human "${n.id}" stop-word: lists an empty word, or one on two lines. Each stop word is a non-empty word on one line.`); continue; }
+      if (w.trim() === "" || /[\r\n]/.test(w)) continue; // V160
+      const key = normalWord(w);
+      const bad = [...key].find((c) => STOP_CUT_CHARS.includes(c));
+      if (bad !== undefined) err(`Human "${n.id}" stop-word: "${w}" holds "${bad}", where the first word of a message is cut, so it could never be matched. Write the word without it.`);
+      if (seen.has(key)) err(`Human "${n.id}" stop-word: "${w}" is listed twice (case aside).`);
+      seen.add(key);
+      if (n.stopWords !== undefined && go !== undefined && key === go) err(`Human "${n.id}" stop-word: "${w}" is the go word "${n.word}" (compared without regard to case and surrounding punctuation); typed, they would be the same prompt.`);
+    }
+  }
+  return results;
+}
+
+const MAX_COST_ADVISORY ="max-cost is advisory, not enforced: Claude Code hooks do not see spend; it is written to the metering output for reporting";
 
 /**
  * V156: caps. `max-subagents` must be a positive integer (error). `max-cost`,

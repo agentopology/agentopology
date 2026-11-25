@@ -979,8 +979,14 @@ export function parseHuman(
   if (fields.who) node.who = unquote(fields.who);
   if (fields.valid) node.valid = unquote(fields.valid);
   if (fields.word !== undefined) node.word = unquote(fields.word);
-  if (fields["stop-word"] !== undefined) node.stopWord = unquote(fields["stop-word"]);
-  if (fields.binds) node.binds = parseList(fields.binds);
+  if (fields["stop-word"] !== undefined) {
+    if (fields["stop-word"].trim().startsWith("[")) {
+      node.stopWords = parseList(fields["stop-word"]);
+      // the list reader drops an empty item; keep one so V169 can refuse it
+      if (/(^\[|,)\s*""\s*(?=,|\]$)/.test(fields["stop-word"].trim())) node.stopWords.push("");
+      node.stopWord = node.stopWords[0] ?? "";
+    } else node.stopWord = unquote(fields["stop-word"]);
+  }  if (fields.binds) node.binds = parseList(fields.binds);
   if (fields["typed-only-programs"]) node.typedOnlyPrograms = parseList(fields["typed-only-programs"]);
 
   return node;
