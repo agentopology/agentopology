@@ -177,6 +177,7 @@ function serializeAgent(node: AgentNode): string {
   if (node.maxTurns) lines.push(`    max-turns: ${node.maxTurns}`);
   if (node.outputInto) lines.push(`    output-into: ${node.outputInto}`);
   if (node.wallTime !== undefined) lines.push(`    wall-time: ${node.wallTime}`);
+  if (node.renewOn !== undefined) lines.push(`    renew-on: ${node.renewOn}`);
   if (node.timeout) lines.push(`    timeout: ${q(node.timeout)}`);
   if (node.onFail) lines.push(`    on-fail: ${node.onFail}`);
   if (node.behavior) lines.push(`    behavior: ${node.behavior}`);
@@ -351,8 +352,9 @@ function serializeHuman(node: HumanNode): string {
   if (node.who) lines.push(`    who: ${node.who}`);
   if (node.valid) lines.push(`    valid: ${q(node.valid)}`);
   if (node.word !== undefined) lines.push(`    word: ${q(node.word)}`);
-  if (node.stopWord !== undefined) lines.push(`    stop-word: ${q(node.stopWord)}`);
-  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
+  if (node.stopWords !== undefined) lines.push(`    stop-word: [${node.stopWords.map(q).join(", ")}]`);
+  else if (node.stopWord !== undefined) lines.push(`    stop-word: ${q(node.stopWord)}`);
+  if (node.stopFrom !== undefined) lines.push(`    stop-from: ${node.stopFrom}`);  if (node.binds) lines.push(`    binds: [${node.binds.map(q).join(", ")}]`);
   if (node.typedOnlyPrograms) lines.push(`    typed-only-programs: [${node.typedOnlyPrograms.map(q).join(", ")}]`);
   lines.push("  }");
   return lines.join("\n");
