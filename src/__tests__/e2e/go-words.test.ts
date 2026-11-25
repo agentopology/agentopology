@@ -191,13 +191,13 @@ describe("[words] V169: the stop words", () => {
 
 describe.skipIf(!hasJq)("[words] the go word: the whole message, any case, punctuation trimmed", () => {
   const GO = '    word: "go"\n    stop-word: "stop"\n';
-  for (const text of ["Go", "go.", " GO ", "go!", "GO\n", "'go'", "go…"]) {
+  for (const text of ["Go", "go.", " GO ", "go!", "GO\n", "go…"]) {
     it(`counts (one word): ${JSON.stringify(text)}`, () => {
       scaffold(src(GO));
       expect(kind(text)).toBe("go");
     });
   }
-  for (const text of ["Go ahead and explain the plan", "go, but first read the notes", "go release", "go now", "ago", "going", "please go"]) {
+  for (const text of ["Go ahead and explain the plan", "go, but first read the notes", "go release", "go now", "ago", "going", "please go", "'go'", "go?"]) {
     it(`does not count (one word): ${JSON.stringify(text)}`, () => {
       scaffold(src(GO));
       expect(kind(text)).toBe("none");

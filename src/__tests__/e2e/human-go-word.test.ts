@@ -215,15 +215,14 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
       "go release", // spec/grammar.md and the human docs topic: the person types `go release`
       "go release.",
       "go release!",
-      "go release?",
     ];
     for (const text of counts) {
       const before = rows().length;
       expect(run(goCmd(), prompt(text)).status).toBe(0);
       expect(rows().length, text).toBe(before + 1);
     }
-    // 0.13.3: the go word must be the whole message, so a trailing clause does not count
-    for (const text of ["go release, notes look right", "go release: ship it", "go release; thanks", "go released", "please go release, ok", "go release-candidate", "go release/x", "go release_ok"]) {
+    // 0.13.3: the go word must be the whole message, so a trailing clause does not count; a question is not the go
+    for (const text of ["go release?", "go release, notes look right", "go release: ship it", "go release; thanks", "go released", "please go release, ok", "go release-candidate", "go release/x", "go release_ok"]) {
       const before = rows().length;
       expect(run(goCmd(), prompt(text)).status).toBe(0);
       expect(rows().length, text).toBe(before);
