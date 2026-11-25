@@ -5163,6 +5163,11 @@ function v160StopWord(ast: TopologyAST): ValidationResult[] {
 function v169StopWords(ast: TopologyAST): ValidationResult[] {
   const results: ValidationResult[] = [];
   for (const n of ast.nodes) {
+    if (n.type === "human" && n.stopFrom !== undefined) {
+      const ferr = (message: string) => results.push({ rule: "V169", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
+      if (n.stopFrom !== "any") ferr(`Human "${n.id}" stop-from: "${n.stopFrom}" is not a value. The only value is any: write stop-from: any, or leave the field out.`);
+      else if (n.stopWord === undefined) ferr(`Human "${n.id}" has stop-from: any but no stop-word:. Add stop-word: "<the stop word>" or remove stop-from.`);
+    }
     if (n.type !== "human" || n.stopWord === undefined) continue;
     const err = (message: string) => results.push({ rule: "V169", level: "error", node: n.id, line: lookupLine(ast, n.id), message });
     const words = stopWordsOf(n);

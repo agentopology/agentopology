@@ -74,7 +74,7 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "mode", "let-go", "lift", "rule"],
     blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "stop-word", "binds", "typed-only-programs"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "stop-word", "stop-from", "binds", "typed-only-programs"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },

@@ -987,7 +987,8 @@ export function parseHuman(
       if (/(^\[|,)\s*""\s*(?=,|\]$)/.test(fields["stop-word"].trim())) node.stopWords.push("");
       node.stopWord = node.stopWords[0] ?? "";
     } else node.stopWord = unquote(fields["stop-word"]);
-  }  if (fields.binds) node.binds = parseList(fields.binds);
+  }
+  if (fields["stop-from"] !== undefined) node.stopFrom = unquote(fields["stop-from"]);  if (fields.binds) node.binds = parseList(fields.binds);
   if (fields["typed-only-programs"]) node.typedOnlyPrograms = parseList(fields["typed-only-programs"]);
 
   return node;

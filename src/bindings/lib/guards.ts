@@ -4070,7 +4070,13 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
     "# It never blocks (exit 0).",
     "PAYLOAD=$(cat 2>/dev/null || true)",
     ...TYPED_TEST_LINES,
-    '[ "$KIND" = typed ] || exit 0',
+    ...(stop !== undefined && human.stopFrom === "any"
+      ? [
+        "# stop-from: any. A stop word in a prompt nobody typed (another session, a background report) halts too.",
+        "# The go word never counts from such a prompt.",
+        "TYPED=0; [ \"$KIND\" = typed ] && TYPED=1",
+      ]
+      : ['[ "$KIND" = typed ] || exit 0']),
     `W=${sq(human.word.trim())}`,
     ...GO_WORD_FUNCTIONS,
     ...(stop === undefined
@@ -4084,7 +4090,19 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
         "# The stop word is the first word of the message (any case in ASCII, a word in another script exactly),",
         "# whitespace and punctuation around that word trimmed; a trailing clause is allowed.",
         "# The go word must be the whole message: any case in ASCII, whitespace and punctuation around it trimmed.",
-        'at_trim "$PROMPT"; AT_T=$AT_OUT',
+        ...(human.stopFrom === "any"
+          ? [
+            "# A prompt nobody typed: read the text after its envelope (the body of a cross-session message, or what follows a task notification).",
+            'TB=$PROMPT',
+            'if [ "$TYPED" = 0 ]; then',
+            '  case "$PROMPT" in',
+            '    *"</task-notification>"*) TB=${PROMPT##*"</task-notification>"} ;;',
+            '    "<cross-session-message"*) TB=${PROMPT#*">"} ;;',
+            "  esac",
+            "fi",
+            'at_trim "$TB"; AT_T=$AT_OUT',
+          ]
+          : ['at_trim "$PROMPT"; AT_T=$AT_OUT']),
         "STOP=0; S=''",
         ...stop.map((w, i) => {
           const fold = !isNonAscii(w);
@@ -4093,6 +4111,7 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
         }),
         "fi",
         'if [ "$STOP" = 0 ]; then',
+        ...(human.stopFrom === "any" ? ['  [ "$TYPED" = 1 ] || exit 0'] : []),
         '  at_norm "$PROMPT"; G=$AT_OUT',
         '  at_norm "$W"',
         '  [ "$G" = "$AT_OUT" ] || exit 0',
