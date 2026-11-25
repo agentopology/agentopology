@@ -12,8 +12,68 @@
  * @module
  */
 
-import type { ActionNode, GateNode, RecordDef, TopologyAST } from "./ast.js";
+import type { ActionNode, GateNode, HumanNode, RecordDef, TopologyAST } from "./ast.js";
 import { gateAnchors } from "./ast.js";
+
+/** A human's stop words as written: the list, or the one string; empty when it has none. */
+export function stopWordsOf(h: HumanNode): string[] {
+  return h.stopWords ?? (h.stopWord !== undefined ? [h.stopWord] : []);
+}
+
+/** The ASCII letters of `s` folded to lower case; every other character stays as it is. */
+export function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/**
+ * Marks phones and keyboards put around or inside a word: direction marks (U+200E, U+200F), zero-width
+ * space and joiner (U+200B, U+200D), the byte-order mark (U+FEFF), the emoji variation selector (U+FE0F),
+ * the ideographic space (U+3000) and the no-break space (U+00A0).
+ */
+const INVISIBLE_CHARS = "‎‏​‍﻿️　 ";
+/** Quotes, Hebrew punctuation, CJK and full-width punctuation, markers and the stop-sign emoji around a stop word. */
+const PHONE_CHARS = "“”‘’«»״׳־。！？#[]🛑⛔";
+/** The characters the stop-word reader cuts the first word at: a stop word holding one could never match. */
+export const STOP_CUT_CHARS = ",;:!?.\"*/()`<>…–—" + PHONE_CHARS + INVISIBLE_CHARS;
+/** The characters trimmed from both ends of the go word, besides ASCII whitespace. No `?` and no quotes: `go release?` is a question. */
+export const GO_TRIM_CHARS = ".,;:!*/()-_`…–—";
+/** The characters trimmed from both ends of a stop word (and of a scheduled prompt), besides ASCII whitespace: the go set and more. */
+export const TRIM_CHARS = GO_TRIM_CHARS + "?'\"<>" + PHONE_CHARS + INVISIBLE_CHARS;
+/** Hebrew points and accents (U+0591 to U+05C7), dropped before a stop word is compared; the punctuation in that block stays. */
+export const NIQQUD_CHARS = Array.from({ length: 0x05c7 - 0x0591 + 1 }, (_, i) => 0x0591 + i)
+  .filter((c) => ![0x05be, 0x05c0, 0x05c3, 0x05c6].includes(c))
+  .map((c) => String.fromCodePoint(c))
+  .join("");
+
+/** `s` with full-width Latin letters as ASCII letters and Hebrew points dropped: how a stop word is compared. */
+export function foldStop(s: string): string {
+  const niqqud = new Set([...NIQQUD_CHARS]);
+  return [...s]
+    .filter((c) => !niqqud.has(c))
+    .map((c) => {
+      const p = c.codePointAt(0)!;
+      return (p >= 0xff21 && p <= 0xff3a) || (p >= 0xff41 && p <= 0xff5a) ? String.fromCharCode(p - 0xfee0) : c;
+    })
+    .join("");
+}
+
+/** True when `w` holds a character outside ASCII (such a word is matched exactly, with no case folding). */
+export const isNonAscii = (w: string): boolean => /[^\x00-\x7f]/.test(w);
+
+/** `w` with whitespace and the TRIM_CHARS taken off both ends, and inner whitespace one space. */
+export function trimWord(w: string): string {
+  const trim = new Set([...TRIM_CHARS]);
+  let chars = [...w.trim()];
+  while (chars.length > 0 && (trim.has(chars[0]) || /\s/.test(chars[0]))) chars.shift();
+  while (chars.length > 0 && (trim.has(chars[chars.length - 1]) || /\s/.test(chars[chars.length - 1]))) chars.pop();
+  return chars.join("").split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** A go or stop word as the go hook compares it: ends trimmed, inner whitespace one space, ASCII lower case (when `fold`). */
+export function normalWord(w: string, fold = true): string {
+  const t = trimWord(w);
+  return fold ? asciiLower(t) : t;
+}
 
 /** The actions a gate stands before that a command can name (they have `commands:`). */
 export function guardedActions(ast: TopologyAST, gate: GateNode): ActionNode[] {

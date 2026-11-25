@@ -42,7 +42,7 @@ const AGENT: BlockSchema = {
     "thinking", "thinking-budget", "output-format", "log-level", "join",
     "compensates", "isolation", "background", "memory", "retrieval",
     "custodian-of", "place", "machine", "decides", "permission-mode", "sandbox", "fallback-chain", "rate-limit", "max-turns",
-    "max-subagents", "max-cost", "output-into", "wall-time",
+    "max-subagents", "max-cost", "output-into", "wall-time", "renew-on",
     // `prompt:` is a known misuse, reported by V89 with a better message.
     "prompt",
   ],
@@ -74,7 +74,7 @@ const NODE_SCHEMAS = {
     fields: ["after", "before", "run", "checks", "retry", "on-fail", "behavior", "timeout", "description", "strength", "by", "at", "match", "bypass", "ledger", "mode", "let-go", "lift", "rule"],
     blocks: { extensions: OPAQUE, tests: { fields: ["refuse", "allow"] } },
   },
-  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "stop-word", "binds", "typed-only-programs"] },
+  human: { fields: ["file", "description", "timeout", "on-timeout", "who", "valid", "word", "stop-word", "stop-from", "binds", "typed-only-programs"] },
   group: {
     fields: ["members", "file", "speaker-selection", "max-rounds", "termination", "description", "timeout"],
   },

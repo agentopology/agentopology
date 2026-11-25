@@ -677,7 +677,7 @@ agent researcher {
 
 ## Summary Table
 
-All 168 rules, generated from `src/parser/validator.ts` so the spec cannot drift
+All 169 rules, generated from `src/parser/validator.ts` so the spec cannot drift
 from the implementation. Rules V8, V12, V23, V24, V89, V90, V98, V102, V155 and V167 are collected at
 **parse time** — the misuse they catch leaves no trace in the AST — and surfaced
 through the validator like any other rule.
@@ -845,8 +845,8 @@ through the validator like any other rule.
 | V157 | error | In a `checkpoint`, `interface`, `defaults`, `observability` or `metering` block, a value still holds `, <field>:` where `<field>` is a field of the same block: a comma between fields on one line separates them, but not inside quotes, `[..]`, `{..}` or `(..)`, and an unclosed one hid the next field. Also, in any block (secrets and tools included), a value that holds `" <word>:` or `] <word>:`, or `<value> <field>:` for a known field of that block, is a second field run into the first with no comma or newline (`secret prod { path: "config/prod/**" readers: [worker] }`). The error names the block, the key and the field; add the comma, close the bracket or quote, or put the field on its own line |
 | V158 | error | A record's `max-per-day` is not a positive whole number, or the record's path holds `{unit}` (the cap counts the rows of one file). The message names the record |
 | V159 | error/warning | An agent's `output-into:` names no declared record, names a record whose path holds `{unit}` (the SubagentStop hook knows no unit), or is on an agent with no `output-schema` (errors). With `--target codex` or `cursor`, a warning: only claude-code writes the hook |
-| V160 | error | A human's `stop-word:` is empty or on more than one line, is set with no `word:`, equals the `word:` (compared as the go hook reads it: lower case, runs of other characters as one space), or opens with the `word:` (or the reverse) followed by a space: one typed prompt would read as both |
-| V161 | error | An agent's `wall-time:` is not a duration (a positive whole number and `s`, `m`, `h` or `d`), or sits on an agent that is not the entry (`meta { entry }`), or the topology names no entry: it caps the whole session; a subagent's own limit is `timeout` |
+| V160 | error | A human's `stop-word:` is empty or on more than one line, is set with no `word:`, equals the `word:` (compared as the go hook reads it: lower case, runs of other characters as one space), or opens with the `word:` (or the reverse) followed by a space: one typed prompt would read as both. With a list, each listed word is checked for that overlap, without regard to case |
+| V161 | error | An agent's `wall-time:` is not a duration (a positive whole number and `s`, `m`, `h` or `d`), or sits on an agent that is not the entry (`meta { entry }`), or the topology names no entry: it caps the whole session; a subagent's own limit is `timeout`. Also: `renew-on:` with no `wall-time:`, off the entry agent, or naming something that is not a human with a `word:` |
 | V162 | error | The top-level `egress { gate, covers }` block: `gate` is missing, names no human with a `word:` and no record, or names a record whose path has `{unit}`; `covers` is empty or names something other than `observability`, `web`, `network`, `mcp` |
 | V163 | error | The same path (same anchor `~/`, `//` or project root, same path) is in `never-reads` and in `ask-reads`, on the same agent or on two agents. One refuses and the other asks, and `ask-reads` is a session-wide `permissions.ask` rule, so both cannot hold; keep one |
 | V164 | error | A `boundary` block has no `path` (or an empty one), so it is about nothing |
@@ -854,6 +854,7 @@ through the validator like any other rule.
 | V166 | warning | A `boundary` lists `outbound` hosts, and no sandbox block is generated (no human has a go word), so they are not written to `sandbox.network.allowedDomains`; they are listed in `boundaries.md` for the author to add. With a go word the sandbox block is generated, the hosts go into its allow-list and this rule is silent |
 | V167 | error | `uses-plugins: [<id>, ...]` names a plugin that is not loaded (EXPERIMENTAL; plugins load only by `--plugin <module>` or the project package.json `agentopology.plugins`, never from the .at). Each top-level block that no core section and no loaded plugin owns is reported as `block <kw> needs plugin <id>; run with --plugin <id>` instead of V102; with no such block, `uses-plugins names plugin <id>, which is not loaded; run with --plugin <id>`. Without `uses-plugins`, an unknown block stays V102. A loaded plugin's own findings carry its namespaced rule ids (`<id>/<name>`), not a V number |
 | V168 | error | `observability { protocol }` is not one of the values Claude Code documents for `OTEL_EXPORTER_OTLP_PROTOCOL`: `http/json`, `http/protobuf`, `grpc` |
+| V169 | error | A human's stop words (`stop-word:`, a string or a list): one is empty or on two lines, a word is listed twice (case aside), a word is the go word (compared without regard to case and surrounding punctuation), or a word holds a character the stop reader cuts the first word at (a comma, a full stop, a quote ...), so it could never match. Also `stop-from:` with any value but `any`, or with no `stop-word:` |
 
 > Sections above document the first 35 rules with worked examples. The rest are
 > single-line entries here plus their doc comment in the source. Adding an

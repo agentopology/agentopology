@@ -778,6 +778,8 @@ export interface AgentNode extends BaseNode {
   maxSubagents?: number;
   /** Wall-clock cap on the whole session, as written (`4h`, `90m`); the entry agent only (V161). On claude-code a PreToolUse guard refuses every tool once it has passed. */
   wallTime?: string;
+  /** `renew-on: <human-id>` beside `wall-time:`: past the cap, that human's typed go starts a fresh window (V161). */
+  renewOn?: string;
   /** The `max-subagents:` value as written, kept when it is not a positive integer (V156). */
   maxSubagentsRaw?: string;
   /** Spend cap in USD (`max-cost:`). Advisory: never enforced. */
@@ -1007,7 +1009,10 @@ export interface HumanNode extends BaseNode {
   word?: string;
   /** The stop word the person types. On claude-code the same go hook then appends a halt row to the same ledger, and go-halt.sh refuses every tool until the person types the go word again. */
   stopWord?: string;
-  /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
+  /** The stop words as written when `stop-word:` is a list (`stop-word: [stop, עצור]`); `stopWord` then holds the first one. */
+  stopWords?: string[];
+  /** `stop-from: any` (the only value): a stop word in a prompt the person did not type (relayed, scheduled) halts too. The go word never counts from such a prompt (V169). */
+  stopFrom?: string;  /** Project paths whose content the go approves: the row records each one's sha256, and before-action.sh counts the go only while they are unchanged. */
   binds?: string[];
   /** Programs that type into the person's terminal (beyond the built-in keystroke tools): a Bash command running one that holds the go word is refused. */
   typedOnlyPrograms?: string[];
