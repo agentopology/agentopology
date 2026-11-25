@@ -199,9 +199,12 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
     scaffold();
     expect(run(goCmd(), prompt("go released")).status).toBe(0);
     expect(run(goCmd(), prompt("please go release")).status).toBe(0);
-    expect(run(goCmd(), prompt("Go Release")).status).toBe(0);
     expect(run(goCmd(), "garbage").status).toBe(0);
     expect(rows()).toHaveLength(0);
+    // 0.13.3: the go word is matched without regard to case, so `Go Release` is the go word
+    expect(run(goCmd(), prompt("Go Release")).status).toBe(0);
+    expect(rows()).toHaveLength(1);
+    // 0.13.3: the go word must be the whole message; a trailing clause no longer counts
     expect(run(goCmd(), prompt("go release now")).status).toBe(0);
     expect(rows()).toHaveLength(1);
   });
@@ -209,11 +212,8 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
   it("(2c) the word then a space or , . : ; ! ? counts (every docs example); a longer word or a word not at the start does not", () => {
     scaffold();
     const counts = [
-      "go release, notes look right", // spec/grammar.md, the go
       "go release", // spec/grammar.md and the human docs topic: the person types `go release`
       "go release.",
-      "go release: ship it",
-      "go release; thanks",
       "go release!",
       "go release?",
     ];
@@ -222,7 +222,8 @@ describe.skipIf(!hasJq)("[go] the typed word writes the go row; nothing else doe
       expect(run(goCmd(), prompt(text)).status).toBe(0);
       expect(rows().length, text).toBe(before + 1);
     }
-    for (const text of ["go released", "please go release, ok", "go release-candidate", "go release/x", "go release_ok"]) {
+    // 0.13.3: the go word must be the whole message, so a trailing clause does not count
+    for (const text of ["go release, notes look right", "go release: ship it", "go release; thanks", "go released", "please go release, ok", "go release-candidate", "go release/x", "go release_ok"]) {
       const before = rows().length;
       expect(run(goCmd(), prompt(text)).status).toBe(0);
       expect(rows().length, text).toBe(before);
