@@ -1548,7 +1548,17 @@ export function protectedLedgers(ast: TopologyAST, p: GuardPlatform): ProtectedL
     paths.push(`${p.stateDir}/taint/{unit}`);
     if (ast.threatModel?.lift) paths.push(`${p.stateDir}/approvals.jsonl`);
   }
+  // 0.13.3: with a wall-time cap, the whole state folder is the hooks' alone: the session's start file lives
+  // there, and an agent that rewrote it (a start in the future) would never reach the cap.
+  if (p.id === "claude-code" && hasWallCap(ast)) paths.push(`${p.stateDir}/{unit}`);
   return [...new Set(paths)].map(protectedFile);
+}
+
+/** True when the entry agent has a wall-time cap (a positive duration). */
+export function hasWallCap(ast: TopologyAST): boolean {
+  const a = ast.nodes.find((n): n is AgentNode => n.type === "agent" && n.id === ast.topology.entry);
+  const secs = durationSeconds(a?.wallTime);
+  return secs !== null && secs > 0;
 }
 
 /** A project-relative path (`{unit}` allowed) as the patterns and letters the guards match it by. */
@@ -2606,6 +2616,19 @@ function goEntryGuardLines(ast: TopologyAST, p: GuardPlatform): string[] {
     '  echo "agentopology: the command writes to a terminal device (/dev/pts, /dev/tty, /dev/console), where the text reads as typed by the person; only the person types the go ($CMD)" >&2',
     "  exit 2",
     "fi",
+    "# 0.13.3: typing into a terminal is refused outright, whatever it types: the go word can be hidden in hex keys,",
+    "# a variable or an encoding. Refused: a send-keys, send-text, send-key or write-chars word anywhere (tmux, kitty,",
+    "# wezterm, a program named by an expansion), tmux with send, screen with stuff, zellij with write, and any",
+    "# mention of xdotool, wtype, ydotool, osascript or a program in typed-only-programs. tmux and screen that type",
+    "# nothing (tmux ls, screen -ls) still run. Known false refusals: those words in a commit message or an echo.",
+    `if [[ $AT_GO_CMD == *' send keys '* || $AT_GO_CMD == *' send text '* || $AT_GO_CMD == *' send key '* || $AT_GO_CMD == *' write chars '* ]] \\`,
+    `  || { [[ $AT_GO_CMD == *' tmux '* ]] && [[ $AT_GO_CMD == *' send '* || $AT_GO_CMD == *' paste buffer '* || $AT_GO_CMD == *' pasteb '* ]]; } \\`,
+    `  || { [[ $AT_GO_CMD == *' screen '* ]] && [[ $AT_GO_CMD == *' stuff '* ]]; } \\`,
+    `  || { [[ $AT_GO_CMD == *' zellij '* ]] && [[ $AT_GO_CMD == *' write '* ]]; } \\`,
+    `  || ${typists.filter((t) => t !== "tmux" && t !== "screen").map((t) => goWordWords(t) || t).map((w) => `[[ $AT_GO_CMD == *${sq(` ${w} `)}* ]]`).join(" || ")}; then`,
+    '  echo "agentopology: the command types into a terminal (send-keys, send-text, write-chars, stuff, or a keystroke tool), where the text reads as typed by the person; with a go word, typing into a terminal is refused whatever it types ($CMD)" >&2',
+    "  exit 2",
+    "fi",
     "# Keystrokes typed into the person's terminal are a prompt the person seems to type. A command that runs",
     "# a keystroke tool (the built-in ones, and the human's typed-only-programs) and holds a go word is refused.",
     "# Not seen: any other way to type into the person's terminal.",
@@ -2699,26 +2722,37 @@ export function generateBeforeScheduleScript(ast: TopologyAST, p: GuardPlatform)
     'command -v jq >/dev/null 2>&1 || { echo "agentopology: jq is required to check a scheduled prompt for the go word, so it is blocked" >&2; exit 2; }',
     "INPUT=$(cat)",
     ...GO_WORD_FUNCTIONS,
-    "AT_WN=()",
-    `for w in ${words.map((w) => shellQuote(w)).join(" ")}; do at_norm "$w"; AT_WN+=("$AT_OUT"); done`,
-    "at_sched_hit() { # at_sched_hit S: is S, or its first words, a go word (read with the wider trim)",
-    "  local s=$1 w n g IFS=$' \\t\\n'",
-    '  at_norm "$s"; g=$AT_OUT',
-    '  at_trim "$s"; s=$AT_OUT',
-    '  for w in "${AT_WN[@]}"; do',
-    '    [ "$g" = "$w" ] && return 0',
+    "AT_WN=(); AT_WB=()",
+    `for w in ${words.map((w) => shellQuote(w)).join(" ")}; do at_norm "$w"; AT_WN+=("$AT_OUT"); at_blen "$w"; AT_WB+=("$AT_OUT"); done`,
+    "# at_sched_hit S: is S, or its first words, a go word (read with the wider trim). The go hook counts no",
+    "# message longer than the go word by more than AT_SLACK bytes, so a longer text is not read whole; its first",
+    "# words still are, when they are that short.",
+    "at_sched_hit() {",
+    "  local s=$1 w i n f IFS=$' \\t\\n'",
+    '  for ((i=0; i<${#AT_WN[@]}; i++)); do',
+    '    w=${AT_WN[i]}',
+    '    at_blen "$s"',
+    '    if [ "$AT_OUT" -le $((AT_WB[i] + AT_SLACK)) ]; then at_norm "$s"; [ "$AT_OUT" = "$w" ] && return 0; fi',
     "    set -f; set -- $w; n=$#; set -- $s; set +f",
     '    [ "$#" -ge "$n" ] || continue',
-    '    at_norm "${*:1:$n}"',
+    '    f="${*:1:$n}"',
+    '    at_blen "$f"',
+    '    [ "$AT_OUT" -le $((AT_WB[i] + AT_SLACK)) ] || continue',
+    '    at_norm "$f"',
     '    [ "$AT_OUT" = "$w" ] && return 0',
     "  done",
     "  return 1",
     "}",
+    `AT_LIMIT=${SCHEDULE_SECONDS}`,
+    `at_clock() { [ "$SECONDS" -lt "$AT_LIMIT" ] || { echo "agentopology: the scheduled prompt took longer than \${AT_LIMIT}s to check, so it is blocked" >&2; exit 2; }; }`,
     `LIST=$(printf '%s' "$INPUT" | jq -r ${shellQuote(strings)} 2>/dev/null) || { echo "agentopology: the hook input is not valid JSON, so the scheduled prompt is blocked" >&2; exit 2; }`,
     "HIT=0",
     "while IFS= read -r J; do",
     '  [ -n "$J" ] || continue',
+    "  at_clock",
     `  S=$(printf '%s' "$J" | jq -r '.' 2>/dev/null) || { echo "agentopology: the scheduled prompt could not be checked, so it is blocked" >&2; exit 2; }`,
+    '  at_blen "$S"',
+    `  [ "$AT_OUT" -le ${SCHEDULE_MAX_BYTES} ] || { echo "agentopology: a scheduled string is longer than ${SCHEDULE_MAX_BYTES} bytes, so it is not read and the call is blocked; schedule a shorter prompt" >&2; exit 2; }`,
     '  C=("$S")',
     '  T=${S#"${S%%[!$AT_WS]*}"}',
     '  case "$T" in',
@@ -2728,7 +2762,7 @@ export function generateBeforeScheduleScript(ast: TopologyAST, p: GuardPlatform)
     '      case "$R" in *[$AT_WS]*) C+=("${R#*[$AT_WS]}") ;; esac',
     "      ;;",
     "  esac",
-    '  for X in "${C[@]}"; do at_sched_hit "$X" && HIT=1; done',
+    '  for X in "${C[@]}"; do at_clock; at_sched_hit "$X" && HIT=1; done',
     'done <<< "$LIST"',
     'if [ "$HIT" = 1 ]; then',
     '  echo "agentopology: the scheduled prompt reads as a go word; it would be submitted as a prompt and give the go nobody typed. Only the person types the go; schedule the prompt without it." >&2',
@@ -3978,6 +4012,14 @@ export function goHookScript(id: string): string {
   return `go-${id}.sh`;
 }
 
+/** How many bytes a message may run past the go word's own length and still be read as the go. */
+export const GO_SLACK = 64;
+/** The longest string before-schedule.sh reads; a longer one is refused unread. */
+export const SCHEDULE_MAX_BYTES = 4096;
+/** before-schedule.sh refuses once it has run this many seconds; its hook entry's timeout is longer, and fails closed. */
+export const SCHEDULE_SECONDS = 10;
+export const SCHEDULE_HOOK_TIMEOUT = 30;
+
 /** Each character of `chars` shell-quoted, space-separated: a `for c in ...` list (code points, so an emoji stays whole). */
 const charList = (chars: string): string => [...chars].map((c) => shellQuote(c)).join(" ");
 
@@ -4010,6 +4052,13 @@ function foldLines(): string[] {
  */
 const GO_WORD_FUNCTIONS: string[] = [
   "AT_WS=$' \\t\\n\\r\\v\\f'",
+  "at_blen() { # at_blen S: AT_OUT is the length of S in bytes, under every locale",
+  "  local LC_ALL=C",
+  "  AT_OUT=${#1}",
+  "}",
+  `# A message longer than the go word by more than ${GO_SLACK} bytes is never the go: the readers stay fast, and`,
+  "# before-schedule.sh refuses every string the go hook could count.",
+  `AT_SLACK=${GO_SLACK}`,
   "at_trim() { # at_trim S [go]: AT_OUT is S without whitespace or punctuation at either end (patterns, so multibyte-safe)",
   "  local s=$1 p c",
   "  local -a cs",
@@ -4019,8 +4068,8 @@ const GO_WORD_FUNCTIONS: string[] = [
   '    s=${s#"${s%%[!$AT_WS]*}"}',
   '    s=${s%"${s##*[!$AT_WS]}"}',
   '    for c in "${cs[@]}"; do',
-  '      s=${s#"$c"}',
-  '      s=${s%"$c"}',
+  '      while [[ $s == "$c"* ]]; do s=${s#"$c"}; done',
+  '      while [[ $s == *"$c" ]]; do s=${s%"$c"}; done',
   "    done",
   '    [ "$s" = "$p" ] && break',
   "  done",
@@ -4073,7 +4122,9 @@ function renewLines(ast: TopologyAST, human: HumanNode, ledgers: string[], p: Gu
     `WD=${dir}`,
     `SID=$(printf '%s' "$PAYLOAD" | jq -er '.session_id | strings') || SID=''`,
     `case "$SID" in ''|*[!A-Za-z0-9_-]*) SID='' ;; esac`,
-    'if [ -n "$SID" ] && [ ! -L "$WD" ] && [ -f "$WD/$SID" ] && [ ! -L "$WD/$SID" ]; then',
+    "# Only after the go row is written (GO_FAIL=0), never through a symlinked state folder. The renewal row is",
+    "# written first; the start moves only when every row was written, so a renewal is never left unrecorded.",
+    `if [ "$GO_FAIL" = 0 ] && [ -n "$SID" ] && [ ! -L ${p.stateDir} ] && [ ! -L "$WD" ] && [ -f "$WD/$SID" ] && [ ! -L "$WD/$SID" ]; then`,
     `  START=$(head -n 1 "$WD/$SID" 2>/dev/null) || START=''`,
     `  case "$START" in ''|*[!0-9]*) START='' ;; esac`,
     "  NOW=$(date +%s)",
@@ -4081,12 +4132,15 @@ function renewLines(ast: TopologyAST, human: HumanNode, ledgers: string[], p: Gu
     `  if [ -n "$START" ] && [ $((NOW - 10#$START)) -gt ${secs} ]; then`,
     "    # a fresh file of our own (mktemp creates it, so nothing planted at its name is written through), then renamed over the start",
     '    RT=$(mktemp "$WD/.renew.XXXXXX" 2>/dev/null) || RT=\'\'',
-    '    if [ -n "$RT" ] && printf \'%s\\n\' "$NOW" > "$RT" && mv -f "$RT" "$WD/$SID"; then',
-    `      RROW=$(jq -nc --arg human ${sq(human.id)} --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$((10#$START))" '{ts: $ts, human: $human, previous_start: $prev}') || exit 0`,
-    ...ledgers.map((l) => `      printf '%s\\n' "$RROW" | go_append ${sq(l)} || echo ${sq(`go: the renewal for ${human.id} was not written to ${l}`)} >&2`),
-    "    else",
+    `    RROW=$(jq -nc --arg human ${sq(human.id)} --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson prev "$((10#$START))" '{ts: $ts, human: $human, previous_start: $prev}') || RROW=''`,
+    "    RN_OK=0",
+    '    if [ -n "$RT" ] && [ -n "$RROW" ] && printf \'%s\\n\' "$NOW" > "$RT"; then',
+    "      RN_OK=1",
+    ...ledgers.map((l) => `      printf '%s\\n' "$RROW" | go_append ${sq(l)} || RN_OK=0`),
+    "    fi",
+    '    if [ "$RN_OK" = 1 ] && mv -f "$RT" "$WD/$SID"; then :; else',
     `      [ -z "$RT" ] || rm -f "$RT"`,
-    `      echo ${sq(`go: the wall-time renewal for ${human.id} was not written`)} >&2`,
+    `      echo ${sq(`go: the wall-time renewal for ${human.id} was not written; the start is unchanged`)} >&2`,
     "    fi",
     "  fi",
     "fi",
@@ -4145,6 +4199,7 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
       ? [
         "# The go word must be the whole message: any case in ASCII, whitespace and punctuation around it trimmed",
         "# (never a ? or a quote: a question or a quotation is not the go).",
+        'at_blen "$PROMPT"; GL=$AT_OUT; at_blen "$W"; [ "$GL" -le $((AT_OUT + AT_SLACK)) ] || exit 0',
         'at_norm "$PROMPT" go; G=$AT_OUT',
         'at_norm "$W" go',
         '[ "$G" = "$AT_OUT" ] || exit 0',
@@ -4167,9 +4222,9 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
             '    "<cross-session-message"*) TB=${PROMPT#*">"} ;;',
             "  esac",
             "fi",
-            'at_fold "${TB:0:1024}"; at_trim "$AT_OUT"; AT_T=$AT_OUT',
+            'at_fold "${TB:0:256}"; at_trim "$AT_OUT"; AT_T=$AT_OUT',
           ]
-          : ['at_fold "${PROMPT:0:1024}"; at_trim "$AT_OUT"; AT_T=$AT_OUT']),
+          : ['at_fold "${PROMPT:0:256}"; at_trim "$AT_OUT"; AT_T=$AT_OUT']),
         "STOP=0; S=''",
         ...stop.map((w, i) => {
           const fold = !isNonAscii(foldStop(w));
@@ -4179,6 +4234,7 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
         "fi",
         'if [ "$STOP" = 0 ]; then',
         ...(human.stopFrom === "any" ? ['  [ "$TYPED" = 1 ] || exit 0'] : []),
+        '  at_blen "$PROMPT"; GL=$AT_OUT; at_blen "$W"; [ "$GL" -le $((AT_OUT + AT_SLACK)) ] || exit 0',
         '  at_norm "$PROMPT" go; G=$AT_OUT',
         '  at_norm "$W" go',
         '  [ "$G" = "$AT_OUT" ] || exit 0',
@@ -4204,7 +4260,8 @@ export function goHook(ast: TopologyAST, human: HumanNode, p: GuardPlatform): Ge
     ].join("\n")),
     `ROW=$(jq -nc --arg step ${sq(human.id)} --arg word "$W" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson binds "$BINDS" '{step: $step, ok: true, word: $word, ts: $ts}${binds.length ? " + {binds: $binds}" : ""}') || exit 0`,
     ...(stop === undefined ? goAppend : []),
-    ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2`),
+    "GO_FAIL=0",
+    ...ledgers.map((l) => `printf '%s\\n' "$ROW" | go_append ${sq(l)} || { GO_FAIL=1; echo ${sq(`go: the go for ${human.id} was not written to ${l}`)} >&2; }`),
     ...renewLines(ast, human, ledgers, p),
     "exit 0",
     "",

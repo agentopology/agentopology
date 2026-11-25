@@ -207,10 +207,12 @@ describe.skipIf(!hasJq)("[go] keystrokes typed into the person's pane cannot car
       expect(r.status, cmd).toBe(2);
       expect(r.stderr, cmd).toContain("go word");
     }
-    for (const cmd of ['tmux send-keys "ls" Enter', "tmux ls", 'pane-tool send lane "go release"']) {
+    for (const cmd of ["tmux ls", 'pane-tool send lane "go release"']) {
       const r = beforeAction(cmd);
       expect(r.status, `${cmd}: ${r.stderr}`).toBe(0);
     }
+    // 0.13.3: with a go word, typing into a terminal is refused whatever it types
+    expect(beforeAction('tmux send-keys "ls" Enter').status).toBe(2);
   });
 
   it("a topology's own pane tool in typed-only-programs is refused the same way", () => {
@@ -218,8 +220,8 @@ describe.skipIf(!hasJq)("[go] keystrokes typed into the person's pane cannot car
     const r = beforeAction('pane-tool send lane "go release"');
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("go word");
-    const ok = beforeAction('pane-tool send lane "ls"');
-    expect(ok.status, ok.stderr).toBe(0);
+    // 0.13.3: a listed pane tool is refused whatever it types
+    expect(beforeAction('pane-tool send lane "ls"').status).toBe(2);
     expect(beforeAction('tmux send-keys "go release" Enter').status).toBe(2);
   });
 });
@@ -365,7 +367,9 @@ describe.skipIf(!hasJq)("[go] 0.13.0 rc re-check: a send-keys sequence that spel
 
   it("MUST-PASS: keys that spell something else", () => {
     scaffold();
-    passes(['tmux send-keys "ls" Enter', "tmux send-keys -t 0 g i t Space s t a t u s Enter", "tmux ls"]);
+    passes(["tmux ls"]);
+    // 0.13.3: with a go word, typing into a terminal is refused whatever it types
+    refuses(['tmux send-keys "ls" Enter', "tmux send-keys -t 0 g i t Space s t a t u s Enter"]);
   });
 });
 
@@ -375,7 +379,7 @@ describe.skipIf(!hasJq)("[go] (d) a scheduled or /loop prompt the model creates 
     const settings = JSON.parse(fs.readFileSync(at(".claude/settings.json"), "utf8"));
     const e = (settings.hooks?.PreToolUse ?? []).find((x: any) => x.hooks.some((h: any) => h.command.includes("before-schedule.sh")));
     expect(e, "a PreToolUse entry for before-schedule.sh").toBeTruthy();
-    expect(e.matcher).toBe("CronCreate|ScheduleWakeup");
+    expect(e.matcher).toBe("CronCreate|ScheduleWakeup|RemoteTrigger");
   });
 
   it("MUST-REFUSE a prompt that starts with the word; MUST-PASS one that holds it later", () => {

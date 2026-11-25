@@ -23,6 +23,13 @@ import { asList as ccAsList } from "../claude-code-schema.js";
 
 const MANIFEST = ".claude/.scaffold-manifest.json";
 const TALK_LOG = ".claude/state/talk.jsonl";
+const STATE_DIR = ".claude/state";
+
+/** True when the entry agent has a wall-time cap (a positive whole number and s, m, h or d, as V161 reads it). */
+function hasWallCap(ast: TopologyAST): boolean {
+  const a = ast.nodes.find((n) => n.type === "agent" && n.id === ast.topology.entry) as { wallTime?: string } | undefined;
+  return /^\d*[1-9]\d*[smhd]$/.test(a?.wallTime ?? ""); // durationSeconds > 0 in guards.ts
+}
 
 /** A human who carries a go word. */
 function wordHumans(ast: TopologyAST): HumanNode[] {
@@ -73,7 +80,14 @@ export function sandboxPlan(ast: TopologyAST): SandboxPlan | null {
   const talk = talkEdgesOf(ast).length > 0 || sessionAgentsOf(ast).some((a) => (a.decides?.length ?? 0) > 0 && incoming.has(a.id));
   const create = [...ledgers, ...(talk ? [TALK_LOG] : [])];
   const paths = [...create, MANIFEST];
-  return { paths, create, denyWrite: paths.map((p) => `./${p}`), editDeny: paths.map((p) => `Edit(/${p})`) };
+  // 0.13.3: with a wall-time cap, the state folder (the session's start file) is the hooks' alone.
+  const state = hasWallCap(ast) ? STATE_DIR : null;
+  return {
+    paths,
+    create,
+    denyWrite: [...paths.map((p) => `./${p}`), ...(state ? [`./${state}`] : [])],
+    editDeny: [...paths.map((p) => `Edit(/${p})`), ...(state ? [`Edit(/${state}/**)`] : [])],
+  };
 }
 
 /** What the sandbox says about itself, from the AST (the validator, scaffold) or from a settings.json read off disk (guard --check). */

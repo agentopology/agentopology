@@ -119,8 +119,14 @@ describe.skipIf(!hasJq)("the cap's start file is the hooks' alone", () => {
   it("an Edit or Write of the start file is refused", () => {
     scaffold();
     for (const tool of ["Write", "Edit"]) {
-      const r = editHook(tool, `${STATE}/s1`);
+      const r = editHook(tool, at(`${STATE}/s1`)); // Claude Code sends an absolute file_path
       expect.soft(r.status, `${tool}: ${r.stderr}`).toBe(2);
+      const d = editHook(tool, at(".claude/state/x.json"));
+      expect.soft(d.status, `${tool} other state file: ${d.stderr}`).toBe(2);
+    }
+    for (const tool of ["Write", "Edit"]) {
+      const r = editHook(tool, at("src/state/wall-time.ts")); // a project file merely named like it
+      expect.soft(r.status, `${tool} src: ${r.stderr}`).toBe(0);
     }
   });
 
@@ -214,14 +220,19 @@ describe.skipIf(!hasJq)("long input: never a go, never scheduled, answered fast"
     expect.soft(ms2, `alternating: ${ms2} ms`).toBeLessThan(3000);
     expect(rows().filter((x) => x.ok === true)).toEqual([]);
   });
-  it("the schedule gate refuses the same strings in under 5 s, and any string over 4 KB", () => {
+  it("the schedule gate answers the same strings in under 5 s, and refuses any string over 4 KB", () => {
     scaffold();
-    for (const p of [`go release${ELL.repeat(1000)}`, `go release${ELL.repeat(3000)}`, `.${ELL}`.repeat(1500) + "go release", "a".repeat(5000)]) {
+    // 3 KB: under the cap, and not a go (the go hook writes no go row for it, above), so it may be scheduled
+    const [r0, ms0] = timed(() => schedule("CronCreate", { cron: "* * * * *", prompt: `go release${ELL.repeat(1000)}` }));
+    expect([0, 2]).toContain(r0.status);
+    expect.soft(ms0, `3 KB: ${ms0} ms`).toBeLessThan(5000);
+    for (const p of [`go release${ELL.repeat(3000)}`, `.${ELL}`.repeat(1500) + "go release", "a".repeat(5000)]) {
       const [r, ms] = timed(() => schedule("CronCreate", { cron: "* * * * *", prompt: p }));
       expect.soft(r.status, `${p.length}`).toBe(2);
       expect.soft(ms, `${p.length}: ${ms} ms`).toBeLessThan(5000);
     }
     expect(schedule("CronCreate", { cron: "* * * * *", prompt: "check the deploy" }).status).toBe(0);
+    expect(schedule("CronCreate", { cron: "* * * * *", prompt: `go release\n${"notes ".repeat(500)}` }).status).toBe(2);
   });
   it("a short go with a little punctuation still counts", () => {
     scaffold();

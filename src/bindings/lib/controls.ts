@@ -83,6 +83,7 @@ export function generateWallScripts(ast: TopologyAST, p: GuardPlatform): Generat
     `case "$START" in ''|*[!0-9]*) echo "agentopology: wall-time: the start time recorded for this session is not a number, so the ${cap.raw} cap cannot be checked and the call is blocked" >&2; exit 2 ;; esac`,
     "NOW=$(date +%s)",
     '[ "${AGENTOPOLOGY_TEST:-}" = 1 ] && [ -n "${AT_NOW:-}" ] && NOW=$AT_NOW',
+    `if [ "$START" -gt "$NOW" ]; then echo "agentopology: wall-time: the start time recorded for this session is later than now, so the ${cap.raw} cap cannot be checked and the call is blocked" >&2; exit 2; fi`,
     "ELAPSED=$((NOW - START))",
     `if [ "$ELAPSED" -gt ${cap.secs} ]; then`,
     `  echo "agentopology: wall-time: this session passed its cap of ${cap.raw} (\${ELAPSED}s since it started), so every tool call is refused. Stop and report what you have." >&2`,

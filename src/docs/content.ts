@@ -134,7 +134,7 @@ agent NAME {
 | max-turns | number | no | -- | Max agentic turns before stopping |
 | output-into | record id | no | -- | Append the agent's output-schema fields to this record when it stops: a SubagentStop hook writes \`{ts, agent, ...fields}\`, or \`{ts, agent, error: "schema"}\` when the output does not match (never the raw output). Needs an output-schema (V159). It reads \`last_assistant_message\` and matches on \`agent_type\`; a text-level check, claude-code only |
 | wall-time | duration | no | -- | Wall-clock cap on the whole session (\`4h\`, \`90m\`), on the entry agent only (V161). A SessionStart hook records the start; a PreToolUse guard on every tool refuses each call, a subagent's too, once the cap has passed, with a reason naming it; no recorded start refuses too. A text check of elapsed time between calls: it does not interrupt a call already running |
-| renew-on | human id | no | -- | Beside \`wall-time\`: past the cap, the typed go of that human (a human with a go word; the same typed check as every go) starts a fresh window. The start is reset and a renewal row \`{ts, human, previous_start}\` is appended to the go ledger. A relayed go, another human's go, and a session with no recorded start do not renew (V161). Past the cap, one typed go both renews the window and gives the go for the gates after that human: the two are one word |
+| renew-on | human id | no | -- | Beside \`wall-time\`: past the cap, the typed go of that human (a human with a go word; the same typed check as every go) starts a fresh window. The start is reset and a renewal row \`{ts, human, previous_start}\` is appended to the go ledger. A relayed go, another human's go, and a session with no recorded start do not renew (V161). Past the cap, one typed go both renews the window and gives the go for the gates after that human: the two are one word. The renewal follows the go row: when the go row or the renewal row cannot be written, the start is not moved. The \`.claude/state\` folder is refused to the agent (guards, sandbox, permission rules), and a start later than now refuses |
 | max-subagents | number | no | -- | Most subagents this agent may have open at once. Enforced on claude-code: a PreToolUse hook on Agent\|Task refuses a launch at the cap (V156) |
 | max-cost | number | no | -- | Spend cap in USD. Advisory, not enforced (Claude Code hooks do not see spend); written to the metering output (V156) |
 | timeout | duration | no | -- | Longest the agent may run, e.g. 30m. Enforced on claude-code: a PreToolUse hook in the agent refuses every tool call after it (V30) |
@@ -657,10 +657,13 @@ message from another session or a background subagent's report. A prompt that op
 or holds a \`<task-notification\` envelope anywhere, writes no row, and the word counts only as the whole message.
 A session-scoped scheduled task or \`/loop\` prompt arrives as its text was written, with no envelope, so one that
 reads as the word would count as typed. The model schedules those prompts with the CronCreate and ScheduleWakeup
-tools, and \`before-schedule.sh\`, a PreToolUse hook on \`CronCreate|ScheduleWakeup\`, reads each scheduled string
+tools (and a cloud routine with RemoteTrigger), and \`before-schedule.sh\`, a PreToolUse hook on
+\`CronCreate|ScheduleWakeup|RemoteTrigger\` (30 s timeout, blocking on failure), reads each string of the call
 with the go hook's own readers and a wider trim (also \`?\`, quotes and the marks phones add), also after a leading
 \`/loop\` and its interval, and refuses one that is the word or opens with it (\`Go release\`, \`**go release**\`,
-\`- go release\`, \`/loop 5m Go release\`, \`go release now\`), whoever asked for it.
+\`- go release\`, \`/loop 5m Go release\`, \`go release now\`), whoever asked for it. A message longer than the go
+word by more than 64 bytes is never the go; a scheduled string over 4096 bytes is refused unread, and the hook
+refuses once it has run 10 seconds.
 
 \`before-action.sh\` then lets \`release\` run only while \`docs/release-notes.md\` is unchanged since the go (a changed
 file fails and is named) and inside the \`valid\` window.
@@ -682,10 +685,20 @@ These forms are refused, each proven by a test that feeds the hook the call:
   are held to the same rules as the command run directly;
 - a command that names a terminal device (\`/dev/pts/*\`, \`/dev/tty*\`, \`/dev/console\`, also as a glob, through
   \`$(tty)\`, or as dd's \`of=\`), unless it only reads it with \`<\`;
-- a keystroke tool (tmux, screen, xdotool, osascript, wtype, ydotool, or a program the human lists in
-  \`typed-only-programs\`) in a command that holds the go word as a whole word; and keys that spell the go word one
-  by one or across chained calls (\`tmux send-keys g o Space r e l e a s e Enter\`, \`send-keys -l\`, several
-  \`send-keys\` joined by \`;\` or \`&&\`).
+- typing into a terminal, whatever it types (0.13.3; the go word can hide in hex keys, a variable or an encoding):
+  a \`send-keys\`, \`send-text\`, \`send-key\` or \`write-chars\` word anywhere in the command (tmux, kitty, wezterm, a
+  program named by an expansion), tmux with \`send\` or \`paste-buffer\`, screen with \`stuff\`, zellij with \`write\`,
+  and any mention of xdotool, wtype, ydotool, osascript or a program the human lists in \`typed-only-programs\`
+  (list your own pane tools there). \`tmux ls\` and \`screen -ls\` still run. Known false refusals: those words in a
+  commit message or an \`echo\`.
+- with a wall-time cap, the whole \`.claude/state\` folder (the session's start file is there): an Edit or Write, a
+  Bash write, \`cp\`, \`mv\` or \`rm\`. \`wall-time.sh\` also refuses a start later than now.
+
+What these checks do not read (known, documented, not fixed): a stop word after U+202F, U+2009, U+2028, U+2060, U+00AD
+or the bidi embedding marks; a stop word typed before a task notification in the same prompt; a \`">\` inside a quoted
+header attribute of a cross-session message (the body is read after the first \`">\`); a stop word after an image
+marker such as \`[Image #1]\`; and the stop reader's 256-character prefix, counted in bytes under the C locale and in
+characters under UTF-8.
 
 With Bash and an interpreter, text checks can't stop a determined agent; only the sandbox can. A go word turns it
 on (see Sandbox below). An interpreter can still reach the route record, the gate ledgers your own steps write and
@@ -698,7 +711,8 @@ When a human has a go word (\`word:\`), the claude-code binding writes into \`.c
 - \`sandbox.enabled: true\`, \`sandbox.allowUnsandboxedCommands: false\` (a command the sandbox stops is not run again
   outside it) and \`sandbox.failIfUnavailable: true\`;
 - \`sandbox.filesystem.denyWrite\`: each go ledger, \`.claude/state/talk.jsonl\` when talk-guard.sh or a
-  session-prompt script is generated, and the scaffold manifest (\`.claude/.scaffold-manifest.json\`); and
+  session-prompt script is generated, the scaffold manifest (\`.claude/.scaffold-manifest.json\`), and, with a
+  wall-time cap, the folder \`.claude/state\` (\`Edit(/.claude/state/**)\` in \`permissions.deny\`); and
   \`permissions.deny\` \`Edit(...)\` for each of them. A ledger a gate after a step also reads is left out: the step
   writes it.
 - Hooks run outside the sandbox (Claude Code: command hooks "run with your full access"), so the go hook can still write.
