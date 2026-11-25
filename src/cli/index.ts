@@ -2479,6 +2479,11 @@ function main(args: ParsedArgs): void {
     console.log(packageVersion());
     process.exit(0);
   }
+  // --help / -h as the first word: the usage, before any plugin (package.json or --plugin) is loaded.
+  if (first === "--help" || first === "-h") {
+    usage();
+    process.exit(0);
+  }
   const args = parseArgs(process.argv);
   let wanted: ReturnType<typeof pluginRequests>;
   try {

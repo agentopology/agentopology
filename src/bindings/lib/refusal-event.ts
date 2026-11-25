@@ -16,13 +16,24 @@
  */
 
 import type { GeneratedFile } from "../types.js";
+import { shellQuote } from "./guards.js";
 // (the type lives next to the bindings, one folder up)
 
 /** Where the event lines go, relative to the project root. Fixed. */
 export const REFUSAL_EVENT_FILE = ".claude/agentopology/events/refusals.jsonl";
 
 /** The shell function a script defines. `$GUARD_NAME` is the script's own file name. */
-function eventFunction(guard: string): string[] {
+function eventFunction(guard: string, rules: Record<string, string> = {}): string[] {
+  const ruled = Object.entries(rules).filter(([id]) => /^[A-Za-z0-9_.:@/-]+$/.test(id));
+  // Each gate that states a rule maps to the rule as a ready JSON string; any other gate writes null.
+  const ruleCase = ruled.length
+    ? [
+        '  case "$GATE" in',
+        ...ruled.map(([id, rule]) => `    ${id}) RULE=${shellQuote(JSON.stringify(rule))};;`),
+        "    *) RULE=null;;",
+        "  esac",
+      ]
+    : [];
   // The gate: a gate-<id>.sh wrapper is its gate's; deny() in the other guards sets AT_GATE.
   const gate = /^gate-(.+)\.sh$/.exec(guard)?.[1];
   const clean = "tr -cd 'A-Za-z0-9_.:@/-'";
@@ -37,7 +48,10 @@ function eventFunction(guard: string): string[] {
     `  TOOL=$(printf '%s' "\${AT_TOOL_NAME:-$(printf '%s' "\${INPUT:-}" | jq -r '.tool_name // ""' 2>/dev/null)}" | ${clean})`,
     `  REASON=refused; [ -n "$GATE" ] && REASON="a gate refused the call"`,
     '  { mkdir -p "${LOG%/*}"; } 2>/dev/null || true',
-    `  { printf '{"v":1,"ts":"%s","guard":"%s","gate":%s,"rule":null,"tool":"%s","reason":"%s"}\\n' "$TS" ${JSON.stringify(guard)} "$([ -n "$GATE" ] && printf '"%s"' "$GATE" || printf null)" "$TOOL" "$REASON" >> "$LOG"; } 2>/dev/null || true`,
+    ...(ruled.length ? ["  local RULE=null", ...ruleCase] : []),
+    ruled.length
+      ? `  { printf '{"v":1,"ts":"%s","guard":"%s","gate":%s,"rule":%s,"tool":"%s","reason":"%s"}\\n' "$TS" ${JSON.stringify(guard)} "$([ -n "$GATE" ] && printf '"%s"' "$GATE" || printf null)" "$RULE" "$TOOL" "$REASON" >> "$LOG"; } 2>/dev/null || true`
+      : `  { printf '{"v":1,"ts":"%s","guard":"%s","gate":%s,"rule":null,"tool":"%s","reason":"%s"}\\n' "$TS" ${JSON.stringify(guard)} "$([ -n "$GATE" ] && printf '"%s"' "$GATE" || printf null)" "$TOOL" "$REASON" >> "$LOG"; } 2>/dev/null || true`,
     "  return 0",
     "}",
   ];
@@ -50,7 +64,7 @@ const EXIT_2 = /(^|[\s;&|{(])exit 2(?![0-9A-Za-z_])/g;
  * (outside a comment line) preceded by the append, and `deny()` noting its gate. A file that
  * is not a shell script, is a stub for the user to write, or never exits 2 is returned as it is.
  */
-export function withRefusalEvent(file: GeneratedFile): GeneratedFile {
+export function withRefusalEvent(file: GeneratedFile, rules: Record<string, string> = {}): GeneratedFile {
   if (!file.path.endsWith(".sh") || file.stub || !file.content.startsWith("#!") || !/\bexit 2\b/.test(file.content)) return file;
   const guard = file.path.slice(file.path.lastIndexOf("/") + 1);
   const nl = file.content.indexOf("\n");
@@ -66,5 +80,5 @@ export function withRefusalEvent(file: GeneratedFile): GeneratedFile {
         .replace(EXIT_2, "$1{ at_refusal_event 2>/dev/null || :; exit 2; }");
     })
     .join("\n");
-  return { ...file, content: `${head}${eventFunction(guard).join("\n")}\n${body}` };
+  return { ...file, content: `${head}${eventFunction(guard, rules).join("\n")}\n${body}` };
 }

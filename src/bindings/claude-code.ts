@@ -4357,7 +4357,9 @@ function generateAll(ast: TopologyAST): GeneratedFile[] {
 
     // Plugins (EXPERIMENTAL): their files, before dedupe; none without plugins.
     // The refusal event (EXPERIMENTAL), only for a topology that opts in; the plugins' own files are not touched.
-    const evented = refusalEventsOn(ast) ? files.map(withRefusalEvent) : files;
+    const gateRules: Record<string, string> = {};
+    for (const n of ast.nodes) if (n.type === "gate" && (n as GateNode).rule) gateRules[n.id] = (n as GateNode).rule as string;
+    const evented = refusalEventsOn(ast) ? files.map((f) => withRefusalEvent(f, gateRules)) : files;
     return deduplicateFiles(mergePluginFiles(ast, evented));
 }
 
